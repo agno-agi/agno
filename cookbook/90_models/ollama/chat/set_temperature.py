@@ -1,5 +1,16 @@
+"""
+Ollama Set Temperature
+======================
+
+Cookbook example for `ollama/chat/set_temperature.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=Ollama(id="llama3.2", options={"temperature": 0.5}), markdown=True)
 
@@ -9,3 +20,10 @@ agent = Agent(model=Ollama(id="llama3.2", options={"temperature": 0.5}), markdow
 
 # Print the response in the terminal
 agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

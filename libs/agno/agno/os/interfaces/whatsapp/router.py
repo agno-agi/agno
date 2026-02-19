@@ -133,7 +133,7 @@ def attach_routes(
 
             # Generate and send response
             if agent:
-                response = await agent.arun(
+                response = await agent.arun(  # type: ignore[misc]
                     message_text,
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",

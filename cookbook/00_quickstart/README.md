@@ -1,10 +1,10 @@
 # Get Started with Agents, The Easy Way
 
-This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
+This guide walks through the basics of building Agents with Agno. Follow along to learn how to build agents with memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
 
-Each example can be run independently and contains detailed comments to help you understand what's happening behind the scenes. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
+Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
 
-## Cookbooks
+## Files
 
 | # | File | What You'll Learn | Key Features |
 |:--|:---------|:------------------|:-------------|
@@ -77,6 +77,7 @@ python cookbook/00_quickstart/agent_with_tools.py
 ## Run via Agent OS
 
 Agent OS provides a web interface for interacting with your agents. Start the server:
+
 ```bash
 python cookbook/00_quickstart/run.py
 ```
@@ -96,14 +97,15 @@ https://github.com/user-attachments/assets/aae0086b-86f6-4939-a0ce-e1ec9b87ba1f
 ## Swap Models Anytime
 
 Agno is model-agnostic. Same code, different provider:
+
 ```python
 # Gemini (default in these examples)
 from agno.models.google import Gemini
 model = Gemini(id="gemini-3-flash-preview")
 
 # OpenAI
-from agno.models.openai import OpenAIChat
-model = OpenAIChat(id="gpt-5.2")
+from agno.models.openai import OpenAIResponses
+model = OpenAIResponses(id="gpt-5.2")
 
 # Anthropic
 from agno.models.anthropic import Claude
@@ -111,6 +113,7 @@ model = Claude(id="claude-sonnet-4-5")
 ```
 
 ## Run Cookbooks Individually
+
 ```bash
 # 01 - Tools: Fetch real market data
 python cookbook/00_quickstart/agent_with_tools.py
@@ -149,27 +152,6 @@ python cookbook/00_quickstart/multi_agent_team.py
 python cookbook/00_quickstart/sequential_workflow.py
 ```
 
-## File Structure
-```
-cookbook/00_quickstart/
-├── agent_with_tools.py                 # Tools and data fetching
-├── agent_with_storage.py               # Conversation persistence
-├── agent_search_over_knowledge.py      # Knowledge base + hybrid search
-├── custom_tool_for_self_learning.py    # Custom tools
-├── agent_with_structured_output.py     # Pydantic output
-├── agent_with_typed_input_output.py    # Full type safety
-├── agent_with_memory.py                # User memory
-├── agent_with_state_management.py      # Session state
-├── multi_agent_team.py                 # Multi-agent teams
-├── sequential_workflow.py              # Step-based agentic workflows
-├── agent_with_guardrails.py            # Input validation and safety
-├── human_in_the_loop.py                # User confirmation for tools
-├── config.yaml                         # Agent OS quick prompts
-├── run.py                              # Agent OS entrypoint
-├── requirements.txt
-└── README.md
-```
-
 ## Async Patterns
 
 All examples in this Quick Start use synchronous code for simplicity. For async/await patterns (recommended for production), see `cookbook/02_agents/` which includes async variants of most features.
@@ -177,5 +159,4 @@ All examples in this Quick Start use synchronous code for simplicity. For async/
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
-- [Agent OS Overview](https://docs.agno.com/agent-os/overview)
-
+- [Agent OS Overview](https://docs.agno.com/agent-os/introduction)

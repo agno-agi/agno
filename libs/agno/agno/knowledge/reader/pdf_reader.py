@@ -23,6 +23,27 @@ PAGE_END_NUMBERING_FORMAT_DEFAULT = "<end page {page_nr}>"
 PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL = 0.4
 
 
+def _sanitize_pdf_text(text: str) -> str:
+    """Normalize fragmented PDF text while preserving paragraph boundaries.
+
+    PDF text extraction via pypdf often produces fragmented output where each word
+    appears on its own line, especially for multi-column layouts or certain PDF
+    generators. This function joins those broken lines into flowing text while
+    keeping intentional paragraph breaks (double newlines) intact.
+
+    Note: Structured content like code blocks or tables with meaningful whitespace
+    may lose formatting. Use ``sanitize_content=False`` on the reader to disable.
+    """
+    # Collapse word-per-line PDF artifacts: \n<whitespace>\n is a typical extraction artifact,
+    # not an intentional paragraph break (which is \n\n with no whitespace between).
+    text = re.sub(r"\n[ \t]+\n", " ", text)
+    # Join single newlines (broken lines from PDF extraction), preserving true paragraph breaks (\n\n)
+    text = re.sub(r"(?<!\n)[ \t]*\n[ \t]*(?!\n)", " ", text)
+    # Collapse runs of spaces/tabs within lines
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
 def _ocr_reader(page: Any) -> str:
     """A single PDF page object."""
     try:
@@ -184,6 +205,7 @@ class BasePDFReader(Reader):
         page_start_numbering_format: Optional[str] = None,
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
+        sanitize_content: bool = True,
         chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(chunk_size=5000),
         **kwargs,
     ):
@@ -196,6 +218,7 @@ class BasePDFReader(Reader):
         self.page_start_numbering_format = page_start_numbering_format
         self.page_end_numbering_format = page_end_numbering_format
         self.password = password
+        self.sanitize_content = sanitize_content
 
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
@@ -291,6 +314,11 @@ class BasePDFReader(Reader):
             if read_images:
                 pdf_images_text.append(_ocr_reader(page))
 
+        # Sanitize before page number cleaning so that _clean_page_numbers can insert
+        # its markers without the sanitizer later collapsing their newline delimiters.
+        if self.sanitize_content:
+            pdf_content = [_sanitize_pdf_text(page) for page in pdf_content]
+
         pdf_content, shift = _clean_page_numbers(
             page_content_list=pdf_content,
             extra_content=pdf_images_text,
@@ -322,8 +350,12 @@ class BasePDFReader(Reader):
             *[_read_pdf_page(page, read_images) for page in doc_reader.pages]
         )
 
+        page_texts = [x[0] for x in pdf_content]
+        if self.sanitize_content:
+            page_texts = [_sanitize_pdf_text(page) for page in page_texts]
+
         pdf_content_clean, shift = _clean_page_numbers(
-            page_content_list=[x[0] for x in pdf_content],
+            page_content_list=page_texts,
             extra_content=[x[1] for x in pdf_content],
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format,

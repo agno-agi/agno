@@ -17,13 +17,12 @@ from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.remote_content.config import (
-    RemoteContentConfig,
-)
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -48,7 +47,12 @@ class Knowledge(RemoteKnowledge):
     contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
-    content_sources: Optional[List[RemoteContentConfig]] = None
+    content_sources: Optional[List[BaseStorageConfig]] = None
+    # When True, adds linked_to metadata during insert and filters by it during search.
+    # This enables isolation when multiple Knowledge instances share the same vector database.
+    # Requires re-indexing existing data to add linked_to metadata.
+    # Default is False for backwards compatibility with existing data.
+    isolate_vector_search: bool = False
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -125,6 +129,9 @@ class Knowledge(RemoteKnowledge):
             )
             return
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = strip_agno_metadata(metadata)
+
         content = None
         file_data = None
         if text_content:
@@ -136,7 +143,7 @@ class Knowledge(RemoteKnowledge):
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -190,6 +197,9 @@ class Knowledge(RemoteKnowledge):
             )
             return
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = strip_agno_metadata(metadata)
+
         content = None
         file_data = None
         if text_content:
@@ -201,7 +211,7 @@ class Knowledge(RemoteKnowledge):
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -518,9 +528,18 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Inject linked_to filter when isolate_vector_search is enabled and knowledge has a name
+            search_filters = filters
+            if self.isolate_vector_search and self.name:
+                if search_filters is None:
+                    search_filters = {"linked_to": self.name}
+                elif isinstance(search_filters, dict):
+                    search_filters = {**search_filters, "linked_to": self.name}
+                # List-based filters: user must add linked_to filter manually
+
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=filters)
+            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -548,13 +567,22 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Inject linked_to filter when isolate_vector_search is enabled and knowledge has a name
+            search_filters = filters
+            if self.isolate_vector_search and self.name:
+                if search_filters is None:
+                    search_filters = {"linked_to": self.name}
+                elif isinstance(search_filters, dict):
+                    search_filters = {**search_filters, "linked_to": self.name}
+                # List-based filters: user must add linked_to filter manually
+
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
+                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.search(query=query, max_results=_max_results, filters=filters)
+                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -576,8 +604,9 @@ class Knowledge(RemoteKnowledge):
         if isinstance(self.contents_db, AsyncBaseDb):
             raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
 
+        # Filter by linked_to when knowledge has a name for isolation
         contents, count = self.contents_db.get_knowledge_contents(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
         )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -591,13 +620,14 @@ class Knowledge(RemoteKnowledge):
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
+        # Filter by linked_to when knowledge has a name for isolation
         if isinstance(self.contents_db, AsyncBaseDb):
             contents, count = await self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
             )
         else:
             contents, count = self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
             )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -935,6 +965,10 @@ class Knowledge(RemoteKnowledge):
         2. If exclude is specified, file must not match any exclude pattern
         3. If neither specified, include all files
 
+        Patterns without path separators (e.g. ``*.go``) are matched against
+        the filename only so they work when *file_path* is a full or relative
+        path that contains directories.
+
         Args:
             file_path: Path to the file to check
             include: Optional list of include patterns (glob-style)
@@ -944,15 +978,22 @@ class Knowledge(RemoteKnowledge):
             bool: True if file should be included, False otherwise
         """
         import fnmatch
+        import os
+
+        file_name = os.path.basename(file_path)
+
+        def _matches(path: str, name: str, pattern: str) -> bool:
+            """Match pattern against both the full path and the basename."""
+            return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(name, pattern)
 
         # If include patterns specified, file must match at least one
         if include:
-            if not any(fnmatch.fnmatch(file_path, pattern) for pattern in include):
+            if not any(_matches(file_path, file_name, pattern) for pattern in include):
                 return False
 
         # If exclude patterns specified, file must not match any
         if exclude:
-            if any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude):
+            if any(_matches(file_path, file_name, pattern) for pattern in exclude):
                 return False
 
         return True
@@ -1263,6 +1304,9 @@ class Knowledge(RemoteKnowledge):
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
+            # Add linked_to to metadata for vector search filtering (only when isolation is enabled)
+            if self.isolate_vector_search:
+                document.meta_data["linked_to"] = self.name or ""
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
@@ -1477,6 +1521,10 @@ class Knowledge(RemoteKnowledge):
         if not content.url:
             raise ValueError("No url provided")
 
+        # Store URL source metadata in _agno for source tracking
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
+
         # Set name from URL if not provided
         if not content.name and content.url:
             from urllib.parse import urlparse
@@ -1623,6 +1671,10 @@ class Knowledge(RemoteKnowledge):
 
         if not content.url:
             raise ValueError("No url provided")
+
+        # Store URL source metadata in _agno for source tracking
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         # Set name from URL if not provided
         if not content.name and content.url:
@@ -2264,7 +2316,7 @@ class Knowledge(RemoteKnowledge):
             else len(content.file_data.content)
             if content.file_data and content.file_data.content
             else None,
-            linked_to=self._ensure_string_field(self.name, "knowledge.name", default=""),
+            linked_to=self.name if self.name else "",
             access_count=0,
             status=content.status if content.status else ContentStatus.PROCESSING,
             status_message=self._ensure_string_field(content.status_message, "content.status_message", default=""),
@@ -2414,7 +2466,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2429,7 +2481,9 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = strip_agno_metadata(content.metadata) or {}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
@@ -2459,7 +2513,7 @@ class Knowledge(RemoteKnowledge):
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2478,7 +2532,9 @@ class Knowledge(RemoteKnowledge):
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if self.vector_db:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = strip_agno_metadata(content.metadata) or {}
+                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
@@ -2913,7 +2969,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         agent: Optional[Any] = None,
         **kwargs,
     ) -> List[Any]:
-        """Get tools to expose to the agent.
+        """Get tools to expose to the Agent or Team.
 
         Returns the search_knowledge_base tool configured for this knowledge base.
 
@@ -2923,7 +2979,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             knowledge_filters: Filters to apply to searches.
             async_mode: Whether to return async tools.
             enable_agentic_filters: Whether to enable filter parameter on tool.
-            agent: The agent instance (for document conversion).
+            agent: The Agent or Team instance (for document conversion with references_format).
             **kwargs: Additional context.
 
         Returns:
@@ -2977,7 +3033,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         async_mode: bool = False,
         agent: Optional[Any] = None,
     ) -> Any:
-        """Create the search_knowledge_base tool without filter parameter."""
+        """Create the search_knowledge_base tool without filter parameter.
+
+        Args:
+            agent: Agent or Team instance for custom document conversion.
+        """
         from agno.models.message import MessageReferences
         from agno.tools.function import Function
         from agno.utils.timer import Timer
@@ -3069,7 +3129,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         async_mode: bool = False,
         agent: Optional[Any] = None,
     ) -> Any:
-        """Create the search_knowledge_base tool with filter parameter."""
+        """Create the search_knowledge_base tool with filter parameter.
+
+        Args:
+            agent: Agent or Team instance for custom document conversion.
+        """
         from agno.models.message import MessageReferences
         from agno.tools.function import Function
         from agno.utils.timer import Timer
@@ -3216,12 +3280,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
         Args:
             docs: List of documents to convert.
-            agent: Optional agent instance for custom conversion.
+            agent: Optional Agent or Team instance for custom conversion using their references_format.
 
         Returns:
             String representation of documents.
         """
-        # If agent has a custom converter, use it
+        # If agent (Agent or Team) has a custom converter, use it for proper YAML/JSON formatting
         if agent is not None and hasattr(agent, "_convert_documents_to_string"):
             return agent._convert_documents_to_string([doc.to_dict() for doc in docs])
 

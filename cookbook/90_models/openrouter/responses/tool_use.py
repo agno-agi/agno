@@ -10,6 +10,10 @@ from agno.agent import Agent
 from agno.models.openrouter import OpenRouterResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=OpenRouterResponses(id="openai/gpt-oss-20b", reasoning={"enabled": True}),
     tools=[DuckDuckGoTools()],
@@ -17,3 +21,10 @@ agent = Agent(
 )
 
 agent.print_response("What is the latest news about AI?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

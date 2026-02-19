@@ -307,7 +307,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process asynchronously."""
         try:
-            response = await evaluator_agent.arun(evaluation_input, stream=False)
+            response = await evaluator_agent.arun(evaluation_input, stream=False)  # type: ignore[misc]
             accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
                 raise EvalError(f"Evaluator Agent returned an invalid response: {accuracy_agent_response}")
@@ -508,10 +508,10 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 agent_session_id = f"eval_{self.eval_id}_{i + 1}"
 
                 if self.agent is not None:
-                    agent_response = await self.agent.arun(input=eval_input, session_id=agent_session_id, stream=False)
+                    agent_response = await self.agent.arun(input=eval_input, session_id=agent_session_id, stream=False)  # type: ignore[misc]
                     output = agent_response.content
                 elif self.team is not None:
-                    team_response = await self.team.arun(input=eval_input, session_id=agent_session_id, stream=False)
+                    team_response = await self.team.arun(input=eval_input, session_id=agent_session_id, stream=False)  # type: ignore[misc]
                     output = team_response.content
 
                 if not output:

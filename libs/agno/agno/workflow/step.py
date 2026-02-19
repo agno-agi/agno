@@ -118,6 +118,7 @@ class Step:
     def to_dict(self) -> Dict[str, Any]:
         """Convert step to a dictionary representation."""
         result = {
+            "type": "Step",
             "name": self.name,
             "step_id": self.step_id,
             "description": self.description,
@@ -132,7 +133,8 @@ class Step:
             result["agent_id"] = self.agent.id
         if self.team is not None:
             result["team_id"] = self.team.id
-        # TODO: Add support for custom executors
+        if self.executor is not None:
+            result["executor_ref"] = self.executor.__name__
 
         return result
 
@@ -171,14 +173,16 @@ class Step:
                 agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
 
         # --- Handle Team reconstruction ---
-        # if "team_id" in config and config["team_id"] and registry:
-        #     from agno.team.team import get_team_by_id
-        #     team = get_team_by_id(db=db, id=config["team_id"])
+        if "team_id" in config and config["team_id"] and registry:
+            from agno.team.team import get_team_by_id
+
+            team_id = config.get("team_id")
+            if db is not None and team_id is not None:
+                team = get_team_by_id(db=db, id=team_id, registry=registry)
 
         # --- Handle Executor reconstruction ---
-        # TODO: Implement executor reconstruction
-        # if "executor_ref" in config and config["executor_ref"] and registry:
-        #     executor = registry.rehydrate_function(config["executor_ref"])
+        if "executor_ref" in config and config["executor_ref"] and registry:
+            executor = registry.get_function(config["executor_ref"])
 
         return cls(
             name=config.get("name"),
@@ -559,6 +563,9 @@ class Step:
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
+        # Set session_id to match workflow's session_id for consistent event tracking
+        if hasattr(event, "session_id") and workflow_run_response.session_id:
+            event.session_id = workflow_run_response.session_id
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
         if hasattr(event, "step_name") and self.name is not None:
@@ -1430,7 +1437,7 @@ class Step:
                 or not self.active_executor.store_tool_messages
                 or not self.active_executor.store_history_messages
             ):  # type: ignore
-                self.active_executor._scrub_run_output_for_storage(executor_run_response)  # type: ignore
+                self.active_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response

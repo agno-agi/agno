@@ -11,6 +11,10 @@ This requires `google-genai > 1.10.0`
 from agno.agent import Agent
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 task = (
     "Three missionaries and three cannibals need to cross a river. "
     "They have a boat that can carry up to two people at a time. "
@@ -23,3 +27,10 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response(task, stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass
