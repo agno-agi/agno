@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import weakref
@@ -177,6 +178,12 @@ class MCPTools(Toolkit):
         self._active_contexts: list[Any] = []
         self._context = None
         self._session_context = None
+
+        # Semaphore to limit concurrent MCP method calls over a shared
+        # transport (e.g. SSE).  Allows up to 10 concurrent calls instead
+        # of fully serializing them, preventing transport overload while
+        # still enabling parallelism.
+        self._call_semaphore: asyncio.Semaphore = asyncio.Semaphore(10)
 
         # Session management for per-agent-run sessions with dynamic headers
         # Maps run_id to (session, timestamp) for TTL-based cleanup

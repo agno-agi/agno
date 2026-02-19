@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import warnings
@@ -157,6 +158,12 @@ class MultiMCPTools(Toolkit):
         self._successful_connections = 0
         self._sessions: list[ClientSession] = []
         self._session_to_server_idx: Dict[int, int] = {}  # Maps session list index to server params index
+
+        # Semaphore to limit concurrent MCP method calls over a shared
+        # transport (e.g. SSE).  Allows up to 10 concurrent calls instead
+        # of fully serializing them, preventing transport overload while
+        # still enabling parallelism.
+        self._call_semaphore: asyncio.Semaphore = asyncio.Semaphore(10)
 
         # Session management for per-agent-run sessions with dynamic headers
         # For MultiMCP, we track sessions per (run_id, server_idx) since we have multiple servers

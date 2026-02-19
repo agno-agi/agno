@@ -1,3 +1,4 @@
+import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Optional, Union
@@ -71,13 +72,20 @@ def get_entrypoint_for_tool(
             else:
                 active_session = session
 
-            try:
-                await active_session.send_ping()
-            except Exception as e:
-                log_exception(e)
+            # Acquire the concurrency semaphore if available to prevent
+            # overwhelming the SSE transport with too many concurrent writes.
+            # The semaphore allows multiple concurrent calls (unlike a Lock)
+            # while bounding the degree of parallelism.
+            semaphore: Optional[asyncio.Semaphore] = None
+            if mcp_tools_instance and hasattr(mcp_tools_instance, "_call_semaphore"):
+                semaphore = mcp_tools_instance._call_semaphore
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            if semaphore is not None:
+                async with semaphore:
+                    result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            else:
+                result = await active_session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:
