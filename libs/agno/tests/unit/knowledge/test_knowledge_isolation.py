@@ -152,8 +152,8 @@ class TestKnowledgeIsolation:
         assert len(mock_db.search_calls) == 1
         assert mock_db.search_calls[0]["filters"] == {"category": "docs", "linked_to": "Test KB"}
 
-    def test_search_with_isolation_list_filters_passed_through(self):
-        """Test that list filters are passed through without modification."""
+    def test_search_with_isolation_list_filters_injects_linked_to(self):
+        """Test that linked_to filter is auto-injected for list-based FilterExpr filters."""
         from agno.filters import EQ
 
         mock_db = MockVectorDb()
@@ -163,14 +163,41 @@ class TestKnowledgeIsolation:
             isolate_vector_search=True,
         )
 
-        # Use list-based filters (user must add linked_to manually)
         list_filters = [EQ("category", "docs")]
 
         knowledge.search("test query", filters=list_filters)
 
-        # List filters passed through unchanged (user responsibility to add linked_to)
         assert len(mock_db.search_calls) == 1
-        assert mock_db.search_calls[0]["filters"] == list_filters
+        result_filters = mock_db.search_calls[0]["filters"]
+        assert len(result_filters) == 2
+        assert result_filters[0].key == "linked_to"
+        assert result_filters[0].value == "Test KB"
+        assert result_filters[1].key == "category"
+        assert result_filters[1].value == "docs"
+
+    @pytest.mark.asyncio
+    async def test_async_search_with_isolation_list_filters_injects_linked_to(self):
+        """Test that async search auto-injects linked_to for list-based FilterExpr filters."""
+        from agno.filters import EQ
+
+        mock_db = MockVectorDb()
+        knowledge = Knowledge(
+            name="Async Test KB",
+            vector_db=mock_db,
+            isolate_vector_search=True,
+        )
+
+        list_filters = [EQ("department", "legal")]
+
+        await knowledge.asearch("test query", filters=list_filters)
+
+        assert len(mock_db.search_calls) == 1
+        result_filters = mock_db.search_calls[0]["filters"]
+        assert len(result_filters) == 2
+        assert result_filters[0].key == "linked_to"
+        assert result_filters[0].value == "Async Test KB"
+        assert result_filters[1].key == "department"
+        assert result_filters[1].value == "legal"
 
     @pytest.mark.asyncio
     async def test_async_search_with_isolation_injects_filter(self):
