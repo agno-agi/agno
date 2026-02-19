@@ -6,7 +6,7 @@ from agno.utils.log import log_debug
 
 def create_agent_run(run: AgentRunCreate) -> None:
     """Telemetry recording for Agent runs"""
-    with api.Client() as api_client:
+    with api.TelemetryClient() as api_client:
         try:
             api_client.post(
                 ApiRoutes.RUN_CREATE,
@@ -18,7 +18,7 @@ def create_agent_run(run: AgentRunCreate) -> None:
 
 async def acreate_agent_run(run: AgentRunCreate) -> None:
     """Telemetry recording for async Agent runs"""
-    async with api.AsyncClient() as api_client:
+    async with api.AsyncTelemetryClient() as api_client:
         try:
             await api_client.post(
                 ApiRoutes.RUN_CREATE,

@@ -6,6 +6,9 @@ from httpx import Response
 
 from agno.api.settings import agno_api_settings
 
+# Short timeout for telemetry requests so they never block the agent
+TELEMETRY_TIMEOUT = 5
+
 
 class Api:
     def __init__(self):
@@ -27,6 +30,24 @@ class Api:
             base_url=agno_api_settings.api_url,
             headers=self.headers,
             timeout=60,
+            http2=True,
+        )
+
+    def TelemetryClient(self) -> HttpxClient:
+        """HTTP client with a short timeout for non-blocking telemetry submissions."""
+        return HttpxClient(
+            base_url=agno_api_settings.api_url,
+            headers=self.headers,
+            timeout=TELEMETRY_TIMEOUT,
+            http2=True,
+        )
+
+    def AsyncTelemetryClient(self) -> HttpxAsyncClient:
+        """Async HTTP client with a short timeout for non-blocking telemetry submissions."""
+        return HttpxAsyncClient(
+            base_url=agno_api_settings.api_url,
+            headers=self.headers,
+            timeout=TELEMETRY_TIMEOUT,
             http2=True,
         )
 

@@ -6,7 +6,7 @@ from agno.utils.log import log_debug
 
 def log_os_telemetry(launch: OSLaunch) -> None:
     """Telemetry recording for OS launches"""
-    with api.Client() as api_client:
+    with api.TelemetryClient() as api_client:
         try:
             response = api_client.post(
                 ApiRoutes.AGENT_OS_LAUNCH,
