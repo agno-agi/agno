@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model, RetryableModelProviderError
+from agno.models.base import MessageData, Model, RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
@@ -1393,6 +1393,43 @@ class Gemini(Model):
                 model_response.response_usage = self._get_metrics(response_delta.usage_metadata)
 
         return model_response
+
+    def _populate_stream_data(
+        self, stream_data: MessageData, model_response_delta: ModelResponse
+    ) -> Iterator[ModelResponse]:
+        """Override to use assignment for metrics instead of addition.
+
+        Gemini returns cumulative token counts in each streaming chunk, not
+        incremental deltas. The base class sums metrics (+=) which inflates
+        counts by N*actual when there are N chunks. We copy individual token
+        fields so only the latest cumulative value is kept while preserving
+        the timer and time_to_first_token tracked by the base class.
+        """
+        if model_response_delta.response_usage is not None:
+            usage = model_response_delta.response_usage
+            # Clear usage from the delta so the parent class does not add it again.
+            model_response_delta.response_usage = None
+
+            # Initialize metrics if not yet created (mirrors base class behavior)
+            if stream_data.response_metrics is None:
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
+
+            # Copy token fields individually instead of replacing the object,
+            # so that timer and time_to_first_token are preserved.
+            stream_data.response_metrics.input_tokens = usage.input_tokens
+            stream_data.response_metrics.output_tokens = usage.output_tokens
+            stream_data.response_metrics.total_tokens = usage.total_tokens
+            stream_data.response_metrics.cache_read_tokens = usage.cache_read_tokens
+            stream_data.response_metrics.cache_write_tokens = usage.cache_write_tokens
+            stream_data.response_metrics.reasoning_tokens = usage.reasoning_tokens
+            if usage.cost is not None:
+                stream_data.response_metrics.cost = usage.cost
+            if getattr(usage, "provider_metrics", None) is not None:
+                stream_data.response_metrics.provider_metrics = usage.provider_metrics
+
+        # Delegate everything else to the base implementation
+        yield from super()._populate_stream_data(stream_data, model_response_delta)
 
     def __deepcopy__(self, memo):
         """
