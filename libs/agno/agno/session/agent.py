@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
@@ -44,7 +44,13 @@ class AgentSession:
     updated_at: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects (e.g. module references in session_state)
+        session_dict: Dict[str, Any] = {}
+        for f in fields(self):
+            if f.name in ("runs", "summary"):
+                continue
+            session_dict[f.name] = getattr(self, f.name)
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if self.summary else None

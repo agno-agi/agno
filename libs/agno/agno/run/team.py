@@ -1,4 +1,5 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
@@ -650,31 +651,35 @@ class TeamRunOutput:
         return self.status == RunStatus.cancelled
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "messages",
-                "metrics",
-                "status",
-                "tools",
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "citations",
-                "events",
-                "additional_input",
-                "reasoning_steps",
-                "reasoning_messages",
-                "references",
-                "requirements",
-            ]
+        # Excluded fields are handled separately below to use their own to_dict()/model_dump()
+        _excluded_fields = {
+            "messages",
+            "metrics",
+            "status",
+            "tools",
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "citations",
+            "events",
+            "additional_input",
+            "reasoning_steps",
+            "reasoning_messages",
+            "references",
+            "requirements",
         }
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects (e.g. module references in session_state)
+        _dict = {}
+        for f in dataclass_fields(self):
+            if f.name in _excluded_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 

@@ -1,4 +1,5 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
@@ -64,7 +65,9 @@ class ToolExecution:
         return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = asdict(self)
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects (e.g. module references in tool_args)
+        _dict = {f.name: getattr(self, f.name) for f in dataclass_fields(self)}
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
 
@@ -157,7 +160,9 @@ class ModelResponse:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""
-        _dict = asdict(self)
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects
+        _dict = {f.name: getattr(self, f.name) for f in dataclass_fields(self)}
 
         # Handle special serialization for audio
         if self.audio is not None:

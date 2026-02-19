@@ -1,4 +1,5 @@
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -36,33 +37,37 @@ class RunContext:
 @dataclass
 class BaseRunOutputEvent:
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "tools",
-                "tool",
-                "metadata",
-                "image",
-                "images",
-                "videos",
-                "audio",
-                "response_audio",
-                "citations",
-                "member_responses",
-                "reasoning_messages",
-                "reasoning_steps",
-                "references",
-                "additional_input",
-                "session_summary",
-                "metrics",
-                "run_input",
-                "requirements",
-                "memories",
-            ]
+        # Excluded fields are handled separately below to use their own to_dict()/model_dump()
+        _excluded_fields = {
+            "tools",
+            "tool",
+            "metadata",
+            "image",
+            "images",
+            "videos",
+            "audio",
+            "response_audio",
+            "citations",
+            "member_responses",
+            "reasoning_messages",
+            "reasoning_steps",
+            "references",
+            "additional_input",
+            "session_summary",
+            "metrics",
+            "run_input",
+            "requirements",
+            "memories",
         }
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects (e.g. module references in session_state)
+        _dict = {}
+        for f in dataclass_fields(self):
+            if f.name in _excluded_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
 
         if hasattr(self, "metadata") and self.metadata is not None:
             _dict["metadata"] = self.metadata

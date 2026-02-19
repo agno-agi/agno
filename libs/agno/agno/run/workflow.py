@@ -1,4 +1,5 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -77,7 +78,13 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     parent_step_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {k: v for k, v in asdict(self).items() if v is not None}
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects
+        _dict = {}
+        for f in dataclass_fields(self):
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -539,25 +546,29 @@ class WorkflowRunOutput:
         return self.status == RunStatus.cancelled
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "step_results",
-                "step_executor_runs",
-                "events",
-                "metrics",
-                "workflow_agent_run",
-            ]
+        # Excluded fields are handled separately below to use their own to_dict()/model_dump()
+        _excluded_fields = {
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
         }
+        # Build dict from fields without using asdict() to avoid deep-copy/pickle
+        # of non-serializable objects
+        _dict = {}
+        for f in dataclass_fields(self):
+            if f.name in _excluded_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
