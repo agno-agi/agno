@@ -2,7 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
@@ -52,10 +52,9 @@ class Parallel:
         Parallel("my_parallel", step1, step2)              # Name as first positional arg
     """
 
-    steps: WorkflowSteps
-
     name: Optional[str] = None
     description: Optional[str] = None
+    steps: WorkflowSteps = field(default_factory=list)
 
     def __init__(
         self,
