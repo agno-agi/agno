@@ -11,8 +11,6 @@ provider-specific combined tool messages into the standard per-tool format.
 
 import json
 
-import pytest
-
 from agno.models.message import Message
 from agno.utils.message import normalize_tool_messages
 
