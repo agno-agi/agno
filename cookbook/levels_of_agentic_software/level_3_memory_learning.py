@@ -45,9 +45,11 @@ docs_knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-standards",
         path=str(WORKSPACE / "chromadb"),
+        persistent_client=True,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
+    contents_db=db,
 )
 
 # ---------------------------------------------------------------------------
@@ -57,9 +59,11 @@ learned_knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-learnings",
         path=str(WORKSPACE / "chromadb"),
+        persistent_client=True,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
+    contents_db=db,
 )
 
 # ---------------------------------------------------------------------------
