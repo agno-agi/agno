@@ -4,7 +4,7 @@ Level 4: Multi-Agent Team
 Split responsibilities across specialized agents coordinated by a team leader.
 Coder writes, Reviewer critiques, Tester validates.
 
-This builds on Level 3 by adding:
+This takes a different architectural path from the single-agent levels:
 - Multiple specialized agents with distinct roles
 - A Team leader that coordinates and synthesizes
 
