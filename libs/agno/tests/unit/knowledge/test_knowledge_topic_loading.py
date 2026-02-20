@@ -113,12 +113,13 @@ def test_load_from_topics_continues_after_skip(mock_reader):
         skip_index[0] += 1
         return result
 
-    knowledge._should_skip = mock_should_skip
-    knowledge._insert_contents_db = MagicMock()
-    knowledge._update_content = MagicMock()
-    knowledge._handle_vector_db_insert = MagicMock()
-    knowledge._build_content_hash = MagicMock(return_value="hash")
-    knowledge._prepare_documents_for_insert = MagicMock()
+    pipeline = knowledge._pipeline
+    pipeline.should_skip = mock_should_skip
+    pipeline.content_store.insert = MagicMock()
+    pipeline.content_store.update = MagicMock()
+    pipeline.handle_vector_db_insert = MagicMock()
+    pipeline.build_content_hash = MagicMock(return_value="hash")
+    pipeline.prepare_documents_for_insert = MagicMock()
 
     content = Content(topics=["A", "B", "C"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=True)
@@ -144,12 +145,13 @@ async def test_aload_from_topics_continues_after_skip():
         processed_topics.append(topic)
         return [Document(name=topic, content=f"Content for {topic}")]
 
-    knowledge._should_skip = mock_should_skip
-    knowledge._ainsert_contents_db = AsyncMock()
-    knowledge._aupdate_content = AsyncMock()
-    knowledge._ahandle_vector_db_insert = AsyncMock()
-    knowledge._build_content_hash = MagicMock(return_value="hash")
-    knowledge._prepare_documents_for_insert = MagicMock()
+    pipeline = knowledge._pipeline
+    pipeline.should_skip = mock_should_skip
+    pipeline.content_store.ainsert = AsyncMock()
+    pipeline.content_store.aupdate = AsyncMock()
+    pipeline.ahandle_vector_db_insert = AsyncMock()
+    pipeline.build_content_hash = MagicMock(return_value="hash")
+    pipeline.prepare_documents_for_insert = MagicMock()
 
     mock_reader = MagicMock()
     mock_reader.async_read = mock_async_read
@@ -173,12 +175,13 @@ def test_load_from_topics_multiple_skips():
         skip_index[0] += 1
         return result
 
-    knowledge._should_skip = mock_should_skip
-    knowledge._insert_contents_db = MagicMock()
-    knowledge._update_content = MagicMock()
-    knowledge._handle_vector_db_insert = MagicMock()
-    knowledge._build_content_hash = MagicMock(return_value="hash")
-    knowledge._prepare_documents_for_insert = MagicMock()
+    pipeline = knowledge._pipeline
+    pipeline.should_skip = mock_should_skip
+    pipeline.content_store.insert = MagicMock()
+    pipeline.content_store.update = MagicMock()
+    pipeline.handle_vector_db_insert = MagicMock()
+    pipeline.build_content_hash = MagicMock(return_value="hash")
+    pipeline.prepare_documents_for_insert = MagicMock()
 
     content = Content(topics=["A", "B", "C", "D", "E"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=True)
@@ -190,16 +193,17 @@ def test_load_from_topics_all_skipped():
     knowledge = Knowledge(vector_db=MockVectorDb())
     mock_reader = MockReader()
 
-    knowledge._should_skip = MagicMock(return_value=True)
-    knowledge._insert_contents_db = MagicMock()
-    knowledge._update_content = MagicMock()
-    knowledge._build_content_hash = MagicMock(return_value="hash")
+    pipeline = knowledge._pipeline
+    pipeline.should_skip = MagicMock(return_value=True)
+    pipeline.content_store.insert = MagicMock()
+    pipeline.content_store.update = MagicMock()
+    pipeline.build_content_hash = MagicMock(return_value="hash")
 
     content = Content(topics=["A", "B", "C"], reader=mock_reader)
     knowledge._load_from_topics(content, upsert=False, skip_if_exists=True)
 
     assert mock_reader.processed_topics == []
-    assert knowledge._update_content.call_count == 3
+    assert pipeline.content_store.update.call_count == 3
 
 
 def test_load_from_topics_lightrag_continues():
@@ -207,11 +211,12 @@ def test_load_from_topics_lightrag_continues():
     knowledge.vector_db.__class__.__name__ = "LightRag"
 
     processed_topics = []
-    knowledge._process_lightrag_content = MagicMock(
+    pipeline = knowledge._pipeline
+    pipeline.process_lightrag_content = MagicMock(
         side_effect=lambda content, origin: processed_topics.append(content.name)
     )
-    knowledge._build_content_hash = MagicMock(return_value="hash")
-    knowledge._insert_contents_db = MagicMock()
+    pipeline.build_content_hash = MagicMock(return_value="hash")
+    pipeline.content_store.insert = MagicMock()
 
     mock_reader = MagicMock()
     content = Content(topics=["A", "B", "C"], reader=mock_reader)
@@ -233,9 +238,10 @@ async def test_aload_from_topics_lightrag_continues():
     async def mock_process_lightrag(content, origin):
         processed_topics.append(content.name)
 
-    knowledge._aprocess_lightrag_content = mock_process_lightrag
-    knowledge._build_content_hash = MagicMock(return_value="hash")
-    knowledge._ainsert_contents_db = AsyncMock()
+    pipeline = knowledge._pipeline
+    pipeline.aprocess_lightrag_content = mock_process_lightrag
+    pipeline.build_content_hash = MagicMock(return_value="hash")
+    pipeline.content_store.ainsert = AsyncMock()
 
     mock_reader = MagicMock()
     content = Content(topics=["A", "B", "C"], reader=mock_reader)

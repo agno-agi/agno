@@ -220,7 +220,9 @@ async def test_aload_from_path_propagates_metadata(temp_text_file, mock_vector_d
     )
     content.content_hash = knowledge._build_content_hash(content)
 
-    with patch.object(knowledge, "_aread", return_value=[Document(name="test", content="Test content")]):
+    with patch.object(
+        knowledge._reader_registry, "aread", return_value=[Document(name="test", content="Test content")]
+    ):
         await knowledge._aload_from_path(content, upsert=False, skip_if_exists=False)
 
     # Verify documents were inserted with metadata
@@ -244,7 +246,9 @@ async def test_aload_from_path_upsert_propagates_metadata(temp_text_file, mock_v
     )
     content.content_hash = knowledge._build_content_hash(content)
 
-    with patch.object(knowledge, "_aread", return_value=[Document(name="test", content="Test content")]):
+    with patch.object(
+        knowledge._reader_registry, "aread", return_value=[Document(name="test", content="Test content")]
+    ):
         await knowledge._aload_from_path(content, upsert=True, skip_if_exists=False)
 
     # Verify documents were upserted with metadata
@@ -266,7 +270,7 @@ def test_load_from_path_propagates_metadata(temp_text_file, mock_vector_db):
     )
     content.content_hash = knowledge._build_content_hash(content)
 
-    with patch.object(knowledge, "_read", return_value=[Document(name="test", content="Test content")]):
+    with patch.object(knowledge._reader_registry, "read", return_value=[Document(name="test", content="Test content")]):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
     # Verify documents were inserted with metadata
@@ -288,7 +292,7 @@ def test_load_from_path_upsert_propagates_metadata(temp_text_file, mock_vector_d
     )
     content.content_hash = knowledge._build_content_hash(content)
 
-    with patch.object(knowledge, "_read", return_value=[Document(name="test", content="Test content")]):
+    with patch.object(knowledge._reader_registry, "read", return_value=[Document(name="test", content="Test content")]):
         knowledge._load_from_path(content, upsert=True, skip_if_exists=False)
 
     # Verify documents were upserted with metadata
@@ -310,7 +314,9 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     content.content_hash = knowledge._build_content_hash(content)
 
     with patch.object(
-        knowledge, "_read", return_value=[Document(name="test", content="Test content", meta_data={"original": "data"})]
+        knowledge._reader_registry,
+        "read",
+        return_value=[Document(name="test", content="Test content", meta_data={"original": "data"})],
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
@@ -334,8 +340,8 @@ def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_ve
 
     # Mock reader returns document with existing metadata
     with patch.object(
-        knowledge,
-        "_read",
+        knowledge._reader_registry,
+        "read",
         return_value=[
             Document(
                 name="test",
