@@ -4,7 +4,7 @@ Level 4: Multi-agent Team
 Split responsibilities across specialized agents coordinated by a team leader.
 Coder writes, Reviewer critiques, Tester validates.
 
-This builds on Level 3 by adding:
+This takes a different architectural path from the single-agent levels:
 - Multiple specialized agents with distinct roles
 - A Team leader that coordinates and synthesizes
 
@@ -12,6 +12,13 @@ Honest caveat: Multi-agent teams are powerful but less predictable than
 single agents. The team leader is an LLM making delegation decisions --
 sometimes brilliantly, sometimes not. For production automation, prefer
 explicit workflows. Teams shine in human-supervised settings.
+
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_4_team.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L4 Coding Team"
 
 Example prompt:
     "Build a stack data structure with full test coverage"

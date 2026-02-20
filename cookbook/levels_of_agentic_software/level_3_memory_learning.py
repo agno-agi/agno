@@ -10,9 +10,15 @@ This builds on Level 2 by adding:
 - Agentic memory: Builds user profiles over time
 - ReasoningTools: The think tool for structured reasoning
 
-Two-session demo:
-- Session 1: User teaches preferences, agent learns them
-- Session 2: New task, agent applies what it learned
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_3_memory_learning.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L3 Coding Agent"
+
+Example prompt:
+    "Write a data pipeline using functional programming style"
 """
 
 from pathlib import Path
@@ -130,7 +136,8 @@ if __name__ == "__main__":
     l3_coding_agent.print_response(
         "I strongly prefer functional programming style -- no classes, "
         "use pure functions, immutable data structures, and composition. "
-        "Write a data pipeline that reads a list of numbers, filters evens, "
+        "Remember this preference for all future coding tasks. "
+        "Now write a data pipeline that reads a list of numbers, filters evens, "
         "doubles them, and computes the sum. Save it to pipeline.py and run it.",
         user_id=user_id,
         session_id="session_1",

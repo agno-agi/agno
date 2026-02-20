@@ -8,6 +8,13 @@ This builds on Level 1 by adding:
 - Storage: SqliteDb for conversation history across sessions
 - Knowledge: ChromaDb with hybrid search for domain knowledge
 
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_2_storage_knowledge.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L2 Coding Agent"
+
 Example prompt:
     "Write a CSV parser following our coding conventions"
 """
