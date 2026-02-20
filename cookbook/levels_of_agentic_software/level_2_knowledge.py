@@ -44,6 +44,7 @@ knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-standards",
         path="tmp/chromadb",
+        persistent_client=True,  # set to True for persistent memory across runs
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),

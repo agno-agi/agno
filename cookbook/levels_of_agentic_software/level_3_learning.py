@@ -51,6 +51,7 @@ docs_knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-standards",
         path="tmp/chromadb",
+        persistent_client=True,  # set to True for persistent memory across runs
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -63,6 +64,7 @@ learned_knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-learnings",
         path="tmp/chromadb",
+        persistent_client=True,  # set to True for persistent memory across runs
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -132,7 +134,8 @@ if __name__ == "__main__":
     coding_agent.print_response(
         "I strongly prefer functional programming style -- no classes, "
         "use pure functions, immutable data structures, and composition. "
-        "Write a data pipeline that reads a list of numbers, filters evens, "
+        "Remember this preference for all future coding tasks. "
+        "Now write a data pipeline that reads a list of numbers, filters evens, "
         "doubles them, and computes the sum. Save it to pipeline.py and run it.",
         user_id=user_id,
         session_id="session_1",
