@@ -1,5 +1,5 @@
 """
-Level 1: Agent + Tools + Instructions
+Level 1: Agent with Tools
 ======================================
 The simplest useful agent. A model, tools, and clear instructions.
 No memory, no persistence — pure stateless tool calling.
@@ -20,7 +20,7 @@ from agno.tools.coding import CodingTools
 # ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
-WORKSPACE = Path(__file__).parent.joinpath("tmp/code")
+WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -48,8 +48,8 @@ You are a coding agent. You write clean, well-documented Python code.
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-coding_agent = Agent(
-    name="Coding Agent",
+l1_coding_agent = Agent(
+    name="L1 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[CodingTools(base_dir=WORKSPACE, all=True)],
@@ -58,10 +58,10 @@ coding_agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Run Demo
+# Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    coding_agent.print_response(
+    l1_coding_agent.print_response(
         "Write a Fibonacci function that returns the nth Fibonacci number. "
         "Save it to fib.py with a main block that prints the first 10 values, "
         "then run it to verify.",

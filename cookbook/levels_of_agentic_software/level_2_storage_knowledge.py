@@ -1,15 +1,15 @@
 """
-Level 2: Agent + Knowledge + Storage
+Level 2: Agent with storage and knowledge
 ======================================
-Add a searchable knowledge base and persistent storage.
-The agent can now follow project conventions and recall past conversations.
+Add persistent storage and a searchable knowledge base.
+The agent can recall conversations and use domain knowledge.
 
 This builds on Level 1 by adding:
-- Knowledge: ChromaDb with hybrid search for project documentation
 - Storage: SqliteDb for conversation history across sessions
+- Knowledge: ChromaDb with hybrid search for domain knowledge
 
 Example prompt:
-    "Write a CSV parser following our project conventions"
+    "Write a CSV parser following our coding conventions"
 """
 
 from pathlib import Path
@@ -25,18 +25,18 @@ from agno.vectordb.chroma import ChromaDb, SearchType
 # ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
-WORKSPACE = Path(__file__).parent.joinpath("tmp/code")
+WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Storage and Knowledge
 # ---------------------------------------------------------------------------
-db = SqliteDb(db_file="tmp/agents.db")
+db = SqliteDb(db_file=str(WORKSPACE / "agents.db"))
 
 knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-standards",
-        path="tmp/chromadb",
+        path=str(WORKSPACE / "chromadb"),
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -46,20 +46,20 @@ knowledge = Knowledge(
 # Agent Instructions
 # ---------------------------------------------------------------------------
 instructions = """\
-You are a coding agent with access to project documentation.
+You are a coding agent with access to domain knowledge.
 
 ## Workflow
 
-1. Search your knowledge base for relevant conventions and standards
+1. Search your knowledge base for relevant domain knowledge
 2. Understand the task
-3. Write code that follows the project conventions
+3. Write code that follows the domain knowledge
 4. Save the code to a file and run it to verify
 5. If there are errors, fix them and re-run
 
 ## Rules
 
 - Always search knowledge before writing code
-- Follow project conventions found in the knowledge base
+- Follow domain knowledge found in the knowledge base
 - Save code to files before running
 - Include type hints and docstrings
 - No emojis\
@@ -68,8 +68,8 @@ You are a coding agent with access to project documentation.
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-coding_agent = Agent(
-    name="Coding Agent",
+l2_coding_agent = Agent(
+    name="L2 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[CodingTools(base_dir=WORKSPACE, all=True)],
@@ -78,19 +78,19 @@ coding_agent = Agent(
     db=db,
     add_history_to_context=True,
     num_history_runs=3,
-    add_datetime_to_context=True,
     markdown=True,
+    add_datetime_to_context=True,
 )
 
 # ---------------------------------------------------------------------------
-# Run Demo
+# Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Step 1: Load project conventions into the knowledge base
-    print("Loading project conventions into knowledge base...")
+    print("Loading domain knowledge into knowledge base...")
     knowledge.insert(
         text_content="""\
-## Project Coding Conventions
+## Domain Knowledge
 
 ### Style
 - Use snake_case for all function and variable names
@@ -117,7 +117,7 @@ if __name__ == "__main__":
 
     # Step 2: Ask the agent to write code following conventions
     print("\n--- Session 1: Write code following conventions ---\n")
-    coding_agent.print_response(
+    l2_coding_agent.print_response(
         "Write a CSV parser that reads a CSV file and returns a list of "
         "dictionaries. Follow our project conventions. Save it to csv_parser.py "
         "and test it with sample data.",
@@ -128,7 +128,7 @@ if __name__ == "__main__":
 
     # Step 3: Follow-up in the same session (agent has context)
     print("\n--- Session 1: Follow-up question ---\n")
-    coding_agent.print_response(
+    l2_coding_agent.print_response(
         "Add a function to write dictionaries back to CSV format.",
         user_id="dev@example.com",
         session_id="session_1",

@@ -1,5 +1,5 @@
 """
-Level 4: Multi-Agent Team
+Level 4: Multi-agent Team
 ===========================
 Split responsibilities across specialized agents coordinated by a team leader.
 Coder writes, Reviewer critiques, Tester validates.
@@ -28,19 +28,19 @@ from agno.tools.coding import CodingTools
 # ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
-WORKSPACE = Path(__file__).parent.joinpath("tmp/code")
+WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
-db = SqliteDb(db_file="tmp/agents.db")
+db = SqliteDb(db_file=str(WORKSPACE / "agents.db"))
 
 # ---------------------------------------------------------------------------
 # Coder Agent -- writes code
 # ---------------------------------------------------------------------------
 coder = Agent(
-    name="Coder",
+    name="L4 Coder",
     role="Write code based on requirements",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions="""\
@@ -66,7 +66,7 @@ You are a senior developer. Write clean, well-documented code.
 # Reviewer Agent -- reviews code (read-only tools)
 # ---------------------------------------------------------------------------
 reviewer = Agent(
-    name="Reviewer",
+    name="L4 Reviewer",
     role="Review code for quality, bugs, and best practices",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions="""\
@@ -109,7 +109,7 @@ You are a senior code reviewer. Provide thorough, constructive reviews.
 # Tester Agent -- writes and runs tests
 # ---------------------------------------------------------------------------
 tester = Agent(
-    name="Tester",
+    name="L4 Tester",
     role="Write and run tests for the code",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions="""\
@@ -135,8 +135,8 @@ You are a QA engineer. Write thorough tests and run them.
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
-coding_team = Team(
-    name="Coding Team",
+l4_coding_team = Team(
+    name="L4 Coding Team",
     model=OpenAIResponses(id="gpt-5.2"),
     members=[coder, reviewer, tester],
     instructions="""\
@@ -168,7 +168,7 @@ Provide a summary with:
 # Run Demo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    coding_team.print_response(
+    l4_coding_team.print_response(
         "Build a Stack data structure in Python with push, pop, peek, "
         "is_empty, and size methods. Include proper error handling for "
         "operations on an empty stack. Save to stack.py and write tests "

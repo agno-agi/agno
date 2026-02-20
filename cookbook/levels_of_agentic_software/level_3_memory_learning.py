@@ -1,5 +1,5 @@
 """
-Level 3: Agent + Memory + Learning
+Level 3: Agent with memory and learning
 ====================================
 The agent now learns from interactions and improves over time.
 Interaction 1,000 should be better than interaction 1.
@@ -30,13 +30,13 @@ from agno.vectordb.chroma import ChromaDb, SearchType
 # ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
-WORKSPACE = Path(__file__).parent.joinpath("tmp/code")
+WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
-db = SqliteDb(db_file="tmp/agents.db")
+db = SqliteDb(db_file=str(WORKSPACE / "agents.db"))
 
 # ---------------------------------------------------------------------------
 # Knowledge: Static docs (project conventions)
@@ -44,7 +44,7 @@ db = SqliteDb(db_file="tmp/agents.db")
 docs_knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-standards",
-        path="tmp/chromadb",
+        path=str(WORKSPACE / "chromadb"),
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -56,7 +56,7 @@ docs_knowledge = Knowledge(
 learned_knowledge = Knowledge(
     vector_db=ChromaDb(
         collection="coding-learnings",
-        path="tmp/chromadb",
+        path=str(WORKSPACE / "chromadb"),
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -88,8 +88,8 @@ You are a coding agent that learns and improves over time.
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-coding_agent = Agent(
-    name="Coding Agent",
+l3_coding_agent = Agent(
+    name="L3 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     print("SESSION 1: Teaching the agent your preferences")
     print("=" * 60 + "\n")
 
-    coding_agent.print_response(
+    l3_coding_agent.print_response(
         "I strongly prefer functional programming style -- no classes, "
         "use pure functions, immutable data structures, and composition. "
         "Write a data pipeline that reads a list of numbers, filters evens, "
@@ -134,9 +134,9 @@ if __name__ == "__main__":
     )
 
     # Show what the agent learned
-    if coding_agent.learning_machine:
+    if l3_coding_agent.learning_machine:
         print("\n--- Learned Knowledge ---")
-        coding_agent.learning_machine.learned_knowledge_store.print(
+        l3_coding_agent.learning_machine.learned_knowledge_store.print(
             query="coding preferences"
         )
 
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     print("SESSION 2: New task -- agent should apply learned preferences")
     print("=" * 60 + "\n")
 
-    coding_agent.print_response(
+    l3_coding_agent.print_response(
         "Write a log parser that reads a log file, extracts error lines, "
         "groups them by error category, and returns a count per category. "
         "Save it to log_parser.py and run it with sample data.",
