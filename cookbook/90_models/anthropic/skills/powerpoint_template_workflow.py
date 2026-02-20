@@ -31,6 +31,7 @@ from typing import Dict, List
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
+from agno.run.agent import RunOutput
 from agno.tools.nano_banana import NanoBananaTools
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -39,7 +40,7 @@ from anthropic import Anthropic
 from file_download_helper import download_skill_files
 from lxml import etree
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field
@@ -129,6 +130,9 @@ class SlideContent:
     images: list = field(default_factory=list)
     charts: list = field(default_factory=list)
     shapes_xml: list = field(default_factory=list)
+    # Issue 2A: Track image placeholders detected in template layouts
+    has_image_placeholder: bool = False
+    image_placeholder_indices: list = field(default_factory=list)
 
 
 @dataclass
@@ -149,6 +153,44 @@ class ContentArea:
 def _extract_slide_content(slide) -> SlideContent:
     """Extract all content from a slide including text, tables, images, charts, and shapes."""
     content = SlideContent()
+
+    # Issue 2A: Detect image/picture placeholders in the slide layout.
+    # Uses multiple detection strategies for robustness:
+    #   1. int(type) == 18  (the raw OOXML value for PICTURE placeholders)
+    #   2. str(type) contains 'PICTURE (18)'
+    #   3. XML-level fallback: <p:ph type="pic"/>
+    for shape in slide.placeholders:
+        ph_fmt = shape.placeholder_format
+        if ph_fmt is not None:
+            ph_type_val = ph_fmt.type
+            # Strategy 1 & 2: enum / int / string comparison
+            is_picture_ph = False
+            try:
+                if ph_type_val is not None and (
+                    int(ph_type_val) == 18
+                    or str(ph_type_val) == "PICTURE (18)"
+                ):
+                    is_picture_ph = True
+            except (ValueError, TypeError):
+                pass
+            # Also try the enum directly
+            if not is_picture_ph:
+                try:
+                    if ph_type_val == PP_PLACEHOLDER.PICTURE:
+                        is_picture_ph = True
+                except Exception:
+                    pass
+            # Strategy 3: XML-level fallback
+            if not is_picture_ph:
+                nsmap = {
+                    "p": "http://schemas.openxmlformats.org/presentationml/2006/main"
+                }
+                ph_elem = shape._element.find(".//p:ph", nsmap)
+                if ph_elem is not None and ph_elem.get("type") == "pic":
+                    is_picture_ph = True
+            if is_picture_ph:
+                content.has_image_placeholder = True
+                content.image_placeholder_indices.append(ph_fmt.idx)
 
     for shape in slide.shapes:
         if shape.has_table:
@@ -568,12 +610,72 @@ def _transfer_shapes(slide, shapes_xml):
         spTree.append(cloned)
 
 
+def _clear_unused_placeholders(slide, populated_indices: set) -> None:
+    """Remove unused placeholder XML elements from slide to prevent ghost text.
+
+    This is the only reliable way to eliminate ALL types of ghost text:
+    - "Click to add title"
+    - "Click to add text"
+    - "Click icon to add picture"
+    - Content placeholder insertion icons (table, chart, image, etc.)
+
+    Simply calling tf.clear() is insufficient for picture placeholders and
+    content placeholders with embedded icons.  Removing the XML element
+    from the shape tree is the nuclear option that works for every case.
+
+    Args:
+        slide: The pptx slide object.
+        populated_indices: Set of placeholder idx values that were filled with content.
+    """
+    spTree = slide.shapes._spTree
+    elements_to_remove = []
+
+    # Snapshot the collection with list() to avoid proxy/iterator issues
+    for shape in list(slide.placeholders):
+        ph_idx = shape.placeholder_format.idx
+        if ph_idx in populated_indices:
+            continue  # This placeholder was populated, keep it
+
+        # Don't remove shapes that have actual content (charts, tables, real images)
+        try:
+            if hasattr(shape, "has_chart") and shape.has_chart:
+                continue
+            if hasattr(shape, "has_table") and shape.has_table:
+                continue
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                continue
+        except Exception:
+            pass
+
+        # Mark for removal — removing from XML is the only reliable cleanup
+        elements_to_remove.append(shape._element)
+
+    for element in elements_to_remove:
+        spTree.remove(element)
+
+
 def _populate_slide(
-    new_slide, content: SlideContent, slide_width: int, slide_height: int
+    new_slide,
+    content: SlideContent,
+    slide_width: int,
+    slide_height: int,
+    generated_image_bytes: bytes | None = None,
 ):
-    """Transfer all content into a new slide using template-aware positioning."""
+    """Transfer all content into a new slide using template-aware positioning.
+
+    Args:
+        new_slide: The new slide created from a template layout.
+        content: Extracted SlideContent from the generated slide.
+        slide_width: Presentation slide width in EMU.
+        slide_height: Presentation slide height in EMU.
+        generated_image_bytes: Optional raw image bytes from NanoBanana to insert
+            into picture placeholders (Issue 2B).
+    """
     # Compute content area from the slide's layout
     content_area = _get_content_area(new_slide.slide_layout, slide_width, slide_height)
+
+    # Issue 1: Track which placeholder indices are successfully populated
+    populated_indices: set[int] = set()
 
     title_placed = False
     body_placed = False
@@ -582,17 +684,20 @@ def _populate_slide(
         ph_idx = shape.placeholder_format.idx
         if ph_idx == 0 and content.title:
             _populate_placeholder_with_format(shape, content.title, is_title=True)
+            populated_indices.add(ph_idx)
             title_placed = True
         elif ph_idx == 1:
             if content.body_paragraphs:
                 _populate_placeholder_with_format(
                     shape, content.body_paragraphs, is_title=False
                 )
+                populated_indices.add(ph_idx)
                 body_placed = True
             elif content.subtitle:
                 _populate_placeholder_with_format(
                     shape, content.subtitle, is_title=True
                 )
+                populated_indices.add(ph_idx)
                 body_placed = True
 
     if not body_placed and content.body_paragraphs:
@@ -602,6 +707,7 @@ def _populate_slide(
                 _populate_placeholder_with_format(
                     shape, content.body_paragraphs, is_title=False
                 )
+                populated_indices.add(ph_idx)
                 body_placed = True
                 break
 
@@ -646,6 +752,75 @@ def _populate_slide(
     _transfer_images(new_slide, content.images, content_area)
     _transfer_charts(new_slide, content.charts, content_area)
     _transfer_shapes(new_slide, content.shapes_xml)
+
+    # ------------------------------------------------------------------
+    # Issue 2B: Insert generated image INTO picture placeholders.
+    # Detection uses both the tracked indices AND XML-level type checking
+    # as a fallback (type="pic" or "clipArt" in the XML = picture placeholder).
+    # ------------------------------------------------------------------
+    if generated_image_bytes:
+        # Build a comprehensive set of picture placeholder indices using
+        # all three detection strategies: int(18), PP_PLACEHOLDER.PICTURE,
+        # and XML-level type="pic" / type="clipArt".
+        _pic_ph_indices = set(content.image_placeholder_indices)
+
+        for shape in list(new_slide.placeholders):
+            ph_fmt = shape.placeholder_format
+            if ph_fmt is not None:
+                is_picture_ph = False
+                # Strategy 1: int comparison with raw OOXML value 18
+                try:
+                    if ph_fmt.type is not None and (
+                        int(ph_fmt.type) == 18
+                        or str(ph_fmt.type) == "PICTURE (18)"
+                    ):
+                        is_picture_ph = True
+                except (ValueError, TypeError):
+                    pass
+                # Strategy 2: PP_PLACEHOLDER enum
+                if not is_picture_ph:
+                    try:
+                        if ph_fmt.type == PP_PLACEHOLDER.PICTURE:
+                            is_picture_ph = True
+                    except Exception:
+                        pass
+                # Strategy 3: XML-level fallback
+                if not is_picture_ph:
+                    try:
+                        nsmap = {
+                            "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+                        }
+                        ph_elem = shape._element.find(".//p:ph", nsmap)
+                        if ph_elem is not None and ph_elem.get("type") in (
+                            "pic",
+                            "clipArt",
+                        ):
+                            is_picture_ph = True
+                    except Exception:
+                        pass
+                if is_picture_ph:
+                    _pic_ph_indices.add(ph_fmt.idx)
+
+        # Insert the image into the first available picture placeholder
+        for shape in list(new_slide.placeholders):
+            ph_idx = shape.placeholder_format.idx
+            if ph_idx in _pic_ph_indices and ph_idx not in populated_indices:
+                try:
+                    image_stream = BytesIO(generated_image_bytes)
+                    shape.insert_picture(image_stream)
+                    populated_indices.add(ph_idx)
+                    break  # Use first picture placeholder
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    # Issue 1: Remove ALL unpopulated placeholder XML elements from the
+    # slide shape tree. This is the ONLY reliable way to eliminate ALL
+    # types of ghost text ("Click to add title", "Click to add text",
+    # "Click icon to add picture", content placeholder icons, etc.).
+    # tf.clear() alone is insufficient for picture and content placeholders.
+    # ------------------------------------------------------------------
+    _clear_unused_placeholders(new_slide, populated_indices)
 
 
 # ---------------------------------------------------------------------------
@@ -695,8 +870,12 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     content_agent = Agent(
         name="Content Generator",
         model=Claude(
-            id="claude-sonnet-4-5-20250929",
+            id=
+            # "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            # "claude-opus-4-6",
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
+            # max_tokens=1000000,
         ),
         instructions=[
             "You are a structured content generator for PowerPoint presentations.",
@@ -722,8 +901,19 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
         markdown=True,
     )
 
-    # Run the agent
-    response = content_agent.run(enhanced_prompt)
+    # Run the agent with streaming enabled.
+    # The Anthropic API requires streaming for long-running skill operations
+    # (e.g. pptx generation) that may exceed 10 minutes.
+    response: RunOutput | None = None
+    for event in content_agent.run(enhanced_prompt, stream=True, yield_run_output=True):
+        if isinstance(event, RunOutput):
+            response = event
+    if response is None:
+        return StepOutput(
+            content="Error: No response received from content agent.",
+            success=False,
+            stop=True,
+        )
     print("\nAgent response received.")
 
     # Download the generated file
@@ -771,8 +961,33 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     generated_prs = Presentation(generated_file)
     slides_data = []
 
+    # Issue 2D: Also open the template to detect image placeholders per layout.
+    # This info is included in slides_data so the image planner knows which
+    # slides have dedicated picture placeholders in the template.
+    template_prs = None
+    try:
+        template_prs = Presentation(template_path)
+    except Exception:
+        pass
+
+    total_gen_slides = len(list(generated_prs.slides))
+
     for idx, slide in enumerate(generated_prs.slides):
         content = _extract_slide_content(slide)
+
+        # Check if the template layout for this slide position has image placeholders
+        has_template_image_ph = False
+        if template_prs is not None:
+            try:
+                layout = _find_best_layout(template_prs, idx, total_gen_slides)
+                for ph in layout.placeholders:
+                    ph_fmt = ph.placeholder_format
+                    if ph_fmt is not None and ph_fmt.type == PP_PLACEHOLDER.PICTURE:
+                        has_template_image_ph = True
+                        break
+            except Exception:
+                pass
+
         slide_info = {
             "index": idx,
             "title": content.title,
@@ -782,16 +997,18 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
             "has_chart": len(content.charts) > 0,
             "has_image": len(content.images) > 0,
             "has_shapes": len(content.shapes_xml) > 0,
+            "has_image_placeholder": has_template_image_ph,
         }
         slides_data.append(slide_info)
         print(
-            "  Slide %d: '%s' | tables:%d charts:%d images:%d"
+            "  Slide %d: '%s' | tables:%d charts:%d images:%d img_ph:%s"
             % (
                 idx + 1,
                 content.title[:40] if content.title else "",
                 len(content.tables),
                 len(content.charts),
                 len(content.images),
+                has_template_image_ph,
             )
         )
 
@@ -814,7 +1031,10 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
 # This agent decides which slides need AI-generated images
 image_planner = Agent(
     name="Image Planner",
-    model=Gemini(id="gemini-2.5-flash"),
+    model=Gemini(
+        id="models/gemini-2.5-flash-image",
+        response_modalities=["Text", "Image"],
+    ),
     instructions=[
         "You are an image planning specialist for PowerPoint presentations.",
         "You will receive a JSON description of slides in a presentation.",
@@ -826,6 +1046,10 @@ image_planner = Agent(
         "- Content slides with bullet points: Consider YES if the topic is visual.",
         "- Closing slides: Usually NO - keep the focus on next steps/action items.",
         "- Slides that already have images: ALWAYS NO - they already have visuals.",
+        "- Slides with image placeholders (has_image_placeholder=true): STRONGLY YES -",
+        "  the template layout has a dedicated picture placeholder that should be filled.",
+        "  Generating an image for these slides ensures the placeholder is used properly",
+        "  rather than appearing as an empty box.",
         "",
         "When providing image prompts:",
         "- Describe professional, clean, modern illustrations.",
@@ -1021,13 +1245,62 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     for idx, gen_slide in enumerate(generated_slides):
         content = _extract_slide_content(gen_slide)
 
-        # Add AI-generated image if available for this slide
-        # Use 16:9 aspect ratio placeholder; _transfer_images will fit to content area
-        if idx in generated_images:
-            image_bytes = generated_images[idx]
+        # Issue 2C: Look up generated image bytes for this slide index.
+        # The keys may be int or str depending on how they were stored.
+        gen_img = generated_images.get(idx) or generated_images.get(str(idx))
+
+        # Find layout FIRST so we can detect picture placeholders before
+        # deciding whether to add a free-floating image.
+        layout = _find_best_layout(output_prs, idx, total_slides)
+
+        # Issue 2A: Detect image placeholders on the chosen template layout.
+        # Uses both PP_PLACEHOLDER enum and XML-level fallback detection.
+        for ph in layout.placeholders:
+            ph_fmt = ph.placeholder_format
+            if ph_fmt is not None:
+                is_pic_ph = False
+                # Strategy 1: int comparison with raw OOXML value 18
+                try:
+                    if ph_fmt.type is not None and (
+                        int(ph_fmt.type) == 18
+                        or str(ph_fmt.type) == "PICTURE (18)"
+                    ):
+                        is_pic_ph = True
+                except (ValueError, TypeError):
+                    pass
+                # Strategy 2: PP_PLACEHOLDER enum
+                if not is_pic_ph:
+                    try:
+                        if ph_fmt.type == PP_PLACEHOLDER.PICTURE:
+                            is_pic_ph = True
+                    except Exception:
+                        pass
+                # Strategy 3: XML-level fallback
+                if not is_pic_ph:
+                    try:
+                        nsmap = {
+                            "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+                        }
+                        ph_elem = ph._element.find(".//p:ph", nsmap)
+                        if ph_elem is not None and ph_elem.get("type") in (
+                            "pic",
+                            "clipArt",
+                        ):
+                            is_pic_ph = True
+                    except Exception:
+                        pass
+                if is_pic_ph:
+                    content.has_image_placeholder = True
+                    if ph_fmt.idx not in content.image_placeholder_indices:
+                        content.image_placeholder_indices.append(ph_fmt.idx)
+
+        # Only add as free-floating picture if the layout has NO picture
+        # placeholders. When picture placeholders exist, the image will be
+        # inserted into the placeholder by _populate_slide instead.
+        if gen_img is not None and not content.has_image_placeholder:
             content.images.append(
                 ImageData(
-                    blob=image_bytes,
+                    blob=gen_img,
                     left=0,
                     top=0,
                     width=int(Inches(8.0)),
@@ -1036,8 +1309,6 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                 )
             )
 
-        layout = _find_best_layout(output_prs, idx, total_slides)
-
         visual_info = []
         if content.tables:
             visual_info.append("%d table(s)" % len(content.tables))
@@ -1045,6 +1316,8 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             visual_info.append("%d image(s)" % len(content.images))
         if content.charts:
             visual_info.append("%d chart(s)" % len(content.charts))
+        if content.has_image_placeholder:
+            visual_info.append("img placeholder(s)")
         visual_str = ", ".join(visual_info) if visual_info else "text only"
 
         print(
@@ -1058,7 +1331,12 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         )
 
         new_slide = output_prs.slides.add_slide(layout)
-        _populate_slide(new_slide, content, slide_width, slide_height)
+        # Issue 2C: Pass generated image bytes to _populate_slide for
+        # insertion into picture placeholders
+        _populate_slide(
+            new_slide, content, slide_width, slide_height,
+            generated_image_bytes=gen_img,
+        )
 
     output_prs.save(output_path)
     print("\nSaved final presentation: %s" % output_path)
