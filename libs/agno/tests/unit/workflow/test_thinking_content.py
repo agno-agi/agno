@@ -7,11 +7,9 @@ Tests cover:
 - _prepare_message correctly passes content between workflow steps
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.reasoning import extract_thinking_content
 from agno.workflow.step import Step
