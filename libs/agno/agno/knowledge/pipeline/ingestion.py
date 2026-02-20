@@ -307,11 +307,13 @@ class IngestionPipeline:
                 content.status_message = f"Invalid URL format: {content.url}"
                 self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 log_warning(f"Invalid URL format: {content.url}")
+                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            return
 
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -432,11 +434,13 @@ class IngestionPipeline:
                 content.status_message = f"Invalid URL format: {content.url}"
                 await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 log_warning(f"Invalid URL format: {content.url}")
+                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            return
 
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -743,50 +747,54 @@ class IngestionPipeline:
             log_warning("No topics provided for content")
             return
 
+        # Capture original values before the loop to avoid shadowing
+        original_metadata = content.metadata
+        original_reader = content.reader
+
         for topic in content.topics:
-            content = Content(
+            topic_content = Content(
                 name=topic,
-                metadata=content.metadata,
-                reader=content.reader,
-                status=ContentStatus.PROCESSING if content.reader else ContentStatus.FAILED,
+                metadata=original_metadata,
+                reader=original_reader,
+                status=ContentStatus.PROCESSING if original_reader else ContentStatus.FAILED,
                 file_data=FileData(
                     type="Topic",
                 ),
                 topics=[topic],
             )
-            content.content_hash = self.build_content_hash(content)
-            content.id = generate_id(content.content_hash)
+            topic_content.content_hash = self.build_content_hash(topic_content)
+            topic_content.id = generate_id(topic_content.content_hash)
 
-            self.content_store.insert(content)  # type: ignore[union-attr]
-            if self.should_skip(content.content_hash, skip_if_exists):
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+            self.content_store.insert(topic_content)  # type: ignore[union-attr]
+            if self.should_skip(topic_content.content_hash, skip_if_exists):
+                topic_content.status = ContentStatus.COMPLETED
+                self.content_store.update(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                self.process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                self.process_lightrag_content(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
-            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                log_info(f"Content {content.content_hash} already exists, skipping")
+            if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
+                log_info(f"Content {topic_content.content_hash} already exists, skipping")
                 continue
 
-            if content.reader is None:
+            if topic_content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "No reader available for topic"
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                topic_content.status = ContentStatus.FAILED
+                topic_content.status_message = "No reader available for topic"
+                self.content_store.update(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            read_documents = content.reader.read(topic)
+            read_documents = topic_content.reader.read(topic)
             if len(read_documents) > 0:
-                self.prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
+                self.prepare_documents_for_insert(read_documents, topic_content.id, calculate_sizes=True)
             else:
-                content.status = ContentStatus.FAILED
-                content.status_message = "No content found for topic"
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                topic_content.status = ContentStatus.FAILED
+                topic_content.status_message = "No content found for topic"
+                self.content_store.update(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
-            self.handle_vector_db_insert(content, read_documents, upsert)
+            self.handle_vector_db_insert(topic_content, read_documents, upsert)
 
     async def aload_from_topics(
         self,
@@ -803,50 +811,54 @@ class IngestionPipeline:
             log_warning("No topics provided for content")
             return
 
+        # Capture original values before the loop to avoid shadowing
+        original_metadata = content.metadata
+        original_reader = content.reader
+
         for topic in content.topics:
-            content = Content(
+            topic_content = Content(
                 name=topic,
-                metadata=content.metadata,
-                reader=content.reader,
-                status=ContentStatus.PROCESSING if content.reader else ContentStatus.FAILED,
+                metadata=original_metadata,
+                reader=original_reader,
+                status=ContentStatus.PROCESSING if original_reader else ContentStatus.FAILED,
                 file_data=FileData(
                     type="Topic",
                 ),
                 topics=[topic],
             )
-            content.content_hash = self.build_content_hash(content)
-            content.id = generate_id(content.content_hash)
+            topic_content.content_hash = self.build_content_hash(topic_content)
+            topic_content.id = generate_id(topic_content.content_hash)
 
-            await self.content_store.ainsert(content)  # type: ignore[union-attr]
-            if self.should_skip(content.content_hash, skip_if_exists):
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+            await self.content_store.ainsert(topic_content)  # type: ignore[union-attr]
+            if self.should_skip(topic_content.content_hash, skip_if_exists):
+                topic_content.status = ContentStatus.COMPLETED
+                await self.content_store.aupdate(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                await self.aprocess_lightrag_content(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
-            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                log_info(f"Content {content.content_hash} already exists, skipping")
+            if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
+                log_info(f"Content {topic_content.content_hash} already exists, skipping")
                 continue
 
-            if content.reader is None:
+            if topic_content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "No reader available for topic"
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                topic_content.status = ContentStatus.FAILED
+                topic_content.status_message = "No reader available for topic"
+                await self.content_store.aupdate(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            read_documents = await content.reader.async_read(topic)
+            read_documents = await topic_content.reader.async_read(topic)
             if len(read_documents) > 0:
-                self.prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
+                self.prepare_documents_for_insert(read_documents, topic_content.id, calculate_sizes=True)
             else:
-                content.status = ContentStatus.FAILED
-                content.status_message = "No content found for topic"
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                topic_content.status = ContentStatus.FAILED
+                topic_content.status_message = "No content found for topic"
+                await self.content_store.aupdate(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
-            await self.ahandle_vector_db_insert(content, read_documents, upsert)
+            await self.ahandle_vector_db_insert(topic_content, read_documents, upsert)
 
     # ==========================================
     # VECTOR DB INSERT HELPERS
@@ -1016,13 +1028,20 @@ class IngestionPipeline:
 
     def should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
         import fnmatch
+        import os
+
+        file_name = os.path.basename(file_path)
+
+        def _matches(path: str, name: str, pattern: str) -> bool:
+            """Match pattern against both the full path and the basename."""
+            return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(name, pattern)
 
         if include:
-            if not any(fnmatch.fnmatch(file_path, pattern) for pattern in include):
+            if not any(_matches(file_path, file_name, pattern) for pattern in include):
                 return False
 
         if exclude:
-            if any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude):
+            if any(_matches(file_path, file_name, pattern) for pattern in exclude):
                 return False
 
         return True

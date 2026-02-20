@@ -12,6 +12,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentStatus
+from agno.knowledge.utils import merge_user_metadata, strip_agno_metadata
 from agno.utils.log import log_debug, log_info, log_warning
 
 
@@ -73,7 +74,7 @@ class ContentStore:
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -88,7 +89,9 @@ class ContentStore:
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if vector_db:
-                vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = strip_agno_metadata(content.metadata) or {}
+                vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 
@@ -117,7 +120,7 @@ class ContentStore:
                     content.description, "content.description", default=""
                 )
             if content.metadata is not None:
-                content_row.metadata = content.metadata
+                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -136,7 +139,9 @@ class ContentStore:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
             if vector_db:
-                vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
+                # Strip _agno from metadata sent to vector_db — only user fields should be searchable
+                user_metadata = strip_agno_metadata(content.metadata) or {}
+                vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
 
             return content_row.to_dict()
 

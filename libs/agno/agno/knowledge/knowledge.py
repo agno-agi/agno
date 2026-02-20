@@ -16,6 +16,7 @@ from agno.knowledge.remote_content.remote_content import (
 )
 from agno.knowledge.remote_knowledge import RemoteLoader
 from agno.knowledge.store.content_store import ContentStore
+from agno.knowledge.utils import strip_agno_metadata
 from agno.utils.log import log_debug, log_info, log_warning
 from agno.utils.string import generate_id
 
@@ -110,6 +111,9 @@ class Knowledge:
             )
             return
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = strip_agno_metadata(metadata)
+
         file_data = None
         if text_content:
             file_data = FileData(content=text_content, type="Text")
@@ -120,7 +124,7 @@ class Knowledge:
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
@@ -173,6 +177,9 @@ class Knowledge:
             )
             return
 
+        # Strip reserved _agno key from user-provided metadata
+        safe_metadata = strip_agno_metadata(metadata)
+
         file_data = None
         if text_content:
             file_data = FileData(content=text_content, type="Text")
@@ -183,7 +190,7 @@ class Knowledge:
             path=path,
             url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
+            metadata=safe_metadata,
             topics=topics,
             remote_content=remote_content,
             reader=reader,
