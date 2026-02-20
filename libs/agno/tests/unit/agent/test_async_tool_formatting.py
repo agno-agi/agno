@@ -18,16 +18,13 @@ import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
-import asyncio
 from typing import List
-from unittest.mock import MagicMock
-
 import pytest
 
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, ToolResult
+from agno.tools.function import Function, FunctionCall, ToolResult
 
 
 @pytest.fixture
@@ -187,7 +184,7 @@ class TestAsyncSyncConsistency:
         fc = _make_function_call(returns_none)
         function_call_results: List[Message] = []
 
-        events = list(
+        list(
             model.run_function_calls(
                 function_calls=[fc],
                 function_call_results=function_call_results,
