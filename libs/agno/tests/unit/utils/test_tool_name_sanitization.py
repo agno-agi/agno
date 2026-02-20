@@ -1,7 +1,5 @@
 """Tests for tool function name sanitization (Azure OpenAI 64-char limit guard)."""
 
-import pytest
-
 from agno.utils.tools import (
     MAX_FUNCTION_NAME_LENGTH,
     _detect_repeating_pattern,
