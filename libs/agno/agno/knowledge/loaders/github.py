@@ -3,8 +3,6 @@
 Provides methods for loading content from GitHub repositories.
 """
 
-# mypy: disable-error-code="attr-defined"
-
 from io import BytesIO
 from typing import Dict, List, Optional, cast
 
@@ -231,11 +229,11 @@ class GitHubLoader(BaseLoader):
                     content, content_name, virtual_path, merged_metadata, "github", is_folder_upload
                 )
 
-                await self._ainsert_contents_db(content_entry)
+                await self.knowledge._ainsert_contents_db(content_entry)
 
-                if self._should_skip(content_entry.content_hash, skip_if_exists):
+                if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
                     content_entry.status = ContentStatus.COMPLETED
-                    await self._aupdate_content(content_entry)
+                    await self.knowledge._aupdate_content(content_entry)
                     continue
 
                 # Fetch file content
@@ -251,16 +249,16 @@ class GitHubLoader(BaseLoader):
                     log_error(f"Error fetching GitHub file {file_path}: {e}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
-                    await self._aupdate_content(content_entry)
+                    await self.knowledge._aupdate_content(content_entry)
                     continue
 
                 # Select reader and read content
-                reader = self._select_reader_by_uri(file_name, content.reader)
+                reader = self.knowledge._select_reader_by_uri(file_name, content.reader)
                 if reader is None:
                     log_warning(f"No reader found for file: {file_name}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = "No suitable reader found"
-                    await self._aupdate_content(content_entry)
+                    await self.knowledge._aupdate_content(content_entry)
                     continue
 
                 reader = cast(Reader, reader)
@@ -270,8 +268,8 @@ class GitHubLoader(BaseLoader):
                 # Prepare and insert into vector database
                 if not content_entry.id:
                     content_entry.id = generate_id(content_entry.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content_entry.id)
-                await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
+                self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
+                await self.knowledge._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
     def _load_from_github(
         self,
@@ -373,11 +371,11 @@ class GitHubLoader(BaseLoader):
                     content, content_name, virtual_path, merged_metadata, "github", is_folder_upload
                 )
 
-                self._insert_contents_db(content_entry)
+                self.knowledge._insert_contents_db(content_entry)
 
-                if self._should_skip(content_entry.content_hash, skip_if_exists):
+                if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
                     content_entry.status = ContentStatus.COMPLETED
-                    self._update_content(content_entry)
+                    self.knowledge._update_content(content_entry)
                     continue
 
                 # Fetch file content
@@ -393,16 +391,16 @@ class GitHubLoader(BaseLoader):
                     log_error(f"Error fetching GitHub file {file_path}: {e}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
-                    self._update_content(content_entry)
+                    self.knowledge._update_content(content_entry)
                     continue
 
                 # Select reader and read content
-                reader = self._select_reader_by_uri(file_name, content.reader)
+                reader = self.knowledge._select_reader_by_uri(file_name, content.reader)
                 if reader is None:
                     log_warning(f"No reader found for file: {file_name}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = "No suitable reader found"
-                    self._update_content(content_entry)
+                    self.knowledge._update_content(content_entry)
                     continue
 
                 reader = cast(Reader, reader)
@@ -412,5 +410,5 @@ class GitHubLoader(BaseLoader):
                 # Prepare and insert into vector database
                 if not content_entry.id:
                     content_entry.id = generate_id(content_entry.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content_entry.id)
-                self._handle_vector_db_insert(content_entry, read_documents, upsert)
+                self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
+                self.knowledge._handle_vector_db_insert(content_entry, read_documents, upsert)

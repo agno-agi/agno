@@ -3,8 +3,6 @@
 Provides methods for loading content from Microsoft SharePoint.
 """
 
-# mypy: disable-error-code="attr-defined"
-
 from io import BytesIO
 from typing import Dict, List, Optional, cast
 
@@ -299,29 +297,29 @@ class SharePointLoader(BaseLoader):
                 content, content_name, virtual_path, merged_metadata, "sharepoint", is_folder_upload
             )
 
-            await self._ainsert_contents_db(content_entry)
+            await self.knowledge._ainsert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
-                await self._aupdate_content(content_entry)
+                await self.knowledge._aupdate_content(content_entry)
                 continue
 
             # Select reader and download file
-            reader = self._select_reader_by_uri(file_name, content.reader)
+            reader = self.knowledge._select_reader_by_uri(file_name, content.reader)
             reader = cast(Reader, reader)
 
             file_content = await self._adownload_sharepoint_file(site_id, file_path, access_token)
             if not file_content:
                 content_entry.status = ContentStatus.FAILED
-                await self._aupdate_content(content_entry)
+                await self.knowledge._aupdate_content(content_entry)
                 continue
 
             # Read the content
             read_documents = await reader.async_read(file_content, name=file_name)
 
             # Prepare and insert to vector database
-            self._prepare_documents_for_insert(read_documents, content_entry.id)
-            await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
+            self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
+            await self.knowledge._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
     def _load_from_sharepoint(
         self,
@@ -415,26 +413,26 @@ class SharePointLoader(BaseLoader):
                 content, content_name, virtual_path, merged_metadata, "sharepoint", is_folder_upload
             )
 
-            self._insert_contents_db(content_entry)
+            self.knowledge._insert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
-                self._update_content(content_entry)
+                self.knowledge._update_content(content_entry)
                 continue
 
             # Select reader and download file
-            reader = self._select_reader_by_uri(file_name, content.reader)
+            reader = self.knowledge._select_reader_by_uri(file_name, content.reader)
             reader = cast(Reader, reader)
 
             file_content = self._download_sharepoint_file(site_id, file_path, access_token)
             if not file_content:
                 content_entry.status = ContentStatus.FAILED
-                self._update_content(content_entry)
+                self.knowledge._update_content(content_entry)
                 continue
 
             # Read the content
             read_documents = reader.read(file_content, name=file_name)
 
             # Prepare and insert to vector database
-            self._prepare_documents_for_insert(read_documents, content_entry.id)
-            self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
+            self.knowledge._handle_vector_db_insert(content_entry, read_documents, upsert)

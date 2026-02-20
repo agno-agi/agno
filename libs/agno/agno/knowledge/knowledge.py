@@ -14,7 +14,7 @@ from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
-from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.remote_knowledge import RemoteLoader
 from agno.knowledge.store.content_store import ContentStore
 from agno.utils.log import log_debug, log_info, log_warning
 from agno.utils.string import generate_id
@@ -23,7 +23,7 @@ ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
 
 @dataclass
-class Knowledge(RemoteKnowledge):
+class Knowledge:
     """Knowledge class — orchestrates content store, reader registry, and ingestion pipeline."""
 
     name: Optional[str] = None
@@ -61,6 +61,7 @@ class Knowledge(RemoteKnowledge):
             knowledge_name=self.name,
             isolate_vector_search=self.isolate_vector_search,
         )
+        self._remote_loader = RemoteLoader(knowledge=self)
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -699,7 +700,21 @@ class Knowledge(RemoteKnowledge):
         return result
 
     # ==========================================
-    # FORWARDING METHODS (for loader mixin compatibility)
+    # REMOTE CONFIG HELPERS
+    # ==========================================
+
+    def _get_remote_configs(self) -> List[BaseStorageConfig]:
+        """Return configured remote content sources."""
+        return self.content_sources or []
+
+    def _get_remote_config_by_id(self, config_id: str) -> Optional[BaseStorageConfig]:
+        """Get a remote content config by its ID."""
+        if not self.content_sources:
+            return None
+        return next((c for c in self.content_sources if c.id == config_id), None)
+
+    # ==========================================
+    # FORWARDING METHODS (for loader callback compatibility)
     # ==========================================
 
     def _build_content_hash(self, content: Content) -> str:
@@ -897,7 +912,7 @@ class Knowledge(RemoteKnowledge):
     ) -> None:
         self._pipeline.load_content(content, upsert, skip_if_exists, include, exclude)
         if content.remote_content:
-            self._load_from_remote_content(content, upsert, skip_if_exists)
+            self._remote_loader.load_from_remote_content(content, upsert, skip_if_exists)
 
     async def _aload_content(
         self,
@@ -909,7 +924,7 @@ class Knowledge(RemoteKnowledge):
     ) -> None:
         await self._pipeline.aload_content(content, upsert, skip_if_exists, include, exclude)
         if content.remote_content:
-            await self._aload_from_remote_content(content, upsert, skip_if_exists)
+            await self._remote_loader.aload_from_remote_content(content, upsert, skip_if_exists)
 
     # ========================================================================
     # Protocol Implementation (build_context, get_tools, retrieve)
