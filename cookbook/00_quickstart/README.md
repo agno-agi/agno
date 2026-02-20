@@ -1,10 +1,10 @@
-# Get Started with Agents, The Easy Way
+# The Agent Quickstart: 12 Guided Cookbooks
 
-This guide walks through the basics of building Agents with Agno. Follow along to learn how to build agents with memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
+Learn how to build agents with 12 guided cookbooks. We'll go from single tool-using agent to multi-agent teams and step-based workflows through clean, runnable examples. Each file focuses on one core capability and can be run independently.
 
-Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
+All examples use Gemini 3.1 Pro for strong multi-step reasoning and reliable tool execution. You can swap to any model with a one-line change. You only need Python and an API key.
 
-## Files
+## What You'll Build
 
 | # | File | What You'll Learn | Key Features |
 |:--|:---------|:------------------|:-------------|
@@ -34,14 +34,6 @@ Each example can be run independently and contains detailed comments to help you
 | **Workflows** | Sequential agent pipelines | Predictable multi-step processes and data flow |
 | **Guardrails** | Validate and filter input | Block PII, prevent prompt injection |
 | **Human in the Loop** | Require confirmation for actions | Sensitive operations, safety-critical tools |
-
-## Why Gemini 3 Flash?
-
-- **Speed** — Sub-second responses make agent loops feel responsive
-- **Tool Calling** — Reliable function calling out of the box
-- **Affordable** — Cheap enough to experiment freely
-
-Agno is **Model-Agnostic** and you can swap to OpenAI, Anthropic, or any provider with one line.
 
 ## Getting Started
 
@@ -101,7 +93,7 @@ Agno is model-agnostic. Same code, different provider:
 ```python
 # Gemini (default in these examples)
 from agno.models.google import Gemini
-model = Gemini(id="gemini-3-flash-preview")
+model = Gemini(id="gemini-3.1-pro-preview")
 
 # OpenAI
 from agno.models.openai import OpenAIResponses

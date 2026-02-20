@@ -279,6 +279,11 @@ class Workflow:
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
+
+        # Component metadata (set by get_workflows during DB loading)
+        self._version: Optional[int] = None
+        self._stage: Optional[str] = None
+
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
@@ -1218,9 +1223,7 @@ class Workflow:
                     session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
                 )  # type: ignore
             else:
-                session = self.db.get_session(
-                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
-                )
+                session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -1805,6 +1808,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2049,6 +2053,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2389,6 +2394,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2651,6 +2657,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -4869,15 +4876,19 @@ class Workflow:
         """
         from copy import copy, deepcopy
         from dataclasses import fields
+        from inspect import signature
 
         from agno.utils.log import log_debug, log_warning
+
+        # Get the set of valid __init__ parameter names
+        init_params = set(signature(self.__class__.__init__).parameters.keys()) - {"self"}
 
         # Extract the fields to set for the new Workflow
         fields_for_new_workflow: Dict[str, Any] = {}
 
         for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
-            if f.name.startswith("_"):
+            # Skip private fields and fields not accepted by __init__
+            if f.name.startswith("_") or f.name not in init_params:
                 continue
 
             field_value = getattr(self, f.name)
@@ -5109,7 +5120,11 @@ def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
 ) -> List["Workflow"]:
-    """Get all workflows from the database"""
+    """
+    Get all workflows from the database.
+
+    Sets _version and _stage on each workflow from the component metadata.
+    """
     workflows: List[Workflow] = []
     try:
         components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
@@ -5123,13 +5138,13 @@ def get_workflows(
                         if "id" not in workflow_config:
                             workflow_config["id"] = component_id
                         workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                        # Ensure workflow.id is set to the component_id
                         workflow.id = component_id
+                        workflow._version = component.get("current_version")
+                        workflow._stage = config.get("stage")
                         workflows.append(workflow)
             except Exception as e:
                 component_id = component.get("component_id", "unknown")
                 log_error(f"Error loading Workflow {component_id} from database: {e}")
-                # Continue loading other workflows even if this one fails
                 continue
         return workflows
 

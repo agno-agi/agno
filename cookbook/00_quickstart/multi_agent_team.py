@@ -39,8 +39,8 @@ team_db = SqliteDb(db_file="tmp/agents.db")
 bull_agent = Agent(
     name="Bull Analyst",
     role="Make the investment case FOR a stock",
-    model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    model=Gemini(id="gemini-3.1-pro-preview"),
+    tools=[YFinanceTools(all=True)],
     db=team_db,
     instructions="""\
 You are a bull analyst. Your job is to make the strongest possible case
@@ -63,8 +63,8 @@ Be persuasive but grounded in data. Use the tools to get real numbers.\
 bear_agent = Agent(
     name="Bear Analyst",
     role="Make the investment case AGAINST a stock",
-    model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    model=Gemini(id="gemini-3.1-pro-preview"),
+    tools=[YFinanceTools(all=True)],
     db=team_db,
     instructions="""\
 You are a bear analyst. Your job is to make the strongest possible case
@@ -86,7 +86,7 @@ Be critical but fair. Use the tools to get real numbers to support your concerns
 # ---------------------------------------------------------------------------
 multi_agent_team = Team(
     name="Multi-Agent Team",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.1-pro-preview"),
     members=[bull_agent, bear_agent],
     instructions="""\
 You lead an investment research team with a Bull Analyst and Bear Analyst.

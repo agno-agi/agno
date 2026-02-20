@@ -10,6 +10,7 @@ from agno.team.team import Team
 
 ASYNC_TEST_TIMEOUT = 300
 
+
 def test_team_delegation():
     """Test basic functionality of a coordinator team."""
 
@@ -347,6 +348,4 @@ async def test_async_delegate_to_all_members_with_tools():
     combined = content + " " + tool_results
 
     # Verify agent identities appear (tools should have been called)
-    assert "ToolAgent1" in combined or "ToolAgent2" in combined, (
-        f"No ToolAgent identity found in response: {combined}"
-    )
+    assert "ToolAgent1" in combined or "ToolAgent2" in combined, f"No ToolAgent identity found in response: {combined}"

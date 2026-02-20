@@ -140,10 +140,10 @@ Don't save: Raw data, one-off facts, or obvious information.\
 # ---------------------------------------------------------------------------
 human_in_the_loop_agent = Agent(
     name="Agent with Human in the Loop",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.1-pro-preview"),
     instructions=instructions,
     tools=[
-        YFinanceTools(),
+        YFinanceTools(all=True),
         save_learning,
     ],
     knowledge=learnings_kb,

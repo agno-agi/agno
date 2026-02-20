@@ -89,9 +89,9 @@ Never share sensitive personal information in responses.\
 # ---------------------------------------------------------------------------
 agent_with_guardrails = Agent(
     name="Agent with Guardrails",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.1-pro-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     pre_hooks=[
         PIIDetectionGuardrail(),  # Block PII (SSN, credit cards, emails, phones)
         PromptInjectionGuardrail(),  # Block jailbreak attempts

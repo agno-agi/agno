@@ -78,10 +78,11 @@ agno_json_data/
 .conductor/
 
 # Private design documents (symlinked)
-specs
-docs
-projects
-agno-os
+/specs
+/docs
+/projects
+/agno-os
+/apps
 
 # Private Claude coding session preferences
 CLAUDE_PRIVATE.md

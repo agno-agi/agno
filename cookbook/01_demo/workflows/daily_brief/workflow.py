@@ -20,7 +20,7 @@ Test:
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.parallel import ParallelTools
 from agno.workflow import Step, Workflow
 from agno.workflow.parallel import Parallel
 
@@ -124,7 +124,7 @@ email_agent = Agent(
 news_agent = Agent(
     name="News Scanner",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    tools=[ParallelTools(enable_extract=False)],
     instructions=[
         "You scan for relevant news and industry updates.",
         "Focus on: AI/ML developments, competitor news, market trends.",
