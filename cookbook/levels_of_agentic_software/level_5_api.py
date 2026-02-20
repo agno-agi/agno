@@ -5,7 +5,7 @@ Production infrastructure for agentic software. Upgrade from development
 databases to PostgreSQL + PgVector, add tracing, and expose everything
 as an API with AgentOS.
 
-This builds on Level 3 by adding:
+This builds on Level 4 by adding:
 - PostgresDb: Production-grade session storage
 - PgVector: Production-grade vector search
 - AgentOS: FastAPI server with web UI, tracing, and session management
