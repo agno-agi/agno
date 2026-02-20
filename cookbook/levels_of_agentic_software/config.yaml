@@ -1,0 +1,11 @@
+chat:
+  quick_prompts:
+    coding-agent:
+      - "Write a Fibonacci function, save it, and run it"
+      - "Write a CSV parser following project conventions"
+      - "Write a data pipeline using functional style"
+
+    coding-team:
+      - "Build a stack data structure with full test coverage"
+      - "Write a binary search function and review it for edge cases"
+      - "Create a simple key-value store with tests"
