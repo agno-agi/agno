@@ -77,6 +77,7 @@ def handle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> TeamRunOutput:
     from agno.run.approval import create_approval_from_pause
     from agno.team._run import _cleanup_and_store
@@ -96,7 +97,7 @@ def handle_team_run_paused(
         store_events=team.store_events,
     )
 
-    _cleanup_and_store(team, run_response=run_response, session=session)
+    _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
     create_approval_from_pause(
         db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
     )
@@ -109,6 +110,7 @@ def handle_team_run_paused_stream(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     from agno.run.approval import create_approval_from_pause
     from agno.team._run import _cleanup_and_store
@@ -128,7 +130,7 @@ def handle_team_run_paused_stream(
         store_events=team.store_events,
     )
 
-    _cleanup_and_store(team, run_response=run_response, session=session)
+    _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
     create_approval_from_pause(
         db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
     )
@@ -143,6 +145,7 @@ async def ahandle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> TeamRunOutput:
     from agno.run.approval import acreate_approval_from_pause
     from agno.team._run import _acleanup_and_store
@@ -162,7 +165,7 @@ async def ahandle_team_run_paused(
         store_events=team.store_events,
     )
 
-    await _acleanup_and_store(team, run_response=run_response, session=session)
+    await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
     await acreate_approval_from_pause(
         db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
     )
@@ -175,6 +178,7 @@ async def ahandle_team_run_paused_stream(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
+    run_context: Optional[RunContext] = None,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     from agno.run.approval import acreate_approval_from_pause
     from agno.team._run import _acleanup_and_store
@@ -194,7 +198,7 @@ async def ahandle_team_run_paused_stream(
         store_events=team.store_events,
     )
 
-    await _acleanup_and_store(team, run_response=run_response, session=session)
+    await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
     await acreate_approval_from_pause(
         db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
     )
