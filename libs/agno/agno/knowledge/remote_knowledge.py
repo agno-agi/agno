@@ -3,12 +3,11 @@
 Provides methods for loading content from cloud storage providers:
 - S3, GCS, SharePoint, GitHub, Azure Blob Storage
 
-This module contains the RemoteKnowledge class which combines all loader
-capabilities through inheritance. The Knowledge class inherits from this
-to gain remote content loading capabilities.
+This module contains the RemoteLoader class which composes all loader
+instances and dispatches to the appropriate provider.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.knowledge.content import Content
 from agno.knowledge.loaders.azure_blob import AzureBlobLoader
@@ -27,34 +26,26 @@ from agno.knowledge.remote_content.remote_content import (
 from agno.utils.log import log_warning
 
 
-class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, AzureBlobLoader):
-    """Base class providing remote content loading capabilities.
+class RemoteLoader:
+    """Manages remote content loading via composed loader instances.
 
-    Inherits from all provider-specific loaders:
-    - S3Loader: AWS S3 content loading
-    - GCSLoader: Google Cloud Storage content loading
-    - SharePointLoader: Microsoft SharePoint content loading
-    - GitHubLoader: GitHub repository content loading
-    - AzureBlobLoader: Azure Blob Storage content loading
-
-    Knowledge inherits from this class and provides:
-    - content_sources: List[BaseStorageConfig]
-    - vector_db, contents_db attributes
-    - _should_skip(), _select_reader_by_uri(), _prepare_documents_for_insert() methods
-    - _ahandle_vector_db_insert(), _handle_vector_db_insert() methods
-    - _ainsert_contents_db(), _insert_contents_db() methods
-    - _aupdate_content(), _update_content() methods
-    - _build_content_hash() method
+    Each loader receives a reference to the Knowledge instance so it can
+    call back into Knowledge for content store, reader, and pipeline operations.
     """
 
-    # These attributes are provided by the Knowledge subclass
-    content_sources: Optional[List[BaseStorageConfig]]
+    def __init__(self, knowledge: Any):
+        self.knowledge = knowledge
+        self._s3_loader = S3Loader(knowledge=knowledge)
+        self._gcs_loader = GCSLoader(knowledge=knowledge)
+        self._sharepoint_loader = SharePointLoader(knowledge=knowledge)
+        self._github_loader = GitHubLoader(knowledge=knowledge)
+        self._azure_blob_loader = AzureBlobLoader(knowledge=knowledge)
 
     # ==========================================
     # REMOTE CONTENT DISPATCHERS
     # ==========================================
 
-    async def _aload_from_remote_content(
+    async def aload_from_remote_content(
         self,
         content: Content,
         upsert: bool,
@@ -78,24 +69,24 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
                 log_warning(f"No config found for config_id: {remote_content.config_id}")
 
         if isinstance(remote_content, S3Content):
-            await self._aload_from_s3(content, upsert, skip_if_exists, config)
+            await self._s3_loader._aload_from_s3(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, GCSContent):
-            await self._aload_from_gcs(content, upsert, skip_if_exists, config)
+            await self._gcs_loader._aload_from_gcs(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, SharePointContent):
-            await self._aload_from_sharepoint(content, upsert, skip_if_exists, config)
+            await self._sharepoint_loader._aload_from_sharepoint(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, GitHubContent):
-            await self._aload_from_github(content, upsert, skip_if_exists, config)
+            await self._github_loader._aload_from_github(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, AzureBlobContent):
-            await self._aload_from_azure_blob(content, upsert, skip_if_exists, config)
+            await self._azure_blob_loader._aload_from_azure_blob(content, upsert, skip_if_exists, config)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    def _load_from_remote_content(
+    def load_from_remote_content(
         self,
         content: Content,
         upsert: bool,
@@ -119,19 +110,19 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
                 log_warning(f"No config found for config_id: {remote_content.config_id}")
 
         if isinstance(remote_content, S3Content):
-            self._load_from_s3(content, upsert, skip_if_exists, config)
+            self._s3_loader._load_from_s3(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, GCSContent):
-            self._load_from_gcs(content, upsert, skip_if_exists, config)
+            self._gcs_loader._load_from_gcs(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, SharePointContent):
-            self._load_from_sharepoint(content, upsert, skip_if_exists, config)
+            self._sharepoint_loader._load_from_sharepoint(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, GitHubContent):
-            self._load_from_github(content, upsert, skip_if_exists, config)
+            self._github_loader._load_from_github(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, AzureBlobContent):
-            self._load_from_azure_blob(content, upsert, skip_if_exists, config)
+            self._azure_blob_loader._load_from_azure_blob(content, upsert, skip_if_exists, config)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
@@ -142,10 +133,10 @@ class RemoteKnowledge(S3Loader, GCSLoader, SharePointLoader, GitHubLoader, Azure
 
     def _get_remote_configs(self) -> List[BaseStorageConfig]:
         """Return configured remote content sources."""
-        return self.content_sources or []
+        return self.knowledge.content_sources or []
 
     def _get_remote_config_by_id(self, config_id: str) -> Optional[BaseStorageConfig]:
         """Get a remote content config by its ID."""
-        if not self.content_sources:
+        if not self.knowledge.content_sources:
             return None
-        return next((c for c in self.content_sources if c.id == config_id), None)
+        return next((c for c in self.knowledge.content_sources if c.id == config_id), None)
