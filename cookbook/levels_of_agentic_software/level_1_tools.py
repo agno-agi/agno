@@ -7,6 +7,13 @@ No memory, no persistence — pure stateless tool calling.
 This is where every agent should start. You'd be surprised how much
 a single agent with good instructions and the right tools can accomplish.
 
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_1_tools.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L1 Coding Agent"
+
 Example prompt:
     "Write a Fibonacci function, save it to fib.py, and run it to verify"
 """
@@ -49,7 +56,7 @@ You are a coding agent. You write clean, well-documented Python code.
 # Create Agent
 # ---------------------------------------------------------------------------
 coding_agent = Agent(
-    name="Coding Agent",
+    name="L1 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[CodingTools(base_dir=WORKSPACE, all=True)],

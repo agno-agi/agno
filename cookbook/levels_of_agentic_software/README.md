@@ -8,7 +8,7 @@ Build a coding agent from scratch, progressively adding capabilities at each lev
 | 2 | `level_2_knowledge.py` | Knowledge + Storage | ChromaDb, SqliteDb, hybrid search, session history |
 | 3 | `level_3_learning.py` | Memory + Learning | LearningMachine, agentic memory, ReasoningTools |
 | 4 | `level_4_team.py` | Multi-Agent Team | Coder/Reviewer/Tester team with coordination |
-| 5 | `level_5_api.py` | Production Infrastructure | PostgresDb, PgVector, AgentOS, tracing |
+| 5 | `level_5_api.py` | Production Infrastructure | PostgresDb, PgVector, tracing |
 
 ## Getting Started
 
@@ -68,14 +68,27 @@ python cookbook/levels_of_agentic_software/level_5_api.py
 
 ## Run via Agent OS
 
-Agent OS provides a web interface for interacting with your agents. Start PostgreSQL, then start the server:
+Agent OS provides a web interface for interacting with your agents. All 5 levels are available in the UI so you can compare the progression interactively. Level 5 is the most complete, with production databases, learning, and tracing.
 
 ```bash
+# Start PostgreSQL (required for Level 5)
 ./cookbook/scripts/run_pgvector.sh
+
+# Start the server
 python cookbook/levels_of_agentic_software/run.py
 ```
 
 Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
+
+| Agent in UI | What You Get |
+|:------------|:-------------|
+| L1 Coding Agent | Stateless tool calling -- no setup needed |
+| L2 Coding Agent | Knowledge base + session storage (ChromaDb + SQLite) |
+| L3 Coding Agent | Memory + learning -- improves over time |
+| L4 Coding Team | Multi-agent team: Coder, Reviewer, Tester |
+| L5 Coding Agent | Production system with PostgreSQL, PgVector, tracing |
+
+**Start with L5 for the full experience.** Try L1-L4 to see how each capability builds on the last.
 
 ## Swap Models
 

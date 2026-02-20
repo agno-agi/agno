@@ -10,9 +10,15 @@ This builds on Level 2 by adding:
 - Agentic memory: Builds user profiles over time
 - ReasoningTools: The think tool for structured reasoning
 
-Two-session demo:
-- Session 1: User teaches preferences, agent learns them
-- Session 2: New task, agent applies what it learned
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_3_learning.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L3 Coding Agent"
+
+Example prompt:
+    "Write a data pipeline using functional programming style"
 """
 
 from pathlib import Path
@@ -89,7 +95,7 @@ You are a coding agent that learns and improves over time.
 # Create Agent
 # ---------------------------------------------------------------------------
 coding_agent = Agent(
-    name="Coding Agent",
+    name="L3 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[

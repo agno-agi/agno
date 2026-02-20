@@ -8,6 +8,13 @@ This builds on Level 1 by adding:
 - Knowledge: ChromaDb with hybrid search for project documentation
 - Storage: SqliteDb for conversation history across sessions
 
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_2_knowledge.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L2 Coding Agent"
+
 Example prompt:
     "Write a CSV parser following our project conventions"
 """
@@ -69,7 +76,7 @@ You are a coding agent with access to project documentation.
 # Create Agent
 # ---------------------------------------------------------------------------
 coding_agent = Agent(
-    name="Coding Agent",
+    name="L2 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[CodingTools(base_dir=WORKSPACE, all=True)],

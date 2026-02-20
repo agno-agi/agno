@@ -1,9 +1,9 @@
 """
 Level 5: Agentic System (Production API)
 ==========================================
-Production infrastructure for agentic software. Upgrade from development
-databases to PostgreSQL + PgVector, add tracing, and expose everything
-as an API with AgentOS.
+The most complete level. Production infrastructure for agentic software.
+Upgrade from development databases to PostgreSQL + PgVector, add tracing,
+and expose everything as an API with AgentOS.
 
 This builds on Level 4 by adding:
 - PostgresDb: Production-grade session storage
@@ -16,6 +16,16 @@ Prerequisites:
 
     This starts a Postgres container on port 5532 with:
         user=ai, password=ai, database=ai
+
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_5_api.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L5 Coding Agent"
+
+Example prompt:
+    "Write a function that validates email addresses using regex"
 """
 
 from pathlib import Path
@@ -93,7 +103,7 @@ You are a production coding agent that learns and improves over time.
 # Create Production Agent
 # ---------------------------------------------------------------------------
 coding_agent = Agent(
-    name="Coding Agent",
+    name="L5 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
     tools=[

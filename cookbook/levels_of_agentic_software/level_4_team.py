@@ -13,6 +13,13 @@ single agents. The team leader is an LLM making delegation decisions --
 sometimes brilliantly, sometimes not. For production automation, prefer
 explicit workflows. Teams shine in human-supervised settings.
 
+Run standalone:
+    python cookbook/levels_of_agentic_software/level_4_team.py
+
+Run via Agent OS:
+    python cookbook/levels_of_agentic_software/run.py
+    Then visit https://os.agno.com and select "L4 Coding Team"
+
 Example prompt:
     "Build a stack data structure with full test coverage"
 """
@@ -136,7 +143,7 @@ You are a QA engineer. Write thorough tests and run them.
 # Create Team
 # ---------------------------------------------------------------------------
 coding_team = Team(
-    name="Coding Team",
+    name="L4 Coding Team",
     model=OpenAIResponses(id="gpt-5.2"),
     members=[coder, reviewer, tester],
     instructions="""\
