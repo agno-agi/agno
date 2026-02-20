@@ -102,7 +102,7 @@ You are a production coding agent that learns and improves over time.
 # ---------------------------------------------------------------------------
 # Create Production Agent
 # ---------------------------------------------------------------------------
-coding_agent = Agent(
+l5_coding_agent = Agent(
     name="L5 Coding Agent",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=instructions,
@@ -130,7 +130,7 @@ coding_agent = Agent(
 # Run Demo (standalone)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    coding_agent.print_response(
+    l5_coding_agent.print_response(
         "Write a function that validates email addresses using regex. "
         "Save it to email_validator.py and test it with valid and invalid examples.",
         user_id="dev@example.com",

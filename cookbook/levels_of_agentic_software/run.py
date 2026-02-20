@@ -36,11 +36,11 @@ Prerequisites
 from pathlib import Path
 
 from agno.os import AgentOS
-from level_1_tools import coding_agent as l1_agent
-from level_2_knowledge import coding_agent as l2_agent
-from level_3_learning import coding_agent as l3_agent
-from level_4_team import coding_team as l4_team
-from level_5_api import coding_agent as l5_agent
+from level_1_tools import l1_coding_agent
+from level_2_storage_knowledge import l2_coding_agent
+from level_3_memory_learning import l3_coding_agent
+from level_4_team import l4_coding_team
+from level_5_api import l5_coding_agent
 
 # ---------------------------------------------------------------------------
 # AgentOS Config
@@ -54,8 +54,8 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 # Level 5 is the most complete — start there for the full experience.
 agent_os = AgentOS(
     id="Coding Agent OS",
-    agents=[l1_agent, l2_agent, l3_agent, l5_agent],
-    teams=[l4_team],
+    agents=[l1_coding_agent, l2_coding_agent, l3_coding_agent, l5_coding_agent],
+    teams=[l4_coding_team],
     config=config_path,
     tracing=True,
 )

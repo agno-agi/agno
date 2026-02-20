@@ -5,8 +5,8 @@ Build a coding agent from scratch, progressively adding capabilities at each lev
 | Level | File | What It Adds | Key Features |
 |:------|:-----|:-------------|:-------------|
 | 1 | `level_1_tools.py` | Tools + Instructions | CodingTools, stateless execution |
-| 2 | `level_2_knowledge.py` | Knowledge + Storage | ChromaDb, SqliteDb, hybrid search, session history |
-| 3 | `level_3_learning.py` | Memory + Learning | LearningMachine, agentic memory, ReasoningTools |
+| 2 | `level_2_storage_knowledge.py` | Knowledge + Storage | ChromaDb, SqliteDb, hybrid search, session history |
+| 3 | `level_3_memory_learning.py` | Memory + Learning | LearningMachine, agentic memory, ReasoningTools |
 | 4 | `level_4_team.py` | Multi-Agent Team | Coder/Reviewer/Tester team with coordination |
 | 5 | `level_5_api.py` | Production Infrastructure | PostgresDb, PgVector, tracing |
 
@@ -51,10 +51,10 @@ python cookbook/levels_of_agentic_software/level_1_tools.py
 python cookbook/levels_of_agentic_software/level_1_tools.py
 
 # Level 2: Agent + Knowledge + Storage
-python cookbook/levels_of_agentic_software/level_2_knowledge.py
+python cookbook/levels_of_agentic_software/level_2_storage_knowledge.py
 
 # Level 3: Agent + Memory + Learning
-python cookbook/levels_of_agentic_software/level_3_learning.py
+python cookbook/levels_of_agentic_software/level_3_memory_learning.py
 
 # Level 4: Multi-Agent Team
 python cookbook/levels_of_agentic_software/level_4_team.py
