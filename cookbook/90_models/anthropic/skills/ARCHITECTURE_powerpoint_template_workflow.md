@@ -1,7 +1,7 @@
 # Architecture: PowerPoint Template Workflow
 
 **File:** `cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py`
-**Date:** 2026-02-19
+**Date:** 2026-02-21
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
 
 ---
@@ -15,6 +15,106 @@ The architecture separates concerns into distinct workflow steps:
 2. A second LLM plans which slides need images
 3. An image generation model creates visuals
 4. A deterministic function assembles everything onto the template
+
+---
+
+## How It Works (Visual Overview)
+
+This pipeline turns a simple text prompt into a polished PowerPoint presentation in 4 automated steps:
+
+```
+                    ┌─────────────────┐
+                    │   YOUR INPUTS   │
+                    │                 │
+                    │  Text Prompt    │
+                    │  + Template     │
+                    └────────┬────────┘
+                             │
+                             ▼
+        ┌────────────────────────────────────────┐
+        │  STEP 1: Content Generation            │
+        │                                        │
+        │  Agent: Claude (Anthropic)              │
+        │  Role:  Writes the presentation         │
+        │         content — titles, bullets,      │
+        │         tables, and charts              │
+        │                                        │
+        │  Output: Raw .pptx file with content   │
+        └────────────────────┬───────────────────┘
+                             │
+                             ▼
+        ┌────────────────────────────────────────┐
+        │  STEP 2: Image Planning                │
+        │                                        │
+        │  Agent: Gemini (Google)                 │
+        │  Role:  Reviews each slide and decides  │
+        │         which ones need images          │
+        │                                        │
+        │  Output: Image plan (yes/no per slide) │
+        └────────────────────┬───────────────────┘
+                             │
+                             ▼
+        ┌────────────────────────────────────────┐
+        │  STEP 3: Image Generation              │
+        │                                        │
+        │  Tool: NanoBanana (Gemini Image Gen)    │
+        │  Role:  Creates AI-generated images     │
+        │         for the slides that need them   │
+        │                                        │
+        │  Output: PNG images for selected slides │
+        └────────────────────┬───────────────────┘
+                             │
+                             ▼
+        ┌────────────────────────────────────────┐
+        │  STEP 4: Template Assembly             │
+        │                                        │
+        │  Engine: Deterministic (no AI)          │
+        │  Role:  Takes your template's visual    │
+        │         design and maps all content +   │
+        │         images onto it                  │
+        │                                        │
+        │  Output: Final polished .pptx file     │
+        └────────────────────┬───────────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │   YOUR OUTPUT   │
+                    │                 │
+                    │  Professional   │
+                    │  Presentation   │
+                    │  (.pptx file)   │
+                    └─────────────────┘
+```
+
+### Key Actors
+
+| Step | Who Does the Work | What They Do | AI or Code? |
+|------|-------------------|--------------|-------------|
+| 1 | **Claude** (Anthropic) | Writes all slide content from your prompt | AI Agent |
+| 2 | **Gemini** (Google) | Decides which slides benefit from images | AI Agent |
+| 3 | **NanoBanana** (Gemini) | Generates professional images for slides | AI Tool |
+| 4 | **Template Engine** | Applies your company's template styling | Deterministic Code |
+
+### What You Control
+
+| Option | What It Does | Default |
+|--------|-------------|---------|
+| `--template` / `-t` | Your company's .pptx template | Required |
+| `--prompt` / `-p` | What the presentation should be about | Built-in demo |
+| `--output` / `-o` | Where to save the result | `presentation_from_template.pptx` |
+| `--no-images` | Skip Steps 2 and 3 (faster, text-only) | Images enabled |
+| `--no-stream` | Use simpler API mode (more reliable for short prompts) | Streaming enabled |
+| `--verbose` / `-v` | Show detailed diagnostic output | Off |
+
+### Quick Example
+
+```bash
+# Generate a presentation about AI trends using your company template
+python powerpoint_template_workflow.py \
+    --template company_template.pptx \
+    --prompt "Create a 5-slide presentation about AI trends in 2026" \
+    --output ai_trends.pptx
+```
 
 ---
 
@@ -88,18 +188,18 @@ flowchart TD
 
 | Model | Purpose | Used In |
 |-------|---------|---------|
-| [`SlideImageDecision`](powerpoint_template_workflow.py:53) | Per-slide decision: needs image? prompt? reasoning? | Step 2 output |
-| [`ImagePlan`](powerpoint_template_workflow.py:72) | List of `SlideImageDecision` for all slides | Step 2 `output_schema` |
+| [`SlideImageDecision`](powerpoint_template_workflow.py) | Per-slide decision: needs image? prompt? reasoning? | Step 2 output |
+| [`ImagePlan`](powerpoint_template_workflow.py) | List of `SlideImageDecision` for all slides | Step 2 `output_schema` |
 
 ### Dataclasses — Internal Content Representation
 
 | Dataclass | Purpose | Fields |
 |-----------|---------|--------|
-| [`TableData`](powerpoint_template_workflow.py:86) | Extracted table with position | `rows`, `left`, `top`, `width`, `height` |
-| [`ImageData`](powerpoint_template_workflow.py:97) | Extracted image blob with position | `blob`, `left`, `top`, `width`, `height`, `content_type` |
-| [`ChartExtract`](powerpoint_template_workflow.py:109) | Extracted chart data with position | `chart_type`, `categories`, `series`, `left`, `top`, `width`, `height` |
-| [`SlideContent`](powerpoint_template_workflow.py:122) | All content from one slide | `title`, `subtitle`, `body_paragraphs`, `tables`, `images`, `charts`, `shapes_xml` |
-| [`ContentArea`](powerpoint_template_workflow.py:134) | Safe content region on a template slide in EMU | `left`, `top`, `width`, `height` |
+| [`TableData`](powerpoint_template_workflow.py) | Extracted table with position | `rows`, `left`, `top`, `width`, `height` |
+| [`ImageData`](powerpoint_template_workflow.py) | Extracted image blob with position | `blob`, `left`, `top`, `width`, `height`, `content_type` |
+| [`ChartExtract`](powerpoint_template_workflow.py) | Extracted chart data with position | `chart_type`, `categories`, `series`, `left`, `top`, `width`, `height` |
+| [`SlideContent`](powerpoint_template_workflow.py) | All content from one slide | `title`, `subtitle`, `body_paragraphs`, `tables`, `images`, `charts`, `shapes_xml` |
+| [`ContentArea`](powerpoint_template_workflow.py) | Safe content region on a template slide in EMU | `left`, `top`, `width`, `height` |
 
 **Data flow through the pipeline:**
 
@@ -119,17 +219,17 @@ flowchart LR
 ### Step 1: Content Generation
 
 **Type:** Executor function
-**Function:** [`step_generate_content()`](powerpoint_template_workflow.py:656)
+**Function:** [`step_generate_content()`](powerpoint_template_workflow.py)
 **Agent:** Claude `claude-sonnet-4-5-20250929` with `pptx` skill
 
 **Flow:**
 1. Reads the template to extract available layout names
 2. Builds an enhanced prompt with structural requirements for template compatibility
 3. Creates a Claude `Agent` with the `pptx` skill and formatting instructions
-4. Runs the agent, which generates a `.pptx` file server-side
-5. Downloads the generated file via [`download_skill_files()`](file_download_helper.py:34) using the Anthropic Files API
+4. Runs the agent (streaming or non-streaming based on `--no-stream` flag), which generates a `.pptx` file server-side
+5. Downloads the generated file via [`download_skill_files()`](file_download_helper.py) using the Anthropic Files API
 6. Validates the download is a valid `.pptx` file
-7. Opens the generated presentation and extracts [`SlideContent`](powerpoint_template_workflow.py:122) from each slide using [`_extract_slide_content()`](powerpoint_template_workflow.py:149)
+7. Opens the generated presentation and extracts [`SlideContent`](powerpoint_template_workflow.py) from each slide using [`_extract_slide_content()`](powerpoint_template_workflow.py)
 8. Stores extracted data in `session_state` for downstream steps:
    - `generated_file`: path to the downloaded `.pptx`
    - `slides_data`: list of slide metadata dicts
@@ -142,15 +242,19 @@ flowchart LR
 - No custom fonts, colors, SmartArt, or animations
 - Standard slide ordering: Title, Content, Closing
 
+**Streaming modes:**
+- **Streaming (default):** Required for long-running skill operations (>10 min) but may have issues with `provider_data` propagation.
+- **Non-streaming (`--no-stream`):** Simpler and more reliable for shorter operations but can timeout on complex presentations.
+
 ### Step 2: Image Planning
 
 **Type:** Agent step
-**Agent:** [`image_planner`](powerpoint_template_workflow.py:815) — Gemini `gemini-2.5-flash-image` with `output_schema=ImagePlan`
+**Agent:** [`image_planner`](powerpoint_template_workflow.py) — Gemini `gemini-2.5-flash-image` with `output_schema=ImagePlan`
 
 **Flow:**
 1. Receives the JSON summary of slides from Step 1 as input
 2. Uses Gemini with structured output to decide per-slide whether an image is needed
-3. Outputs an [`ImagePlan`](powerpoint_template_workflow.py:72) with a list of [`SlideImageDecision`](powerpoint_template_workflow.py:53)s
+3. Outputs an [`ImagePlan`](powerpoint_template_workflow.py) with a list of [`SlideImageDecision`](powerpoint_template_workflow.py)s
 
 **Decision guidelines** encoded in agent instructions:
 - Title slides: usually YES
@@ -161,7 +265,7 @@ flowchart LR
 ### Step 3: Image Generation
 
 **Type:** Executor function
-**Function:** [`step_generate_images()`](powerpoint_template_workflow.py:847)
+**Function:** [`step_generate_images()`](powerpoint_template_workflow.py)
 **Tool:** `NanoBananaTools` with `aspect_ratio="16:9"`
 
 **Flow:**
@@ -175,18 +279,18 @@ flowchart LR
 ### Step 4: Template Assembly
 
 **Type:** Executor function
-**Function:** [`step_assemble_template()`](powerpoint_template_workflow.py:958)
+**Function:** [`step_assemble_template()`](powerpoint_template_workflow.py)
 
 **Flow:**
 1. Copies the template file to the output path
 2. Opens the copy as the output presentation
 3. Removes all existing slides from the template copy using `lxml` XML manipulation
 4. For each generated slide:
-   a. Extracts content via [`_extract_slide_content()`](powerpoint_template_workflow.py:149)
-   b. Appends any AI-generated image from `session_state` as an [`ImageData`](powerpoint_template_workflow.py:97)
-   c. Selects the best template layout via [`_find_best_layout()`](powerpoint_template_workflow.py:281)
+   a. Extracts content via [`_extract_slide_content()`](powerpoint_template_workflow.py)
+   b. Appends any AI-generated image from `session_state` as an [`ImageData`](powerpoint_template_workflow.py)
+   c. Selects the best template layout via [`_find_best_layout()`](powerpoint_template_workflow.py)
    d. Creates a new slide from the selected layout
-   e. Populates the slide via [`_populate_slide()`](powerpoint_template_workflow.py:571)
+   e. Populates the slide via [`_populate_slide()`](powerpoint_template_workflow.py)
 5. Saves the final presentation
 
 ---
@@ -195,9 +299,9 @@ flowchart LR
 
 ### Extraction
 
-| Function | Line | Purpose |
-|----------|------|---------|
-| [`_extract_slide_content()`](powerpoint_template_workflow.py:149) | 149 | Walks all shapes on a slide. Classifies each as table, chart, picture, group, or text. Extracts placeholder text by `idx` — 0=title, 1=subtitle/body, >1=other body. Non-placeholder shapes are captured as raw XML. |
+| Function | Purpose |
+|----------|---------|
+| [`_extract_slide_content()`](powerpoint_template_workflow.py) | Walks all shapes on a slide. Classifies each as table, chart, picture, group, or text. Extracts placeholder text by `idx` — 0=title, 1=subtitle/body, >1=other body. Non-placeholder shapes are captured as raw XML. |
 
 **Shape processing order:**
 1. Tables → `TableData`
@@ -209,39 +313,39 @@ flowchart LR
 
 ### Template Layout Selection
 
-| Function | Line | Purpose |
-|----------|------|---------|
-| [`_find_best_layout()`](powerpoint_template_workflow.py:281) | 281 | Heuristic matching of slide position to template layout. Title slide → layout with name containing *title slide*. Last slide → *blank/closing/end*. Content slides → *content/body/text*, then *object/list*, then second layout. |
+| Function | Purpose |
+|----------|---------|
+| [`_find_best_layout()`](powerpoint_template_workflow.py) | Heuristic matching of slide position to template layout. Title slide → layout with name containing *title slide*. Last slide → *blank/closing/end*. Content slides → *content/body/text*, then *object/list*, then second layout. |
 
 ### Content Area Detection
 
-| Function | Line | Purpose |
-|----------|------|---------|
-| [`_get_content_area()`](powerpoint_template_workflow.py:320) | 320 | Derives the safe content region from a template layout's placeholders. Strategy: body placeholder idx=1 first, then any non-title placeholder, then default safe margins at 5%/25%/90%/65% of slide dimensions. All values in EMU. |
+| Function | Purpose |
+|----------|---------|
+| [`_get_content_area()`](powerpoint_template_workflow.py) | Derives the safe content region from a template layout's placeholders. Strategy: body placeholder idx=1 first, then any non-title placeholder, then default safe margins at 5%/25%/90%/65% of slide dimensions. All values in EMU. |
 
 ### Visual Quality Functions
 
-| Function | Line | Purpose |
-|----------|------|---------|
-| [`_fit_to_area()`](powerpoint_template_workflow.py:359) | 359 | Aspect-ratio-preserving scaling. Fits an image within a `ContentArea` and centers it. Returns `left, top, width, height` tuple in EMU. |
-| [`_populate_placeholder_with_format()`](powerpoint_template_workflow.py:389) | 389 | Preserves template paragraph/run XML formatting. Captures `pPr` and `rPr` elements from the first template paragraph, clears the text frame, inserts new text with cloned formatting. Enables `word_wrap` and calls `fit_text()` for auto-sizing with fallback to `MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE`. |
+| Function | Purpose |
+|----------|---------|
+| [`_fit_to_area()`](powerpoint_template_workflow.py) | Aspect-ratio-preserving scaling. Fits an image within a `ContentArea` and centers it. Returns `left, top, width, height` tuple in EMU. |
+| [`_populate_placeholder_with_format()`](powerpoint_template_workflow.py) | Preserves template paragraph/run XML formatting. Captures `pPr` and `rPr` elements from the first template paragraph, clears the text frame, inserts new text with cloned formatting. Enables `word_wrap` and calls `fit_text()` for auto-sizing with fallback to `MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE`. |
 
 ### Transfer Functions
 
-All transfer functions receive a [`ContentArea`](powerpoint_template_workflow.py:134) to position content within the template's safe region.
+All transfer functions receive a [`ContentArea`](powerpoint_template_workflow.py) to position content within the template's safe region.
 
-| Function | Line | Purpose |
-|----------|------|---------|
-| [`_transfer_tables()`](powerpoint_template_workflow.py:455) | 455 | Creates tables within the content area. Multiple tables stack vertically. Header row uses `Pt(11)`, data cells `Pt(10)`. Word wrap enabled on all cells. |
-| [`_transfer_images()`](powerpoint_template_workflow.py:500) | 500 | Adds images scaled and centered within the content area via `_fit_to_area()`. |
-| [`_transfer_charts()`](powerpoint_template_workflow.py:508) | 508 | Recreates charts from `CategoryChartData` within the content area. Multiple charts stack vertically. Handles None and non-numeric values. |
-| [`_transfer_shapes()`](powerpoint_template_workflow.py:555) | 555 | Deep-copies raw shape XML to the target slide's `spTree`. Reassigns element IDs to avoid collisions. |
+| Function | Purpose |
+|----------|---------|
+| [`_transfer_tables()`](powerpoint_template_workflow.py) | Creates tables within the content area. Multiple tables stack vertically. Header row uses `Pt(11)`, data cells `Pt(10)`. Word wrap enabled on all cells. |
+| [`_transfer_images()`](powerpoint_template_workflow.py) | Adds images scaled and centered within the content area via `_fit_to_area()`. |
+| [`_transfer_charts()`](powerpoint_template_workflow.py) | Recreates charts from `CategoryChartData` within the content area. Multiple charts stack vertically. Handles None and non-numeric values. |
+| [`_transfer_shapes()`](powerpoint_template_workflow.py) | Deep-copies raw shape XML to the target slide's `spTree`. Reassigns element IDs to avoid collisions. |
 
 ### Slide Assembly Orchestrator
 
-| Function | Line | Purpose |
-|----------|------|---------|
-| [`_populate_slide()`](powerpoint_template_workflow.py:571) | 571 | Orchestrates all transfers for a single slide. Computes `ContentArea` from the layout. Fills title placeholder idx=0, body placeholder idx=1, then fallback textboxes if placeholders are missing. Calls all transfer functions. |
+| Function | Purpose |
+|----------|---------|
+| [`_populate_slide()`](powerpoint_template_workflow.py) | Orchestrates all transfers for a single slide. Computes `ContentArea` from the layout. Fills title placeholder idx=0, body placeholder idx=1, then fallback textboxes if placeholders are missing. Calls all transfer functions. |
 
 **Placeholder filling priority:**
 1. Placeholder idx=0 → title text
@@ -261,6 +365,8 @@ session_state = {
     "template_path": str,       # Path to the .pptx template file
     "output_dir": str,          # Directory for intermediate files
     "output_path": str,         # Final output .pptx path
+    "verbose": bool,            # Enable verbose/debug logging
+    "stream": bool,             # Use streaming mode for Claude agent
 
     # Set by Step 1
     "generated_file": str,      # Path to Claude-generated .pptx
@@ -276,7 +382,7 @@ session_state = {
 
 ## CLI Interface
 
-**Function:** [`parse_args()`](powerpoint_template_workflow.py:1077)
+**Function:** [`parse_args()`](powerpoint_template_workflow.py)
 
 | Flag | Short | Required | Default | Description |
 |------|-------|----------|---------|-------------|
@@ -284,6 +390,8 @@ session_state = {
 | `--output` | `-o` | No | `presentation_from_template.pptx` | Output filename |
 | `--prompt` | `-p` | No | Built-in 6-slide demo | Custom presentation prompt |
 | `--no-images` | — | No | `False` | Skip Steps 2 and 3 entirely |
+| `--no-stream` | — | No | `False` | Disable streaming mode for Claude agent (more reliable for shorter prompts, but may timeout on complex presentations) |
+| `--verbose` | `-v` | No | `False` | Enable verbose/debug logging for troubleshooting |
 
 **Usage examples:**
 
@@ -299,6 +407,14 @@ session_state = {
 # Skip image generation
 .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \
     -t my_template.pptx --no-images
+
+# Disable streaming (more reliable for short prompts)
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \
+    -t my_template.pptx --no-stream
+
+# Verbose logging for debugging
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \
+    -t my_template.pptx -v
 ```
 
 ---
@@ -309,7 +425,7 @@ The workflow is conditionally assembled based on CLI flags:
 
 ```mermaid
 flowchart LR
-    S1[Step 1: Content Generation<br>executor=step_generate_content]
+    S1[Step 1: Content Generation<br>executor=step_generate_content<br>stream or non-stream mode]
     S2[Step 2: Image Planning<br>agent=image_planner]
     S3[Step 3: Image Generation<br>executor=step_generate_images]
     S4[Step 4: Template Assembly<br>executor=step_assemble_template]
@@ -324,12 +440,12 @@ flowchart LR
 
 | Step | Name | Type | Executor/Agent |
 |------|------|------|----------------|
-| 1 | Content Generation | `executor` | `step_generate_content` |
+| 1 | Content Generation | `executor` | `step_generate_content` (streaming or non-streaming based on `--no-stream`) |
 | 2 | Image Planning | `agent` | `image_planner` - Gemini with `output_schema` |
 | 3 | Image Generation | `executor` | `step_generate_images` |
 | 4 | Template Assembly | `executor` | `step_assemble_template` |
 
-**Agno Workflow wiring** at [`line 1187`](powerpoint_template_workflow.py:1187):
+**Agno Workflow wiring** in the `__main__` block:
 - Each `Step` can have either an `agent` or an `executor` — not both
 - Agent steps pass `step_input.previous_step_content` as the prompt
 - Executor steps receive `(step_input, session_state)` and return `StepOutput`

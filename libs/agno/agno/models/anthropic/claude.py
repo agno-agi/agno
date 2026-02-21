@@ -1087,6 +1087,21 @@ class Claude(Model):
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
 
+            # Extract file IDs if skills are enabled (streaming parity with _parse_provider_response)
+            if self.skills and hasattr(response, "message") and response.message.content:
+                file_ids: List[str] = []
+                for block in response.message.content:
+                    if block.type == "bash_code_execution_tool_result":
+                        if hasattr(block, "content") and hasattr(block.content, "content"):
+                            if isinstance(block.content.content, list):
+                                for output_block in block.content.content:
+                                    if hasattr(output_block, "file_id"):
+                                        file_ids.append(output_block.file_id)
+                if file_ids:
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["file_ids"] = file_ids
+
         if (
             isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent))
             and hasattr(response, "message")

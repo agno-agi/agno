@@ -1,6 +1,7 @@
-from typing import List
 import os
 import re
+from typing import List
+
 
 def detect_file_extension(file_content: bytes) -> str:
     """
@@ -30,6 +31,7 @@ def detect_file_extension(file_content: bytes) -> str:
         return ".doc"
     else:
         return ".bin"
+
 
 def download_skill_files(
     response, client, output_dir: str = ".", default_filename: str = None

@@ -2,8 +2,8 @@
 Agno Workflow: PowerPoint Template Generation Pipeline.
 
 A sequential workflow that generates presentations using Claude's pptx skill,
-intelligently adds AI-generated images via NanoBanana, and applies a custom
-.pptx template for professional styling.
+intelligently adds AI-generated images via NanoBanana (powered by Gemini), and
+applies a custom .pptx template for professional styling.
 
 Prerequisites:
 - uv pip install agno anthropic python-pptx google-genai pillow
@@ -12,10 +12,30 @@ Prerequisites:
 - A .pptx template file
 
 Usage:
+    # Basic usage with a template:
     .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
         --template my_template.pptx
+
+    # Full options: custom prompt, output path, verbose logging:
     .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
-        -t my_template.pptx -o report.pptx -p "Create a 5-slide AI trends presentation"
+        -t my_template.pptx -o report.pptx -p "Create a 5-slide AI trends presentation" -v
+
+    # Disable streaming (more reliable for shorter prompts, may timeout on complex ones):
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
+        -t my_template.pptx --no-stream
+
+    # Skip AI image generation entirely:
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
+        -t my_template.pptx --no-images
+
+CLI Flags:
+    --template, -t   Path to the .pptx template file (required).
+    --output, -o     Output filename (default: presentation_from_template.pptx).
+    --prompt, -p     Custom prompt for the presentation content.
+    --no-images      Skip AI image generation (Steps 2 and 3).
+    --no-stream      Disable streaming mode for Claude agent (more reliable for
+                     shorter prompts, but may timeout on complex presentations).
+    --verbose, -v    Enable verbose/debug logging for troubleshooting.
 """
 
 import argparse
@@ -24,6 +44,7 @@ import json
 import os
 import shutil
 import sys
+import traceback
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Dict, List
@@ -44,6 +65,9 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field
+
+# Module-level verbose flag (set from CLI args)
+VERBOSE = False
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +154,7 @@ class SlideContent:
     images: list = field(default_factory=list)
     charts: list = field(default_factory=list)
     shapes_xml: list = field(default_factory=list)
-    # Issue 2A: Track image placeholders detected in template layouts
+    # Track picture placeholders detected in the slide layout
     has_image_placeholder: bool = False
     image_placeholder_indices: list = field(default_factory=list)
 
@@ -151,14 +175,17 @@ class ContentArea:
 
 
 def _extract_slide_content(slide) -> SlideContent:
-    """Extract all content from a slide including text, tables, images, charts, and shapes."""
+    """Extract all content from a slide including text, tables, images, charts, and shapes.
+
+    Detects picture placeholders using multiple strategies for robustness:
+      1. int(type) == 18  (the raw OOXML value for PICTURE placeholders)
+      2. str(type) contains 'PICTURE (18)'
+      3. PP_PLACEHOLDER.PICTURE enum comparison
+      4. XML-level fallback: <p:ph type="pic"/>
+    """
     content = SlideContent()
 
-    # Issue 2A: Detect image/picture placeholders in the slide layout.
-    # Uses multiple detection strategies for robustness:
-    #   1. int(type) == 18  (the raw OOXML value for PICTURE placeholders)
-    #   2. str(type) contains 'PICTURE (18)'
-    #   3. XML-level fallback: <p:ph type="pic"/>
+    # Detect picture placeholders in the slide layout
     for shape in slide.placeholders:
         ph_fmt = shape.placeholder_format
         if ph_fmt is not None:
@@ -167,8 +194,7 @@ def _extract_slide_content(slide) -> SlideContent:
             is_picture_ph = False
             try:
                 if ph_type_val is not None and (
-                    int(ph_type_val) == 18
-                    or str(ph_type_val) == "PICTURE (18)"
+                    int(ph_type_val) == 18 or str(ph_type_val) == "PICTURE (18)"
                 ):
                     is_picture_ph = True
             except (ValueError, TypeError):
@@ -178,8 +204,9 @@ def _extract_slide_content(slide) -> SlideContent:
                 try:
                     if ph_type_val == PP_PLACEHOLDER.PICTURE:
                         is_picture_ph = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    if VERBOSE:
+                        print("[VERBOSE] Exception suppressed: %s" % str(e))
             # Strategy 3: XML-level fallback
             if not is_picture_ph:
                 nsmap = {
@@ -238,8 +265,9 @@ def _extract_slide_content(slide) -> SlideContent:
                             height=shape.height,
                         )
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Exception suppressed: %s" % str(e))
             continue
 
         if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
@@ -256,8 +284,9 @@ def _extract_slide_content(slide) -> SlideContent:
                         content_type=ct,
                     )
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Exception suppressed: %s" % str(e))
             continue
 
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
@@ -279,10 +308,12 @@ def _extract_slide_content(slide) -> SlideContent:
                                     content_type=ct,
                                 )
                             )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as e:
+                            if VERBOSE:
+                                print("[VERBOSE] Exception suppressed: %s" % str(e))
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Exception suppressed: %s" % str(e))
             continue
 
         if shape.has_text_frame:
@@ -489,8 +520,10 @@ def _populate_placeholder_with_format(shape, texts, is_title=False):
     try:
         max_size = 28 if is_title else 18
         tf.fit_text(font_family="Calibri", max_size=max_size)
-    except Exception:
+    except Exception as e:
         # fit_text requires font metrics; fall back to MSO_AUTO_SIZE
+        if VERBOSE:
+            print("[VERBOSE] Exception suppressed: %s" % str(e))
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
 
@@ -590,8 +623,9 @@ def _transfer_charts(slide, charts, content_area: ContentArea):
                 chart_height,
                 chart_data,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            if VERBOSE:
+                print("[VERBOSE] Exception suppressed: %s" % str(e))
 
 
 def _transfer_shapes(slide, shapes_xml):
@@ -644,10 +678,11 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
                 continue
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            if VERBOSE:
+                print("[VERBOSE] Exception suppressed: %s" % str(e))
 
-        # Mark for removal — removing from XML is the only reliable cleanup
+        # Mark for removal -- removing from XML is the only reliable cleanup
         elements_to_remove.append(shape._element)
 
     for element in elements_to_remove:
@@ -663,18 +698,23 @@ def _populate_slide(
 ):
     """Transfer all content into a new slide using template-aware positioning.
 
+    Handles text placeholders, tables, charts, images, and shapes. When
+    ``generated_image_bytes`` is provided and the slide layout contains a
+    picture placeholder, the image is inserted into that placeholder rather
+    than being added as a free-floating picture.
+
     Args:
         new_slide: The new slide created from a template layout.
         content: Extracted SlideContent from the generated slide.
         slide_width: Presentation slide width in EMU.
         slide_height: Presentation slide height in EMU.
-        generated_image_bytes: Optional raw image bytes from NanoBanana to insert
-            into picture placeholders (Issue 2B).
+        generated_image_bytes: Optional raw image bytes (e.g. from NanoBanana)
+            to insert into picture placeholders.
     """
     # Compute content area from the slide's layout
     content_area = _get_content_area(new_slide.slide_layout, slide_width, slide_height)
 
-    # Issue 1: Track which placeholder indices are successfully populated
+    # Track populated placeholder indices for cleanup
     populated_indices: set[int] = set()
 
     title_placed = False
@@ -745,7 +785,9 @@ def _populate_slide(
             para.font.size = Pt(18)
         try:
             tf.fit_text(font_family="Calibri", max_size=18)
-        except Exception:
+        except Exception as e:
+            if VERBOSE:
+                print("[VERBOSE] Exception suppressed: %s" % str(e))
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
     _transfer_tables(new_slide, content.tables, content_area)
@@ -754,7 +796,7 @@ def _populate_slide(
     _transfer_shapes(new_slide, content.shapes_xml)
 
     # ------------------------------------------------------------------
-    # Issue 2B: Insert generated image INTO picture placeholders.
+    # Insert generated images into picture placeholders.
     # Detection uses both the tracked indices AND XML-level type checking
     # as a fallback (type="pic" or "clipArt" in the XML = picture placeholder).
     # ------------------------------------------------------------------
@@ -771,8 +813,7 @@ def _populate_slide(
                 # Strategy 1: int comparison with raw OOXML value 18
                 try:
                     if ph_fmt.type is not None and (
-                        int(ph_fmt.type) == 18
-                        or str(ph_fmt.type) == "PICTURE (18)"
+                        int(ph_fmt.type) == 18 or str(ph_fmt.type) == "PICTURE (18)"
                     ):
                         is_picture_ph = True
                 except (ValueError, TypeError):
@@ -782,8 +823,9 @@ def _populate_slide(
                     try:
                         if ph_fmt.type == PP_PLACEHOLDER.PICTURE:
                             is_picture_ph = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if VERBOSE:
+                            print("[VERBOSE] Exception suppressed: %s" % str(e))
                 # Strategy 3: XML-level fallback
                 if not is_picture_ph:
                     try:
@@ -796,8 +838,9 @@ def _populate_slide(
                             "clipArt",
                         ):
                             is_picture_ph = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if VERBOSE:
+                            print("[VERBOSE] Exception suppressed: %s" % str(e))
                 if is_picture_ph:
                     _pic_ph_indices.add(ph_fmt.idx)
 
@@ -810,14 +853,15 @@ def _populate_slide(
                     shape.insert_picture(image_stream)
                     populated_indices.add(ph_idx)
                     break  # Use first picture placeholder
-                except Exception:
-                    pass
+                except Exception as e:
+                    if VERBOSE:
+                        print("[VERBOSE] Exception suppressed: %s" % str(e))
 
     # ------------------------------------------------------------------
-    # Issue 1: Remove ALL unpopulated placeholder XML elements from the
-    # slide shape tree. This is the ONLY reliable way to eliminate ALL
-    # types of ghost text ("Click to add title", "Click to add text",
-    # "Click icon to add picture", content placeholder icons, etc.).
+    # Remove ALL unpopulated placeholder XML elements from the slide shape
+    # tree. This is the ONLY reliable way to eliminate ALL types of ghost
+    # text ("Click to add title", "Click to add text", "Click icon to add
+    # picture", content placeholder icons, etc.).
     # tf.clear() alone is insufficient for picture and content placeholders.
     # ------------------------------------------------------------------
     _clear_unused_placeholders(new_slide, populated_indices)
@@ -831,6 +875,12 @@ def _populate_slide(
 def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOutput:
     """Generate PowerPoint content using Claude's pptx skill.
 
+    Supports both streaming and non-streaming modes (controlled by the
+    ``stream`` key in session_state). Streaming is required for long-running
+    skill operations (>10 min) but may have issues with provider_data
+    propagation. Non-streaming is simpler and more reliable for shorter
+    operations but can timeout on complex presentations.
+
     This step:
     1. Creates a Claude agent with the pptx skill
     2. Runs the user's prompt to generate a presentation
@@ -838,6 +888,9 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     4. Extracts SlideContent from each slide
     5. Stores the extracted content in session_state
     """
+    global VERBOSE
+    VERBOSE = session_state.get("verbose", VERBOSE)
+
     user_prompt = step_input.input
     template_path = session_state.get("template_path", "")
     output_dir = session_state.get("output_dir", ".")
@@ -863,19 +916,16 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
             "- The template has these available layouts: " + layout_info + ".\n"
             "- Use standard slide ordering: Title Slide, then Content Slides, then Closing."
         )
-    except Exception:
-        pass
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Exception suppressed: %s" % str(e))
 
     # Create the Claude agent
     content_agent = Agent(
         name="Content Generator",
         model=Claude(
-            id=
-            # "claude-sonnet-4-6",
-            "claude-sonnet-4-5-20250929",
-            # "claude-opus-4-6",
+            id="claude-sonnet-4-5-20250929",  # Or: "claude-sonnet-4-6", "claude-opus-4-6"
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
-            # max_tokens=1000000,
         ),
         instructions=[
             "You are a structured content generator for PowerPoint presentations.",
@@ -901,13 +951,57 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
         markdown=True,
     )
 
-    # Run the agent with streaming enabled.
-    # The Anthropic API requires streaming for long-running skill operations
-    # (e.g. pptx generation) that may exceed 10 minutes.
-    response: RunOutput | None = None
-    for event in content_agent.run(enhanced_prompt, stream=True, yield_run_output=True):
-        if isinstance(event, RunOutput):
-            response = event
+    # Determine streaming mode from session_state
+    use_stream = session_state.get("stream", True)
+
+    if use_stream:
+        # Streaming mode: required for long-running skill operations (>10 min)
+        response: RunOutput | None = None
+        event_count = 0
+        try:
+            for event in content_agent.run(
+                enhanced_prompt, stream=True, yield_run_output=True
+            ):
+                event_count += 1
+                if isinstance(event, RunOutput):
+                    response = event
+                    if VERBOSE:
+                        print(
+                            "[VERBOSE] Received RunOutput after %d events" % event_count
+                        )
+                elif VERBOSE and event_count <= 5:
+                    print(
+                        "[VERBOSE] Stream event %d: type=%s"
+                        % (event_count, type(event).__name__)
+                    )
+                elif VERBOSE and event_count == 6:
+                    print("[VERBOSE] (Suppressing further stream event logs...)")
+        except Exception as e:
+            print("[ERROR] Agent streaming failed with exception: %s" % str(e))
+            if VERBOSE:
+                traceback.print_exc()
+            return StepOutput(
+                content="Error: Agent execution failed: %s" % str(e),
+                success=False,
+                stop=True,
+            )
+        if VERBOSE:
+            print("[VERBOSE] Total stream events received: %d" % event_count)
+    else:
+        # Non-streaming mode: simpler, more reliable for shorter operations
+        response = None
+        try:
+            response = content_agent.run(enhanced_prompt, stream=False)
+        except Exception as e:
+            print("[ERROR] Agent execution failed with exception: %s" % str(e))
+            if VERBOSE:
+                traceback.print_exc()
+            return StepOutput(
+                content="Error: Agent execution failed: %s" % str(e),
+                success=False,
+                stop=True,
+            )
+
     if response is None:
         return StepOutput(
             content="Error: No response received from content agent.",
@@ -916,40 +1010,214 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
         )
     print("\nAgent response received.")
 
+    if VERBOSE:
+        # Diagnostic: Inspect the RunOutput
+        print("\n[VERBOSE] === Agent Response Diagnostics ===")
+        if response is None:
+            print("[VERBOSE] Response is None!")
+        else:
+            print("[VERBOSE] Response type: %s" % type(response).__name__)
+            print(
+                "[VERBOSE] Number of messages: %d"
+                % (len(response.messages) if response.messages else 0)
+            )
+            if response.messages:
+                for m_idx, msg in enumerate(response.messages):
+                    print("[VERBOSE] Message %d:" % m_idx)
+                    print("[VERBOSE]   Type: %s" % type(msg).__name__)
+                    print("[VERBOSE]   Role: %s" % getattr(msg, "role", "N/A"))
+                    print(
+                        "[VERBOSE]   Has provider_data: %s"
+                        % (
+                            hasattr(msg, "provider_data")
+                            and msg.provider_data is not None
+                        )
+                    )
+                    if hasattr(msg, "provider_data") and msg.provider_data:
+                        pd = msg.provider_data
+                        print("[VERBOSE]   provider_data type: %s" % type(pd).__name__)
+                        if isinstance(pd, dict):
+                            print(
+                                "[VERBOSE]   provider_data keys: %s" % list(pd.keys())
+                            )
+                        elif hasattr(pd, "__dict__"):
+                            print(
+                                "[VERBOSE]   provider_data attrs: %s"
+                                % list(vars(pd).keys())[:20]
+                            )
+                    # Also show content snippet
+                    content_text = getattr(msg, "content", None)
+                    if content_text and isinstance(content_text, str):
+                        print(
+                            "[VERBOSE]   Content (first 200 chars): %s"
+                            % content_text[:200]
+                        )
+            # Check for response-level attributes
+            for attr_name in [
+                "content",
+                "tool_calls",
+                "extra_data",
+                "metrics",
+                "model_provider_data",
+            ]:
+                val = getattr(response, attr_name, "MISSING")
+                if val != "MISSING":
+                    if isinstance(val, str):
+                        print(
+                            "[VERBOSE] response.%s (first 200 chars): %s"
+                            % (attr_name, val[:200])
+                        )
+                    elif val is not None:
+                        print(
+                            "[VERBOSE] response.%s type: %s"
+                            % (attr_name, type(val).__name__)
+                        )
+        print("[VERBOSE] === End Diagnostics ===\n")
+
     # Download the generated file
     client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     generated_file = None
 
     if response.messages:
-        for msg in response.messages:
+        for msg_idx, msg in enumerate(response.messages):
+            if VERBOSE:
+                print("[VERBOSE] Checking message %d for provider_data..." % msg_idx)
             if hasattr(msg, "provider_data") and msg.provider_data:
-                files = download_skill_files(
-                    msg.provider_data, client, output_dir=output_dir
-                )
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Message %d has provider_data, calling download_skill_files..."
+                        % msg_idx
+                    )
+                try:
+                    files = download_skill_files(
+                        msg.provider_data, client, output_dir=output_dir
+                    )
+                except Exception as e:
+                    print(
+                        "[ERROR] download_skill_files raised an exception: %s" % str(e)
+                    )
+                    if VERBOSE:
+                        traceback.print_exc()
+                    files = None
+
+                if VERBOSE:
+                    print("[VERBOSE] download_skill_files returned: %s" % files)
+
                 if files:
                     for f in files:
                         if not f.endswith(".pptx"):
+                            if VERBOSE:
+                                print("[VERBOSE] Skipping non-.pptx file: %s" % f)
                             continue
                         try:
                             Presentation(f)
                             generated_file = f
                             print("Downloaded: %s" % generated_file)
                             break
-                        except Exception:
+                        except Exception as e:
+                            print(
+                                "[WARNING] File '%s' failed pptx validation: %s"
+                                % (f, str(e))
+                            )
                             continue
                     if not generated_file:
+                        # Fallback: try any file
                         for f in files:
                             try:
                                 Presentation(f)
                                 generated_file = f
-                                print("Downloaded: %s" % generated_file)
+                                print("Downloaded (fallback): %s" % generated_file)
                                 break
-                            except Exception:
+                            except Exception as e:
+                                if VERBOSE:
+                                    print(
+                                        "[VERBOSE] Fallback file '%s' also failed: %s"
+                                        % (f, str(e))
+                                    )
                                 continue
-                if generated_file:
-                    break
+                elif VERBOSE:
+                    print("[VERBOSE] No files returned from download_skill_files")
+            elif VERBOSE:
+                print("[VERBOSE] Message %d has no provider_data" % msg_idx)
+            if generated_file:
+                break
+    else:
+        if VERBOSE:
+            print("[VERBOSE] response.messages is empty or None!")
+
+    # Fallback: check response.model_provider_data directly
+    # This catches cases where provider_data is on the RunOutput but not on individual messages
+    if not generated_file and response.model_provider_data:
+        if VERBOSE:
+            print(
+                "[VERBOSE] Trying fallback: response.model_provider_data = %s"
+                % response.model_provider_data
+            )
+        try:
+            files = download_skill_files(
+                response.model_provider_data, client, output_dir=output_dir
+            )
+        except Exception as e:
+            print("[ERROR] download_skill_files (fallback) raised: %s" % str(e))
+            if VERBOSE:
+                traceback.print_exc()
+            files = None
+        if files:
+            if VERBOSE:
+                print("[VERBOSE] Fallback download_skill_files returned: %s" % files)
+            for f in files:
+                if f.endswith(".pptx"):
+                    try:
+                        Presentation(f)
+                        generated_file = f
+                        print(
+                            "Downloaded (via model_provider_data fallback): %s"
+                            % generated_file
+                        )
+                        break
+                    except Exception as e:
+                        print(
+                            "[WARNING] Fallback file '%s' failed pptx validation: %s"
+                            % (f, str(e))
+                        )
+            if not generated_file:
+                for f in files:
+                    try:
+                        Presentation(f)
+                        generated_file = f
+                        print(
+                            "Downloaded (via model_provider_data fallback): %s"
+                            % generated_file
+                        )
+                        break
+                    except Exception as e:
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Fallback file '%s' also failed: %s"
+                                % (f, str(e))
+                            )
 
     if not generated_file:
+        if VERBOSE:
+            print("\n[VERBOSE] === File Generation Failure Summary ===")
+            print("[VERBOSE] No valid .pptx file was found in any message.")
+            print(
+                "[VERBOSE] Total messages checked: %d"
+                % (len(response.messages) if response.messages else 0)
+            )
+            messages_with_pd = sum(
+                1
+                for m in (response.messages or [])
+                if hasattr(m, "provider_data") and m.provider_data
+            )
+            print("[VERBOSE] Messages with provider_data: %d" % messages_with_pd)
+            print("[VERBOSE] Hint: The agent may not have generated a file. Check if:")
+            print(
+                "[VERBOSE]   1. The agent's response contained tool use / skill output"
+            )
+            print("[VERBOSE]   2. The ANTHROPIC_API_KEY has access to the pptx skill")
+            print("[VERBOSE]   3. The prompt was understood correctly by the agent")
+            print("[VERBOSE] === End Failure Summary ===\n")
         return StepOutput(
             content="Error: No presentation file was generated.",
             success=False,
@@ -961,14 +1229,14 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     generated_prs = Presentation(generated_file)
     slides_data = []
 
-    # Issue 2D: Also open the template to detect image placeholders per layout.
-    # This info is included in slides_data so the image planner knows which
-    # slides have dedicated picture placeholders in the template.
+    # Check template layouts for picture placeholders so the image planner
+    # knows which slides have dedicated picture slots in the template.
     template_prs = None
     try:
         template_prs = Presentation(template_path)
-    except Exception:
-        pass
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Exception suppressed: %s" % str(e))
 
     total_gen_slides = len(list(generated_prs.slides))
 
@@ -985,8 +1253,9 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
                     if ph_fmt is not None and ph_fmt.type == PP_PLACEHOLDER.PICTURE:
                         has_template_image_ph = True
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Exception suppressed: %s" % str(e))
 
         slide_info = {
             "index": idx,
@@ -1069,13 +1338,16 @@ image_planner = Agent(
 
 
 def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutput:
-    """Generate images for slides that need them using NanoBanana.
+    """Generate images for slides that need them using NanoBanana (powered by Gemini).
 
     This step:
-    1. Reads the image plan from step 2
+    1. Reads the image plan from step 2 (produced by the Gemini image planner)
     2. For each slide marked as needing an image, generates one with NanoBanana
-    3. Stores the generated image bytes in session_state
+    3. Stores the generated image bytes in session_state keyed by slide index
     """
+    global VERBOSE
+    VERBOSE = session_state.get("verbose", VERBOSE)
+
     print("\n" + "=" * 60)
     print("Step 3: Generating images with NanoBanana...")
     print("=" * 60)
@@ -1166,6 +1438,8 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
                 print("    Image generated but no bytes returned.")
         except Exception as e:
             print("    Failed to generate image: %s" % str(e))
+            if VERBOSE:
+                traceback.print_exc()
 
     session_state["generated_images"] = generated_images
     return StepOutput(
@@ -1182,12 +1456,19 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
 def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOutput:
     """Apply template styling and assemble the final presentation.
 
+    Handles image placeholder detection on each template layout so that
+    generated images are inserted into dedicated picture placeholders when
+    available, rather than being added as free-floating pictures.
+
     This step:
     1. Opens the template and generated presentation
     2. Creates slides from template layouts with extracted content
-    3. Adds AI-generated images to appropriate slides
+    3. Inserts AI-generated images into picture placeholders (or as free-floating)
     4. Saves the final output
     """
+    global VERBOSE
+    VERBOSE = session_state.get("verbose", VERBOSE)
+
     print("\n" + "=" * 60)
     print("Step 4: Assembling final presentation with template...")
     print("=" * 60)
@@ -1213,6 +1494,9 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     generated_slides = list(generated_prs.slides)
     total_slides = len(generated_slides)
 
+    if VERBOSE:
+        print("[VERBOSE] Generated presentation has %d slides" % total_slides)
+
     if total_slides == 0:
         shutil.copy2(template_path, output_path)
         return StepOutput(
@@ -1225,6 +1509,12 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     output_prs = Presentation(output_path)
     slide_width = output_prs.slide_width
     slide_height = output_prs.slide_height
+
+    if VERBOSE:
+        print(
+            "[VERBOSE] Template layouts available: %s"
+            % [layout.name for layout in output_prs.slide_layouts]
+        )
 
     # Remove existing slides from template
     while len(output_prs.slides._sldIdLst) > 0:
@@ -1245,7 +1535,7 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     for idx, gen_slide in enumerate(generated_slides):
         content = _extract_slide_content(gen_slide)
 
-        # Issue 2C: Look up generated image bytes for this slide index.
+        # Look up generated image for this slide.
         # The keys may be int or str depending on how they were stored.
         gen_img = generated_images.get(idx) or generated_images.get(str(idx))
 
@@ -1253,7 +1543,7 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         # deciding whether to add a free-floating image.
         layout = _find_best_layout(output_prs, idx, total_slides)
 
-        # Issue 2A: Detect image placeholders on the chosen template layout.
+        # Detect picture placeholders on the chosen template layout.
         # Uses both PP_PLACEHOLDER enum and XML-level fallback detection.
         for ph in layout.placeholders:
             ph_fmt = ph.placeholder_format
@@ -1262,8 +1552,7 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                 # Strategy 1: int comparison with raw OOXML value 18
                 try:
                     if ph_fmt.type is not None and (
-                        int(ph_fmt.type) == 18
-                        or str(ph_fmt.type) == "PICTURE (18)"
+                        int(ph_fmt.type) == 18 or str(ph_fmt.type) == "PICTURE (18)"
                     ):
                         is_pic_ph = True
                 except (ValueError, TypeError):
@@ -1273,8 +1562,9 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                     try:
                         if ph_fmt.type == PP_PLACEHOLDER.PICTURE:
                             is_pic_ph = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if VERBOSE:
+                            print("[VERBOSE] Exception suppressed: %s" % str(e))
                 # Strategy 3: XML-level fallback
                 if not is_pic_ph:
                     try:
@@ -1287,8 +1577,9 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                             "clipArt",
                         ):
                             is_pic_ph = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if VERBOSE:
+                            print("[VERBOSE] Exception suppressed: %s" % str(e))
                 if is_pic_ph:
                     content.has_image_placeholder = True
                     if ph_fmt.idx not in content.image_placeholder_indices:
@@ -1331,10 +1622,13 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         )
 
         new_slide = output_prs.slides.add_slide(layout)
-        # Issue 2C: Pass generated image bytes to _populate_slide for
-        # insertion into picture placeholders
+        # Pass generated image bytes to _populate_slide for insertion
+        # into picture placeholders
         _populate_slide(
-            new_slide, content, slide_width, slide_height,
+            new_slide,
+            content,
+            slide_width,
+            slide_height,
             generated_image_bytes=gen_img,
         )
 
@@ -1380,11 +1674,25 @@ def parse_args():
         action="store_true",
         help="Skip AI image generation (Steps 2 and 3).",
     )
+    parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Disable streaming mode for Claude agent (more reliable for shorter prompts, "
+        "but may timeout on complex presentations).",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose/debug logging for troubleshooting.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+
+    VERBOSE = args.verbose
 
     if not os.path.isfile(args.template):
         print("Error: Template file not found: %s" % args.template)
@@ -1450,6 +1758,9 @@ if __name__ == "__main__":
     print("Template: %s" % args.template)
     print("Output:   %s" % output_path)
     print("Images:   %s" % ("disabled" if args.no_images else "enabled"))
+    print("Stream:   %s" % ("disabled" if args.no_stream else "enabled"))
+    if VERBOSE:
+        print("Verbose:  enabled")
 
     # Build workflow steps
     steps: List[Step] = [
@@ -1463,6 +1774,17 @@ if __name__ == "__main__":
     steps.append(Step(name="Template Assembly", executor=step_assemble_template))
 
     # Create and run the workflow
+    #
+    # session_state schema:
+    #   template_path      (str)  - Path to the .pptx template file
+    #   output_dir         (str)  - Directory for intermediate output files
+    #   output_path        (str)  - Path for the final assembled presentation
+    #   generated_file     (str)  - Path to the Claude-generated .pptx file (set by step 1)
+    #   slides_data        (list) - Per-slide metadata dicts (set by step 1)
+    #   total_slides       (int)  - Number of slides in the generated presentation
+    #   generated_images   (dict) - Mapping of slide index -> image bytes (set by step 3)
+    #   verbose            (bool) - Whether verbose logging is enabled
+    #   stream             (bool) - Whether to use streaming mode for Claude agent
     workflow = Workflow(
         name="PowerPoint Template Workflow",
         steps=steps,
@@ -1474,6 +1796,8 @@ if __name__ == "__main__":
             "slides_data": [],
             "total_slides": 0,
             "generated_images": {},
+            "verbose": args.verbose,
+            "stream": not args.no_stream,
         },
     )
 

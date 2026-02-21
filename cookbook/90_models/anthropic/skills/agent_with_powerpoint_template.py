@@ -34,7 +34,6 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.util import Inches, Pt
 
-
 # ---------------------------------------------------------------------------
 # Data Classes for Extracted Content
 # ---------------------------------------------------------------------------
