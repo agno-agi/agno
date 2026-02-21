@@ -230,3 +230,5 @@ class FileType(str, Enum):
     GIF = "gif"
     MP3 = "mp3"
     WAV = "wav"
+    PNG = "png"
+    JPG = "jpg"
