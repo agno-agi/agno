@@ -124,15 +124,25 @@ class WorkflowSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    is_component: bool = Field(False, description="Whether this workflow was created via Builder")
+    current_version: Optional[int] = Field(None, description="Current published version number")
+    stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod
-    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+    def from_workflow(
+        cls,
+        workflow: Union[Workflow, RemoteWorkflow],
+        is_component: bool = False,
+    ) -> "WorkflowSummaryResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             db_id=db_id,
+            is_component=is_component,
+            current_version=getattr(workflow, "_version", None),
+            stage=getattr(workflow, "_stage", None),
         )
 
 
@@ -190,26 +200,6 @@ class SessionSchema(BaseModel):
         if not session_name:
             session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
-
-        created_at = session.get("created_at", 0)
-        updated_at = session.get("updated_at", created_at)
-
-        # Handle created_at and updated_at as either ISO 8601 string or timestamp
-        def parse_datetime(val):
-            if isinstance(val, str):
-                try:
-                    # Accept both with and without Z
-                    if val.endswith("Z"):
-                        val = val[:-1] + "+00:00"
-                    return datetime.fromisoformat(val)
-                except Exception:
-                    return None
-            elif isinstance(val, (int, float)):
-                try:
-                    return datetime.fromtimestamp(val, tz=timezone.utc)
-                except Exception:
-                    return None
-            return None
 
         created_at = to_utc_datetime(session.get("created_at", 0))
         updated_at = to_utc_datetime(session.get("updated_at", created_at))

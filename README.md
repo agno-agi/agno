@@ -10,7 +10,7 @@
 
 <p align="center">
   The programming language for agentic software.<br/>
-  Build multi-agent systems with streaming, memory, governance, and request isolation.
+  Build, run, and manage multi-agent systems at scale.
 </p>
 
 <div align="center">
@@ -18,76 +18,24 @@
   <span>&nbsp;•&nbsp;</span>
   <a href="https://github.com/agno-agi/agno/tree/main/cookbook">Cookbook</a>
   <span>&nbsp;•&nbsp;</span>
+  <a href="https://docs.agno.com/first-agent">Quickstart</a>
+  <span>&nbsp;•&nbsp;</span>
   <a href="https://www.agno.com/discord">Discord</a>
 </div>
 
 ## What is Agno?
 
-Agno is the open-source stack for building, deploying and managing multi-agent systems.
+Software is shifting from deterministic request–response to reasoning systems that plan, call tools, remember context, and make decisions. Agno is the language for building that software correctly. It provides:
 
-Agentic software operates under a different contract than traditional software. Execution is dynamic. Decisions are contextual. Trust must be engineered.
-
-Agno gives you the primitives, execution engine, and production runtime to handle that natively.
-
-| Layer | What it does |
-|-------|--------------|
-| **SDK** | The primitives: agents, teams, workflows, memory, knowledge, tools, guardrails, approval flows. |
-| **Engine** | The agent loop: model calls, tool execution, context management, runtime checks. |
-| **AgentOS** | The production runtime: streaming APIs, authentication, per-request isolation, approval enforcement, background execution, and a [control plane](https://os.agno.com) to monitor and manage everything. |
-
-## Why Agno?
-
-Agentic software introduces three fundamental shifts.
-
-### 1. A new interaction model
-
-Traditional software receives a request and returns a response.
-
-Agents stream reasoning, tool calls, and results in real time. They can pause mid-execution, wait for approval, and resume later.
-
-Agno treats streaming and long-running execution as first-class behavior.
-
-### 2. A new governance model
-
-Traditional systems execute predefined decision logic written in advance.
-
-Agents choose actions dynamically. Some actions are low risk. Some require user approval. Some require administrative authority.
-
-Agno lets you define who decides what as part of the agent definition, with:
-
-- Approval workflows
-- Human-in-the-loop
-- Audit logs
-- Enforcement at runtime
-
-### 3. A new trust model
-
-Traditional systems are designed to be predictable. Every execution path is defined in advance.
-
-Agents introduce probabilistic reasoning into the execution path.
-
-Agno builds trust into the engine itself:
-
-- Guardrails run as part of execution
-- Evaluations integrate into the agent loop
-- Traces and audit logs are first-class
-
-## Built for Production
-
-Agno is not a hobby project. It is designed for real systems.
-
-- 50+ APIs out of the box
-- Per-user session isolation
-- Stateless, horizontally scalable runtime
-- Approval enforcement at runtime
-- Background execution and scheduler
-- Complete auditability and observability
-- Runs entirely in your cloud
-- Sessions, memory, knowledge, and traces stored in your database
+| Layer | Responsibility |
+|-------|----------------|
+| **SDK** | Agents, teams, workflows, memory, knowledge, tools, guardrails, approval flows |
+| **Engine** | Model calls, tool orchestration, structured outputs, runtime enforcement |
+| **AgentOS** | Streaming APIs, isolation, auth, approval enforcement, tracing, control plane |
 
 ## Quick Start
 
-Build an agent that answers questions about Agno, remembers past conversations, and runs as a production API:
+Build a stateful, tool-using agent and serve it as a production API in ~20 lines.
 
 ```python
 from agno.agent import Agent
@@ -98,7 +46,7 @@ from agno.tools.mcp import MCPTools
 
 agno_assist = Agent(
     name="Agno Assist",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=SqliteDb(db_file="agno.db"),
     tools=[MCPTools(url="https://docs.agno.com/mcp")],
     add_history_to_context=True,
@@ -106,59 +54,104 @@ agno_assist = Agent(
     markdown=True,
 )
 
-agent_os = AgentOS(agents=[agno_assist])
+agent_os = AgentOS(agents=[agno_assist], tracing=True)
 app = agent_os.get_app()
 ```
 
 Run it:
 
 ```bash
-uv pip install -U 'agno[os]' anthropic mcp
+export ANTHROPIC_API_KEY="***"
 
-fastapi dev agno_assist.py
+uvx --python 3.12 \
+  --with "agno[os]" \
+  --with anthropic \
+  --with mcp \
+  fastapi dev agno_assist.py
 ```
 
-You get:
-- Streaming responses
-- Per-user session isolation
-- A full API at http://localhost:8000
+In ~20 lines, you get:
+- A stateful agent with streaming responses
+- Per-user, per-session isolation
+- A production API at http://localhost:8000
+- Native tracing
 
-Connect the [AgentOS UI](https://os.agno.com) to monitor, manage, and test your agents.
+Connect to the [AgentOS UI](https://os.agno.com) to monitor, manage, and test your agents.
+
+1. Open [os.agno.com](https://os.agno.com) and sign in.
+2. Click **"Add new OS"** in the top navigation.
+3. Select **"Local"** to connect to a local AgentOS.
+4. Enter your endpoint URL (default: `http://localhost:8000`).
+5. Name it "Local AgentOS".
+6. Click **"Connect"**.
+
+https://github.com/user-attachments/assets/75258047-2471-4920-8874-30d68c492683
+
+Open Chat, select your agent, and ask:
+
+> What is Agno?
+
+The agent retrieves context from the Agno MCP server and responds with grounded answers.
+
+https://github.com/user-attachments/assets/24c28d28-1d17-492c-815d-810e992ea8d2
+
+You can use this exact same architecture for running multi-agent systems in production.
+
+## Why Agno?
+
+Agentic software introduces three fundamental shifts.
+
+### A new interaction model
+
+Traditional software receives a request and returns a response. Agents stream reasoning, tool calls, and results in real time. They can pause mid-execution, wait for approval, and resume later.
+
+Agno treats streaming and long-running execution as first-class behavior.
+
+### A new governance model
+
+Traditional systems execute predefined decision logic written in advance. Agents choose actions dynamically. Some actions are low risk. Some require user approval. Some require administrative authority.
+
+Agno lets you define who decides what as part of the agent definition, with:
+
+- Approval workflows
+- Human-in-the-loop
+- Audit logs
+- Enforcement at runtime
+
+### A new trust model
+
+Traditional systems are designed to be predictable. Every execution path is defined in advance. Agents introduce probabilistic reasoning into the execution path.
+
+Agno builds trust into the engine itself:
+
+- Guardrails run as part of execution
+- Evaluations integrate into the agent loop
+- Traces and audit logs are first-class
+
+## Built for Production
+
+Agno runs in your infrastructure, not ours.
+
+- Stateless, horizontally scalable runtime.
+- 50+ APIs and background execution.
+- Per-user and per-session isolation.
+- Runtime approval enforcement.
+- Native tracing and full auditability.
+- Sessions, memory, knowledge, and traces stored in your database.
+
+You own the system. You own the data. You define the rules.
 
 ## What You Can Build
 
-**Gcode**: a lightweight coding agent that writes, reviews, and iterates on code. It remembers project conventions, learns from its mistakes, and gets sharper the more you use it.
+Agno powers real agentic systems built from the same primitives above.
 
-```python
-from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
-from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
-from agno.models.openai import OpenAIResponses
-from agno.tools.coding import CodingTools
-from agno.tools.reasoning import ReasoningTools
+- [**Pal →**](https://github.com/agno-agi/pal) A personal agent that learns your preferences.
+- [**Dash →**](https://github.com/agno-agi/dash) A self-learning data agent grounded in six layers of context.
+- [**Scout →**](https://github.com/agno-agi/scout) A self-learning context agent that manages enterprise context knowledge.
+- [**Gcode →**](https://github.com/agno-agi/gcode) A post-IDE coding agent that improves over time.
+- [**Investment Team →**](https://github.com/agno-agi/investment-team) A multi-agent investment committee that debates and allocates capital.
 
-gcode = Agent(
-    name="Gcode",
-    model=OpenAIResponses(id="gpt-5.2"),
-    db=SqliteDb(db_file="agno.db"),
-    instructions=instructions,
-    knowledge=gcode_knowledge,
-    search_knowledge=True,
-    learning=LearningMachine(
-        knowledge=gcode_learnings,
-        learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
-    ),
-    tools=[CodingTools(base_dir=workspace, all=True), ReasoningTools()],
-    enable_agentic_memory=True,
-    add_history_to_context=True,
-    num_history_runs=10,
-    markdown=True,
-)
-```
-
-Knowledge, learning, memory, governance and tools are part of the agent definition. They are primitives in Agno.
-
-[Read more →](https://docs.agno.com/deploy/templates/gcode/overview)
+Single agents. Coordinated teams. Structured workflows. All built on one architecture.
 
 ## Get Started
 

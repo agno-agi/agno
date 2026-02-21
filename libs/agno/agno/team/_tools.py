@@ -124,6 +124,7 @@ def _determine_tools_for_model(
         _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
         _update_session_state_tool,
+        create_knowledge_search_tool,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -191,19 +192,19 @@ def _determine_tools_for_model(
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and team.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-        if callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
+    # Single unified path through get_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or team.knowledge_retriever is not None) and team.search_knowledge:
+        _tools.append(
+            create_knowledge_search_tool(
+                team,
                 run_response=run_response,
                 run_context=run_context,
                 knowledge_filters=run_context.knowledge_filters,
-                async_mode=async_mode,
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
-                agent=team,
+                async_mode=async_mode,
             )
-            _tools.extend(knowledge_tools)
+        )
 
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)

@@ -13,7 +13,7 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.filters import FilterExpr
+from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -535,7 +535,8 @@ class Knowledge(RemoteKnowledge):
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # List-based filters: user must add linked_to filter manually
+                elif isinstance(search_filters, list):
+                    search_filters = [EQ("linked_to", self.name), *search_filters]
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
@@ -574,7 +575,8 @@ class Knowledge(RemoteKnowledge):
                     search_filters = {"linked_to": self.name}
                 elif isinstance(search_filters, dict):
                     search_filters = {**search_filters, "linked_to": self.name}
-                # List-based filters: user must add linked_to filter manually
+                elif isinstance(search_filters, list):
+                    search_filters = [EQ("linked_to", self.name), *search_filters]
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
@@ -965,6 +967,10 @@ class Knowledge(RemoteKnowledge):
         2. If exclude is specified, file must not match any exclude pattern
         3. If neither specified, include all files
 
+        Patterns without path separators (e.g. ``*.go``) are matched against
+        the filename only so they work when *file_path* is a full or relative
+        path that contains directories.
+
         Args:
             file_path: Path to the file to check
             include: Optional list of include patterns (glob-style)
@@ -974,15 +980,22 @@ class Knowledge(RemoteKnowledge):
             bool: True if file should be included, False otherwise
         """
         import fnmatch
+        import os
+
+        file_name = os.path.basename(file_path)
+
+        def _matches(path: str, name: str, pattern: str) -> bool:
+            """Match pattern against both the full path and the basename."""
+            return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(name, pattern)
 
         # If include patterns specified, file must match at least one
         if include:
-            if not any(fnmatch.fnmatch(file_path, pattern) for pattern in include):
+            if not any(_matches(file_path, file_name, pattern) for pattern in include):
                 return False
 
         # If exclude patterns specified, file must not match any
         if exclude:
-            if any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude):
+            if any(_matches(file_path, file_name, pattern) for pattern in exclude):
                 return False
 
         return True
@@ -1293,9 +1306,7 @@ class Knowledge(RemoteKnowledge):
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
-            # Add linked_to to metadata for vector search filtering (only when isolation is enabled)
-            if self.isolate_vector_search:
-                document.meta_data["linked_to"] = self.name or ""
+            document.meta_data["linked_to"] = self.name or ""
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:

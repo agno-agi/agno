@@ -666,10 +666,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     if team.metadata is not None:
         config["metadata"] = team.metadata
 
-    # --- Version ---
-    if team.version is not None:
-        config["version"] = team.version
-
     # --- Debug and telemetry settings ---
     if team.debug_mode:
         config["debug_mode"] = team.debug_mode
@@ -982,10 +978,6 @@ def from_dict(
             telemetry=config.get("telemetry", True),
         ),
     )
-
-    # Set fields that are not constructor parameters
-    if "version" in config:
-        team.version = config["version"]
 
     return team
 
