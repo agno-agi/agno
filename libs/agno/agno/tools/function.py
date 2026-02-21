@@ -70,6 +70,65 @@ class UserInputField:
         )
 
 
+@dataclass
+class UserFeedbackOption:
+    """An option for a user feedback question."""
+
+    label: str
+    description: Optional[str] = None
+    selected: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "label": self.label,
+            "description": self.description,
+            "selected": self.selected,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserFeedbackOption":
+        return cls(
+            label=data["label"],
+            description=data.get("description"),
+            selected=data.get("selected", False),
+        )
+
+
+@dataclass
+class UserFeedbackQuestion:
+    """A structured question with predefined options for user feedback."""
+
+    question: str
+    header: Optional[str] = None
+    options: Optional[List["UserFeedbackOption"]] = None
+    multi_select: bool = False
+    selected_options: Optional[List[str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "question": self.question,
+            "header": self.header,
+            "multi_select": self.multi_select,
+            "selected_options": self.selected_options,
+        }
+        if self.options is not None:
+            result["options"] = [opt.to_dict() for opt in self.options]
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserFeedbackQuestion":
+        options = None
+        if data.get("options") is not None:
+            options = [UserFeedbackOption.from_dict(opt) if isinstance(opt, dict) else opt for opt in data["options"]]
+        return cls(
+            question=data["question"],
+            header=data.get("header"),
+            options=options,
+            multi_select=data.get("multi_select", False),
+            selected_options=data.get("selected_options"),
+        )
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 
@@ -124,6 +183,10 @@ class Function(BaseModel):
     # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
     external_execution_silent: Optional[bool] = None
 
+    # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
+    # Set via the @approval decorator, not directly via @tool().
+    approval_type: Optional[str] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -146,7 +209,15 @@ class Function(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
-            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+            include={
+                "name",
+                "description",
+                "parameters",
+                "strict",
+                "requires_confirmation",
+                "external_execution",
+                "approval_type",
+            },
         )
 
     @classmethod
@@ -160,6 +231,7 @@ class Function(BaseModel):
             strict=data.get("strict"),
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
+            approval_type=data.get("approval_type"),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":

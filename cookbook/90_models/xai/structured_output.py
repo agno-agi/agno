@@ -1,3 +1,10 @@
+"""
+Xai Structured Output
+=====================
+
+Cookbook example for `xai/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
@@ -5,6 +12,10 @@ from agno.models.xai.xai import xAI
 from agno.run.agent import RunOutput
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -38,3 +49,10 @@ structured_output_response: RunOutput = structured_output_agent.run(
     "Llamas ruling the world"
 )
 pprint(structured_output_response.content)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

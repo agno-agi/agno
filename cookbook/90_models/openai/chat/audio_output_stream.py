@@ -1,3 +1,10 @@
+"""
+Openai Audio Output Stream
+==========================
+
+Cookbook example for `openai/chat/audio_output_stream.py`.
+"""
+
 import base64
 import wave
 from typing import Iterator
@@ -5,6 +12,10 @@ from typing import Iterator
 from agno.agent import Agent, RunOutputEvent  # noqa
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Audio Configuration
 SAMPLE_RATE = 24000  # Hz (24kHz)
@@ -53,3 +64,10 @@ print(f"Saved audio to {filename}")
 
 print("Metrics:")
 print(agent.get_last_run_output().metrics)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

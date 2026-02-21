@@ -39,7 +39,14 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
-from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
+from agno.tools.function import (
+    Function,
+    FunctionCall,
+    FunctionExecutionResult,
+    UserFeedbackOption,
+    UserFeedbackQuestion,
+    UserInputField,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
@@ -790,6 +797,13 @@ class Model(ABC):
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                         break
 
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
+
                     # Continue loop to get next response
                     continue
 
@@ -993,6 +1007,13 @@ class Model(ABC):
                     # If we have any tool calls that require user input, break the loop
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                         break
+
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
 
                     # Continue loop to get next response
                     continue
@@ -1429,6 +1450,13 @@ class Model(ABC):
                     if any(fc.function.requires_user_input for fc in function_calls_to_run):
                         break
 
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
+
                     # Continue loop to get next response
                     continue
 
@@ -1672,6 +1700,13 @@ class Model(ABC):
                     # If we have any tool calls that require user input, break the loop
                     if any(fc.function.requires_user_input for fc in function_calls_to_run):
                         break
+
+                    # Check if run_response has requirements (e.g., from member agent HITL)
+                    # This handles cases where a tool (like delegate_task_to_member) propagates
+                    # HITL requirements from a member agent to the team's run_response
+                    if run_response is not None and run_response.requirements:
+                        if any(not req.is_resolved() for req in run_response.requirements):
+                            break
 
                     # Continue loop to get next response
                     continue
@@ -2109,6 +2144,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
@@ -2128,6 +2164,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_user_input=True,
+                        approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
@@ -2170,6 +2207,35 @@ class Model(ABC):
                     )
                 )
 
+            # If the function is from the user feedback tools, we handle it here
+            if fc.function.name == "ask_user" and fc.arguments and fc.arguments.get("questions"):
+                user_feedback_schema = []
+                for q in fc.arguments.get("questions", []):
+                    options = None
+                    if q.get("options"):
+                        options = [
+                            UserFeedbackOption(label=opt.get("label", ""), description=opt.get("description"))
+                            for opt in q["options"]
+                        ]
+                    user_feedback_schema.append(
+                        UserFeedbackQuestion(
+                            question=q.get("question", ""),
+                            header=q.get("header"),
+                            options=options,
+                            multi_select=q.get("multi_select", False),
+                        )
+                    )
+
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_feedback_schema=user_feedback_schema,
+                    )
+                )
+
             # The function requires external execution (HITL)
             if fc.function.external_execution:
                 paused_tool_executions.append(
@@ -2178,6 +2244,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
@@ -2273,6 +2340,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )
@@ -2291,6 +2359,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_user_input=True,
+                        approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
@@ -2337,6 +2406,40 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
+            # If the function is from the user feedback tools, we handle it here
+            if (
+                fc.function.name == "ask_user"
+                and fc.arguments
+                and fc.arguments.get("questions")
+                and not skip_pause_check
+            ):
+                fc.function.requires_user_input = True
+                user_feedback_schema = []
+                for q in fc.arguments.get("questions", []):
+                    options = None
+                    if q.get("options"):
+                        options = [
+                            UserFeedbackOption(label=opt.get("label", ""), description=opt.get("description"))
+                            for opt in q["options"]
+                        ]
+                    user_feedback_schema.append(
+                        UserFeedbackQuestion(
+                            question=q.get("question", ""),
+                            header=q.get("header"),
+                            options=options,
+                            multi_select=q.get("multi_select", False),
+                        )
+                    )
+
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_feedback_schema=user_feedback_schema,
+                    )
+                )
             # If the function requires external execution, we yield a message to the user
             if fc.function.external_execution and not skip_pause_check:
                 paused_tool_executions.append(
@@ -2345,6 +2448,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
                     )
                 )

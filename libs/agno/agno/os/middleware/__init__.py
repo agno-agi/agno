@@ -21,7 +21,11 @@ except ImportError:
 from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
 __all__ = [
-    "JWTMiddleware",
-    "TokenSource",
-    "TrailingSlashMiddleware",
+    name
+    for name in (
+        "JWTMiddleware",
+        "TokenSource",
+        "TrailingSlashMiddleware",
+    )
+    if name in globals()
 ]

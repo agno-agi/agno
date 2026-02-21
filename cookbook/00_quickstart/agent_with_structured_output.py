@@ -26,15 +26,15 @@ from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Storage Configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_db = SqliteDb(db_file="tmp/agents.db")
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Structured Output Schema
-# ============================================================================
+# ---------------------------------------------------------------------------
 class StockAnalysis(BaseModel):
     """Structured output for stock analysis."""
 
@@ -53,9 +53,9 @@ class StockAnalysis(BaseModel):
     )
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Agent Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are a Finance Agent — a data-driven analyst who retrieves market data,
 computes key ratios, and produces concise, decision-ready insights.
@@ -82,14 +82,14 @@ computes key ratios, and produces concise, decision-ready insights.
 - Recommendation must be one of: Strong Buy, Buy, Hold, Sell, Strong Sell\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_with_structured_output = Agent(
     name="Agent with Structured Output",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     output_schema=StockAnalysis,
     db=agent_db,
     add_datetime_to_context=True,
@@ -98,9 +98,9 @@ agent_with_structured_output = Agent(
     markdown=True,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Get structured output
     response = agent_with_structured_output.run("Analyze NVIDIA")
@@ -126,9 +126,9 @@ if __name__ == "__main__":
     print(f"\nRecommendation: {analysis.recommendation}")
     print(f"{'=' * 60}\n")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 Structured output is perfect for:
 

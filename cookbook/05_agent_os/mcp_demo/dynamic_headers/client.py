@@ -23,6 +23,10 @@ from agno.run import RunContext
 from agno.team.team import Team
 from agno.tools.mcp import MCPTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 if TYPE_CHECKING:
     from agno.agent import Agent as AgentType
     from agno.team.team import Team as TeamType
@@ -82,6 +86,10 @@ agent_os = AgentOS(
 )
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="client:app")

@@ -1,5 +1,17 @@
+"""
+Custom Api Tools
+=============================
+
+Demonstrates custom api tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.api import CustomApiTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """
 Args:
@@ -23,6 +35,10 @@ agent_all = Agent(
     markdown=True,
 )
 
-agent.print_response(
-    'Make api calls to the following two different endpoints- /breeds/image/random and /breeds/list/all to get a random dog image and list of dog breeds respectively. Make sure that the method is "GET" for both the api calls.'
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        'Make api calls to the following two different endpoints- /breeds/image/random and /breeds/list/all to get a random dog image and list of dog breeds respectively. Make sure that the method is "GET" for both the api calls.'
+    )
