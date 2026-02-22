@@ -188,3 +188,40 @@ def test_reasoning_previous_response_skips_prior_function_call_items(monkeypatch
 
     # Expect no re-sent function_call when previous_response_id is present for reasoning models
     assert all(x.get("type") != "function_call" for x in fm)
+
+
+def test_format_function_call_results_preserves_existing_tool_call_id():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+
+    # Simulate mixed tool calls where only one tool result is available now
+    function_call_results = [
+        Message(role="tool", tool_call_id="call_non_external", content="ok"),
+    ]
+    messages: List[Message] = []
+
+    model.format_function_call_results(
+        messages=messages,
+        function_call_results=function_call_results,
+        tool_call_ids=["call_external", "call_non_external"],
+    )
+
+    assert len(messages) == 1
+    assert messages[0].tool_call_id == "call_non_external"
+
+
+def test_format_function_call_results_backfills_missing_tool_call_id_from_extra():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+
+    function_call_results = [
+        Message(role="tool", content="ok"),
+    ]
+    messages: List[Message] = []
+
+    model.format_function_call_results(
+        messages=messages,
+        function_call_results=function_call_results,
+        tool_call_ids=["call_def456"],
+    )
+
+    assert len(messages) == 1
+    assert messages[0].tool_call_id == "call_def456"

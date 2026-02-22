@@ -872,7 +872,7 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        tool_call_ids: List[str],
+        tool_call_ids: Optional[List[str]] = None,
         compress_tool_results: bool = False,
     ) -> None:
         """
@@ -881,12 +881,20 @@ class OpenAIResponses(Model):
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
+            tool_call_ids (Optional[List[str]]): Tool call IDs from provider response.
             compress_tool_results (bool): Whether to compress tool results.
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+                # Preserve the tool_call_id produced by function execution whenever available.
+                # This avoids mismatches when only a subset of tool calls are executed (e.g.,
+                # mixed external_execution and non-external_execution tool calls).
+                if (
+                    not _fc_message.tool_call_id
+                    and tool_call_ids is not None
+                    and _fc_message_index < len(tool_call_ids)
+                ):
+                    _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
