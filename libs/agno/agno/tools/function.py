@@ -698,7 +698,6 @@ class Function(BaseModel):
         from time import time
 
         try:
-            # Convert Pydantic models to dicts for JSON serialization
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
             with open(cache_file, "w") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
