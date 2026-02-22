@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, validate_call
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
+from agno.utils.common import nested_model_dump
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -698,8 +699,9 @@ class Function(BaseModel):
         from time import time
 
         try:
+            serializable_result = nested_model_dump(result)
             with open(cache_file, "w") as f:
-                json.dump({"timestamp": time(), "result": result}, f)
+                json.dump({"timestamp": time(), "result": serializable_result}, f)
         except Exception as e:
             log_error(f"Error writing cache: {e}")
 

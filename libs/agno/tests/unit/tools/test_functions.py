@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
@@ -318,6 +318,25 @@ def test_function_cache_ttl(tmp_path):
 
     # Verify cache is no longer valid
     assert func._get_cached_result(cache_file) is None
+
+
+def test_function_cache_pydantic_model_result(tmp_path):
+    """Test that cache save/retrieve works when tool returns a Pydantic model."""
+    import os
+
+    class OrderResponse(BaseModel):
+        success: bool
+        data: dict | None = None
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
+    result = OrderResponse(success=True, data={"id": 12345, "status": "delivered"})
+    cache_file = os.path.join(str(tmp_path), "pydantic_cache.json")
+
+    func._save_to_cache(cache_file, result)
+
+    assert os.path.exists(cache_file)
+    retrieved = func._get_cached_result(cache_file)
+    assert retrieved == {"success": True, "data": {"id": 12345, "status": "delivered"}}
 
 
 def test_function_call_initialization():
