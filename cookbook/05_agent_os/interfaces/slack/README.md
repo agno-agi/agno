@@ -15,8 +15,6 @@ Streaming requires the `assistant:write` scope and the `assistant_thread_started
 event subscription. Tokens arrive in real-time and tool calls render as progress
 cards in Slack's plan display.
 
-- `streaming.py` — Agent with tool progress cards, thread titles, and suggested prompts.
-- `streaming_research.py` — Research agent with multiple tools and rich plan-block cards.
 - `streaming_deep_research.py` — Deep research agent with 7 toolkits stress-testing plan display.
 - `streaming_team.py` — Multi-agent stock research team with streaming.
 
@@ -34,11 +32,6 @@ cards in Slack's plan display.
 - `reasoning_agent.py` — Agent with ReasoningTools for step-by-step thinking.
 - `research_assistant.py` — Agent combining Slack message search with web search.
 - `multiple_instances.py` — Two bots on one server with separate credentials.
-
-## Testing
-
-- `test_all.py` — Two apps (workflow + team) on one server for comprehensive testing.
-- `test_streaming_events.py` — Switch between agent/team/workflow with `TEST_MODE` env var.
 
 ## Prerequisites
 

@@ -18,22 +18,6 @@
 
 ---
 
-### streaming.py
-
-**Status:** PASS
-
-**Description:** Streaming agent with WebSearchTools. Tested with `@Agent test What is the latest news about AI agents?` in #interfaces channel. Bot responded with a well-structured numbered list of 5 news articles (TechRepublic, HBR, Business Insider, VentureBeat, MSN) with bold titles, summaries, and source links. Response streamed via `chat_stream` with proper markdown formatting. WebSearchTools executed correctly mid-stream.
-
----
-
-### streaming_research.py
-
-**Status:** PASS
-
-**Description:** Research agent with DuckDuckGo, HackerNews, and YFinance tools. Tested with `@Agent test What are the top stories on HackerNews today?` in #interfaces channel via Cloudflare tunnel. Bot returned a well-formatted list of 10 real HackerNews stories with bold titles, source links, and descriptions. HackerNewsTools correctly fetched live data from the HN API. Response streamed via `chat_stream`.
-
----
-
 ### streaming_deep_research.py
 
 **Status:** PENDING
@@ -122,18 +106,3 @@
 
 ---
 
-### test_all.py
-
-**Status:** PENDING
-
-**Description:** Two apps (Dash workflow + Ace team) on one server with separate credentials. Tests workflow streaming (parallel research + synthesis) and team streaming (web search + coordination). Requires two Slack app configurations.
-
----
-
-### test_streaming_events.py
-
-**Status:** PENDING
-
-**Description:** Switchable agent/team/workflow via `TEST_MODE` env var. Agent mode tests reasoning + tool calls; Team mode tests member coordination; Workflow mode tests Parallel + Condition steps.
-
----
