@@ -1,0 +1,74 @@
+"""
+GCP Integration: Google Cloud Storage
+=======================================
+Load files and folders from GCS buckets into your Knowledge base.
+
+Features:
+- Load single files or entire prefixes recursively
+- Automatic file type detection
+- Service account or application default credentials
+
+Requirements:
+- GCP credentials configured
+- GCS bucket with read access
+
+Environment Variables:
+    GOOGLE_APPLICATION_CREDENTIALS - Path to service account key file
+    GCS_BUCKET_NAME               - GCS bucket name
+"""
+
+from os import getenv
+
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.remote_content import GCSConfig
+from agno.vectordb.pgvector import PgVector
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+gcs_config = GCSConfig(
+    id="my-gcs-bucket",
+    name="My GCS Bucket",
+    bucket=getenv("GCS_BUCKET_NAME", "my-bucket"),
+)
+
+knowledge = Knowledge(
+    name="GCS Knowledge",
+    vector_db=PgVector(
+        table_name="gcs_knowledge",
+        db_url=db_url,
+    ),
+    content_sources=[gcs_config],
+)
+
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Single file
+    print("\n" + "=" * 60)
+    print("GCS: single file")
+    print("=" * 60 + "\n")
+
+    knowledge.insert(
+        name="Report",
+        remote_content=gcs_config.file("reports/quarterly.pdf"),
+    )
+
+    # Folder
+    print("\n" + "=" * 60)
+    print("GCS: folder")
+    print("=" * 60 + "\n")
+
+    knowledge.insert(
+        name="All Reports",
+        remote_content=gcs_config.folder("reports/"),
+    )
+
+    results = knowledge.search("What were the results?")
+    for doc in results:
+        print("- %s" % doc.name)
