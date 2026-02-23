@@ -78,7 +78,6 @@ def build_agent():
                 agent=agent,
                 streaming=True,
                 reply_to_mentions_only=True,
-                initial_buffer_size=1,
                 loading_messages=["Thinking...", "Searching...", "Analyzing..."],
                 suggested_prompts=[
                     {
@@ -140,7 +139,6 @@ def build_team():
                 team=team,
                 streaming=True,
                 reply_to_mentions_only=True,
-                initial_buffer_size=1,
                 loading_messages=[
                     "Coordinating team...",
                     "Researching...",
@@ -229,7 +227,6 @@ def build_workflow():
                 workflow=workflow,
                 streaming=True,
                 reply_to_mentions_only=True,
-                initial_buffer_size=1,
                 loading_messages=[
                     "Starting workflow...",
                     "Researching...",

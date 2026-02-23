@@ -74,7 +74,6 @@ agent_os = AgentOS(
             agent=deep_research_agent,
             streaming=True,
             reply_to_mentions_only=True,
-            initial_buffer_size=1,
             loading_messages=[
                 "Researching across multiple sources...",
                 "Gathering data from 7 different tools...",

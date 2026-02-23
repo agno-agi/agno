@@ -1,10 +1,17 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
+
+TaskStatus = Literal["in_progress", "complete", "error"]
+
+
+@dataclass
+class TaskCard:
+    title: str
+    status: TaskStatus = "in_progress"
 
 
 @dataclass
 class StreamState:
-    first_flush_done: bool = False
     title_set: bool = False
     error_count: int = 0
 
@@ -13,8 +20,7 @@ class StreamState:
     reasoning_round: int = 0
 
     progress_started: bool = False
-    # {task_key: [title, status]}
-    task_cards: Dict[str, List[str]] = field(default_factory=dict)
+    task_cards: Dict[str, TaskCard] = field(default_factory=dict)
 
     images: list = field(default_factory=list)
     videos: list = field(default_factory=list)
@@ -27,26 +33,29 @@ class StreamState:
 
     workflow_final_content: str = ""
 
+    # Set by handlers on terminal events; router reads this for the final flush
+    terminal_status: str = ""
+
     def track_task(self, key: str, title: str) -> None:
-        self.task_cards[key] = [title, "in_progress"]
+        self.task_cards[key] = TaskCard(title=title)
         self.progress_started = True
 
     def complete_task(self, key: str) -> None:
         card = self.task_cards.get(key)
         if card:
-            card[1] = "complete"
+            card.status = "complete"
 
     def error_task(self, key: str) -> None:
         card = self.task_cards.get(key)
         if card:
-            card[1] = "error"
+            card.status = "error"
 
     def resolve_all_pending(self, status: str = "complete") -> List[dict]:
         chunks: List[dict] = []
         for key, card in self.task_cards.items():
-            if card[1] == "in_progress":
-                card[1] = status
-                chunks.append({"type": "task_update", "id": key, "title": card[0], "status": status})
+            if card.status == "in_progress":
+                card.status = status  # type: ignore[assignment]
+                chunks.append({"type": "task_update", "id": key, "title": card.title, "status": status})
         return chunks
 
     def collect_media(self, chunk: Any) -> None:

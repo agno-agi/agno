@@ -67,7 +67,6 @@ agent_os = AgentOS(
             agent=research_agent,
             streaming=True,
             reply_to_mentions_only=True,
-            initial_buffer_size=1,
             loading_messages=[
                 "Researching...",
                 "Gathering sources...",

@@ -25,11 +25,10 @@ class Slack(BaseInterface):
         reply_to_mentions_only: bool = True,
         token: Optional[str] = None,
         signing_secret: Optional[str] = None,
-        streaming: bool = False,
+        streaming: bool = True,
         loading_messages: Optional[List[str]] = None,
         task_display_mode: str = "plan",
-        buffer_size: int = 256,
-        initial_buffer_size: int = 1,
+        loading_text: str = "Thinking...",
         suggested_prompts: Optional[List[Dict[str, str]]] = None,
         ssl: Optional[SSLContext] = None,
     ):
@@ -44,8 +43,7 @@ class Slack(BaseInterface):
         self.streaming = streaming
         self.loading_messages = loading_messages
         self.task_display_mode = task_display_mode
-        self.buffer_size = buffer_size
-        self.initial_buffer_size = initial_buffer_size
+        self.loading_text = loading_text
         self.suggested_prompts = suggested_prompts
         self.ssl = ssl
 
@@ -64,8 +62,7 @@ class Slack(BaseInterface):
             streaming=self.streaming,
             loading_messages=self.loading_messages,
             task_display_mode=self.task_display_mode,
-            buffer_size=self.buffer_size,
-            initial_buffer_size=self.initial_buffer_size,
+            loading_text=self.loading_text,
             suggested_prompts=self.suggested_prompts,
             ssl=self.ssl,
         )

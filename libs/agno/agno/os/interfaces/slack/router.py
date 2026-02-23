@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from ssl import SSLContext
 from typing import Any, Dict, List, Optional, Union
 
@@ -5,16 +6,13 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.slack.handlers import (
-    _BOT_SUBTYPES,
-    DISPATCH,
-    WORKFLOW_DISPATCH,
-)
 from agno.os.interfaces.slack.helpers import (
     download_event_files,
     extract_event_context,
+    member_name,
     send_slack_message,
     should_respond,
+    task_id,
     upload_response_media,
 )
 from agno.os.interfaces.slack.security import verify_slack_signature
@@ -23,6 +21,293 @@ from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
+
+_BOT_SUBTYPES = frozenset({"bot_message", "bot_add", "bot_remove", "bot_enable", "bot_disable"})
+
+
+# ---------------------------------------------------------------------------
+# Event processing helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_event(event: str) -> str:
+    """Unify agent and team event strings.
+
+    RunEvent values:  'ReasoningStarted', 'ToolCallStarted', etc.
+    TeamRunEvent values: 'TeamReasoningStarted', 'TeamToolCallStarted', etc.
+
+    Stripping the 'Team' prefix lets us handle both with one if/elif branch.
+    Workflow events (no 'Team' prefix) pass through unchanged.
+    """
+    return event[4:] if event.startswith("Team") else event
+
+
+@dataclass(frozen=True)
+class _ToolRef:
+    tid: str | None
+    label: str
+    errored: bool
+
+
+def _extract_tool_ref(chunk: Any, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
+    tool = getattr(chunk, "tool", None)
+    tool_name = (tool.tool_name if tool else None) or "tool"
+    call_id = (tool.tool_call_id if tool else None) or fallback_id
+    member = member_name(chunk, state.entity_name)
+    label = f"{member}: {tool_name}" if member else tool_name
+    tid = task_id(member, call_id) if call_id else None  # type: ignore[arg-type]
+    errored = bool(tool.tool_call_error) if tool else False
+    return _ToolRef(tid=tid, label=label, errored=errored)
+
+
+async def _emit_task(
+    stream: Any,
+    task_id: str,
+    title: str,
+    status: str,
+    *,
+    output: str | None = None,
+) -> None:
+    chunk: dict = {"type": "task_update", "id": task_id, "title": title, "status": status}
+    if output:
+        chunk["output"] = output[:200]
+    await stream.append(chunks=[chunk])
+
+
+async def _wf_task(
+    chunk: Any,
+    state: StreamState,
+    stream: Any,
+    prefix: str,
+    label: str = "",
+    *,
+    started: bool,
+    name_attr: str = "step_name",
+) -> None:
+    """Handle a workflow structural event (step/parallel/condition/router/agent/steps)."""
+    name = getattr(chunk, name_attr, None) or prefix
+    sid = getattr(chunk, "step_id", None) or name
+    key = f"wf_{prefix}_{sid}"
+    title = f"{label}: {name}" if label else name
+    if started:
+        state.track_task(key, title)
+        await _emit_task(stream, key, title, "in_progress")
+    else:
+        state.complete_task(key)
+        await _emit_task(stream, key, title, "complete")
+
+
+# Nested agent events suppressed in workflow mode — users see step-level progress only.
+# These are NORMALIZED values (no "Team" prefix), so this single set covers both.
+_SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
+    {
+        "ReasoningStarted",
+        "ReasoningCompleted",
+        "ToolCallStarted",
+        "ToolCallCompleted",
+        "ToolCallError",
+        "MemoryUpdateStarted",
+        "MemoryUpdateCompleted",
+        "RunContent",
+        "RunIntermediateContent",
+        "RunCompleted",
+        "RunError",
+        "RunCancelled",
+    }
+)
+
+
+async def _process_event(ev_raw: str, chunk: Any, state: StreamState, stream: Any) -> bool:
+    """Process one stream event. Returns True to break the stream loop."""
+    ev = _normalize_event(ev_raw)
+    is_workflow = state.entity_type == "workflow"
+
+    # Workflow mode: suppress nested agent internals
+    if is_workflow and ev in _SUPPRESSED_IN_WORKFLOW:
+        return False
+
+    # --- Reasoning ---
+    if ev == "ReasoningStarted":
+        key = f"reasoning_{state.reasoning_round}"
+        state.track_task(key, "Reasoning")
+        await _emit_task(stream, key, "Reasoning", "in_progress")
+
+    elif ev == "ReasoningCompleted":
+        key = f"reasoning_{state.reasoning_round}"
+        state.complete_task(key)
+        state.reasoning_round += 1
+        await _emit_task(stream, key, "Reasoning", "complete")
+
+    # --- Tools ---
+    elif ev == "ToolCallStarted":
+        ref = _extract_tool_ref(chunk, state, fallback_id=str(len(state.task_cards)))
+        if ref.tid:
+            state.track_task(ref.tid, ref.label)
+            await _emit_task(stream, ref.tid, ref.label, "in_progress")
+
+    elif ev == "ToolCallCompleted":
+        ref = _extract_tool_ref(chunk, state)
+        if ref.tid:
+            if ref.tid not in state.task_cards:
+                state.track_task(ref.tid, ref.label)
+            if ref.errored:
+                state.error_task(ref.tid)
+            else:
+                state.complete_task(ref.tid)
+            await _emit_task(stream, ref.tid, ref.label, "error" if ref.errored else "complete")
+
+    elif ev == "ToolCallError":
+        ref = _extract_tool_ref(chunk, state, fallback_id=f"tool_error_{state.error_count}")
+        error_msg = getattr(chunk, "error", None) or "Tool call failed"
+        state.error_count += 1
+        if ref.tid:
+            if ref.tid in state.task_cards:
+                state.error_task(ref.tid)
+            else:
+                state.track_task(ref.tid, ref.label)
+                state.error_task(ref.tid)
+            await _emit_task(stream, ref.tid, ref.label, "error", output=str(error_msg))
+
+    # --- Content ---
+    elif ev == "RunContent":
+        content = getattr(chunk, "content", None)
+        if content is not None:
+            state.text_buffer += str(content)
+
+    elif ev == "RunIntermediateContent":
+        # Teams emit partial member output — suppress to avoid interleaving.
+        # The final RunContent from the team leader has the consolidated response.
+        if state.entity_type != "team":
+            content = getattr(chunk, "content", None)
+            if content is not None:
+                state.text_buffer += str(content)
+
+    # --- Memory ---
+    elif ev == "MemoryUpdateStarted":
+        state.track_task("memory_update", "Updating memory")
+        await _emit_task(stream, "memory_update", "Updating memory", "in_progress")
+
+    elif ev == "MemoryUpdateCompleted":
+        state.complete_task("memory_update")
+        await _emit_task(stream, "memory_update", "Updating memory", "complete")
+
+    # --- Run lifecycle ---
+    elif ev == "RunCompleted":
+        pass  # Finalization handled by caller after stream ends
+
+    elif ev in ("RunError", "RunCancelled"):
+        state.error_count += 1
+        error_msg = getattr(chunk, "content", None) or "An error occurred"
+        state.text_buffer += f"\n_Error: {error_msg}_"
+        state.terminal_status = "error"
+        return True
+
+    # --- Workflow step output (behavior differs by mode) ---
+    elif ev_raw == "StepOutput":
+        content = getattr(chunk, "content", None)
+        if content is not None:
+            if is_workflow:
+                # Capture for final response (not streamed incrementally)
+                state.workflow_final_content = str(content)
+            else:
+                state.text_buffer += str(content)
+
+    # --- Workflow lifecycle ---
+    elif ev_raw == "WorkflowStarted":
+        wf_name = getattr(chunk, "workflow_name", None) or state.entity_name or "Workflow"
+        run_id = getattr(chunk, "run_id", None) or "run"
+        key = f"wf_run_{run_id}"
+        state.track_task(key, f"Workflow: {wf_name}")
+        await _emit_task(stream, key, f"Workflow: {wf_name}", "in_progress")
+
+    elif ev_raw == "WorkflowCompleted":
+        run_id = getattr(chunk, "run_id", None) or "run"
+        wf_name = getattr(chunk, "workflow_name", None) or state.entity_name or "Workflow"
+        key = f"wf_run_{run_id}"
+        state.complete_task(key)
+        await _emit_task(stream, key, f"Workflow: {wf_name}", "complete")
+        final = getattr(chunk, "content", None)
+        if final is None:
+            final = state.workflow_final_content
+        if final:
+            state.text_buffer += str(final)
+
+    elif ev_raw in ("WorkflowError", "WorkflowCancelled"):
+        state.error_count += 1
+        error_msg = getattr(chunk, "error", None) or getattr(chunk, "content", None) or "Workflow failed"
+        state.text_buffer += f"\n_Error: {error_msg}_"
+        state.terminal_status = "error"
+        return True
+
+    # --- Workflow structural events ---
+    elif ev_raw == "StepStarted":
+        await _wf_task(chunk, state, stream, "step", started=True)
+    elif ev_raw == "StepCompleted":
+        await _wf_task(chunk, state, stream, "step", started=False)
+    elif ev_raw == "StepError":
+        step_name = getattr(chunk, "step_name", None) or "step"
+        sid = getattr(chunk, "step_id", None) or step_name
+        key = f"wf_step_{sid}"
+        error_msg = getattr(chunk, "error", None) or "Step failed"
+        state.error_task(key)
+        await _emit_task(stream, key, step_name, "error", output=str(error_msg))
+
+    # --- Workflow loops (explicit — titles include iteration/max info) ---
+    elif ev_raw == "LoopExecutionStarted":
+        step_name = getattr(chunk, "step_name", None) or "loop"
+        loop_key = getattr(chunk, "step_id", None) or step_name
+        max_iter = getattr(chunk, "max_iterations", None)
+        title = f"Loop: {step_name}" + (f" (max {max_iter})" if max_iter else "")
+        key = f"wf_loop_{loop_key}"
+        state.track_task(key, title)
+        await _emit_task(stream, key, title, "in_progress")
+
+    elif ev_raw == "LoopIterationStarted":
+        loop_key = getattr(chunk, "step_id", None) or getattr(chunk, "step_name", None) or "loop"
+        iteration = getattr(chunk, "iteration", 0)
+        max_iter = getattr(chunk, "max_iterations", None)
+        title = f"Iteration {iteration}" + (f"/{max_iter}" if max_iter else "")
+        key = f"wf_loop_{loop_key}_iter_{iteration}"
+        state.track_task(key, title)
+        await _emit_task(stream, key, title, "in_progress")
+
+    elif ev_raw == "LoopIterationCompleted":
+        loop_key = getattr(chunk, "step_id", None) or getattr(chunk, "step_name", None) or "loop"
+        iteration = getattr(chunk, "iteration", 0)
+        key = f"wf_loop_{loop_key}_iter_{iteration}"
+        state.complete_task(key)
+        await _emit_task(stream, key, f"Iteration {iteration}", "complete")
+
+    elif ev_raw == "LoopExecutionCompleted":
+        step_name = getattr(chunk, "step_name", None) or "loop"
+        loop_key = getattr(chunk, "step_id", None) or step_name
+        key = f"wf_loop_{loop_key}"
+        state.complete_task(key)
+        await _emit_task(stream, key, f"Loop: {step_name}", "complete")
+
+    # --- Workflow parallel / conditions / routing / agent / steps ---
+    elif ev_raw == "ParallelExecutionStarted":
+        await _wf_task(chunk, state, stream, "parallel", "Parallel", started=True)
+    elif ev_raw == "ParallelExecutionCompleted":
+        await _wf_task(chunk, state, stream, "parallel", "Parallel", started=False)
+    elif ev_raw == "ConditionExecutionStarted":
+        await _wf_task(chunk, state, stream, "cond", "Condition", started=True)
+    elif ev_raw == "ConditionExecutionCompleted":
+        await _wf_task(chunk, state, stream, "cond", "Condition", started=False)
+    elif ev_raw == "RouterExecutionStarted":
+        await _wf_task(chunk, state, stream, "router", "Router", started=True)
+    elif ev_raw == "RouterExecutionCompleted":
+        await _wf_task(chunk, state, stream, "router", "Router", started=False)
+    elif ev_raw == "WorkflowAgentStarted":
+        await _wf_task(chunk, state, stream, "agent", "Running", started=True, name_attr="agent_name")
+    elif ev_raw == "WorkflowAgentCompleted":
+        await _wf_task(chunk, state, stream, "agent", "Running", started=False, name_attr="agent_name")
+    elif ev_raw == "StepsExecutionStarted":
+        await _wf_task(chunk, state, stream, "steps", "Steps", started=True)
+    elif ev_raw == "StepsExecutionCompleted":
+        await _wf_task(chunk, state, stream, "steps", "Steps", started=False)
+
+    return False
 
 
 class SlackEventResponse(BaseModel):
@@ -44,8 +329,7 @@ def attach_routes(
     streaming: bool = False,
     loading_messages: Optional[List[str]] = None,
     task_display_mode: str = "plan",
-    buffer_size: int = 256,
-    initial_buffer_size: int = 1,  # Flush first token immediately, then batch for efficiency
+    loading_text: str = "Thinking...",
     suggested_prompts: Optional[List[Dict[str, str]]] = None,
     ssl: Optional[SSLContext] = None,
 ) -> APIRouter:
@@ -233,41 +517,26 @@ def attach_routes(
                     pass
                 return
 
-            # buffer_size=0 disables SDK-level buffering — we manage our own via
-            # state.text_buffer with two thresholds: initial_buffer_size flushes the
-            # first token fast (responsive feel), then buffer_size batches the rest.
             stream = await async_client.chat_stream(
                 channel=ctx["channel_id"],
                 thread_ts=ctx["ts"],
                 recipient_team_id=team_id,
                 recipient_user_id=user_id,
                 task_display_mode=task_display_mode,
-                buffer_size=0,
+                buffer_size=1,
             )
 
-            dispatch = WORKFLOW_DISPATCH if state.entity_type == "workflow" else DISPATCH
-            stream_initialized = False
+            await stream.append(chunks=[{"type": "plan_update", "title": loading_text}])
             async for chunk in response_stream:
-                event_name = getattr(chunk, "event", None)
-                handler = dispatch.get(event_name) if event_name else None
-                if handler:
-                    # Lazy-start: send plan_update via startStream so all
-                    # subsequent task_update chunks go via appendStream
-                    # (Slack silently discards task_update in startStream).
-                    # Delaying until the first handler fires preserves the
-                    # setStatus typing indicator while the model thinks.
-                    if not stream_initialized:
-                        await stream.append(chunks=[{"type": "plan_update", "title": "Working..."}])
-                        stream_initialized = True
-                    action = await handler(chunk, state, stream)
-                    if action == "break":
+                state.collect_media(chunk)
+
+                ev = getattr(chunk, "event", None)
+                if ev:
+                    if await _process_event(ev, chunk, state, stream):
                         break
 
-                # Flush text buffer when threshold reached
+                # Flush text buffer immediately (token-by-token streaming)
                 if state.text_buffer:
-                    if not stream_initialized:
-                        await stream.append(chunks=[{"type": "plan_update", "title": "Working..."}])
-                        stream_initialized = True
                     if not state.title_set:
                         state.title_set = True
                         title = ctx["message_text"][:50].strip() or "New conversation"
@@ -278,13 +547,11 @@ def attach_routes(
                         except Exception:
                             pass
 
-                    threshold = buffer_size if state.first_flush_done else initial_buffer_size
-                    if len(state.text_buffer) >= threshold:
-                        await stream.append(markdown_text=state.text_buffer)
-                        state.text_buffer = ""
-                        state.first_flush_done = True
+                    await stream.append(markdown_text=state.text_buffer)
+                    state.text_buffer = ""
 
-            completion_chunks = state.resolve_all_pending() if state.progress_started else []
+            final_status = state.terminal_status or "complete"
+            completion_chunks = state.resolve_all_pending(final_status) if state.progress_started else []
             stop_kwargs: Dict[str, Any] = {}
             if state.text_buffer:
                 stop_kwargs["markdown_text"] = state.text_buffer

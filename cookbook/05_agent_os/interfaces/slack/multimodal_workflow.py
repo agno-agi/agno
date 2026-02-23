@@ -115,7 +115,6 @@ agent_os = AgentOS(
             workflow=creative_workflow,
             streaming=True,
             reply_to_mentions_only=True,
-            initial_buffer_size=1,
             suggested_prompts=[
                 {
                     "title": "Analyze",

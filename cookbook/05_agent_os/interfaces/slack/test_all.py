@@ -176,7 +176,6 @@ agent_os = AgentOS(
             signing_secret=DASH_SECRET,
             streaming=True,
             reply_to_mentions_only=True,
-            initial_buffer_size=1,
             loading_messages=[
                 "Thinking...",
                 "Searching the web...",
@@ -196,7 +195,6 @@ agent_os = AgentOS(
             signing_secret=ACE_SECRET,
             streaming=True,
             reply_to_mentions_only=True,
-            initial_buffer_size=1,
             loading_messages=[
                 "Thinking...",
                 "Researching...",
