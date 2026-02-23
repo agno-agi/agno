@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Base metrics
+# Base Metrics
 # ---------------------------------------------------------------------------
 
 
@@ -50,7 +50,7 @@ class BaseMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Model metrics – per-model aggregate (one entry per unique provider+id)
+# Model Metrics
 # ---------------------------------------------------------------------------
 
 
@@ -104,7 +104,7 @@ class ModelMetrics(BaseMetrics):
 
 
 # ---------------------------------------------------------------------------
-# Tool call metrics – timing only
+# Tool Call Metrics
 # ---------------------------------------------------------------------------
 
 
@@ -162,17 +162,13 @@ class ToolCallMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Message metrics – per-message (token counts + TTFT)
+# Message Metrics
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class MessageMetrics(BaseMetrics):
-    """Message-level metrics — token counts and timing.
-
-    Used by Message.metrics. Does not carry run-level fields like
-    details, additional_metrics, etc.
-    """
+    """Message-level metrics — token counts and timing. Used by Message.metrics."""
 
     timer: Optional[Timer] = None
     duration: Optional[float] = None
@@ -263,7 +259,7 @@ class MessageMetrics(BaseMetrics):
 
 
 # ---------------------------------------------------------------------------
-# Run metrics – per agent/team run
+# Run Metrics
 # ---------------------------------------------------------------------------
 
 
