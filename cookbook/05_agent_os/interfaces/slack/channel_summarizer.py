@@ -2,7 +2,14 @@
 Channel Summarizer
 ==================
 
-Demonstrates channel summarizer.
+An agent that uses SlackTools to read channel history, expand threads,
+and produce structured summaries grouped by topic.
+
+Key concepts:
+  - ``SlackTools`` with ``enable_get_thread`` and ``enable_search_messages``
+    lets the agent read Slack data as tool calls.
+  - Instructions guide the agent to group messages, highlight decisions,
+    and list action items.
 """
 
 from agno.agent import Agent

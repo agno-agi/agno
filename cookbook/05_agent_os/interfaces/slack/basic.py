@@ -1,8 +1,14 @@
 """
-Basic
-=====
+Basic Slack Agent
+=================
 
-Demonstrates basic.
+Minimal Slack bot that responds only when mentioned in a channel.
+Uses SQLite for session persistence so the agent remembers conversation
+history across restarts.
+
+Key concepts:
+  - ``reply_to_mentions_only=True`` ignores DMs and only responds to @mentions.
+  - ``add_history_to_context=True`` feeds the last N runs back into the prompt.
 """
 
 from agno.agent import Agent
