@@ -87,7 +87,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # ---------------------------------------------------------------------------
 agent_with_structured_output = Agent(
     name="Agent with Structured Output",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools(all=True)],
     output_schema=StockAnalysis,

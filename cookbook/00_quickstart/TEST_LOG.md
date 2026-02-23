@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-20
 **Environment:** `.venvs/demo/bin/python` (Python 3.12)
-**Model:** `gemini-3.1-pro-preview`
+**Model:** `gemini-3-flash-preview`
 **Pre-flight:** Structure checker 0 violations, all API keys set
 
 ---

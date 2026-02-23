@@ -1,8 +1,8 @@
 # The Agent Quickstart: 12 Guided Cookbooks
 
-Learn how to build agents with 12 guided cookbooks. We'll go from single tool-using agent to multi-agent teams and step-based workflows through clean, runnable examples. Each file focuses on one core capability and can be run independently.
+Learn how to build agents with 12 guided cookbooks. We'll go from single tool-using agent to multi-agent teams and step-based workflows through clean, runnable examples.
 
-All examples use Gemini 3.1 Pro for strong multi-step reasoning and reliable tool execution. You can swap to any model with a one-line change. You only need Python and an API key.
+Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use Gemini 3 Flash — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
 
 ## What You'll Build
 
@@ -45,8 +45,8 @@ cd agno
 
 ### 2. Create and activate a virtual environment
 ```bash
-uv venv .quickstart --python 3.12
-source .quickstart/bin/activate
+uv venv .venvs/quickstart --python 3.12
+source .venvs/quickstart/bin/activate
 ```
 
 ### 3. Install dependencies
@@ -93,7 +93,7 @@ Agno is model-agnostic. Same code, different provider:
 ```python
 # Gemini (default in these examples)
 from agno.models.google import Gemini
-model = Gemini(id="gemini-3.1-pro-preview")
+model = Gemini(id="gemini-3-flash-preview")
 
 # OpenAI
 from agno.models.openai import OpenAIResponses
