@@ -79,8 +79,8 @@ async def _astart_memory_task(
     team: Team,
     run_messages: RunMessages,
     user_id: Optional[str],
-    existing_task: Optional[asyncio.Task[None]],
-) -> Optional[asyncio.Task[None]]:
+    existing_task: Optional[asyncio.Task],
+) -> Optional[asyncio.Task]:
     """Cancel any existing memory task and start a new one if conditions are met.
 
     Args:
@@ -116,8 +116,8 @@ def _start_memory_future(
     team: Team,
     run_messages: RunMessages,
     user_id: Optional[str],
-    existing_future: Optional[Future[None]],
-) -> Optional[Future[None]]:
+    existing_future: Optional[Future],
+) -> Optional[Future]:
     """Cancel any existing memory future and start a new one if conditions are met.
 
     Args:
@@ -251,8 +251,8 @@ def _start_learning_future(
     run_messages: RunMessages,
     session: TeamSession,
     user_id: Optional[str],
-    existing_future: Optional[Future[None]] = None,
-) -> Optional[Future[None]]:
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
     """Start learning extraction in background thread.
 
     Args:

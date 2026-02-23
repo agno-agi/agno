@@ -253,7 +253,7 @@ def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
             result = f.result()
             if isinstance(result, RunMetrics):
                 collected.append(result)
-        except Exception:
+        except BaseException:
             pass
     return collected
 

@@ -140,8 +140,8 @@ async def astart_memory_task(
     agent: Agent,
     run_messages: RunMessages,
     user_id: Optional[str],
-    existing_task: Optional[Task[None]],
-) -> Optional[Task[None]]:
+    existing_task: Optional[Task],
+) -> Optional[Task]:
     """Cancel any existing memory task and start a new one if conditions are met.
 
     Args:
@@ -291,8 +291,8 @@ async def acreate_cultural_knowledge(
 async def astart_cultural_knowledge_task(
     agent: Agent,
     run_messages: RunMessages,
-    existing_task: Optional[Task[None]],
-) -> Optional[Task[None]]:
+    existing_task: Optional[Task],
+) -> Optional[Task]:
     """Cancel any existing cultural knowledge task and start a new one if conditions are met.
 
     Args:
