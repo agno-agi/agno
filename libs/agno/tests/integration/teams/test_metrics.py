@@ -445,7 +445,12 @@ def test_team_session_metrics_type(shared_db):
     assert isinstance(session_metrics, SessionMetrics)
     assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
-    assert isinstance(session_metrics.details, list)
+    assert isinstance(session_metrics.details, dict)
+    assert len(session_metrics.details) > 0
+    for model_type, metrics_list in session_metrics.details.items():
+        assert isinstance(metrics_list, list)
+        for metric in metrics_list:
+            assert isinstance(metric, ModelMetrics)
 
 
 @pytest.mark.asyncio

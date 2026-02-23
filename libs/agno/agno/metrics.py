@@ -175,6 +175,7 @@ class MessageMetrics(BaseMetrics):
     """
 
     timer: Optional[Timer] = None
+    duration: Optional[float] = None
     time_to_first_token: Optional[float] = None
     # Transit field: set by providers, consumed by accumulate_model_metrics → ModelMetrics
     provider_metrics: Optional[Dict[str, Any]] = None
@@ -214,6 +215,15 @@ class MessageMetrics(BaseMetrics):
             result.cost = self_cost
         elif other_cost is not None:
             result.cost = other_cost
+        # Sum duration
+        self_duration = self.duration
+        other_duration = getattr(other, "duration", None)
+        if self_duration is not None and other_duration is not None:
+            result.duration = self_duration + other_duration
+        elif self_duration is not None:
+            result.duration = self_duration
+        elif other_duration is not None:
+            result.duration = other_duration
         # Preserve timer from self
         if self.timer is not None:
             result.timer = self.timer
@@ -224,6 +234,11 @@ class MessageMetrics(BaseMetrics):
             result.time_to_first_token = self_ttft
         elif other_ttft is not None:
             result.time_to_first_token = other_ttft
+        # Merge provider_metrics
+        self_provider_metrics = self.provider_metrics
+        other_provider_metrics = getattr(other, "provider_metrics", None)
+        if self_provider_metrics is not None or other_provider_metrics is not None:
+            result.provider_metrics = {**(self_provider_metrics or {}), **(other_provider_metrics or {})}
         return result
 
     def __radd__(self, other: Any) -> "MessageMetrics":
@@ -239,6 +254,8 @@ class MessageMetrics(BaseMetrics):
     def stop_timer(self, set_duration: bool = True):
         if self.timer is not None:
             self.timer.stop()
+            if set_duration:
+                self.duration = self.timer.elapsed
 
     def set_time_to_first_token(self):
         if self.timer is not None:
@@ -345,11 +362,11 @@ class RunMetrics(BaseMetrics):
         elif other_duration is not None:
             result.duration = other_duration
 
-        # Keep first non-None TTFT
+        # Keep earliest TTFT
         self_ttft = self.time_to_first_token
         other_ttft = getattr(other, "time_to_first_token", None)
         if self_ttft is not None and other_ttft is not None:
-            result.time_to_first_token = self_ttft + other_ttft
+            result.time_to_first_token = min(self_ttft, other_ttft)
         elif self_ttft is not None:
             result.time_to_first_token = self_ttft
         elif other_ttft is not None:
