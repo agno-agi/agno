@@ -34,7 +34,7 @@ workflow_db = SqliteDb(db_file="tmp/agents.db")
 # ---------------------------------------------------------------------------
 data_agent = Agent(
     name="Data Gatherer",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[YFinanceTools(all=True)],
     instructions="""\
 You are a data gathering agent. Your job is to fetch comprehensive market data.
@@ -65,7 +65,7 @@ data_step = Step(
 # ---------------------------------------------------------------------------
 analyst_agent = Agent(
     name="Analyst",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions="""\
 You are a financial analyst. You receive raw market data from the data team.
 
@@ -94,7 +94,7 @@ analysis_step = Step(
 # ---------------------------------------------------------------------------
 report_agent = Agent(
     name="Report Writer",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions="""\
 You are a report writer. You receive analysis from the research team.
 

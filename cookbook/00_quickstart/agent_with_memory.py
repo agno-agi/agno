@@ -35,7 +35,7 @@ agent_db = SqliteDb(db_file="tmp/agents.db")
 # Memory Manager Configuration
 # ---------------------------------------------------------------------------
 memory_manager = MemoryManager(
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     db=agent_db,
     additional_instructions="""
     Capture the user's favorite stocks, their risk tolerance, and their investment goals.
@@ -87,7 +87,7 @@ user_id = "investor@example.com"
 
 agent_with_memory = Agent(
     name="Agent with Memory",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools(all=True)],
     db=agent_db,
