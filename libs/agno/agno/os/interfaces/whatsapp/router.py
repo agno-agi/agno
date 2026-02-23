@@ -123,6 +123,7 @@ def attach_routes(
 
             if msg_type == "text":
                 message_text = message["text"]["body"]
+                log_info(message_text)
 
             elif msg_type == "image":
                 message_text = message.get("image", {}).get("caption", "Describe the image")
@@ -139,37 +140,6 @@ def attach_routes(
             elif msg_type == "document":
                 message_text = message.get("document", {}).get("caption", "Process the document")
                 message_doc = message["document"]["id"]
-
-            elif msg_type == "interactive":
-                interactive = message.get("interactive", {})
-                interactive_type = interactive.get("type")
-                if interactive_type == "button_reply":
-                    reply = interactive["button_reply"]
-                    message_text = f"[Button Selected] {reply['title']} (id: {reply['id']})"
-                elif interactive_type == "list_reply":
-                    reply = interactive["list_reply"]
-                    message_text = f"[List Selected] {reply['title']} (id: {reply['id']})"
-                else:
-                    log_warning(f"Unknown interactive type: {interactive_type}")
-                    return
-
-            elif msg_type == "location":
-                loc = message.get("location", {})
-                name = loc.get("name", "Unknown")
-                message_text = f"[Location] {name} ({loc.get('latitude')}, {loc.get('longitude')})"
-
-            elif msg_type == "reaction":
-                reaction = message.get("reaction", {})
-                message_text = f"[Reaction] {reaction.get('emoji', '')} on message {reaction.get('message_id', '')}"
-
-            elif msg_type == "contacts":
-                contacts = message.get("contacts", [])
-                names = [c.get("name", {}).get("formatted_name", "Unknown") for c in contacts]
-                message_text = f"[Contacts Shared] {', '.join(names)}"
-
-            elif msg_type == "sticker":
-                message_text = "Sticker received"
-                message_image = message.get("sticker", {}).get("id")
 
             else:
                 log_warning(f"Unknown message type: {msg_type}")

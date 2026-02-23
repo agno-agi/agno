@@ -20,10 +20,9 @@ agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 image_agent = Agent(
     id="image_generation_tools",
     db=agent_db,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
-    debug_mode=True,
     add_history_to_context=True,
 )
 
