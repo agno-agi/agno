@@ -1401,7 +1401,7 @@ class Model(ABC):
                         _stream_model_response.response_usage = assistant_message.metrics
                         accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response)
 
-                else:   
+                else:
                     # Initialize message metrics and start timer before model call
                     self._ensure_message_metrics_initialized(assistant_message)
                     self._process_model_response(

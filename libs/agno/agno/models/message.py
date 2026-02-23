@@ -109,8 +109,8 @@ class Message(BaseModel):
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
-    # Metrics for the message. Only set on assistant messages from model responses.
-    metrics: Optional[MessageMetrics] = None
+    # Metrics for the message. Defaults to empty MessageMetrics; populated on assistant messages.
+    metrics: MessageMetrics = Field(default_factory=MessageMetrics)
     # The references added to the message for RAG
     references: Optional[MessageReferences] = None
     # The Unix timestamp the message was created.
@@ -272,11 +272,12 @@ class Message(BaseModel):
                     data["video_output"] = Video(**vid_data)
 
         # Handle metrics deserialization, convert dict to MessageMetrics
-        if "metrics" in data and data["metrics"] is not None:
+        if "metrics" in data:
             if isinstance(data["metrics"], dict):
                 data["metrics"] = MessageMetrics.from_dict(data["metrics"])
             elif not isinstance(data["metrics"], MessageMetrics):
-                data["metrics"] = None
+                # Remove invalid/None values so Pydantic default factory creates empty MessageMetrics
+                data.pop("metrics")
 
         return cls(**data)
 
