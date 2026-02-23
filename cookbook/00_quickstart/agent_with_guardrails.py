@@ -89,7 +89,7 @@ Never share sensitive personal information in responses.\
 # ---------------------------------------------------------------------------
 agent_with_guardrails = Agent(
     name="Agent with Guardrails",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools(all=True)],
     pre_hooks=[

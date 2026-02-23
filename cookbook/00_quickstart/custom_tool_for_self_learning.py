@@ -143,7 +143,7 @@ Don't save: Raw data, one-off facts, or obvious information.\
 # ---------------------------------------------------------------------------
 self_learning_agent = Agent(
     name="Self-Learning Agent",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[
         YFinanceTools(all=True),

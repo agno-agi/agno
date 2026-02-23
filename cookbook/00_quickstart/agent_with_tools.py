@@ -59,7 +59,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # ---------------------------------------------------------------------------
 agent_with_tools = Agent(
     name="Agent with Tools",
-    model=Gemini(id="gemini-3.1-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools(all=True)],
     add_datetime_to_context=True,
