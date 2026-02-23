@@ -192,6 +192,7 @@ def handle_agent_run_paused(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
+    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> RunOutput:
     run_response.status = RunStatus.paused
@@ -202,7 +203,8 @@ def handle_agent_run_paused(
     create_approval_from_pause(
         db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
     )
-    cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+
+    cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id)
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -214,6 +216,7 @@ def handle_agent_run_paused_stream(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
+    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
     yield_run_output: bool = False,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
@@ -238,7 +241,7 @@ def handle_agent_run_paused_stream(
         store_events=agent.store_events,
     )
 
-    cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id)
 
     yield pause_event  # type: ignore
 
@@ -253,6 +256,7 @@ async def ahandle_agent_run_paused(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
+    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> RunOutput:
     run_response.status = RunStatus.paused
@@ -263,7 +267,9 @@ async def ahandle_agent_run_paused(
     await acreate_approval_from_pause(
         db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
     )
-    await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await acleanup_and_store(
+        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+    )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -275,6 +281,7 @@ async def ahandle_agent_run_paused_stream(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
+    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
     yield_run_output: bool = False,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
@@ -299,7 +306,9 @@ async def ahandle_agent_run_paused_stream(
         store_events=agent.store_events,
     )
 
-    await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
+    await acleanup_and_store(
+        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+    )
 
     yield pause_event  # type: ignore
 
