@@ -12,7 +12,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
 from agno.db.base import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -30,8 +30,10 @@ def make_memories(
     agent: Agent,
     run_messages: RunMessages,
     user_id: Optional[str] = None,
-    run_response: Optional["RunOutput"] = None,
-):
+) -> Optional[RunMetrics]:
+    from agno.run.agent import RunOutput
+
+    collector = RunOutput(content="")
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
         user_message_str is not None
@@ -44,7 +46,7 @@ def make_memories(
             message=user_message_str,
             user_id=user_id,
             agent_id=agent.id,
-            run_response=run_response,
+            run_response=collector,
         )
 
     if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -70,20 +72,23 @@ def make_memories(
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
                 agent.memory_manager.create_user_memories(
-                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=run_response
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=collector
                 )  # type: ignore
             else:
                 log_warning(
                     "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
                 )
+    return collector.metrics
 
 
 async def amake_memories(
     agent: Agent,
     run_messages: RunMessages,
     user_id: Optional[str] = None,
-    run_response: Optional["RunOutput"] = None,
-):
+) -> Optional[RunMetrics]:
+    from agno.run.agent import RunOutput
+
+    collector = RunOutput(content="")
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
         user_message_str is not None
@@ -96,7 +101,7 @@ async def amake_memories(
             message=user_message_str,
             user_id=user_id,
             agent_id=agent.id,
-            run_response=run_response,
+            run_response=collector,
         )
 
     if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -122,21 +127,21 @@ async def amake_memories(
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
                 await agent.memory_manager.acreate_user_memories(  # type: ignore
-                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=run_response
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=collector
                 )
             else:
                 log_warning(
                     "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
                 )
+    return collector.metrics
 
 
 async def astart_memory_task(
     agent: Agent,
     run_messages: RunMessages,
     user_id: Optional[str],
-    existing_task: Optional[Task[None]],
-    run_response: Optional["RunOutput"] = None,
-) -> Optional[Task[None]]:
+    existing_task: Optional[Task],
+) -> Optional[Task]:
     """Cancel any existing memory task and start a new one if conditions are met.
 
     Args:
@@ -144,7 +149,6 @@ async def astart_memory_task(
         run_messages: The run messages containing the user message.
         user_id: The user ID for memory creation.
         existing_task: An existing memory task to cancel before starting a new one.
-        run_response: The run response for tracking memory model metrics.
 
     Returns:
         A new memory task if conditions are met, None otherwise.
@@ -165,7 +169,7 @@ async def astart_memory_task(
         and not agent.enable_agentic_memory
     ):
         log_debug("Starting memory creation in background task.")
-        return create_task(amake_memories(agent, run_messages=run_messages, user_id=user_id, run_response=run_response))
+        return create_task(amake_memories(agent, run_messages=run_messages, user_id=user_id))
 
     return None
 
@@ -175,7 +179,6 @@ def start_memory_future(
     run_messages: RunMessages,
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
-    run_response: Optional["RunOutput"] = None,
 ) -> Optional[Future]:
     """Cancel any existing memory future and start a new one if conditions are met.
 
@@ -184,7 +187,6 @@ def start_memory_future(
         run_messages: The run messages containing the user message.
         user_id: The user ID for memory creation.
         existing_future: An existing memory future to cancel before starting a new one.
-        run_response: The run response for tracking memory model metrics.
 
     Returns:
         A new memory future if conditions are met, None otherwise.
@@ -202,9 +204,7 @@ def start_memory_future(
         and not agent.enable_agentic_memory
     ):
         log_debug("Starting memory creation in background thread.")
-        return agent.background_executor.submit(
-            make_memories, agent, run_messages=run_messages, user_id=user_id, run_response=run_response
-        )
+        return agent.background_executor.submit(make_memories, agent, run_messages=run_messages, user_id=user_id)
 
     return None
 
@@ -259,42 +259,46 @@ async def aget_user_memories(agent: Agent, user_id: Optional[str] = None) -> Opt
 def make_cultural_knowledge(
     agent: Agent,
     run_messages: RunMessages,
-    run_response: Optional["RunOutput"] = None,
-):
+) -> Optional[RunMetrics]:
+    from agno.run.agent import RunOutput
+
+    collector = RunOutput(content="")
     if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
         log_debug("Creating cultural knowledge.")
         agent.culture_manager.create_cultural_knowledge(
             message=run_messages.user_message.get_content_string(),
-            run_response=run_response,
+            run_response=collector,
         )
+    return collector.metrics
 
 
 async def acreate_cultural_knowledge(
     agent: Agent,
     run_messages: RunMessages,
-    run_response: Optional["RunOutput"] = None,
-):
+) -> Optional[RunMetrics]:
+    from agno.run.agent import RunOutput
+
+    collector = RunOutput(content="")
     if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
         log_debug("Creating cultural knowledge.")
         await agent.culture_manager.acreate_cultural_knowledge(
             message=run_messages.user_message.get_content_string(),
-            run_response=run_response,
+            run_response=collector,
         )
+    return collector.metrics
 
 
 async def astart_cultural_knowledge_task(
     agent: Agent,
     run_messages: RunMessages,
-    existing_task: Optional[Task[None]],
-    run_response: Optional["RunOutput"] = None,
-) -> Optional[Task[None]]:
+    existing_task: Optional[Task],
+) -> Optional[Task]:
     """Cancel any existing cultural knowledge task and start a new one if conditions are met.
 
     Args:
         agent: The Agent instance.
         run_messages: The run messages containing the user message.
         existing_task: An existing cultural knowledge task to cancel before starting a new one.
-        run_response: The run response for tracking culture model metrics.
 
     Returns:
         A new cultural knowledge task if conditions are met, None otherwise.
@@ -310,7 +314,7 @@ async def astart_cultural_knowledge_task(
     # Create new task if conditions are met
     if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
         log_debug("Starting cultural knowledge creation in background task.")
-        return create_task(acreate_cultural_knowledge(agent, run_messages=run_messages, run_response=run_response))
+        return create_task(acreate_cultural_knowledge(agent, run_messages=run_messages))
 
     return None
 
@@ -319,7 +323,6 @@ def start_cultural_knowledge_future(
     agent: Agent,
     run_messages: RunMessages,
     existing_future: Optional[Future] = None,
-    run_response: Optional["RunOutput"] = None,
 ) -> Optional[Future]:
     """Cancel any existing cultural knowledge future and start a new one if conditions are met.
 
@@ -327,7 +330,6 @@ def start_cultural_knowledge_future(
         agent: The Agent instance.
         run_messages: The run messages containing the user message.
         existing_future: An existing cultural knowledge future to cancel before starting a new one.
-        run_response: The run response for tracking culture model metrics.
 
     Returns:
         A new cultural knowledge future if conditions are met, None otherwise.
@@ -340,9 +342,7 @@ def start_cultural_knowledge_future(
     # Create new future if conditions are met
     if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
         log_debug("Starting cultural knowledge creation in background thread.")
-        return agent.background_executor.submit(
-            make_cultural_knowledge, agent, run_messages=run_messages, run_response=run_response
-        )
+        return agent.background_executor.submit(make_cultural_knowledge, agent, run_messages=run_messages)
 
     return None
 
@@ -387,12 +387,14 @@ def process_learnings(
     run_messages: RunMessages,
     session: AgentSession,
     user_id: Optional[str],
-    run_response: Optional["RunOutput"] = None,
-) -> None:
+) -> Optional[RunMetrics]:
     """Process learnings from conversation (runs in background thread)."""
     if agent._learning is None:
-        return
+        return None
 
+    from agno.run.agent import RunOutput
+
+    collector = RunOutput(content="")
     try:
         # Convert run messages to list format expected by LearningMachine
         messages = run_messages.messages if run_messages else []
@@ -403,11 +405,12 @@ def process_learnings(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             team_id=agent.team_id,
-            run_response=run_response,
+            run_response=collector,
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
         log_warning(f"Error processing learnings: {e}")
+    return collector.metrics
 
 
 async def aprocess_learnings(
@@ -415,12 +418,14 @@ async def aprocess_learnings(
     run_messages: RunMessages,
     session: AgentSession,
     user_id: Optional[str],
-    run_response: Optional["RunOutput"] = None,
-) -> None:
+) -> Optional[RunMetrics]:
     """Async process learnings from conversation."""
     if agent._learning is None:
-        return
+        return None
 
+    from agno.run.agent import RunOutput
+
+    collector = RunOutput(content="")
     try:
         messages = run_messages.messages if run_messages else []
         await agent._learning.aprocess(
@@ -429,11 +434,12 @@ async def aprocess_learnings(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             team_id=agent.team_id,
-            run_response=run_response,
+            run_response=collector,
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
         log_warning(f"Error processing learnings: {e}")
+    return collector.metrics
 
 
 async def astart_learning_task(
@@ -442,7 +448,6 @@ async def astart_learning_task(
     session: AgentSession,
     user_id: Optional[str],
     existing_task: Optional[Task] = None,
-    run_response: Optional["RunOutput"] = None,
 ) -> Optional[Task]:
     """Start learning extraction as async task.
 
@@ -452,7 +457,6 @@ async def astart_learning_task(
         session: The agent session.
         user_id: The user ID for learning extraction.
         existing_task: An existing task to cancel before starting a new one.
-        run_response: The run response for tracking learning model metrics.
 
     Returns:
         A new learning task if conditions are met, None otherwise.
@@ -474,7 +478,6 @@ async def astart_learning_task(
                 run_messages=run_messages,
                 session=session,
                 user_id=user_id,
-                run_response=run_response,
             )
         )
 
@@ -487,7 +490,6 @@ def start_learning_future(
     session: AgentSession,
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
-    run_response: Optional["RunOutput"] = None,
 ) -> Optional[Future]:
     """Start learning extraction in background thread.
 
@@ -497,7 +499,6 @@ def start_learning_future(
         session: The agent session.
         user_id: The user ID for learning extraction.
         existing_future: An existing future to cancel before starting a new one.
-        run_response: The run response for tracking learning model metrics.
 
     Returns:
         A new learning future if conditions are met, None otherwise.
@@ -515,7 +516,6 @@ def start_learning_future(
             run_messages=run_messages,
             session=session,
             user_id=user_id,
-            run_response=run_response,
         )
 
     return None

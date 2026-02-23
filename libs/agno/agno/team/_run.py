@@ -57,9 +57,11 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
+from agno.models.metrics import merge_background_metrics
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    collect_background_metrics,
     store_media_util,
     validate_input,
     validate_media_object_id,
@@ -384,6 +386,7 @@ def _run_tasks(
 
         # Wait for background memory creation
         wait_for_open_threads(memory_future=memory_future)  # type: ignore
+        merge_background_metrics(run_response, collect_background_metrics(memory_future))
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -688,6 +691,7 @@ def _run(
 
                 # 11. Wait for background memory creation
                 wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
+                merge_background_metrics(run_response, collect_background_metrics(memory_future, learning_future))
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1087,6 +1091,7 @@ def _run_stream(
                     store_events=team.store_events,
                     get_memories_callback=lambda: team.get_user_memories(user_id=user_id),
                 )
+                merge_background_metrics(run_response, collect_background_metrics(memory_future, learning_future))
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 # 9. Create session summary
@@ -1661,6 +1666,7 @@ async def _arun_tasks(
 
         # Wait for background memory creation
         await await_for_open_threads(memory_task=memory_task)
+        merge_background_metrics(run_response, collect_background_metrics(memory_task))
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2003,6 +2009,7 @@ async def _arun(
 
                 # 11. Wait for background memory creation
                 await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)
+                merge_background_metrics(run_response, collect_background_metrics(memory_task, learning_task))
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 12. Create session summary
@@ -2515,6 +2522,7 @@ async def _arun_stream(
                     get_memories_callback=lambda: team.aget_user_memories(user_id=user_id),
                 ):
                     yield event
+                merge_background_metrics(run_response, collect_background_metrics(memory_task, learning_task))
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 

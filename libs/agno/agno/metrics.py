@@ -466,18 +466,13 @@ class SessionMetrics(BaseMetrics):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionMetrics":
-        """Create SessionMetrics from a dict.
-
-        Handles both new format (details as Dict[str, List]) and
-        legacy format (details as flat List or old Metrics dict).
-        """
+        """Create SessionMetrics from a dict, converting details dicts to ModelMetrics objects."""
         valid = {f.name for f in dc_fields(cls)}
         filtered = {k: v for k, v in data.items() if k in valid}
 
         if "details" in filtered and filtered["details"] is not None:
             details_raw = filtered["details"]
             if isinstance(details_raw, dict):
-                # New format: Dict[str, List[ModelMetrics]]
                 converted: Dict[str, List[ModelMetrics]] = {}
                 for model_type, model_metrics_list in details_raw.items():
                     if isinstance(model_metrics_list, list):
@@ -486,16 +481,6 @@ class SessionMetrics(BaseMetrics):
                             for model_metric in model_metrics_list
                         ]
                 filtered["details"] = converted if converted else None
-            elif isinstance(details_raw, list):
-                # Legacy format: flat List[ModelMetrics] — group by model type (default to "model")
-                flat_metrics = [
-                    ModelMetrics.from_dict(model_metric) if isinstance(model_metric, dict) else model_metric
-                    for model_metric in details_raw
-                ]
-                if flat_metrics:
-                    filtered["details"] = {"model": flat_metrics}
-                else:
-                    filtered["details"] = None
             else:
                 filtered.pop("details", None)
 
@@ -765,3 +750,62 @@ def accumulate_eval_metrics(
             run_response.metrics.additional_metrics = {}
         existing = run_response.metrics.additional_metrics.get("eval_duration", 0)
         run_response.metrics.additional_metrics["eval_duration"] = existing + eval_metrics.duration
+
+
+def merge_background_metrics(
+    run_response: "Union[RunOutput, TeamRunOutput]",
+    background_metrics: "List[Optional[RunMetrics]]",
+) -> None:
+    """Merge background task metrics into run_response.metrics on the main thread.
+
+    Each background task (memory, culture, learning) accumulates metrics into its
+    own isolated RunMetrics collector. After all tasks complete, this function
+    merges those collectors into the real run_response — avoiding concurrent
+    mutation of shared state.
+    """
+    for bg_metrics in background_metrics:
+        if bg_metrics is None:
+            continue
+
+        if run_response.metrics is None:
+            run_response.metrics = RunMetrics()
+
+        metrics = run_response.metrics
+
+        # Accumulate top-level token counts
+        metrics.input_tokens += bg_metrics.input_tokens
+        metrics.output_tokens += bg_metrics.output_tokens
+        metrics.total_tokens += bg_metrics.total_tokens
+        metrics.audio_input_tokens += bg_metrics.audio_input_tokens
+        metrics.audio_output_tokens += bg_metrics.audio_output_tokens
+        metrics.audio_total_tokens += bg_metrics.audio_total_tokens
+        metrics.cache_read_tokens += bg_metrics.cache_read_tokens
+        metrics.cache_write_tokens += bg_metrics.cache_write_tokens
+        metrics.reasoning_tokens += bg_metrics.reasoning_tokens
+
+        # Accumulate cost
+        if bg_metrics.cost is not None:
+            metrics.cost = (metrics.cost or 0) + bg_metrics.cost
+
+        # Merge per-model details
+        if bg_metrics.details:
+            if metrics.details is None:
+                metrics.details = {}
+            for model_type, model_metrics_list in bg_metrics.details.items():
+                if model_type not in metrics.details:
+                    metrics.details[model_type] = []
+                for mm in model_metrics_list:
+                    found = False
+                    for existing in metrics.details[model_type]:
+                        if existing.provider == mm.provider and existing.id == mm.id:
+                            existing.accumulate(mm)
+                            found = True
+                            break
+                    if not found:
+                        metrics.details[model_type].append(ModelMetrics.from_dict(mm.to_dict()))
+
+        # Merge additional_metrics
+        if bg_metrics.additional_metrics:
+            if metrics.additional_metrics is None:
+                metrics.additional_metrics = {}
+            metrics.additional_metrics.update(bg_metrics.additional_metrics)
