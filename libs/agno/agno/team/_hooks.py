@@ -175,7 +175,7 @@ async def ahandle_team_run_paused(
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
-
+  
 
 async def ahandle_team_run_paused_stream(
     team: "Team",

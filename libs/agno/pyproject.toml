@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.2"
+version = "2.5.3"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -63,7 +63,7 @@ dev = [
   "types-greenlet",
 ]
 
-os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT"]
+os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "croniter>=1.3", "pytz>=2023.3"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry

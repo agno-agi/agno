@@ -533,7 +533,11 @@ def _run(
                     )
 
                     return handle_agent_run_paused(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 # 8. Store media if enabled
@@ -957,6 +961,7 @@ def _run_stream(
                         agent,
                         run_response=run_response,
                         session=agent_session,
+                        run_context=run_context,
                         user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     )
@@ -1580,7 +1585,11 @@ async def _arun(
                         learning_task=learning_task,
                     )
                     return await ahandle_agent_run_paused(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 # 11. Convert the response to the structured format if needed
@@ -2120,6 +2129,7 @@ async def _arun_stream(
                         agent,
                         run_response=run_response,
                         session=agent_session,
+                        run_context=run_context,
                         user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     ):
@@ -2878,7 +2888,9 @@ def _continue_run(
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    return handle_agent_run_paused(agent, run_response=run_response, session=session, user_id=user_id)
+                    return handle_agent_run_paused(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                 # 4. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
@@ -3094,6 +3106,7 @@ def _continue_run_stream(
                         agent,
                         run_response=run_response,
                         session=session,
+                        run_context=run_context,
                         user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     )
@@ -3621,7 +3634,11 @@ async def _acontinue_run(
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     return await ahandle_agent_run_paused(
-                        agent, run_response=run_response, session=agent_session, user_id=user_id
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
                     )
 
                 # 10. Convert the response to the structured format if needed
@@ -4033,6 +4050,7 @@ async def _acontinue_run_stream(
                         agent,
                         run_response=run_response,
                         session=agent_session,
+                        run_context=run_context,
                         user_id=user_id,
                         yield_run_output=yield_run_output or False,
                     ):
@@ -4324,7 +4342,7 @@ def cleanup_and_store(
 
     # Update run_response.session_state before saving
     # This ensures RunOutput reflects all tool modifications
-    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+    if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
@@ -4369,9 +4387,9 @@ async def acleanup_and_store(
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Update run_response.session_state from session before saving
+    # Update run_response.session_state before saving
     # This ensures RunOutput reflects all tool modifications
-    if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+    if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
