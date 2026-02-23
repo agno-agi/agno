@@ -250,7 +250,7 @@ class MessageMetrics(BaseMetrics):
                 self.duration = self.timer.elapsed
 
     def set_time_to_first_token(self):
-        if self.timer is not None:
+        if self.timer is not None and self.time_to_first_token is None:
             self.time_to_first_token = self.timer.elapsed
 
 
@@ -414,7 +414,7 @@ class RunMetrics(BaseMetrics):
                 self.duration = self.timer.elapsed
 
     def set_time_to_first_token(self):
-        if self.timer is not None:
+        if self.timer is not None and self.time_to_first_token is None:
             self.time_to_first_token = self.timer.elapsed
 
 
