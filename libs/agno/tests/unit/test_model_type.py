@@ -10,11 +10,10 @@ Tests cover:
 - Backward compatibility with string model_type values
 """
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from agno.metrics import (
+    MessageMetrics,
     Metrics,
     ModelMetrics,
     ModelType,
@@ -85,7 +84,7 @@ class TestModelTypeOnModel:
 
 def _make_model_response(input_tokens=10, output_tokens=5, total_tokens=15, cost=None, ttft=None):
     """Create a mock ModelResponse with response_usage."""
-    usage = Metrics(
+    usage = MessageMetrics(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
@@ -305,7 +304,7 @@ class TestMetricsSerialization:
         session = SessionMetrics.from_dict(data)
         assert session.details is not None
         assert len(session.details) == 1
-        assert session.details[0].id == "gpt-4o"
+        assert session.details["model"][0].id == "gpt-4o"
 
 
 # ---------------------------------------------------------------------------
