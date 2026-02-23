@@ -64,7 +64,6 @@ class ModelMetrics(BaseMetrics):
 
     id: str = ""
     provider: str = ""
-    time_to_first_token: Optional[float] = None
     provider_metrics: Optional[Dict[str, Any]] = None
 
     def accumulate(self, other: "ModelMetrics") -> None:
@@ -80,12 +79,6 @@ class ModelMetrics(BaseMetrics):
         self.reasoning_tokens += other.reasoning_tokens or 0
         if other.cost is not None:
             self.cost = (self.cost or 0) + other.cost
-        # Keep earliest TTFT
-        if other.time_to_first_token is not None:
-            if self.time_to_first_token is not None:
-                self.time_to_first_token = min(self.time_to_first_token, other.time_to_first_token)
-            else:
-                self.time_to_first_token = other.time_to_first_token
         # Merge provider_metrics
         if other.provider_metrics is not None:
             if self.provider_metrics is None:
@@ -677,7 +670,6 @@ def accumulate_model_metrics(
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         reasoning_tokens=reasoning_tokens,
-        time_to_first_token=usage.time_to_first_token,
         cost=usage.cost,
         provider_metrics=usage.provider_metrics,
     )
@@ -709,13 +701,6 @@ def accumulate_model_metrics(
     # Accumulate cost
     if usage.cost is not None:
         metrics.cost = (metrics.cost or 0) + usage.cost
-
-    # TTFT: only set top-level if model_type is "model" or "reasoning_model"
-    if (
-        model_type == ModelType.MODEL or model_type == ModelType.REASONING_MODEL
-    ) and usage.time_to_first_token is not None:
-        if metrics.time_to_first_token is None or usage.time_to_first_token < metrics.time_to_first_token:
-            metrics.time_to_first_token = usage.time_to_first_token
 
 
 def accumulate_eval_metrics(

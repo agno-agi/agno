@@ -180,34 +180,12 @@ class TestAccumulateModelMetrics:
         assert details["output_model"][0].id == "gpt-4o-mini"
         assert run_response.metrics.total_tokens == 180
 
-    def test_time_to_first_token_set_for_model_type(self):
-        """TTFT should only be set for MODEL and REASONING_MODEL types."""
+    def test_accumulate_does_not_set_run_ttft(self):
+        """Run TTFT is set by providers via set_time_to_first_token(), not by accumulate_model_metrics."""
         run_response = _make_run_response()
         model = _make_model()
 
         accumulate_model_metrics(_make_model_response(ttft=0.5), model, ModelType.MODEL, run_response)
-        assert run_response.metrics.time_to_first_token == 0.5
-
-    def test_time_to_first_token_set_for_reasoning_model(self):
-        run_response = _make_run_response()
-        model = _make_model()
-
-        accumulate_model_metrics(_make_model_response(ttft=0.3), model, ModelType.REASONING_MODEL, run_response)
-        assert run_response.metrics.time_to_first_token == 0.3
-
-    def test_time_to_first_token_not_set_for_output_model(self):
-        """TTFT should NOT be set for output_model, parser_model, etc."""
-        run_response = _make_run_response()
-        model = _make_model()
-
-        accumulate_model_metrics(_make_model_response(ttft=0.5), model, ModelType.OUTPUT_MODEL, run_response)
-        assert run_response.metrics.time_to_first_token is None
-
-    def test_time_to_first_token_not_set_for_memory_model(self):
-        run_response = _make_run_response()
-        model = _make_model()
-
-        accumulate_model_metrics(_make_model_response(ttft=0.5), model, ModelType.MEMORY_MODEL, run_response)
         assert run_response.metrics.time_to_first_token is None
 
     def test_none_response_usage_is_no_op(self):
