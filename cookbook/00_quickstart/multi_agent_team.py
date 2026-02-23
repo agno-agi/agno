@@ -40,7 +40,7 @@ bull_agent = Agent(
     name="Bull Analyst",
     role="Make the investment case FOR a stock",
     model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     db=team_db,
     instructions="""\
 You are a bull analyst. Your job is to make the strongest possible case
@@ -64,7 +64,7 @@ bear_agent = Agent(
     name="Bear Analyst",
     role="Make the investment case AGAINST a stock",
     model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     db=team_db,
     instructions="""\
 You are a bear analyst. Your job is to make the strongest possible case

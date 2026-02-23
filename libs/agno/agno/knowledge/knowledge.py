@@ -1306,9 +1306,7 @@ class Knowledge(RemoteKnowledge):
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
-            # Add linked_to to metadata for vector search filtering (only when isolation is enabled)
-            if self.isolate_vector_search:
-                document.meta_data["linked_to"] = self.name or ""
+            document.meta_data["linked_to"] = self.name or ""
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:

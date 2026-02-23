@@ -690,7 +690,7 @@ jobs:
           --ignore=./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           --ignore=./libs/agno/tests/integration/agent/test_introduction.py
 
-  test-teams:
+  test-teams-1:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -720,10 +720,14 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/teams/test_output_schema_override.py \
-          ./libs/agno/tests/integration/teams/test_event_streaming.py \
-          ./libs/agno/tests/integration/teams/test_memory_impact.py \
-          ./libs/agno/tests/integration/teams/test_history.py
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_hooks.py \
+          ./libs/agno/tests/integration/teams/test_dependencies.py \
+          ./libs/agno/tests/integration/teams/test_send_media_to_model.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_confirmation_flows.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_user_input_flows.py \
+          ./libs/agno/tests/integration/teams/test_retries.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_external_execution_flows.py
 
   test-teams-2:
     runs-on: ubuntu-latest
@@ -755,11 +759,94 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/teams \
-          --ignore=./libs/agno/tests/integration/teams/test_output_schema_override.py \
-          --ignore=./libs/agno/tests/integration/teams/test_event_streaming.py \
-          --ignore=./libs/agno/tests/integration/teams/test_memory_impact.py \
-          --ignore=./libs/agno/tests/integration/teams/test_history.py
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_output_schema_override.py \
+          ./libs/agno/tests/integration/teams/test_event_streaming.py \
+          ./libs/agno/tests/integration/teams/test_session_state.py \
+          ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
+          ./libs/agno/tests/integration/teams/test_reasoning_content_default_COT.py \
+          ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
+          ./libs/agno/tests/integration/teams/test_multimodal.py
+
+  test-teams-3:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run teams integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_team_reasoning_new_models.py \
+          ./libs/agno/tests/integration/teams/test_session.py \
+          ./libs/agno/tests/integration/teams/test_input.py \
+          ./libs/agno/tests/integration/teams/test_team_delegation.py \
+          ./libs/agno/tests/integration/teams/test_history.py \
+          ./libs/agno/tests/integration/teams/test_memory_impact.py \
+          ./libs/agno/tests/integration/teams/test_team_with_output_model.py \
+          ./libs/agno/tests/integration/teams/test_team_with_member_with_parser_model.py
+
+  test-teams-4:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run teams integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_team_convenience_functions.py \
+          ./libs/agno/tests/integration/teams/test_introduction.py \
+          ./libs/agno/tests/integration/teams/test_callable_members.py \
+          ./libs/agno/tests/integration/teams/test_structured_output.py \
+          ./libs/agno/tests/integration/teams/test_tool_compression.py \
+          ./libs/agno/tests/integration/teams/test_metrics.py \
+          ./libs/agno/tests/integration/teams/test_parser_model.py
 
   test-workflows:
     runs-on: ubuntu-latest
