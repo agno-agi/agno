@@ -328,3 +328,40 @@ def test_timelimit_year(mock_ddgs):
 
     call_kwargs = mock_instance.text.call_args[1]
     assert call_kwargs["timelimit"] == "y"
+
+
+# ============================================================================
+# TIMELIMIT VALIDATION TESTS
+# ============================================================================
+
+
+def test_invalid_timelimit_raises_error():
+    """Test that invalid timelimit raises ValueError."""
+    with patch("agno.tools.websearch.DDGS"):
+        with pytest.raises(ValueError) as exc_info:
+            DuckDuckGoTools(timelimit="invalid")
+        assert "Invalid timelimit 'invalid'" in str(exc_info.value)
+
+
+def test_invalid_timelimit_empty_string():
+    """Test that empty string timelimit raises ValueError."""
+    with patch("agno.tools.websearch.DDGS"):
+        with pytest.raises(ValueError) as exc_info:
+            DuckDuckGoTools(timelimit="")
+        assert "Invalid timelimit ''" in str(exc_info.value)
+
+
+def test_invalid_timelimit_uppercase():
+    """Test that uppercase timelimit raises ValueError (case-sensitive)."""
+    with patch("agno.tools.websearch.DDGS"):
+        with pytest.raises(ValueError) as exc_info:
+            DuckDuckGoTools(timelimit="W")
+        assert "Invalid timelimit 'W'" in str(exc_info.value)
+
+
+def test_invalid_timelimit_full_word():
+    """Test that full word timelimit raises ValueError."""
+    with patch("agno.tools.websearch.DDGS"):
+        with pytest.raises(ValueError) as exc_info:
+            DuckDuckGoTools(timelimit="week")
+        assert "Invalid timelimit 'week'" in str(exc_info.value)
