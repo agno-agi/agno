@@ -1,0 +1,79 @@
+"""
+AWS Integration: S3 Content Source
+====================================
+Load files and folders from S3 buckets into your Knowledge base.
+Supports any S3-compatible storage with AWS credentials.
+
+Features:
+- Load single files or entire prefixes (folders) recursively
+- Automatic file type detection and reader selection
+- Metadata tagging per file (bucket, key, region)
+
+Requirements:
+- AWS credentials configured (env vars, profile, or IAM role)
+- S3 bucket with read access
+
+Environment Variables:
+    AWS_ACCESS_KEY_ID     - AWS access key
+    AWS_SECRET_ACCESS_KEY - AWS secret key
+    AWS_REGION            - AWS region (default: us-east-1)
+"""
+
+from os import getenv
+
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.remote_content import S3Config
+from agno.vectordb.pgvector import PgVector
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+# Configure S3 content source
+s3_config = S3Config(
+    id="my-bucket",
+    name="My S3 Bucket",
+    bucket=getenv("AWS_S3_BUCKET", "my-bucket"),
+    region=getenv("AWS_REGION", "us-east-1"),
+)
+
+knowledge = Knowledge(
+    name="S3 Knowledge",
+    vector_db=PgVector(
+        table_name="s3_knowledge",
+        db_url=db_url,
+    ),
+    content_sources=[s3_config],
+)
+
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Insert a single file from S3
+    print("\n" + "=" * 60)
+    print("Loading single file from S3")
+    print("=" * 60 + "\n")
+
+    knowledge.insert(
+        name="Report",
+        remote_content=s3_config.file("reports/quarterly-report.pdf"),
+    )
+
+    # Insert an entire folder (prefix)
+    print("\n" + "=" * 60)
+    print("Loading folder from S3")
+    print("=" * 60 + "\n")
+
+    knowledge.insert(
+        name="All Reports",
+        remote_content=s3_config.folder("reports/"),
+    )
+
+    # Search
+    results = knowledge.search("What were the quarterly results?")
+    for doc in results:
+        print("- %s" % doc.name)
