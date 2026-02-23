@@ -1,0 +1,7 @@
+agno
+chromadb
+fastapi[standard]
+openai
+pgvector
+psycopg[binary]
+sqlalchemy
