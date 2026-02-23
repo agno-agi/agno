@@ -173,7 +173,16 @@ class TestSerializeSessionJsonFields:
         result = serialize_session_json_fields(session)
 
         # All fields should be JSON strings now
-        for field in ["session_data", "agent_data", "team_data", "workflow_data", "metadata", "chat_history", "summary", "runs"]:
+        for field in [
+            "session_data",
+            "agent_data",
+            "team_data",
+            "workflow_data",
+            "metadata",
+            "chat_history",
+            "summary",
+            "runs",
+        ]:
             assert isinstance(result[field], str), f"{field} should be a string"
 
     def test_serialize_none_fields(self):
