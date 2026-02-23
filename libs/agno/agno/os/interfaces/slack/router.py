@@ -327,6 +327,7 @@ def attach_routes(
     loading_text: str = "Thinking...",
     suggested_prompts: Optional[List[Dict[str, str]]] = None,
     ssl: Optional[SSLContext] = None,
+    buffer_size: int = 100,
 ) -> APIRouter:
     entity = agent or team or workflow
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
@@ -403,11 +404,25 @@ def attach_routes(
             return
 
         ctx = extract_event_context(event)
+
+        # Show typing indicator immediately so the user knows the bot received their message.
+        try:
+            from slack_sdk.web.async_client import AsyncWebClient
+
+            async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+            await async_client.assistant_threads_setStatus(
+                channel_id=ctx["channel_id"],
+                thread_ts=ctx["thread_id"],
+                status="Thinking...",
+            )
+        except Exception:
+            pass
+
         files, images, videos, audio = download_event_files(slack_tools, event)
 
         run_kwargs: Dict[str, Any] = {
             "user_id": ctx["user"],
-            "session_id": ctx["ts"],
+            "session_id": ctx["thread_id"],
             "files": files if files else None,
             "images": images if images else None,
             "videos": videos if videos else None,
@@ -430,25 +445,27 @@ def attach_routes(
                         slack_tools,
                         channel=ctx["channel_id"],
                         message="Sorry, there was an error processing your message. Please try again later.",
-                        thread_ts=ctx["ts"],
+                        thread_ts=ctx["thread_id"],
                     )
                     return
 
                 if hasattr(response, "reasoning_content") and response.reasoning_content:
                     rc = str(response.reasoning_content)
                     formatted = f"*Reasoning:*\n> {rc.replace(chr(10), chr(10) + '> ')}"
-                    send_slack_message(slack_tools, channel=ctx["channel_id"], message=formatted, thread_ts=ctx["ts"])
+                    send_slack_message(
+                        slack_tools, channel=ctx["channel_id"], message=formatted, thread_ts=ctx["thread_id"]
+                    )
 
                 content = str(response.content) if response.content else ""
-                send_slack_message(slack_tools, channel=ctx["channel_id"], message=content, thread_ts=ctx["ts"])
-                upload_response_media(slack_tools, response, ctx["channel_id"], ctx["ts"])
+                send_slack_message(slack_tools, channel=ctx["channel_id"], message=content, thread_ts=ctx["thread_id"])
+                upload_response_media(slack_tools, response, ctx["channel_id"], ctx["thread_id"])
         except Exception as e:
             log_error(f"Error processing slack event: {e}")
             send_slack_message(
                 slack_tools,
                 channel=ctx["channel_id"],
                 message="Sorry, there was an error processing your message.",
-                thread_ts=ctx["ts"],
+                thread_ts=ctx["thread_id"],
             )
 
     async def _stream_slack_response(data: dict):
@@ -459,12 +476,6 @@ def attach_routes(
             return
 
         ctx = extract_event_context(event)
-
-        # Slack's chat_stream API only works inside threads. For top-level channel
-        # messages (no thread_ts), we gracefully degrade to the non-streaming path.
-        if not event.get("thread_ts"):
-            await _process_slack_event(event)
-            return
 
         team_id = data.get("team_id") or event.get("team") or None
         # CRITICAL: recipient_user_id must be the HUMAN user, not the bot.
@@ -481,7 +492,7 @@ def attach_routes(
             try:
                 status_kwargs: Dict[str, Any] = {
                     "channel_id": ctx["channel_id"],
-                    "thread_ts": ctx["ts"],
+                    "thread_ts": ctx["thread_id"],
                     "status": "Thinking...",
                 }
                 if loading_messages:
@@ -497,7 +508,7 @@ def attach_routes(
                 "stream": True,
                 "stream_events": True,
                 "user_id": ctx["user"],
-                "session_id": ctx["ts"],
+                "session_id": ctx["thread_id"],
                 "files": files if files else None,
                 "images": images if images else None,
                 "videos": videos if videos else None,
@@ -514,7 +525,7 @@ def attach_routes(
             if response_stream is None:
                 try:
                     await async_client.assistant_threads_setStatus(
-                        channel_id=ctx["channel_id"], thread_ts=ctx["ts"], status=""
+                        channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                     )
                 except Exception:
                     pass
@@ -522,11 +533,11 @@ def attach_routes(
 
             stream = await async_client.chat_stream(
                 channel=ctx["channel_id"],
-                thread_ts=ctx["ts"],
+                thread_ts=ctx["thread_id"],
                 recipient_team_id=team_id,
                 recipient_user_id=user_id,
                 task_display_mode=task_display_mode,
-                buffer_size=1,
+                buffer_size=buffer_size,
             )
 
             await stream.append(chunks=[{"type": "plan_update", "title": loading_text}])
@@ -538,14 +549,13 @@ def attach_routes(
                     if await _process_event(ev, chunk, state, stream):
                         break
 
-                # Flush text buffer immediately (token-by-token streaming)
                 if state.text_buffer:
                     if not state.title_set:
                         state.title_set = True
                         title = ctx["message_text"][:50].strip() or "New conversation"
                         try:
                             await async_client.assistant_threads_setTitle(
-                                channel_id=ctx["channel_id"], thread_ts=ctx["ts"], title=title
+                                channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], title=title
                             )
                         except Exception:
                             pass
@@ -563,13 +573,13 @@ def attach_routes(
             await stream.stop(**stop_kwargs)
 
             # Upload collected media after stream ends
-            upload_response_media(slack_tools, state, ctx["channel_id"], ctx["ts"])
+            upload_response_media(slack_tools, state, ctx["channel_id"], ctx["thread_id"])
 
         except Exception as e:
             log_error(f"Error streaming slack response: {e}")
             try:
                 await async_client.assistant_threads_setStatus(
-                    channel_id=ctx["channel_id"], thread_ts=ctx["ts"], status=""
+                    channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                 )
             except Exception:
                 pass
@@ -582,7 +592,7 @@ def attach_routes(
                 slack_tools,
                 channel=ctx["channel_id"],
                 message="Sorry, there was an error processing your message.",
-                thread_ts=ctx["ts"],
+                thread_ts=ctx["thread_id"],
             )
 
     async def _handle_thread_started(event: dict):

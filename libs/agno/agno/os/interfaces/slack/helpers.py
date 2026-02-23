@@ -35,8 +35,7 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
         "user": event.get("user", ""),
-        # Prefer thread_ts so all replies in a thread share one session.
-        "ts": event.get("thread_ts") or event.get("ts", ""),
+        "thread_id": event.get("thread_ts") or event.get("ts", ""),
     }
 
 

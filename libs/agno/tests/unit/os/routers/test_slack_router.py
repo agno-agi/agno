@@ -1,45 +1,12 @@
 import hashlib
 import hmac
 import json
-import sys
 import time
-import types
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
-
-def _install_fake_slack_sdk():
-    slack_sdk = types.ModuleType("slack_sdk")
-    slack_sdk_errors = types.ModuleType("slack_sdk.errors")
-    slack_sdk_web = types.ModuleType("slack_sdk.web")
-    slack_sdk_web_async = types.ModuleType("slack_sdk.web.async_client")
-
-    class SlackApiError(Exception):
-        def __init__(self, message="error", response=None):
-            super().__init__(message)
-            self.response = response
-
-    class WebClient:
-        def __init__(self, token=None):
-            self.token = token
-
-    class AsyncWebClient:
-        def __init__(self, token=None):
-            self.token = token
-
-    slack_sdk.WebClient = WebClient
-    slack_sdk_errors.SlackApiError = SlackApiError
-    slack_sdk_web_async.AsyncWebClient = AsyncWebClient
-    sys.modules.setdefault("slack_sdk", slack_sdk)
-    sys.modules.setdefault("slack_sdk.errors", slack_sdk_errors)
-    sys.modules.setdefault("slack_sdk.web", slack_sdk_web)
-    sys.modules.setdefault("slack_sdk.web.async_client", slack_sdk_web_async)
-
-
-_install_fake_slack_sdk()
 
 SIGNING_SECRET = "test-secret"
 
