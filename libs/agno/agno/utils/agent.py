@@ -237,6 +237,27 @@ def wait_for_thread_tasks_stream(
             log_warning(f"Error in learning extraction: {str(e)}")
 
 
+def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
+    """Collect RunMetrics returned by completed background futures/tasks.
+
+    Call this after wait_for_open_threads / await_for_open_threads (or the
+    streaming variants) to gather the isolated metrics collectors produced by
+    background memory, culture, and learning tasks.  Each argument can be a
+    ``concurrent.futures.Future``, ``asyncio.Task``, or ``None``.
+    """
+    collected: List[RunMetrics] = []
+    for f in futures_or_tasks:
+        if f is None or not f.done():
+            continue
+        try:
+            result = f.result()
+            if isinstance(result, RunMetrics):
+                collected.append(result)
+        except Exception:
+            pass
+    return collected
+
+
 def collect_joint_images(
     run_input: Optional[RunInput] = None,
     session: Optional[Union[AgentSession, TeamSession]] = None,

@@ -15,6 +15,7 @@ from agno.metrics import (  # noqa: F401
     ToolCallMetrics,
     accumulate_eval_metrics,
     accumulate_model_metrics,
+    merge_background_metrics,
 )
 
 # Explicit re-export for type checkers
@@ -29,4 +30,5 @@ __all__ = [
     "ToolCallMetrics",
     "accumulate_eval_metrics",
     "accumulate_model_metrics",
+    "merge_background_metrics",
 ]
