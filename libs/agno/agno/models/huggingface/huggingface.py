@@ -249,9 +249,6 @@ class HuggingFace(Model):
         Send a chat completion request to the HuggingFace Hub.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
@@ -283,9 +280,6 @@ class HuggingFace(Model):
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -317,9 +311,6 @@ class HuggingFace(Model):
         Send a streaming chat completion request to the HuggingFace API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             stream = self.get_client().chat.completions.create(
@@ -356,9 +347,6 @@ class HuggingFace(Model):
         Sends an asynchronous streaming chat completion request to the HuggingFace API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat.completions.create(
                 model=self.id,

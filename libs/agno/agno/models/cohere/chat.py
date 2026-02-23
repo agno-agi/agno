@@ -218,9 +218,6 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat(
                 model=self.id,
@@ -253,9 +250,6 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
@@ -290,9 +284,6 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat(
                 model=self.id,
@@ -325,9 +316,6 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()

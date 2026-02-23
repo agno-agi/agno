@@ -468,9 +468,6 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
             assistant_message.metrics.stop_timer()
@@ -515,9 +512,6 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -570,9 +564,6 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async with self.get_async_client() as client:
@@ -620,9 +611,6 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 

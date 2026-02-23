@@ -255,9 +255,6 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
@@ -289,9 +286,6 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -323,9 +317,6 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat.completions.create(
@@ -357,9 +348,6 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         async_stream = await self.get_async_client().chat.completions.create(

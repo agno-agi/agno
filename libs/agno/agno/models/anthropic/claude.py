@@ -593,9 +593,6 @@ class Claude(Model):
         Send a request to the Anthropic API to generate a response.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -664,9 +661,6 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -718,9 +712,6 @@ class Claude(Model):
         Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -784,9 +775,6 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
