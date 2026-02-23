@@ -19,8 +19,8 @@ agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memo
 
 basic_agent = Agent(
     name="Basic Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    db=agent_db,
+    model=OpenAIChat(id="gpt-5.2"),
+    db=agent_db,debug_mode=True, debug_level=2,
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
@@ -32,7 +32,8 @@ agent_os = AgentOS(
     interfaces=[
         Slack(
             agent=basic_agent,
-            reply_to_mentions_only=True,  # The Agent will react only to messages mentioning it
+            streaming=False,
+            reply_to_mentions_only=False
         )
     ],
 )

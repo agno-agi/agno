@@ -7,7 +7,7 @@ Demonstrates research assistant.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.slack import SlackTools
@@ -21,7 +21,8 @@ agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/research_assist
 
 research_assistant = Agent(
     name="Research Assistant",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-sonnet-4-5"),
+    debug_mode=True,debug_level=2,
     db=agent_db,
     tools=[
         SlackTools(

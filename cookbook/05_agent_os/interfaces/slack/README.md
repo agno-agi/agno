@@ -11,6 +11,7 @@ Examples for `interfaces/slack` in AgentOS.
 - `multiple_instances.py` — Multiple Instances.
 - `reasoning_agent.py` — Reasoning Agent.
 - `research_assistant.py` — Research Assistant.
+- `streaming.py` — Streaming (real-time token delivery with tool progress).
 - `support_team.py` — Support Team.
 
 ## Prerequisites

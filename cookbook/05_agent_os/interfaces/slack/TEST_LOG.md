@@ -66,6 +66,14 @@
 
 ---
 
+### streaming.py
+
+**Status:** PENDING
+
+**Description:** Streaming responses with tool progress, thread titles, and suggested prompts. Requires a live Slack workspace with `assistant:write` scope and `assistant_thread_started` event subscription.
+
+---
+
 ### support_team.py
 
 **Status:** PENDING
