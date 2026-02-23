@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -241,6 +241,8 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().completion(**completion_kwargs)
@@ -269,6 +271,8 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().completion(**completion_kwargs):
@@ -293,6 +297,8 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         provider_response = await self.get_client().acompletion(**completion_kwargs)
@@ -321,6 +327,8 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         try:
@@ -500,17 +508,17 @@ class LiteLLM(Model):
 
         return result
 
-    def _get_metrics(self, response_usage: Any) -> Metrics:
+    def _get_metrics(self, response_usage: Any) -> MessageMetrics:
         """
-        Parse the given LiteLLM usage into an Agno Metrics object.
+        Parse the given LiteLLM usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from LiteLLM
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         if isinstance(response_usage, dict):
             metrics.input_tokens = response_usage.get("prompt_tokens") or 0

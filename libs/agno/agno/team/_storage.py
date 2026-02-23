@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields as dc_fields
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,7 +22,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
-from agno.metrics import Metrics, ModelMetrics, SessionMetrics
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -135,54 +134,11 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
         session_metrics_from_db = session.session_data.get("session_metrics")
         if session_metrics_from_db is not None:
             if isinstance(session_metrics_from_db, dict):
-                # Handle legacy Metrics dict - convert to SessionMetrics
-                metrics_dict = session_metrics_from_db.copy()
-                # Remove run-level timing fields that don't exist on SessionMetrics
-                metrics_dict.pop("duration", None)
-                metrics_dict.pop("time_to_first_token", None)
-                metrics_dict.pop("timer", None)
-                # Handle details field
-                if "details" in metrics_dict:
-                    if isinstance(metrics_dict["details"], list):
-                        # New format: list of ModelMetrics dicts
-                        details_list = []
-                        for detail_dict in metrics_dict["details"]:
-                            if isinstance(detail_dict, dict):
-                                details_list.append(ModelMetrics.from_dict(detail_dict))
-                            elif isinstance(detail_dict, ModelMetrics):
-                                details_list.append(detail_dict)
-                        metrics_dict["details"] = details_list if details_list else None
-                    elif isinstance(metrics_dict["details"], dict):
-                        # Old run-level format: Dict[str, List[ModelMetrics]]
-                        # Flatten into a single list for SessionMetrics
-                        details_list = []
-                        for model_type_details in metrics_dict["details"].values():
-                            if isinstance(model_type_details, list):
-                                for detail in model_type_details:
-                                    if isinstance(detail, dict):
-                                        details_list.append(ModelMetrics.from_dict(detail))
-                                    elif isinstance(detail, ModelMetrics):
-                                        details_list.append(detail)
-                        metrics_dict["details"] = details_list if details_list else None
-                    else:
-                        metrics_dict.pop("details", None)
-                # Remove any remaining fields not valid on SessionMetrics
-                valid_fields = {f.name for f in dc_fields(SessionMetrics)}
-                metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
-                return SessionMetrics(**metrics_dict)
+                return SessionMetrics.from_dict(session_metrics_from_db)
             elif isinstance(session_metrics_from_db, SessionMetrics):
-                # Ensure details are ModelMetrics objects, not dicts
-                if session_metrics_from_db.details:
-                    details_list = []
-                    for detail in session_metrics_from_db.details:
-                        if isinstance(detail, dict):
-                            details_list.append(ModelMetrics.from_dict(detail))
-                        elif isinstance(detail, ModelMetrics):
-                            details_list.append(detail)
-                    session_metrics_from_db.details = details_list if details_list else None
                 return session_metrics_from_db
-            elif isinstance(session_metrics_from_db, Metrics):
-                # Convert legacy Metrics to SessionMetrics
+            elif isinstance(session_metrics_from_db, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
                 return SessionMetrics(
                     input_tokens=session_metrics_from_db.input_tokens,
                     output_tokens=session_metrics_from_db.output_tokens,
@@ -193,6 +149,7 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
                     cache_read_tokens=session_metrics_from_db.cache_read_tokens,
                     cache_write_tokens=session_metrics_from_db.cache_write_tokens,
                     reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    cost=session_metrics_from_db.cost,
                 )
     return SessionMetrics()
 

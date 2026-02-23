@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
@@ -272,7 +272,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
 
 
@@ -595,7 +595,7 @@ class TeamRunOutput:
     content_type: str = "str"
 
     messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     model: Optional[str] = None
     model_provider: Optional[str] = None
 
@@ -679,7 +679,7 @@ class TeamRunOutput:
             _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -824,7 +824,7 @@ class TeamRunOutput:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            metrics = Metrics.from_dict(metrics)
+            metrics = RunMetrics.from_dict(metrics)
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None

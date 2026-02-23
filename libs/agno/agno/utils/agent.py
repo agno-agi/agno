@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from agno.db.base import AsyncBaseDb
 from agno.media import Audio, File, Image, Video
-from agno.metrics import Metrics, SessionMetrics
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run import RunContext
@@ -845,8 +845,8 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) ->
             return SessionMetrics.from_dict(session_metrics_from_db)
         elif isinstance(session_metrics_from_db, SessionMetrics):
             return session_metrics_from_db
-        elif isinstance(session_metrics_from_db, Metrics):
-            # Legacy: convert Metrics to SessionMetrics
+        elif isinstance(session_metrics_from_db, RunMetrics):
+            # Legacy: convert RunMetrics to SessionMetrics
             return SessionMetrics(
                 input_tokens=session_metrics_from_db.input_tokens,
                 output_tokens=session_metrics_from_db.output_tokens,
@@ -857,6 +857,7 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) ->
                 cache_read_tokens=session_metrics_from_db.cache_read_tokens,
                 cache_write_tokens=session_metrics_from_db.cache_write_tokens,
                 reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                cost=session_metrics_from_db.cost,
             )
     return None
 
@@ -873,7 +874,7 @@ async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: 
             return SessionMetrics.from_dict(session_metrics)
         elif isinstance(session_metrics, SessionMetrics):
             return session_metrics
-        elif isinstance(session_metrics, Metrics):
+        elif isinstance(session_metrics, RunMetrics):
             return SessionMetrics(
                 input_tokens=session_metrics.input_tokens,
                 output_tokens=session_metrics.output_tokens,
@@ -884,6 +885,7 @@ async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: 
                 cache_read_tokens=session_metrics.cache_read_tokens,
                 cache_write_tokens=session_metrics.cache_write_tokens,
                 reasoning_tokens=session_metrics.reasoning_tokens,
+                cost=session_metrics.cost,
             )
     return None
 

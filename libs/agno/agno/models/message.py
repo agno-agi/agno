@@ -6,7 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, File, Image, Video
-from agno.metrics import Metrics
+from agno.metrics import MessageMetrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
@@ -109,8 +109,8 @@ class Message(BaseModel):
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
-    # Metrics for the message.
-    metrics: Metrics = Field(default_factory=Metrics)
+    # Metrics for the message. Only set on assistant messages from model responses.
+    metrics: Optional[MessageMetrics] = None
     # The references added to the message for RAG
     references: Optional[MessageReferences] = None
     # The Unix timestamp the message was created.
@@ -271,16 +271,11 @@ class Message(BaseModel):
                 else:
                     data["video_output"] = Video(**vid_data)
 
-        # Handle metrics deserialization, convert dict to Metrics
+        # Handle metrics deserialization, convert dict to MessageMetrics
         if "metrics" in data and data["metrics"] is not None:
             if isinstance(data["metrics"], dict):
-                # Strip legacy fields that don't exist on Metrics
-                from dataclasses import fields as dataclass_fields
-
-                valid_keys = {f.name for f in dataclass_fields(Metrics)}
-                cleaned = {k: v for k, v in data["metrics"].items() if k in valid_keys}
-                data["metrics"] = Metrics(**cleaned)
-            elif not isinstance(data["metrics"], Metrics):
+                data["metrics"] = MessageMetrics.from_dict(data["metrics"])
+            elif not isinstance(data["metrics"], MessageMetrics):
                 data["metrics"] = None
 
         return cls(**data)
@@ -420,7 +415,7 @@ class Message(BaseModel):
             _logger(f"Files added: {len(self.files)}")
 
         metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
-        if metrics and self.metrics is not None and self.metrics != Metrics():
+        if metrics and self.metrics is not None and self.metrics != MessageMetrics():
             _logger(metrics_header, center=True, symbol="*")
 
             # Token metrics

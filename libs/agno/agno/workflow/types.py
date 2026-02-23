@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.session.workflow import WorkflowSession
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -298,7 +298,7 @@ class StepOutput:
     files: Optional[List[File]] = None
 
     # Metrics for this step execution
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
 
     success: bool = True
     error: Optional[str] = None
@@ -356,12 +356,8 @@ class StepOutput:
         metrics = None
         if metrics_data:
             if isinstance(metrics_data, dict):
-                # Convert dict to Metrics object
-                from agno.models.metrics import Metrics
-
-                metrics = Metrics.from_dict(metrics_data)
+                metrics = RunMetrics.from_dict(metrics_data)
             else:
-                # Already a Metrics object
                 metrics = metrics_data
 
         # Handle nested steps
@@ -397,7 +393,7 @@ class StepMetrics:
     step_name: str
     executor_type: str  # "agent", "team", etc.
     executor_name: str
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -417,12 +413,8 @@ class StepMetrics:
         metrics = None
         if metrics_data:
             if isinstance(metrics_data, dict):
-                # Convert dict to Metrics object
-                from agno.models.metrics import Metrics
-
-                metrics = Metrics.from_dict(metrics_data)
+                metrics = RunMetrics.from_dict(metrics_data)
             else:
-                # Already a Metrics object
                 metrics = metrics_data
 
         return cls(

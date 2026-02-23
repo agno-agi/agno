@@ -31,7 +31,7 @@ from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -1394,7 +1394,7 @@ def run_dispatch(
         run_response.model_provider = team.model.provider if team.model is not None else None
 
         # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
+        run_response.metrics = RunMetrics()
         run_response.metrics.start_timer()
     except Exception:
         cleanup_run(run_id)
@@ -2814,7 +2814,7 @@ def arun_dispatch(  # type: ignore
     run_response.model_provider = team.model.provider if team.model is not None else None
 
     # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = Metrics()
+    run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
     # Background execution: return immediately with PENDING status

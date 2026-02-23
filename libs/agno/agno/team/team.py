@@ -33,7 +33,7 @@ from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -1262,9 +1262,11 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
+    def _calculate_metrics(
+        self, messages: List[Message], current_run_metrics: Optional[RunMetrics] = None
+    ) -> RunMetrics:
         # Metrics are now accumulated immediately during model calls
-        return current_run_metrics or Metrics()
+        return current_run_metrics or RunMetrics()
 
     def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         _session.update_session_metrics(self, session, run_response)

@@ -33,7 +33,7 @@ from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.metrics import Metrics, SessionMetrics
+from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
@@ -4545,9 +4545,9 @@ class Workflow:
             "session_id": self.session_id,
         }
 
-    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
+    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> RunMetrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
-        session_metrics = Metrics()
+        session_metrics = RunMetrics()
 
         # Aggregate metrics from all steps
         for step_name, step_metrics in workflow_metrics.steps.items():
@@ -4567,8 +4567,8 @@ class Workflow:
                     return SessionMetrics.from_dict(session_metrics_from_db)
                 elif isinstance(session_metrics_from_db, SessionMetrics):
                     return session_metrics_from_db
-                elif isinstance(session_metrics_from_db, Metrics):
-                    # Convert legacy Metrics to SessionMetrics
+                elif isinstance(session_metrics_from_db, RunMetrics):
+                    # Convert legacy RunMetrics to SessionMetrics
                     return SessionMetrics(
                         input_tokens=session_metrics_from_db.input_tokens,
                         output_tokens=session_metrics_from_db.output_tokens,

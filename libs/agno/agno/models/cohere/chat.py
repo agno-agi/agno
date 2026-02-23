@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -221,6 +221,8 @@ class Cohere(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat(
                 model=self.id,
@@ -258,6 +260,8 @@ class Cohere(Model):
 
             tool_use: Dict[str, Any] = {}
 
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             for response in self.get_client().chat_stream(
@@ -293,6 +297,8 @@ class Cohere(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat(
                 model=self.id,
@@ -330,6 +336,8 @@ class Cohere(Model):
 
             tool_use: Dict[str, Any] = {}
 
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             async for response in self.get_async_client().chat_stream(
@@ -429,17 +437,17 @@ class Cohere(Model):
 
         return model_response, tool_use
 
-    def _get_metrics(self, response_usage) -> Metrics:
+    def _get_metrics(self, response_usage) -> MessageMetrics:
         """
-        Parse the given Cohere usage into an Agno Metrics object.
+        Parse the given Cohere usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Cohere
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.tokens.input_tokens or 0
         metrics.output_tokens = response_usage.tokens.output_tokens or 0

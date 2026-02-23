@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.agent import RunOutput
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 from agno.utils.reasoning import extract_thinking_content
@@ -245,6 +245,8 @@ class Ollama(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().chat(
@@ -276,6 +278,8 @@ class Ollama(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         provider_response = await self.get_async_client().chat(
@@ -305,6 +309,8 @@ class Ollama(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat(
@@ -333,6 +339,8 @@ class Ollama(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         async for chunk in await self.get_async_client().chat(
@@ -428,17 +436,17 @@ class Ollama(Model):
 
         return model_response
 
-    def _get_metrics(self, response: Union[dict, ChatResponse]) -> Metrics:
+    def _get_metrics(self, response: Union[dict, ChatResponse]) -> MessageMetrics:
         """
-        Parse the given Ollama usage into an Agno Metrics object.
+        Parse the given Ollama usage into an Agno MessageMetrics object.
 
         Args:
             response: The response from the provider.
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         # Safely handle None values from Ollama Cloud responses
         input_tokens = response.get("prompt_eval_count")

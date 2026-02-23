@@ -8,7 +8,7 @@ from agno.db.base import SessionType
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.memory.manager import MemoryManager
-from agno.metrics import Metrics, ModelMetrics, SessionMetrics, ToolCallMetrics
+from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics, ToolCallMetrics
 from agno.models.openai import OpenAIChat
 from agno.tools.websearch import WebSearchTools
 
@@ -134,7 +134,7 @@ def test_run_metrics_details_structure():
     response = agent.run("Hello")
 
     assert response.metrics is not None
-    assert isinstance(response.metrics, Metrics)
+    assert isinstance(response.metrics, RunMetrics)
     assert response.metrics.total_tokens > 0
     assert response.metrics.details is not None
     assert "model" in response.metrics.details
@@ -427,7 +427,9 @@ def test_tool_call_metrics_multiple_tools():
         assert isinstance(tool.metrics, ToolCallMetrics)
         assert tool.metrics.duration > 0
 
-    assert len(response.metrics.details["model"]) >= 2
+    # Same (provider, id) accumulates into a single ModelMetrics entry
+    assert len(response.metrics.details["model"]) >= 1
+    assert response.metrics.details["model"][0].total_tokens > 0
 
 
 def test_tool_call_metrics_latency():
@@ -460,7 +462,8 @@ def test_provider_metrics_openai_with_tools():
     response = agent.run("Add 5 and 10.")
 
     model_entries = response.metrics.details["model"]
-    assert len(model_entries) >= 2
+    # Same (provider, id) accumulates into a single entry
+    assert len(model_entries) >= 1
 
     for entry in model_entries:
         assert entry.provider == "OpenAI"
@@ -492,9 +495,12 @@ def test_session_metrics_type(shared_db):
     assert session_metrics.average_duration > 0
     assert session_metrics.input_tokens > 0
     assert session_metrics.total_tokens > 0
-    assert isinstance(session_metrics.details, list)
+    assert isinstance(session_metrics.details, dict)
     assert len(session_metrics.details) > 0
-    assert isinstance(session_metrics.details[0], ModelMetrics)
+    for model_type, metrics_list in session_metrics.details.items():
+        assert isinstance(metrics_list, list)
+        for metric in metrics_list:
+            assert isinstance(metric, ModelMetrics)
 
 
 def test_session_metrics_with_memory(shared_db):
@@ -512,9 +518,10 @@ def test_session_metrics_with_memory(shared_db):
     assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
-    for detail in session_metrics.details:
-        assert isinstance(detail, ModelMetrics)
-        assert detail.id is not None
+    for model_type, metrics_list in session_metrics.details.items():
+        for detail in metrics_list:
+            assert isinstance(detail, ModelMetrics)
+            assert detail.id is not None
 
 
 def test_session_metrics_with_eval(shared_db):
@@ -633,7 +640,9 @@ def test_tools_plus_eval_sync():
 
     assert "model" in response.metrics.details
     assert "eval_model" in response.metrics.details
-    assert len(response.metrics.details["model"]) >= 2
+    # Same (provider, id) accumulates into a single entry
+    assert len(response.metrics.details["model"]) >= 1
+    assert response.metrics.details["model"][0].total_tokens > 0
 
 
 def test_all_three_combined(shared_db):
