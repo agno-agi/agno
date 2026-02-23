@@ -10,7 +10,7 @@
 
 <p align="center">
   The programming language for agentic software.<br/>
-  Build, run, and govern multi-agent systems at scale.
+  Build, run, and manage multi-agent systems at scale.
 </p>
 
 <div align="center">
