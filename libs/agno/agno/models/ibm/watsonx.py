@@ -183,8 +183,6 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
             response = client.chat(messages=formatted_messages, **request_params)
             assistant_message.metrics.stop_timer()
@@ -221,8 +219,6 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
             provider_response = await client.achat(messages=formatted_messages, **request_params)
             assistant_message.metrics.stop_timer()
@@ -259,8 +255,6 @@ class WatsonX(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             for chunk in client.chat_stream(messages=formatted_messages, **request_params):
@@ -297,8 +291,6 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
