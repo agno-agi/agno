@@ -1,7 +1,7 @@
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
@@ -726,3 +726,58 @@ def test_tool_decorator_with_complex_types():
     assert complex_types_func.parameters["properties"]["param2"]["type"] == "object"
     assert complex_types_func.parameters["properties"]["param3"]["type"] == "boolean"
     assert "param3" not in complex_types_func.parameters["required"]
+
+
+def test_function_cache_pydantic_model(tmp_path):
+    """Test caching operations with Pydantic BaseModel results."""
+    import json
+    import os
+
+    class OrderResponse(BaseModel):
+        success: bool
+        data: Optional[dict] = None
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
+
+    # Test saving a Pydantic model to cache
+    test_result = OrderResponse(success=True, data={"id": 123, "status": "delivered"})
+    cache_file = os.path.join(str(tmp_path), "test_pydantic_cache.json")
+    func._save_to_cache(cache_file, test_result)
+
+    # Verify cache file exists and contains correct data
+    assert os.path.exists(cache_file)
+    with open(cache_file, "r") as f:
+        cached_data = json.load(f)
+    assert cached_data["result"] == {"success": True, "data": {"id": 123, "status": "delivered"}}
+
+    # Test retrieving from cache returns the dict representation
+    retrieved_result = func._get_cached_result(cache_file)
+    assert retrieved_result == {"success": True, "data": {"id": 123, "status": "delivered"}}
+
+
+def test_function_cache_pydantic_model_nested(tmp_path):
+    """Test caching operations with nested Pydantic BaseModel results."""
+    import json
+    import os
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+    class User(BaseModel):
+        name: str
+        address: Address
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
+
+    test_result = User(name="John", address=Address(street="123 Main St", city="Springfield"))
+    cache_file = os.path.join(str(tmp_path), "test_nested_cache.json")
+    func._save_to_cache(cache_file, test_result)
+
+    assert os.path.exists(cache_file)
+    with open(cache_file, "r") as f:
+        cached_data = json.load(f)
+    assert cached_data["result"] == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+
+    retrieved_result = func._get_cached_result(cache_file)
+    assert retrieved_result == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}

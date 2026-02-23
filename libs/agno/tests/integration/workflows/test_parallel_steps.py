@@ -675,12 +675,13 @@ def test_parallel_name_first_streaming():
 
 
 # ==================================
-# OUTPUT SCHEMA ISOLATION TESTS 
+# OUTPUT SCHEMA ISOLATION TESTS
 
 # When parallel steps contain agents with different output_schema types, each
 # step must receive its own run_context copy so that apply_to_context() writes
 # do not clobber a sibling step's schema.
 # ==================================
+
 
 class ImageClassification(BaseModel):
     """Output schema for image classifier agents."""

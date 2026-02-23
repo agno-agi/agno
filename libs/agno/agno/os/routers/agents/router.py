@@ -650,17 +650,15 @@ def get_agent_router(
                 if isinstance(agent, RemoteAgent):
                     agents.append(await agent.get_agent_config())
                 else:
-                    agent_response = await AgentResponse.from_agent(agent=agent)
+                    agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
                     agents.append(agent_response)
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
 
-            db_agents = get_agents(db=os.db, registry=registry)
-            if db_agents:
-                for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent)
-                    agents.append(agent_response)
+            for db_agent in get_agents(db=os.db, registry=registry):
+                agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                agents.append(agent_response)
 
         return agents
 
