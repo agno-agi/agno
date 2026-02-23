@@ -1,4 +1,3 @@
-from copy import deepcopy
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dc_fields
 from enum import Enum
@@ -346,23 +345,25 @@ class RunMetrics(BaseMetrics):
         if self.timer is not None:
             result.timer = self.timer
 
-        # Merge details — deep copy lists from self to avoid aliasing
+        # Merge details — aggregate by (model_type, provider, id)
         self_details = self.details
         other_details = getattr(other, "details", None)
         if self_details or other_details:
-            result.details = {}
-            if self_details:
-                result.details = {
-                    model_type: [deepcopy(model_metric) for model_metric in metrics_list]
-                    for model_type, metrics_list in self_details.items()
-                }
-            if other_details:
-                for model_type, model_metrics_list in other_details.items():
-                    other_metrics_list = [deepcopy(model_metric) for model_metric in model_metrics_list]
-                    if model_type in result.details:
-                        result.details[model_type].extend(other_metrics_list)
-                    else:
-                        result.details[model_type] = other_metrics_list
+            lookup: Dict[str, Dict[Tuple[str, str], ModelMetrics]] = {}
+
+            for source_details in (self_details, other_details):
+                if source_details:
+                    for model_type, model_metrics_list in source_details.items():
+                        if model_type not in lookup:
+                            lookup[model_type] = {}
+                        for mm in model_metrics_list:
+                            key = (mm.provider, mm.id)
+                            if key in lookup[model_type]:
+                                lookup[model_type][key].accumulate(mm)
+                            else:
+                                lookup[model_type][key] = ModelMetrics.from_dict(mm.to_dict())
+
+            result.details = {model_type: list(entries.values()) for model_type, entries in lookup.items()}
 
         # Sum durations
         self_duration = self.duration
