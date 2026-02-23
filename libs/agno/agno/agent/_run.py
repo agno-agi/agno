@@ -225,9 +225,8 @@ def handle_agent_run_paused_stream(
     create_approval_from_pause(
         db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
     )
-    cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
-    # We return and await confirmation/completion for the tools that require it
+    # Create RunPausedEvent and add to run_response.events before storing
     pause_event = handle_event(
         create_run_paused_event(
             from_run_response=run_response,
@@ -238,6 +237,8 @@ def handle_agent_run_paused_stream(
         events_to_skip=agent.events_to_skip,  # type: ignore
         store_events=agent.store_events,
     )
+
+    cleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     yield pause_event  # type: ignore
 
@@ -285,9 +286,8 @@ async def ahandle_agent_run_paused_stream(
     await acreate_approval_from_pause(
         db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
     )
-    await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
-    # We return and await confirmation/completion for the tools that require it
+    # Create RunPausedEvent and add to run_response.events before storing
     pause_event = handle_event(
         create_run_paused_event(
             from_run_response=run_response,
@@ -298,6 +298,8 @@ async def ahandle_agent_run_paused_stream(
         events_to_skip=agent.events_to_skip,  # type: ignore
         store_events=agent.store_events,
     )
+
+    await acleanup_and_store(agent, run_response=run_response, session=session, user_id=user_id)
 
     yield pause_event  # type: ignore
 
