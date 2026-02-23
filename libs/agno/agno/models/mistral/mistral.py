@@ -190,8 +190,6 @@ class MistralChat(Model):
                 if run_response and run_response.metrics:
                     run_response.metrics.set_time_to_first_token()
 
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
 
                 response = self.get_client().chat.complete(
@@ -204,8 +202,6 @@ class MistralChat(Model):
                 if run_response and run_response.metrics:
                     run_response.metrics.set_time_to_first_token()
 
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 response = self.get_client().chat.complete(
                     model=self.id,
@@ -244,8 +240,6 @@ class MistralChat(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         try:
@@ -288,8 +282,6 @@ class MistralChat(Model):
             ):
                 if run_response and run_response.metrics:
                     run_response.metrics.set_time_to_first_token()
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
@@ -300,8 +292,6 @@ class MistralChat(Model):
             else:
                 if run_response and run_response.metrics:
                     run_response.metrics.set_time_to_first_token()
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
@@ -339,8 +329,6 @@ class MistralChat(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             async for chunk in await self.get_client().chat.stream_async(

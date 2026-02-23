@@ -471,8 +471,6 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
             assistant_message.metrics.stop_timer()
@@ -521,8 +519,6 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             # Track current tool being built across chunks
@@ -577,8 +573,6 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             async with self.get_async_client() as client:
@@ -630,8 +624,6 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             # Track current tool being built across chunks
