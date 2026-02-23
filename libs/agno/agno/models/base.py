@@ -1398,23 +1398,10 @@ class Model(ABC):
                         from agno.metrics import accumulate_model_metrics
 
                         _stream_model_response = ModelResponse()
-                        _stream_model_response.response_usage = MessageMetrics(
-                            input_tokens=assistant_message.metrics.input_tokens,
-                            output_tokens=assistant_message.metrics.output_tokens,
-                            total_tokens=assistant_message.metrics.total_tokens,
-                            audio_input_tokens=assistant_message.metrics.audio_input_tokens,
-                            audio_output_tokens=assistant_message.metrics.audio_output_tokens,
-                            audio_total_tokens=assistant_message.metrics.audio_total_tokens,
-                            cache_read_tokens=assistant_message.metrics.cache_read_tokens,
-                            cache_write_tokens=assistant_message.metrics.cache_write_tokens,
-                            reasoning_tokens=assistant_message.metrics.reasoning_tokens,
-                            time_to_first_token=assistant_message.metrics.time_to_first_token,
-                            cost=assistant_message.metrics.cost,
-                            provider_metrics=assistant_message.metrics.provider_metrics,
-                        )
+                        _stream_model_response.response_usage = assistant_message.metrics
                         accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response)
 
-                else:
+                else:   
                     # Initialize message metrics and start timer before model call
                     self._ensure_message_metrics_initialized(assistant_message)
                     self._process_model_response(
@@ -1682,20 +1669,7 @@ class Model(ABC):
                         from agno.metrics import accumulate_model_metrics
 
                         _stream_model_response = ModelResponse()
-                        _stream_model_response.response_usage = MessageMetrics(
-                            input_tokens=assistant_message.metrics.input_tokens,
-                            output_tokens=assistant_message.metrics.output_tokens,
-                            total_tokens=assistant_message.metrics.total_tokens,
-                            audio_input_tokens=assistant_message.metrics.audio_input_tokens,
-                            audio_output_tokens=assistant_message.metrics.audio_output_tokens,
-                            audio_total_tokens=assistant_message.metrics.audio_total_tokens,
-                            cache_read_tokens=assistant_message.metrics.cache_read_tokens,
-                            cache_write_tokens=assistant_message.metrics.cache_write_tokens,
-                            reasoning_tokens=assistant_message.metrics.reasoning_tokens,
-                            time_to_first_token=assistant_message.metrics.time_to_first_token,
-                            cost=assistant_message.metrics.cost,
-                            provider_metrics=assistant_message.metrics.provider_metrics,
-                        )
+                        _stream_model_response.response_usage = assistant_message.metrics
                         accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response)
 
                 else:
