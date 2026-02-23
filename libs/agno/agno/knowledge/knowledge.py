@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from io import BytesIO
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -62,7 +60,10 @@ class Knowledge:
             knowledge_name=self.name,
             isolate_vector_search=self.isolate_vector_search,
         )
-        self._remote_loader = RemoteLoader(knowledge=self)
+        self._remote_loader = RemoteLoader(
+            pipeline=self._pipeline,
+            content_sources=self.content_sources,
+        )
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -721,7 +722,7 @@ class Knowledge:
         return next((c for c in self.content_sources if c.id == config_id), None)
 
     # ==========================================
-    # FORWARDING METHODS (for loader callback compatibility)
+    # FORWARDING METHODS (kept for OS router / test compatibility)
     # ==========================================
 
     def _build_content_hash(self, content: Content) -> str:
@@ -729,15 +730,6 @@ class Knowledge:
 
     def _build_document_content_hash(self, document: Document, content: Content) -> str:
         return self._pipeline.build_document_content_hash(document, content)
-
-    def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
-        return self._pipeline.should_skip(content_hash, skip_if_exists)
-
-    def _should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
-        return self._pipeline.should_include_file(file_path, include, exclude)
-
-    def _is_text_mime_type(self, mime_type: str) -> bool:
-        return self._pipeline.is_text_mime_type(mime_type)
 
     def _prepare_documents_for_insert(
         self,
@@ -747,71 +739,6 @@ class Knowledge:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         return self._pipeline.prepare_documents_for_insert(documents, content_id, calculate_sizes, metadata)
-
-    def _handle_vector_db_insert(self, content: Content, read_documents: List[Document], upsert: bool) -> None:
-        return self._pipeline.handle_vector_db_insert(content, read_documents, upsert)
-
-    async def _ahandle_vector_db_insert(self, content: Content, read_documents: List[Document], upsert: bool) -> None:
-        return await self._pipeline.ahandle_vector_db_insert(content, read_documents, upsert)
-
-    def _insert_contents_db(self, content: Content) -> None:
-        self._content_store.insert(content)
-
-    async def _ainsert_contents_db(self, content: Content) -> None:
-        await self._content_store.ainsert(content)
-
-    def _update_content(self, content: Content) -> Optional[Dict[str, Any]]:
-        return self._content_store.update(content, vector_db=self.vector_db)
-
-    async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
-        return await self._content_store.aupdate(content, vector_db=self.vector_db)
-
-    def _select_reader_by_uri(self, uri: str, provided_reader: Optional[Reader] = None) -> Optional[Reader]:
-        return self._reader_registry.select_reader_by_uri(uri, provided_reader)
-
-    def _select_reader_by_extension(
-        self, file_extension: str, provided_reader: Optional[Reader] = None
-    ) -> Tuple[Optional[Reader], str]:
-        return self._reader_registry.select_reader_by_extension(file_extension, provided_reader)
-
-    def _select_reader(self, extension: str) -> Reader:
-        return self._reader_registry.select_reader(extension)
-
-    def _generate_reader_key(self, reader: Reader) -> str:
-        return self._reader_registry._generate_reader_key(reader)
-
-    def _get_reader(self, reader_type: str) -> Optional[Reader]:
-        return self._reader_registry._get_reader(reader_type)
-
-    def _read(
-        self,
-        reader: Reader,
-        source: Union[Path, str, BytesIO],
-        name: Optional[str] = None,
-        password: Optional[str] = None,
-    ) -> List[Document]:
-        return self._reader_registry.read(reader, source, name, password)
-
-    async def _aread(
-        self,
-        reader: Reader,
-        source: Union[Path, str, BytesIO],
-        name: Optional[str] = None,
-        password: Optional[str] = None,
-    ) -> List[Document]:
-        return await self._reader_registry.aread(reader, source, name, password)
-
-    def _content_row_to_content(self, content_row: Any) -> Content:
-        return self._content_store._content_row_to_content(content_row)
-
-    def _build_knowledge_row(self, content: Content) -> Any:
-        return self._content_store._build_knowledge_row(content)
-
-    def _parse_content_status(self, status_str: Optional[str]) -> ContentStatus:
-        return self._content_store._parse_content_status(status_str)
-
-    def _ensure_string_field(self, value: Any, field_name: str, default: str = "") -> str:
-        return self._content_store._ensure_string_field(value, field_name, default)
 
     def _validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]], valid_metadata_filters: Set[str]
@@ -886,18 +813,6 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
     ) -> None:
         await self._pipeline.aload_from_path(content, upsert, skip_if_exists, include, exclude)
-
-    def _load_from_url(self, content: Content, upsert: bool, skip_if_exists: bool) -> None:
-        self._pipeline.load_from_url(content, upsert, skip_if_exists)
-
-    async def _aload_from_url(self, content: Content, upsert: bool, skip_if_exists: bool) -> None:
-        await self._pipeline.aload_from_url(content, upsert, skip_if_exists)
-
-    def _load_from_content(self, content: Content, upsert: bool, skip_if_exists: bool) -> None:
-        self._pipeline.load_from_content(content, upsert, skip_if_exists)
-
-    async def _aload_from_content(self, content: Content, upsert: bool, skip_if_exists: bool) -> None:
-        await self._pipeline.aload_from_content(content, upsert, skip_if_exists)
 
     def _load_from_topics(self, content: Content, upsert: bool, skip_if_exists: bool) -> None:
         self._pipeline.load_from_topics(content, upsert, skip_if_exists)

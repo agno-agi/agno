@@ -134,18 +134,18 @@ class S3Loader(BaseLoader):
                 metadata=merged_metadata,
                 file_type="s3",
             )
-            content_entry.content_hash = self.knowledge._build_content_hash(content_entry)
+            content_entry.content_hash = self.pipeline.build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
 
-            await self.knowledge._ainsert_contents_db(content_entry)
+            await self.pipeline.content_store.ainsert(content_entry)
 
-            if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
+            if self.pipeline.should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
-                await self.knowledge._aupdate_content(content_entry)
+                await self.pipeline.content_store.aupdate(content_entry, vector_db=self.pipeline.vector_db)
                 continue
 
             # Select reader
-            reader = self.knowledge._select_reader_by_uri(s3_object.uri, content.reader)
+            reader = self.pipeline.reader_registry.select_reader_by_uri(s3_object.uri, content.reader)
             reader = cast(Reader, reader)
 
             # Fetch and load the content
@@ -162,8 +162,8 @@ class S3Loader(BaseLoader):
             read_documents = await reader.async_read(readable_content, name=file_name)
 
             # Prepare and insert the content in the vector database
-            self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
-            await self.knowledge._ahandle_vector_db_insert(content_entry, read_documents, upsert)
+            self.pipeline.prepare_documents_for_insert(read_documents, content_entry.id)
+            await self.pipeline.ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
             # Remove temporary file if needed
             if temporary_file:
@@ -234,18 +234,18 @@ class S3Loader(BaseLoader):
                 metadata=merged_metadata,
                 file_type="s3",
             )
-            content_entry.content_hash = self.knowledge._build_content_hash(content_entry)
+            content_entry.content_hash = self.pipeline.build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
 
-            self.knowledge._insert_contents_db(content_entry)
+            self.pipeline.content_store.insert(content_entry)
 
-            if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
+            if self.pipeline.should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
-                self.knowledge._update_content(content_entry)
+                self.pipeline.content_store.update(content_entry, vector_db=self.pipeline.vector_db)
                 continue
 
             # Select reader
-            reader = self.knowledge._select_reader_by_uri(s3_object.uri, content.reader)
+            reader = self.pipeline.reader_registry.select_reader_by_uri(s3_object.uri, content.reader)
             reader = cast(Reader, reader)
 
             # Fetch and load the content
@@ -262,8 +262,8 @@ class S3Loader(BaseLoader):
             read_documents = reader.read(readable_content, name=file_name)
 
             # Prepare and insert the content in the vector database
-            self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
-            self.knowledge._handle_vector_db_insert(content_entry, read_documents, upsert)
+            self.pipeline.prepare_documents_for_insert(read_documents, content_entry.id)
+            self.pipeline.handle_vector_db_insert(content_entry, read_documents, upsert)
 
             # Remove temporary file if needed
             if temporary_file:

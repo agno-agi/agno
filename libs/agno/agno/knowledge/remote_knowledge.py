@@ -29,17 +29,17 @@ from agno.utils.log import log_warning
 class RemoteLoader:
     """Manages remote content loading via composed loader instances.
 
-    Each loader receives a reference to the Knowledge instance so it can
-    call back into Knowledge for content store, reader, and pipeline operations.
+    Each loader receives a pipeline reference (IngestionPipeline) which provides
+    direct access to content_store, reader_registry, and vector_db.
     """
 
-    def __init__(self, knowledge: Any):
-        self.knowledge = knowledge
-        self._s3_loader = S3Loader(knowledge=knowledge)
-        self._gcs_loader = GCSLoader(knowledge=knowledge)
-        self._sharepoint_loader = SharePointLoader(knowledge=knowledge)
-        self._github_loader = GitHubLoader(knowledge=knowledge)
-        self._azure_blob_loader = AzureBlobLoader(knowledge=knowledge)
+    def __init__(self, pipeline: Any, content_sources: Optional[List[BaseStorageConfig]] = None):
+        self.content_sources = content_sources
+        self._s3_loader = S3Loader(pipeline=pipeline)
+        self._gcs_loader = GCSLoader(pipeline=pipeline)
+        self._sharepoint_loader = SharePointLoader(pipeline=pipeline)
+        self._github_loader = GitHubLoader(pipeline=pipeline)
+        self._azure_blob_loader = AzureBlobLoader(pipeline=pipeline)
 
     # ==========================================
     # REMOTE CONTENT DISPATCHERS
@@ -133,10 +133,10 @@ class RemoteLoader:
 
     def _get_remote_configs(self) -> List[BaseStorageConfig]:
         """Return configured remote content sources."""
-        return self.knowledge.content_sources or []
+        return self.content_sources or []
 
     def _get_remote_config_by_id(self, config_id: str) -> Optional[BaseStorageConfig]:
         """Get a remote content config by its ID."""
-        if not self.knowledge.content_sources:
+        if not self.content_sources:
             return None
-        return next((c for c in self.knowledge.content_sources if c.id == config_id), None)
+        return next((c for c in self.content_sources if c.id == config_id), None)

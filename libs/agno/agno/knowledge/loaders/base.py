@@ -30,12 +30,13 @@ class BaseLoader:
     This class provides common methods used by all content loaders to reduce
     code duplication between sync and async implementations.
 
-    Each loader receives a ``knowledge`` reference in its constructor,
-    which provides callback methods like ``_build_content_hash()``.
+    Each loader receives a ``pipeline`` reference (IngestionPipeline) in its
+    constructor, which provides direct access to content_store, reader_registry,
+    and vector_db for content operations.
     """
 
-    def __init__(self, knowledge: Any = None):
-        self.knowledge = knowledge
+    def __init__(self, pipeline: Any = None):
+        self.pipeline = pipeline
 
     RESERVED_METADATA_KEY = RESERVED_AGNO_KEY
 
@@ -94,7 +95,7 @@ class BaseLoader:
             metadata=metadata,
             file_type=file_type,
         )
-        entry.content_hash = self.knowledge._build_content_hash(entry)
+        entry.content_hash = self.pipeline.build_content_hash(entry)
         entry.id = generate_id(entry.content_hash)
         return entry
 
@@ -121,7 +122,7 @@ class BaseLoader:
         content.metadata = metadata
         content.file_type = file_type
         if not content.content_hash:
-            content.content_hash = self.knowledge._build_content_hash(content)
+            content.content_hash = self.pipeline.build_content_hash(content)
         if not content.id:
             content.id = generate_id(content.content_hash)
         return content
