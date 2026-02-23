@@ -2898,6 +2898,7 @@ def _cleanup_and_store(
     run_context: Optional[RunContext] = None,
 ) -> None:
     #  Scrub the stored run based on storage flags
+    from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
     scrub_run_output_for_storage(team, run_response)
@@ -2926,6 +2927,11 @@ def _cleanup_and_store(
     # Save session to memory
     team.save_session(session=session)
 
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(team.db, run_response.run_id, run_response.status.value)
+
 
 async def _acleanup_and_store(
     team: "Team",
@@ -2934,6 +2940,7 @@ async def _acleanup_and_store(
     run_context: Optional[RunContext] = None,
 ) -> None:
     #  Scrub the stored run based on storage flags
+    from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
     scrub_run_output_for_storage(team, run_response)
@@ -2961,6 +2968,11 @@ async def _acleanup_and_store(
 
     # Save session to memory
     await team.asave_session(session=session)
+
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status.value)
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
@@ -4224,6 +4236,7 @@ def _continue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,
@@ -4647,6 +4660,7 @@ async def _acontinue_run(
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -4657,6 +4671,7 @@ async def _acontinue_run(
                 if run_response.content is None:
                     run_response.content = str(e)
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -5033,6 +5048,7 @@ async def _acontinue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,

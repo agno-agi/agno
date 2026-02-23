@@ -40,6 +40,10 @@ class ApprovalResponse(BaseModel):
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+    # Run status from the associated run, fetched at response time (not stored in DB).
+    # Used by the UI to determine if the run has already been continued.
+    # Values: "PAUSED", "COMPLETED", "RUNNING", "ERROR", "CANCELLED", or None if not found.
+    run_status: Optional[str] = None
 
 
 class ApprovalListResponse(BaseModel):

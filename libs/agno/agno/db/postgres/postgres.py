@@ -4927,3 +4927,29 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error counting approvals: {e}")
             return 0
+
+    def update_approval_run_status(self, run_id: str, run_status: str) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status (e.g., "COMPLETED", "ERROR", "CANCELLED").
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == run_id)
+                    .values(run_status=run_status, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return result.rowcount
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
+            return 0

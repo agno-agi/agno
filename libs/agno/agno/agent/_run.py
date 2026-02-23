@@ -3714,6 +3714,7 @@ async def _acontinue_run(
                 log_info(f"Run {run_response.run_id if run_response else run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
+
                 # Cleanup and store the run response and session
                 if agent_session is not None:
                     await acleanup_and_store(
@@ -4341,6 +4342,7 @@ def cleanup_and_store(
     user_id: Optional[str] = None,
 ) -> None:
     from agno.agent import _session
+    from agno.run.approval import update_approval_run_status
 
     # Scrub the stored run based on storage flags
     scrub_run_output_for_storage(agent, run_response)
@@ -4379,6 +4381,11 @@ def cleanup_and_store(
     # Save session to memory
     _session.save_session(agent, session=session)
 
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(agent.db, run_response.run_id, run_response.status.value)
+
 
 async def acleanup_and_store(
     agent: Agent,
@@ -4388,6 +4395,7 @@ async def acleanup_and_store(
     user_id: Optional[str] = None,
 ) -> None:
     from agno.agent import _session
+    from agno.run.approval import aupdate_approval_run_status
 
     # Scrub the stored run based on storage flags
     scrub_run_output_for_storage(agent, run_response)
@@ -4425,6 +4433,11 @@ async def acleanup_and_store(
 
     # Save session to memory
     await _session.asave_session(agent, session=session)
+
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status.value)
 
 
 # ---------------------------------------------------------------------------
