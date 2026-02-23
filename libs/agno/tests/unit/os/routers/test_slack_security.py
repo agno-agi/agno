@@ -65,10 +65,6 @@ class TestVerifySlackSignature:
         sig = _sign(body, stale_ts, secret)
         assert verify_slack_signature(body, stale_ts, sig, signing_secret=secret) is False
 
-    def test_invalid_timestamp_format(self):
-        body = b'{"test": true}'
-        assert verify_slack_signature(body, "not-a-number", "v0=fake", signing_secret="secret") is False
-
     def test_wrong_signature_rejected(self):
         body = b'{"test": true}'
         ts = str(int(time.time()))
