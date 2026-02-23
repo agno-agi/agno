@@ -241,8 +241,6 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().completion(**completion_kwargs)
@@ -271,8 +269,6 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().completion(**completion_kwargs):
@@ -297,8 +293,6 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         provider_response = await self.get_client().acompletion(**completion_kwargs)
@@ -327,8 +321,6 @@ class LiteLLM(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
         assistant_message.metrics.start_timer()
 
         try:
