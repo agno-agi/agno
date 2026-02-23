@@ -848,6 +848,26 @@ jobs:
           ./libs/agno/tests/integration/teams/test_metrics.py \
           ./libs/agno/tests/integration/teams/test_parser_model.py
 
+  verify-split-test-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Verify all split integration tests are assigned to CI jobs
+        run: |
+          status=0
+          for dir in teams knowledge; do
+            grep -oE "\./libs/agno/tests/integration/${dir}/[^ \\\\]+(/[^ \\\\]+)*\.py" \
+              .github/workflows/test_on_release.yml \
+              | grep -v '^\s*#' | sort -u > /tmp/wf.txt
+            find "libs/agno/tests/integration/${dir}" -name 'test_*.py' \
+              | sed 's|^|./|' | sort > /tmp/repo.txt
+            if ! diff /tmp/repo.txt /tmp/wf.txt; then
+              echo "::error::${dir} test coverage mismatch — see diff above"
+              status=1
+            fi
+          done
+          exit $status
+
   test-workflows:
     runs-on: ubuntu-latest
     strategy:
@@ -943,7 +963,9 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
+          ./libs/agno/tests/integration/knowledge/test_pptx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_async_knowledge_retriever.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
@@ -977,7 +999,8 @@ jobs:
           python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/filters/test_agentic_filtering.py
 
   # Run A2A tests (isolated due to dependency conflicts)
   test-a2a:
