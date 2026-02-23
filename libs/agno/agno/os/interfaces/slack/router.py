@@ -24,7 +24,17 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
 # filter the router would try to process its own messages, causing infinite loops.
-_BOT_SUBTYPES = frozenset({"bot_message", "bot_add", "bot_remove", "bot_enable", "bot_disable"})
+_IGNORED_SUBTYPES = frozenset(
+    {
+        "bot_message",
+        "bot_add",
+        "bot_remove",
+        "bot_enable",
+        "bot_disable",
+        "message_changed",
+        "message_deleted",
+    }
+)
 
 
 def _normalize_event(event: str) -> str:
@@ -380,7 +390,6 @@ def attach_routes(
         if "event" in data:
             event = data["event"]
             event_type = event.get("type")
-
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(_handle_thread_started, event)
             # Bot self-loop prevention: check bot_id at both the top-level event
@@ -389,7 +398,7 @@ def attach_routes(
             elif (
                 event.get("bot_id")
                 or (event.get("message") or {}).get("bot_id")
-                or event.get("subtype") in _BOT_SUBTYPES
+                or event.get("subtype") in _IGNORED_SUBTYPES
             ):
                 pass
             elif streaming:
@@ -540,7 +549,6 @@ def attach_routes(
                 buffer_size=buffer_size,
             )
 
-            await stream.append(chunks=[{"type": "plan_update", "title": loading_text}])
             async for chunk in response_stream:
                 state.collect_media(chunk)
 
