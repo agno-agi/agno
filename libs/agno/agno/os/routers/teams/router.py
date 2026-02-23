@@ -469,16 +469,15 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 teams.append(await team.get_team_config())
             else:
-                team_response = await TeamResponse.from_team(team=team)
+                team_response = await TeamResponse.from_team(team=team, is_component=False)
                 teams.append(team_response)
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            db_teams = get_teams(db=os.db, registry=registry)
-            for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team)
+            for db_team in get_teams(db=os.db, registry=registry):
+                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                 teams.append(team_response)
 
         return teams
