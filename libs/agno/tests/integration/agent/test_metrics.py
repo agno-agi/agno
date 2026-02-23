@@ -491,8 +491,6 @@ def test_session_metrics_type(shared_db):
 
     session_metrics = agent.get_session_metrics()
     assert isinstance(session_metrics, SessionMetrics)
-    assert session_metrics.total_runs == 2
-    assert session_metrics.average_duration > 0
     assert session_metrics.input_tokens > 0
     assert session_metrics.total_tokens > 0
     assert isinstance(session_metrics.details, dict)
@@ -515,7 +513,6 @@ def test_session_metrics_with_memory(shared_db):
 
     session_metrics = agent.get_session_metrics()
     assert isinstance(session_metrics, SessionMetrics)
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
     for model_type, metrics_list in session_metrics.details.items():
@@ -539,7 +536,6 @@ def test_session_metrics_with_eval(shared_db):
     assert "eval_model" in response2.metrics.details
 
     session_metrics = agent.get_session_metrics()
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
 
@@ -550,7 +546,6 @@ async def test_session_metrics_async(shared_db):
     await agent.arun("Second async run.")
 
     session_metrics = agent.get_session_metrics()
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
 
@@ -575,7 +570,6 @@ def test_session_metrics_streaming(shared_db):
                 assert event.metrics.total_tokens > 0
 
     session_metrics = agent.get_session_metrics()
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
 
@@ -717,7 +711,6 @@ def test_multi_run_memory_session(shared_db):
         assert "memory_model" in response.metrics.details
 
     session_metrics = agent.get_session_metrics()
-    assert session_metrics.total_runs == 3
     assert session_metrics.total_tokens >= sum(runs_tokens)
 
 

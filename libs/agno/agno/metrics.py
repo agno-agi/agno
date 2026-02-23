@@ -65,7 +65,6 @@ class ModelMetrics(BaseMetrics):
     id: str = ""
     provider: str = ""
     time_to_first_token: Optional[float] = None
-    duration: Optional[float] = None
     provider_metrics: Optional[Dict[str, Any]] = None
 
     def accumulate(self, other: "ModelMetrics") -> None:
@@ -81,8 +80,6 @@ class ModelMetrics(BaseMetrics):
         self.reasoning_tokens += other.reasoning_tokens or 0
         if other.cost is not None:
             self.cost = (self.cost or 0) + other.cost
-        if other.duration is not None:
-            self.duration = (self.duration or 0) + other.duration
         # Keep earliest TTFT
         if other.time_to_first_token is not None:
             if self.time_to_first_token is not None:
@@ -445,9 +442,6 @@ class SessionMetrics(BaseMetrics):
     Tokens in each ModelMetrics entry are summed across all runs.
     """
 
-    average_duration: Optional[float] = None
-    total_runs: int = 0
-
     # Same type as RunMetrics.details — Dict keyed by model type
     details: Optional[Dict[str, List[ModelMetrics]]] = None
 
@@ -537,15 +531,6 @@ class SessionMetrics(BaseMetrics):
                 self.additional_metrics = {}
             self.additional_metrics.update(run_metrics.additional_metrics)
 
-        # Calculate weighted-average duration
-        self.total_runs += 1
-        if run_metrics.duration is not None:
-            if self.average_duration is None:
-                self.average_duration = run_metrics.duration
-            else:
-                total_duration = self.average_duration * (self.total_runs - 1) + run_metrics.duration
-                self.average_duration = total_duration / self.total_runs
-
         # Merge per-model details: Dict[str, List[ModelMetrics]] -> Dict[str, List[ModelMetrics]]
         if run_metrics.details:
             if self.details is None:
@@ -570,19 +555,6 @@ class SessionMetrics(BaseMetrics):
 
     def __add__(self, other: "SessionMetrics") -> "SessionMetrics":
         """Sum two SessionMetrics objects."""
-        other_total_runs = getattr(other, "total_runs", 0)
-        total_runs = self.total_runs + other_total_runs
-
-        # Calculate weighted average duration
-        average_duration = None
-        other_avg = getattr(other, "average_duration", None)
-        if self.average_duration is not None and other_avg is not None:
-            total_duration = (self.average_duration * self.total_runs) + (other_avg * other_total_runs)
-            average_duration = total_duration / total_runs if total_runs > 0 else None
-        elif self.average_duration is not None:
-            average_duration = self.average_duration
-        elif other_avg is not None:
-            average_duration = other_avg
 
         # Merge details dicts — aggregate by (model_type, provider, id)
         merged_details: Optional[Dict[str, List[ModelMetrics]]] = None
@@ -636,8 +608,6 @@ class SessionMetrics(BaseMetrics):
             cache_write_tokens=self.cache_write_tokens + getattr(other, "cache_write_tokens", 0),
             reasoning_tokens=self.reasoning_tokens + getattr(other, "reasoning_tokens", 0),
             cost=cost,
-            average_duration=average_duration,
-            total_runs=total_runs,
             details=merged_details,
             additional_metrics=merged_am,
         )
