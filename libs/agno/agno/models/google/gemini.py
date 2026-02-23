@@ -229,9 +229,8 @@ class Gemini(Model):
         builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
 
     def _is_gemini_2_5(self) -> bool:
-        """Check if this model is in the Gemini 2.5 family."""
         model_id = self.id.lower()
-        return "gemini-2.5" in model_id or "gemini-2.5" in model_id.replace(" ", "-")
+        return "gemini-2.5" in model_id
 
     @staticmethod
     def _has_function_declarations(tools_config: list) -> bool:
