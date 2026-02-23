@@ -1074,8 +1074,7 @@ class IngestionPipeline:
                 document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
-            if self.isolate_vector_search:
-                document.meta_data["linked_to"] = self.knowledge_name or ""
+            document.meta_data["linked_to"] = self.knowledge_name or ""
         return documents
 
     def chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
