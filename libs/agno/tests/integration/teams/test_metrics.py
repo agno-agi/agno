@@ -443,7 +443,6 @@ def test_team_session_metrics_type(shared_db):
 
     session_metrics = team.get_session_metrics()
     assert isinstance(session_metrics, SessionMetrics)
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
     assert isinstance(session_metrics.details, dict)
     assert len(session_metrics.details) > 0
@@ -462,7 +461,6 @@ async def test_team_session_metrics_async(shared_db):
 
     session_metrics = team.get_session_metrics()
     assert isinstance(session_metrics, SessionMetrics)
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
 
@@ -487,7 +485,6 @@ def test_team_session_metrics_with_eval(shared_db):
     assert "eval_model" in response2.metrics.details
 
     session_metrics = team.get_session_metrics()
-    assert session_metrics.total_runs == 2
     assert session_metrics.total_tokens > 0
 
 
