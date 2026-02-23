@@ -4,7 +4,7 @@ Start here to learn the basics of RAG (Retrieval-Augmented Generation) with Agno
 
 ## Prerequisites
 
-1. Run PgVector: `./cookbook/scripts/run_pgvector.sh`
+1. Run Qdrant: `./cookbook/scripts/run_qdrant.sh`
 2. Set `OPENAI_API_KEY` environment variable
 
 ## Examples

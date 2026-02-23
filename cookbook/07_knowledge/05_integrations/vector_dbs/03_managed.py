@@ -1,19 +1,19 @@
 """
-Managed Vector Databases: Pinecone and Qdrant
-===============================================
-For cloud-hosted, fully managed vector search at scale.
+Managed Vector Databases: Pinecone and PgVector
+=================================================
+For cloud-hosted or managed vector search at scale.
 
 Pinecone:
 - Fully managed, serverless option available
 - Automatic scaling and high availability
 - pip install pinecone
 
-Qdrant:
-- Cloud or self-hosted options
-- Rich filtering capabilities
-- pip install qdrant-client
+PgVector:
+- PostgreSQL extension for vector search
+- Full SQL capabilities, reliable, battle-tested
+- Self-hosted or managed PostgreSQL services
 
-See also: 01_pgvector.py for production self-hosted, 02_local.py for local dev.
+See also: 01_qdrant.py for recommended default, 02_local.py for local dev.
 """
 
 from os import getenv
@@ -42,22 +42,22 @@ except ImportError:
     print("Pinecone not installed. Run: pip install pinecone")
 
 # ---------------------------------------------------------------------------
-# Qdrant Setup
+# PgVector Setup
 # ---------------------------------------------------------------------------
 
 try:
-    from agno.vectordb.qdrant import Qdrant
+    from agno.vectordb.pgvector import PgVector
 
-    knowledge_qdrant = Knowledge(
-        vector_db=Qdrant(
-            collection="knowledge-demo",
-            url=getenv("QDRANT_URL", "http://localhost:6333"),
+    knowledge_pgvector = Knowledge(
+        vector_db=PgVector(
+            table_name="knowledge_demo",
+            db_url=getenv("PG_DB_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"),
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
     )
 except ImportError:
-    knowledge_qdrant = None
-    print("Qdrant not installed. Run: pip install qdrant-client")
+    knowledge_pgvector = None
+    print("PgVector not installed. Run: pip install pgvector psycopg[binary]")
 
 # ---------------------------------------------------------------------------
 # Run Demo
@@ -80,15 +80,15 @@ if __name__ == "__main__":
         )
         agent.print_response("What Thai recipes do you know?", stream=True)
 
-    if knowledge_qdrant:
+    if knowledge_pgvector:
         print("\n" + "=" * 60)
-        print("Qdrant: managed or self-hosted vector database")
+        print("PgVector: PostgreSQL-based vector database")
         print("=" * 60 + "\n")
 
-        knowledge_qdrant.insert(url=pdf_url)
+        knowledge_pgvector.insert(url=pdf_url)
         agent = Agent(
             model=OpenAIResponses(id="gpt-5.2"),
-            knowledge=knowledge_qdrant,
+            knowledge=knowledge_pgvector,
             search_knowledge=True,
             markdown=True,
         )

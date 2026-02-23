@@ -28,13 +28,11 @@ from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import AzureBlobConfig, SharePointConfig
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.qdrant import Qdrant
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # --- Azure Blob Storage ---
 azure_blob = AzureBlobConfig(
@@ -59,9 +57,9 @@ sharepoint = SharePointConfig(
 
 knowledge = Knowledge(
     name="Azure Knowledge",
-    vector_db=PgVector(
-        table_name="azure_knowledge",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="azure_knowledge",
+        url="http://localhost:6333",
     ),
     content_sources=[azure_blob, sharepoint],
 )

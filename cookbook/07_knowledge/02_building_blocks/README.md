@@ -4,7 +4,7 @@ Core components you can configure to customize knowledge behavior.
 
 ## Prerequisites
 
-1. Run PgVector: `./cookbook/scripts/run_pgvector.sh`
+1. Run Qdrant: `./cookbook/scripts/run_qdrant.sh`
 2. Set `OPENAI_API_KEY` environment variable
 3. For reranking: set `COHERE_API_KEY` environment variable
 

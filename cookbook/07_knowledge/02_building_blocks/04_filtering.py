@@ -17,18 +17,19 @@ from agno.filters import AND, EQ, IN
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="filtering_demo",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="filtering_demo",
+        url=qdrant_url,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),

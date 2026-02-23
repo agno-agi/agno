@@ -12,7 +12,7 @@ Decision guides and comparison tables for choosing the right components.
 
 ## Quick Recommendations
 
-- **Vector DB**: Start with PgVector for production
+- **Vector DB**: Start with Qdrant for production
 - **Embedder**: Start with OpenAI text-embedding-3-small
 - **Chunking**: Start with Recursive Chunking (chunk_size=500)
 - **Search**: Start with Hybrid Search

@@ -14,7 +14,7 @@ LanceDB:
 - Supports hybrid search
 - pip install lancedb tantivy
 
-See also: 01_pgvector.py for production, 03_managed.py for managed cloud.
+See also: 01_qdrant.py for production, 03_managed.py for managed cloud.
 """
 
 from agno.agent import Agent

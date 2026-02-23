@@ -23,13 +23,11 @@ from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import S3Config
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.qdrant import Qdrant
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Configure S3 content source
 s3_config = S3Config(
@@ -41,9 +39,9 @@ s3_config = S3Config(
 
 knowledge = Knowledge(
     name="S3 Knowledge",
-    vector_db=PgVector(
-        table_name="s3_knowledge",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="s3_knowledge",
+        url="http://localhost:6333",
     ),
     content_sources=[s3_config],
 )

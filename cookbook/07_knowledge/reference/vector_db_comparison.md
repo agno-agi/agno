@@ -6,9 +6,9 @@ Feature matrix for all supported vector databases.
 
 | Use Case | Recommended DB | Why |
 |----------|---------------|-----|
-| Production | PgVector | Full SQL, reliable, hybrid search, reranking |
+| Production | Qdrant | Fast, scalable, hybrid search, reranking, rich filtering |
 | Local Dev | LanceDB or ChromaDB | No server needed, file-based |
-| Managed Cloud | Pinecone or Qdrant | Zero ops, auto-scaling |
+| Managed Cloud | Pinecone or PgVector | Zero ops, auto-scaling |
 
 ## Feature Matrix
 

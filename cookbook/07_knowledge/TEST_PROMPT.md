@@ -20,7 +20,7 @@ Read these files first:
 ./scripts/demo_setup.sh
 
 # Database
-./cookbook/scripts/run_pgvector.sh
+./cookbook/scripts/run_qdrant.sh
 
 # Required env vars
 export OPENAI_API_KEY=your-key

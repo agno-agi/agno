@@ -21,13 +21,11 @@ from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GCSConfig
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.qdrant import Qdrant
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 gcs_config = GCSConfig(
     id="my-gcs-bucket",
@@ -37,9 +35,9 @@ gcs_config = GCSConfig(
 
 knowledge = Knowledge(
     name="GCS Knowledge",
-    vector_db=PgVector(
-        table_name="gcs_knowledge",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="gcs_knowledge",
+        url="http://localhost:6333",
     ),
     content_sources=[gcs_config],
 )
