@@ -22,18 +22,19 @@ from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 
 # Also available: from agno.knowledge.reader.arxiv_reader import ArxivReader
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="loading_content",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="loading_content",
+        url=qdrant_url,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),

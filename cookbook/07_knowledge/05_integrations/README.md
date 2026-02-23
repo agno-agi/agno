@@ -4,7 +4,7 @@ Specific reader, cloud storage, and vector database integrations.
 
 ## Prerequisites
 
-1. Run PgVector: `./cookbook/scripts/run_pgvector.sh`
+1. Run Qdrant: `./cookbook/scripts/run_qdrant.sh`
 2. Set `OPENAI_API_KEY` environment variable
 3. For cloud: set provider-specific credentials (see each file)
 4. For managed DBs: install provider packages (see each file)
@@ -29,9 +29,9 @@ Specific reader, cloud storage, and vector database integrations.
 
 | File | Databases |
 |------|-----------|
-| [vector_dbs/01_pgvector.py](./vector_dbs/01_pgvector.py) | PgVector (recommended for production) |
+| [vector_dbs/01_qdrant.py](./vector_dbs/01_qdrant.py) | Qdrant (recommended for production) |
 | [vector_dbs/02_local.py](./vector_dbs/02_local.py) | ChromaDB + LanceDB (local development) |
-| [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone + Qdrant (managed cloud) |
+| [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone + PgVector (managed/production) |
 
 ## Running
 

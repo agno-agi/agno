@@ -18,18 +18,19 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.csv_reader import CSVReader
 from agno.knowledge.reader.json_reader import JSONReader
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="data_readers",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="data_readers",
+        url=qdrant_url,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),

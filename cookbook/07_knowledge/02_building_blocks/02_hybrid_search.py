@@ -15,21 +15,22 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+qdrant_url = "http://localhost:6333"
 pdf_url = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 
 
 def create_knowledge(search_type: SearchType) -> Knowledge:
     return Knowledge(
-        vector_db=PgVector(
-            table_name="search_types_%s" % search_type.value,
-            db_url=db_url,
+        vector_db=Qdrant(
+            collection="search_types_%s" % search_type.value,
+            url=qdrant_url,
             search_type=search_type,
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),

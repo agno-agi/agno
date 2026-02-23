@@ -14,30 +14,30 @@ See also: 03_multi_tenant.py for isolating knowledge per tenant.
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
     name="Lifecycle Demo",
-    vector_db=PgVector(
-        table_name="lifecycle_demo",
-        db_url=db_url,
+    vector_db=Qdrant(
+        collection="lifecycle_demo",
+        url=qdrant_url,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     # Contents DB tracks ingested content, status, and metadata
-    contents_db=PostgresDb(
-        db_url=db_url,
-        knowledge_table="lifecycle_contents",
+    contents_db=SqliteDb(
+        db_file="tmp/agent.db",
     ),
 )
 

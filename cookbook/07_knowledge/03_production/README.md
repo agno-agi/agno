@@ -4,7 +4,7 @@ Real-world patterns for deploying knowledge systems.
 
 ## Prerequisites
 
-1. Run PgVector: `./cookbook/scripts/run_pgvector.sh`
+1. Run Qdrant: `./cookbook/scripts/run_qdrant.sh`
 2. Set `OPENAI_API_KEY` environment variable
 
 ## Examples

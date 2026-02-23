@@ -11,7 +11,7 @@ Knowledge is Agno's RAG framework. It handles the full pipeline: reading documen
 | **Readers** | Extract text from files | PDF, DOCX, CSV, JSON, Web, YouTube, ArXiv |
 | **Chunking** | Split text into searchable pieces | Fixed, Recursive, Semantic, Code, Markdown, Agentic |
 | **Embedders** | Convert text to vectors | OpenAI, Cohere, Bedrock, Ollama, 14+ more |
-| **Vector DBs** | Store and search vectors | PgVector, LanceDB, ChromaDB, Pinecone, 14+ more |
+| **Vector DBs** | Store and search vectors | Qdrant, LanceDB, ChromaDB, Pinecone, 14+ more |
 | **Rerankers** | Re-score results for quality | Cohere, SentenceTransformer, Bedrock, Infinity |
 
 ## Quick Start
@@ -21,12 +21,12 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant, SearchType
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="my_docs",
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    vector_db=Qdrant(
+        collection="my_docs",
+        url="http://localhost:6333",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -77,7 +77,7 @@ cookbook/07_knowledge/
 |-- 05_integrations/           Specific providers
 |   |-- readers/                   PDF, CSV, JSON, Web, etc.
 |   |-- cloud/                     S3, Azure, GCS
-|   +-- vector_dbs/                PgVector, ChromaDB, Pinecone, etc.
+|   +-- vector_dbs/                Qdrant, ChromaDB, Pinecone, etc.
 |
 +-- reference/                 Decision guides
     |-- vector_db_comparison.md
@@ -87,10 +87,10 @@ cookbook/07_knowledge/
 
 ## Running the Cookbooks
 
-### 1. Start PgVector
+### 1. Start Qdrant
 
 ```bash
-./cookbook/scripts/run_pgvector.sh
+./cookbook/scripts/run_qdrant.sh
 ```
 
 ### 2. Set API Keys

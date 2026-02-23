@@ -6,12 +6,12 @@ A quick guide to selecting the right vector database, embedder, and chunking str
 
 | Scenario | Choice | Install |
 |----------|--------|---------|
-| Production | PgVector | `./cookbook/scripts/run_pgvector.sh` |
+| Production | Qdrant | `./cookbook/scripts/run_qdrant.sh` |
 | Quick prototype | LanceDB | `pip install lancedb tantivy` |
 | In-memory testing | ChromaDB | `pip install chromadb` |
-| Managed cloud | Pinecone or Qdrant | See provider docs |
+| Managed cloud | Pinecone or PgVector | See provider docs |
 
-**Start with PgVector** unless you have a specific reason not to. It handles vector search, keyword search, hybrid search, and reranking out of the box.
+**Start with Qdrant** unless you have a specific reason not to. It handles vector search, keyword search, hybrid search, and reranking out of the box.
 
 ## Embedder
 
@@ -51,12 +51,12 @@ A quick guide to selecting the right vector database, embedder, and chunking str
 ```python
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.qdrant import Qdrant, SearchType
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="my_knowledge",
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    vector_db=Qdrant(
+        collection="my_knowledge",
+        url="http://localhost:6333",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
