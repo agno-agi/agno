@@ -466,18 +466,13 @@ class SessionMetrics(BaseMetrics):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionMetrics":
-        """Create SessionMetrics from a dict.
-
-        Handles both new format (details as Dict[str, List]) and
-        legacy format (details as flat List or old Metrics dict).
-        """
+        """Create SessionMetrics from a dict, converting details dicts to ModelMetrics objects."""
         valid = {f.name for f in dc_fields(cls)}
         filtered = {k: v for k, v in data.items() if k in valid}
 
         if "details" in filtered and filtered["details"] is not None:
             details_raw = filtered["details"]
             if isinstance(details_raw, dict):
-                # New format: Dict[str, List[ModelMetrics]]
                 converted: Dict[str, List[ModelMetrics]] = {}
                 for model_type, model_metrics_list in details_raw.items():
                     if isinstance(model_metrics_list, list):
@@ -486,16 +481,6 @@ class SessionMetrics(BaseMetrics):
                             for model_metric in model_metrics_list
                         ]
                 filtered["details"] = converted if converted else None
-            elif isinstance(details_raw, list):
-                # Legacy format: flat List[ModelMetrics] — group by model type (default to "model")
-                flat_metrics = [
-                    ModelMetrics.from_dict(model_metric) if isinstance(model_metric, dict) else model_metric
-                    for model_metric in details_raw
-                ]
-                if flat_metrics:
-                    filtered["details"] = {"model": flat_metrics}
-                else:
-                    filtered["details"] = None
             else:
                 filtered.pop("details", None)
 
