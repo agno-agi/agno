@@ -35,6 +35,7 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
         "user": event.get("user", ""),
+        # Prefer thread_ts so all replies in a thread share one session.
         "ts": event.get("thread_ts") or event.get("ts", ""),
     }
 
@@ -66,7 +67,8 @@ def download_event_files(
                 elif mimetype.startswith("audio/"):
                     audio.append(Audio(content=file_content, mime_type=mimetype))
                 else:
-                    # Unknown MIME types: still pass the file but without mime_type to avoid rejection
+                    # Slack sends MIME types (e.g. application/zip) that agno's File
+                    # rejects. Pass mime_type=None so the file is still delivered.
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
         except Exception as e:
@@ -111,7 +113,7 @@ def send_slack_message(
             return "\n".join([f"_{line}_" for line in text.split("\n")])
         return text
 
-    max_len = 39900  # Leave room for batch prefix
+    max_len = 39900  # Slack's limit is 40K; leave room for "[N/M] " batch prefix
     if len(message) <= max_len:
         slack_tools.send_message_thread(channel=channel, text=_format(message), thread_ts=thread_ts)
         return

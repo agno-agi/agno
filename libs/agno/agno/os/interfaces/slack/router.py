@@ -22,23 +22,14 @@ from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
+# Slack sends lifecycle events for bots with these subtypes. Without this
+# filter the router would try to process its own messages, causing infinite loops.
 _BOT_SUBTYPES = frozenset({"bot_message", "bot_add", "bot_remove", "bot_enable", "bot_disable"})
 
 
-# ---------------------------------------------------------------------------
-# Event processing helpers
-# ---------------------------------------------------------------------------
-
-
 def _normalize_event(event: str) -> str:
-    """Unify agent and team event strings.
-
-    RunEvent values:  'ReasoningStarted', 'ToolCallStarted', etc.
-    TeamRunEvent values: 'TeamReasoningStarted', 'TeamToolCallStarted', etc.
-
-    Stripping the 'Team' prefix lets us handle both with one if/elif branch.
-    Workflow events (no 'Team' prefix) pass through unchanged.
-    """
+    # Strip "Team" prefix so agent events ("ToolCallStarted") and team events
+    # ("TeamToolCallStarted") are handled by the same if/elif branches.
     return event[4:] if event.startswith("Team") else event
 
 
@@ -70,7 +61,7 @@ async def _emit_task(
 ) -> None:
     chunk: dict = {"type": "task_update", "id": task_id, "title": title, "status": status}
     if output:
-        chunk["output"] = output[:200]
+        chunk["output"] = output[:200]  # Slack truncates longer task output
     await stream.append(chunks=[chunk])
 
 
@@ -84,7 +75,6 @@ async def _wf_task(
     started: bool,
     name_attr: str = "step_name",
 ) -> None:
-    """Handle a workflow structural event (step/parallel/condition/router/agent/steps)."""
     name = getattr(chunk, name_attr, None) or prefix
     sid = getattr(chunk, "step_id", None) or name
     key = f"wf_{prefix}_{sid}"
@@ -97,8 +87,10 @@ async def _wf_task(
         await _emit_task(stream, key, title, "complete")
 
 
-# Nested agent events suppressed in workflow mode — users see step-level progress only.
-# These are NORMALIZED values (no "Team" prefix), so this single set covers both.
+# Workflows orchestrate multiple agents via steps/loops/conditions. Without
+# suppression, each inner agent's tool calls and reasoning events would flood
+# the Slack stream with low-level noise. We only show step-level progress.
+# Values are NORMALIZED (no "Team" prefix) so one set covers agent + team events.
 _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
     {
         "ReasoningStarted",
@@ -118,7 +110,7 @@ _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
 
 
 async def _process_event(ev_raw: str, chunk: Any, state: StreamState, stream: Any) -> bool:
-    """Process one stream event. Returns True to break the stream loop."""
+    # Returns True on terminal events (error/cancel) to break the stream loop.
     ev = _normalize_event(ev_raw)
     is_workflow = state.entity_type == "workflow"
 
@@ -175,8 +167,9 @@ async def _process_event(ev_raw: str, chunk: Any, state: StreamState, stream: An
             state.text_buffer += str(content)
 
     elif ev == "RunIntermediateContent":
-        # Teams emit partial member output — suppress to avoid interleaving.
-        # The final RunContent from the team leader has the consolidated response.
+        # Teams emit intermediate content from each member as they finish. Showing
+        # these would interleave partial outputs in the stream. The team leader
+        # emits a single consolidated RunContent at the end — that's what we show.
         if state.entity_type != "team":
             content = getattr(chunk, "content", None)
             if content is not None:
@@ -207,7 +200,9 @@ async def _process_event(ev_raw: str, chunk: Any, state: StreamState, stream: An
         content = getattr(chunk, "content", None)
         if content is not None:
             if is_workflow:
-                # Capture for final response (not streamed incrementally)
+                # Workflow steps may produce intermediate output before the final
+                # WorkflowCompleted event. We capture (not stream) it here so the
+                # completed handler can use it as a fallback if chunk.content is None.
                 state.workflow_final_content = str(content)
             else:
                 state.text_buffer += str(content)
@@ -337,6 +332,8 @@ def attach_routes(
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
     raw_name = getattr(entity, "name", None)
     entity_name = raw_name if isinstance(raw_name, str) else entity_type
+    # Multiple Slack instances can be mounted on one FastAPI app (e.g. /research
+    # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
     op_suffix = entity_name.lower().replace(" ", "_")
 
     slack_tools = SlackTools(token=token, ssl=ssl)
@@ -367,10 +364,10 @@ def attach_routes(
         if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
-        # Slack retries events after ~3s if the previous delivery timed out.
-        # Since we ACK immediately and process in the background, retries are
-        # always duplicates. Trade-off: if the server crashes mid-processing,
-        # the retry that carries the same event won't be reprocessed.
+        # Slack retries after ~3s if it doesn't get a 200. Since we ACK
+        # immediately and process in background, retries are always duplicates.
+        # Trade-off: if the server crashes mid-processing, the retried event
+        # carrying the same payload won't be reprocessed — acceptable for chat.
         if request.headers.get("X-Slack-Retry-Num"):
             return SlackEventResponse(status="ok")
 
@@ -385,7 +382,9 @@ def attach_routes(
 
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(_handle_thread_started, event)
-            # message_changed events nest the original message; check both levels
+            # Bot self-loop prevention: check bot_id at both the top-level event
+            # and inside message_changed's nested "message" object. Without the
+            # nested check, edited bot messages would be reprocessed as new events.
             elif (
                 event.get("bot_id")
                 or (event.get("message") or {}).get("bot_id")
@@ -461,13 +460,17 @@ def attach_routes(
 
         ctx = extract_event_context(event)
 
-        # chat_stream requires a thread_ts (Slack creates the stream inside a thread).
-        # Non-threaded channel messages don't have one, so fall back to non-streaming.
+        # Slack's chat_stream API only works inside threads. For top-level channel
+        # messages (no thread_ts), we gracefully degrade to the non-streaming path.
         if not event.get("thread_ts"):
             await _process_slack_event(event)
             return
 
         team_id = data.get("team_id") or event.get("team") or None
+        # CRITICAL: recipient_user_id must be the HUMAN user, not the bot.
+        # event["user"] = human who sent the message. data["authorizations"][0]["user_id"]
+        # = the bot's own user ID. Using the bot ID causes Slack to stream content
+        # to an invisible recipient, resulting in a blank bubble until stopStream.
         user_id = ctx.get("user") or event.get("user")
 
         async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)

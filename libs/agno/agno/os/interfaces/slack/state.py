@@ -51,6 +51,8 @@ class StreamState:
             card.status = "error"
 
     def resolve_all_pending(self, status: str = "complete") -> List[dict]:
+        # Called at stream end to close any cards left in_progress (e.g. if the
+        # model finished without emitting a ToolCallCompleted for every start).
         chunks: List[dict] = []
         for key, card in self.task_cards.items():
             if card.status == "in_progress":
@@ -59,6 +61,8 @@ class StreamState:
         return chunks
 
     def collect_media(self, chunk: Any) -> None:
+        # Media can't be streamed inline — Slack requires a separate upload after
+        # the stream ends. We collect here and upload_response_media() sends them.
         for img in getattr(chunk, "images", None) or []:
             if img not in self.images:
                 self.images.append(img)
