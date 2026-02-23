@@ -588,6 +588,18 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
+        """
+        Ensure message metrics are initialized and timer is started.
+
+        Args:
+            assistant_message: The assistant message to initialize metrics for
+        """
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
+        if assistant_message.metrics.timer is None or assistant_message.metrics.timer.start_time is None:
+            assistant_message.metrics.start_timer()
+
     def count_tokens(
         self,
         messages: List[Message],
@@ -610,19 +622,6 @@ class Model(ABC):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         return self.count_tokens(messages, tools, output_schema=output_schema)
-
-    def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
-        """
-        Ensure message metrics are initialized and timer is started.
-        This should be called before making model API calls.
-
-        Args:
-            assistant_message: The assistant message to initialize metrics for
-        """
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
-        if assistant_message.metrics.timer is None or assistant_message.metrics.timer.start_time is None:
-            assistant_message.metrics.start_timer()
 
     def response(
         self,
@@ -683,8 +682,7 @@ class Model(ABC):
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 # Initialize message metrics and start timer before model call
-                assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                self._ensure_message_metrics_initialized(assistant_message)
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -904,8 +902,7 @@ class Model(ABC):
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 # Initialize message metrics and start timer before model call
-                assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                self._ensure_message_metrics_initialized(assistant_message)
                 await self._aprocess_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -1261,9 +1258,7 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             # Update Metrics with usage data from response
             usage = provider_response.response_usage
             # Use in-place addition to preserve timer automatically
@@ -1382,7 +1377,7 @@ class Model(ABC):
                     stream_data.response_metrics = MessageMetrics()
                     stream_data.response_metrics.start_timer()
                     # Initialize assistant_message.metrics for provider invoke_stream calls
-                    assistant_message.metrics = MessageMetrics()
+                    self._ensure_message_metrics_initialized(assistant_message)
                     # Generate response
                     for response in self.process_response_stream(
                         messages=messages,
@@ -1421,8 +1416,7 @@ class Model(ABC):
 
                 else:
                     # Initialize message metrics and start timer before model call
-                    assistant_message.metrics = MessageMetrics()
-                    assistant_message.metrics.start_timer()
+                    self._ensure_message_metrics_initialized(assistant_message)
                     self._process_model_response(
                         messages=messages,
                         assistant_message=assistant_message,
@@ -1667,7 +1661,7 @@ class Model(ABC):
                     stream_data.response_metrics = MessageMetrics()
                     stream_data.response_metrics.start_timer()
                     # Initialize assistant_message.metrics for provider ainvoke_stream calls
-                    assistant_message.metrics = MessageMetrics()
+                    self._ensure_message_metrics_initialized(assistant_message)
                     # Generate response
                     async for model_response_delta in self.aprocess_response_stream(
                         messages=messages,
@@ -1706,8 +1700,7 @@ class Model(ABC):
 
                 else:
                     # Initialize message metrics and start timer before model call
-                    assistant_message.metrics = MessageMetrics()
-                    assistant_message.metrics.start_timer()
+                    self._ensure_message_metrics_initialized(assistant_message)
                     await self._aprocess_model_response(
                         messages=messages,
                         assistant_message=assistant_message,

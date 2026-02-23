@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dc_fields
 from enum import Enum
@@ -83,6 +84,12 @@ class ModelMetrics(BaseMetrics):
             self.cost = (self.cost or 0) + other.cost
         if other.duration is not None:
             self.duration = (self.duration or 0) + other.duration
+        # Keep earliest TTFT
+        if other.time_to_first_token is not None:
+            if self.time_to_first_token is not None:
+                self.time_to_first_token = min(self.time_to_first_token, other.time_to_first_token)
+            else:
+                self.time_to_first_token = other.time_to_first_token
         # Merge provider_metrics
         if other.provider_metrics is not None:
             if self.provider_metrics is None:
@@ -295,8 +302,12 @@ class RunMetrics(BaseMetrics):
             valid_model_metrics_fields = {f.name for f in dc_fields(ModelMetrics)}
             for model_type, model_metrics_list in metrics_dict["details"].items():
                 details_dict[model_type] = [
-                    {k: v for k, v in mm.items() if k in valid_model_metrics_fields and v is not None and v != 0}
-                    for mm in model_metrics_list
+                    {
+                        k: v
+                        for k, v in model_metric.items()
+                        if k in valid_model_metrics_fields and v is not None and v != 0
+                    }
+                    for model_metric in model_metrics_list
                 ]
             metrics_dict["details"] = details_dict
         return {
@@ -317,7 +328,8 @@ class RunMetrics(BaseMetrics):
             converted_details: Dict[str, List[ModelMetrics]] = {}
             for model_type, model_metrics_list in filtered["details"].items():
                 converted_details[model_type] = [
-                    ModelMetrics.from_dict(mm) if isinstance(mm, dict) else mm for mm in model_metrics_list
+                    ModelMetrics.from_dict(model_metric) if isinstance(model_metric, dict) else model_metric
+                    for model_metric in model_metrics_list
                 ]
             filtered["details"] = converted_details
         return cls(**filtered)
@@ -344,13 +356,17 @@ class RunMetrics(BaseMetrics):
         if self_details or other_details:
             result.details = {}
             if self_details:
-                result.details = {k: list(v) for k, v in self_details.items()}
+                result.details = {
+                    model_type: [deepcopy(model_metric) for model_metric in metrics_list]
+                    for model_type, metrics_list in self_details.items()
+                }
             if other_details:
                 for model_type, model_metrics_list in other_details.items():
+                    other_metrics_list = [deepcopy(model_metric) for model_metric in model_metrics_list]
                     if model_type in result.details:
-                        result.details[model_type].extend(model_metrics_list)
+                        result.details[model_type].extend(other_metrics_list)
                     else:
-                        result.details[model_type] = list(model_metrics_list)
+                        result.details[model_type] = other_metrics_list
 
         # Sum durations
         self_duration = self.duration
@@ -448,8 +464,12 @@ class SessionMetrics(BaseMetrics):
             details_dict = {}
             for model_type, model_metrics_list in metrics_dict["details"].items():
                 details_dict[model_type] = [
-                    {k: v for k, v in mm.items() if k in valid_model_metrics_fields and v is not None and v != 0}
-                    for mm in model_metrics_list
+                    {
+                        k: v
+                        for k, v in model_metric.items()
+                        if k in valid_model_metrics_fields and v is not None and v != 0
+                    }
+                    for model_metric in model_metrics_list
                 ]
             metrics_dict["details"] = details_dict
         return {
@@ -478,12 +498,16 @@ class SessionMetrics(BaseMetrics):
                 for model_type, model_metrics_list in details_raw.items():
                     if isinstance(model_metrics_list, list):
                         converted[model_type] = [
-                            ModelMetrics.from_dict(mm) if isinstance(mm, dict) else mm for mm in model_metrics_list
+                            ModelMetrics.from_dict(model_metric) if isinstance(model_metric, dict) else model_metric
+                            for model_metric in model_metrics_list
                         ]
                 filtered["details"] = converted if converted else None
             elif isinstance(details_raw, list):
                 # Legacy format: flat List[ModelMetrics] — group by model type (default to "model")
-                flat_metrics = [ModelMetrics.from_dict(mm) if isinstance(mm, dict) else mm for mm in details_raw]
+                flat_metrics = [
+                    ModelMetrics.from_dict(model_metric) if isinstance(model_metric, dict) else model_metric
+                    for model_metric in details_raw
+                ]
                 if flat_metrics:
                     filtered["details"] = {"model": flat_metrics}
                 else:
