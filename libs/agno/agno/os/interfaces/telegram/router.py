@@ -9,14 +9,27 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.telegram.security import validate_webhook_secret_token
+from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import RunCompletedEvent as AgentRunCompletedEvent
 from agno.run.agent import RunContentEvent as AgentRunContentEvent
 from agno.run.agent import RunOutput
+from agno.run.agent import ToolCallCompletedEvent as AgentToolCallCompletedEvent
 from agno.run.agent import ToolCallStartedEvent as AgentToolCallStartedEvent
+from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput
+from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.workflow import (
+    LoopIterationStartedEvent,
+    ParallelExecutionStartedEvent,
+    StepCompletedEvent,
+    StepStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+    WorkflowRunOutput,
+)
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
@@ -445,6 +458,7 @@ def attach_routes(
         chat_id: int,
         reply_to: Optional[int],
         message_thread_id: Optional[int] = None,
+        is_team: bool = False,
     ) -> Optional[Union[RunOutput, TeamRunOutput]]:
         """Consume a streaming response and progressively edit a Telegram message.
 
@@ -455,20 +469,77 @@ def attach_routes(
         """
         sent_message_id: Optional[int] = None
         accumulated_content = ""
+        status_lines: list[str] = []
         last_edit_time = 0.0
         final_run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
+
+        def _build_display_text() -> str:
+            """Combine tool status lines with response content for in-progress display."""
+            parts: list[str] = []
+            if status_lines:
+                parts.append("\n".join(status_lines))
+            if accumulated_content:
+                parts.append(accumulated_content)
+            return "\n\n".join(parts)
+
+        async def _send_or_edit(text: str) -> None:
+            nonlocal sent_message_id, last_edit_time
+            display = text[:TG_MAX_MESSAGE_LENGTH]
+            if sent_message_id is None:
+                msg = await _send_message_safe(
+                    chat_id, display, reply_to_message_id=reply_to, message_thread_id=message_thread_id
+                )
+                sent_message_id = msg.message_id
+            else:
+                await _edit_message_safe(display, chat_id, sent_message_id)
+            last_edit_time = time.monotonic()
 
         async for event in event_stream:
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 final_run_output = event
                 continue
 
-            # Show typing indicator when a tool call starts
+            # Show tool call name so the user knows what's happening
             if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
+                tool_name = event.tool.tool_name if event.tool else None
+                if tool_name:
+                    # For team streams, include agent name on member tool calls
+                    agent_label = ""
+                    if is_team and isinstance(event, AgentToolCallStartedEvent) and event.agent_name:
+                        agent_label = f"[{event.agent_name}] "
+                    status_lines.append(f"> {agent_label}Using {tool_name}...")
+                    try:
+                        await _send_or_edit(_build_display_text())
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        await bot.send_chat_action(chat_id, "typing", message_thread_id=message_thread_id)
+                    except Exception:
+                        pass
+                continue
+
+            # Show reasoning status
+            if isinstance(event, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
+                status_lines.append("> Reasoning...")
                 try:
-                    await bot.send_chat_action(chat_id, "typing", message_thread_id=message_thread_id)
+                    await _send_or_edit(_build_display_text())
                 except Exception:
                     pass
+                continue
+
+            # Update tool status from "Using" to "Used" when a tool call completes
+            if isinstance(event, (AgentToolCallCompletedEvent, TeamToolCallCompletedEvent)):
+                tool_name = event.tool.tool_name if event.tool else None
+                if tool_name:
+                    for i, line in enumerate(status_lines):
+                        if f"Using {tool_name}..." in line:
+                            status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
+                            break
+                    try:
+                        await _send_or_edit(_build_display_text())
+                    except Exception:
+                        pass
                 continue
 
             # Handle content deltas from both Agent and Team streams
@@ -479,27 +550,17 @@ def attach_routes(
                 if now - last_edit_time < TG_STREAM_EDIT_INTERVAL:
                     continue
 
-                # Truncate to Telegram's max message length for in-progress edits
-                display_text = accumulated_content[:TG_MAX_MESSAGE_LENGTH]
-
                 try:
-                    if sent_message_id is None:
-                        msg = await _send_message_safe(
-                            chat_id, display_text, reply_to_message_id=reply_to, message_thread_id=message_thread_id
-                        )
-                        sent_message_id = msg.message_id
-                    else:
-                        await _edit_message_safe(display_text, chat_id, sent_message_id)
-                    last_edit_time = now
+                    await _send_or_edit(_build_display_text())
                 except Exception as e:
                     log_warning(f"Stream edit failed (will retry on next chunk): {e}")
 
             elif isinstance(event, (AgentRunCompletedEvent, TeamRunCompletedEvent)):
-                # RunCompletedEvent carries the final content and media
+                # RunCompletedEvent carries the final content — replace accumulated
                 if event.content:
                     accumulated_content = str(event.content)
 
-        # Final edit with complete content
+        # Final edit with complete content (no tool status lines)
         if accumulated_content and sent_message_id:
             try:
                 if len(accumulated_content) <= TG_MAX_MESSAGE_LENGTH:
@@ -523,6 +584,155 @@ def attach_routes(
             )
 
         return final_run_output
+
+    async def _stream_workflow_to_telegram(
+        event_stream: AsyncIterator[Any],
+        chat_id: int,
+        reply_to: Optional[int],
+        message_thread_id: Optional[int] = None,
+    ) -> None:
+        """Consume a workflow streaming response and progressively edit a Telegram message.
+
+        Handles workflow-specific events (step progress, parallel execution, loops)
+        as well as agent/team events emitted within steps (tool calls, content deltas).
+        """
+        sent_message_id: Optional[int] = None
+        accumulated_content = ""
+        status_lines: list[str] = []
+        last_edit_time = 0.0
+
+        def _build_display_text() -> str:
+            parts: list[str] = []
+            if status_lines:
+                parts.append("\n".join(status_lines))
+            if accumulated_content:
+                parts.append(accumulated_content)
+            return "\n\n".join(parts)
+
+        async def _send_or_edit(text: str) -> None:
+            nonlocal sent_message_id, last_edit_time
+            display = text[:TG_MAX_MESSAGE_LENGTH]
+            if sent_message_id is None:
+                msg = await _send_message_safe(
+                    chat_id, display, reply_to_message_id=reply_to, message_thread_id=message_thread_id
+                )
+                sent_message_id = msg.message_id
+            else:
+                await _edit_message_safe(display, chat_id, sent_message_id)
+            last_edit_time = time.monotonic()
+
+        async for event in event_stream:
+            # --- Workflow-level events ---
+            if isinstance(event, StepStartedEvent):
+                step_name = event.step_name or "unknown"
+                status_lines.append(f"> Running step: {step_name}...")
+                try:
+                    await _send_or_edit(_build_display_text())
+                except Exception:
+                    pass
+                continue
+
+            if isinstance(event, StepCompletedEvent):
+                step_name = event.step_name or "unknown"
+                # Update matching "Running step" line to "Completed step"
+                for i, line in enumerate(status_lines):
+                    if f"Running step: {step_name}..." in line:
+                        status_lines[i] = f"> Completed step: {step_name}"
+                        break
+                # Replace accumulated content with step content if available
+                if event.content:
+                    accumulated_content = str(event.content)
+                try:
+                    await _send_or_edit(_build_display_text())
+                except Exception:
+                    pass
+                continue
+
+            if isinstance(event, ParallelExecutionStartedEvent):
+                count = event.parallel_step_count or 0
+                status_lines.append(f"> Running {count} steps in parallel...")
+                try:
+                    await _send_or_edit(_build_display_text())
+                except Exception:
+                    pass
+                continue
+
+            if isinstance(event, LoopIterationStartedEvent):
+                step_name = event.step_name or "loop"
+                iteration = event.iteration
+                max_iter = event.max_iterations
+                if max_iter:
+                    status_lines.append(f"> {step_name}: iteration {iteration}/{max_iter}...")
+                else:
+                    status_lines.append(f"> {step_name}: iteration {iteration}...")
+                try:
+                    await _send_or_edit(_build_display_text())
+                except Exception:
+                    pass
+                continue
+
+            if isinstance(event, WorkflowCompletedEvent):
+                if event.content:
+                    accumulated_content = str(event.content)
+                continue
+
+            if isinstance(event, WorkflowErrorEvent):
+                accumulated_content = f"Error: {event.error or 'Unknown error'}"
+                continue
+
+            # --- Agent/Team events bubbled from within steps ---
+            if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
+                tool_name = event.tool.tool_name if event.tool else None
+                if tool_name:
+                    status_lines.append(f"> Using {tool_name}...")
+                    try:
+                        await _send_or_edit(_build_display_text())
+                    except Exception:
+                        pass
+                continue
+
+            if isinstance(event, (AgentToolCallCompletedEvent, TeamToolCallCompletedEvent)):
+                tool_name = event.tool.tool_name if event.tool else None
+                if tool_name:
+                    for i, line in enumerate(status_lines):
+                        if f"Using {tool_name}..." in line:
+                            status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
+                            break
+                    try:
+                        await _send_or_edit(_build_display_text())
+                    except Exception:
+                        pass
+                continue
+
+            if isinstance(event, (AgentRunContentEvent, TeamRunContentEvent)) and event.content:
+                accumulated_content += str(event.content)
+                now = time.monotonic()
+                if now - last_edit_time < TG_STREAM_EDIT_INTERVAL:
+                    continue
+                try:
+                    await _send_or_edit(_build_display_text())
+                except Exception:
+                    pass
+
+        # Final edit with complete content (no status lines)
+        if accumulated_content and sent_message_id:
+            try:
+                if len(accumulated_content) <= TG_MAX_MESSAGE_LENGTH:
+                    await _edit_message_safe(accumulated_content, chat_id, sent_message_id)
+                else:
+                    try:
+                        await bot.delete_message(chat_id, sent_message_id)
+                    except Exception:
+                        pass
+                    await _send_text_chunked(
+                        chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
+                    )
+            except Exception as e:
+                log_warning(f"Final workflow stream edit failed: {e}")
+        elif accumulated_content and not sent_message_id:
+            await _send_text_chunked(
+                chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
+            )
 
     @router.get(
         "/status",
@@ -661,17 +871,31 @@ def attach_routes(
             )
 
             # Streaming mode: progressively edit a single Telegram message as content arrives.
-            # Supported for Agent, RemoteAgent, and Team. Workflow uses non-streaming
-            # because workflow events are step completions, not content deltas.
-            use_stream = stream and (agent or team) and not workflow
+            use_stream = stream and (agent or team or workflow)
 
             if use_stream:
-                if agent:
-                    event_stream = agent.arun(message_text, stream=True, yield_run_output=True, **run_kwargs)  # type: ignore[union-attr]
-                else:
-                    event_stream = team.arun(message_text, stream=True, yield_run_output=True, **run_kwargs)  # type: ignore[union-attr, assignment]
+                if workflow:
+                    # Workflow streaming returns AsyncIterator[WorkflowRunOutputEvent].
+                    # Final content comes from WorkflowCompletedEvent within the stream,
+                    # so post-stream media/error handling is done inside _stream_workflow_to_telegram.
+                    event_stream = workflow.arun(message_text, stream=True, stream_events=True, **run_kwargs)  # type: ignore[union-attr]
+                    await _stream_workflow_to_telegram(
+                        event_stream, chat_id, reply_to, message_thread_id=forum_thread_id
+                    )
+                    return
 
-                response = await _stream_to_telegram(event_stream, chat_id, reply_to, message_thread_id=forum_thread_id)
+                if agent:
+                    agent_team_stream = agent.arun(
+                        message_text, stream=True, stream_events=True, yield_run_output=True, **run_kwargs
+                    )  # type: ignore[union-attr]
+                else:
+                    agent_team_stream = team.arun(  # type: ignore[union-attr, assignment]
+                        message_text, stream=True, stream_events=True, yield_run_output=True, **run_kwargs
+                    )
+
+                response = await _stream_to_telegram(
+                    agent_team_stream, chat_id, reply_to, message_thread_id=forum_thread_id, is_team=bool(team)
+                )
 
                 # Handle media from the final RunOutput/TeamRunOutput if present
                 if response:

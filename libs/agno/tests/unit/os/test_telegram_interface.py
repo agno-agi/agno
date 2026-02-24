@@ -2621,3 +2621,216 @@ class TestMultiBotTokenParam:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         assert tg.token is None
+
+
+class TestStreamingEnhancedEvents:
+    """Test enhanced streaming events: reasoning started, tool completed, workflow streaming."""
+
+    def _text_update(self, text="Hello"):
+        return {
+            "update_id": 1,
+            "message": {
+                "message_id": 100,
+                "from": {"id": 67890, "is_bot": False, "first_name": "Test"},
+                "chat": {"id": 12345, "type": "private"},
+                "text": text,
+            },
+        }
+
+    def test_reasoning_started_shows_status_line(self, monkeypatch):
+        """ReasoningStartedEvent should add a 'Reasoning...' status line."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.agent import ReasoningStartedEvent, RunContentEvent, RunOutput
+
+        mock_reasoning_event = MagicMock(spec=ReasoningStartedEvent)
+        mock_content_event = MagicMock(spec=RunContentEvent)
+        mock_content_event.content = "Final answer"
+        mock_run_output = MagicMock(spec=RunOutput)
+        mock_run_output.status = "COMPLETED"
+        mock_run_output.content = "Final answer"
+        mock_run_output.reasoning_content = None
+        mock_run_output.images = None
+        mock_run_output.audio = None
+        mock_run_output.videos = None
+        mock_run_output.files = None
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_reasoning_event
+            yield mock_content_event
+            yield mock_run_output
+
+        agent = AsyncMock()
+        agent.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("think about this"))
+
+        assert resp.status_code == 200
+        # Check that "Reasoning..." was sent in a message
+        send_calls = mock_bot.send_message.call_args_list
+        edit_calls = mock_bot.edit_message_text.call_args_list
+        all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
+        assert any("Reasoning..." in t for t in all_texts), f"Expected 'Reasoning...' in messages, got: {all_texts}"
+
+    def test_tool_completed_updates_status_line(self, monkeypatch):
+        """ToolCallCompletedEvent should update 'Using X...' to 'Used X'."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.agent import RunContentEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
+
+        mock_tool = MagicMock()
+        mock_tool.tool_name = "web_search"
+
+        mock_started = MagicMock(spec=ToolCallStartedEvent)
+        mock_started.tool = mock_tool
+        mock_started.agent_name = None
+
+        mock_completed = MagicMock(spec=ToolCallCompletedEvent)
+        mock_completed.tool = mock_tool
+
+        mock_content_event = MagicMock(spec=RunContentEvent)
+        mock_content_event.content = "Search results here"
+
+        mock_run_output = MagicMock(spec=RunOutput)
+        mock_run_output.status = "COMPLETED"
+        mock_run_output.content = "Search results here"
+        mock_run_output.reasoning_content = None
+        mock_run_output.images = None
+        mock_run_output.audio = None
+        mock_run_output.videos = None
+        mock_run_output.files = None
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_started
+            yield mock_completed
+            yield mock_content_event
+            yield mock_run_output
+
+        agent = AsyncMock()
+        agent.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("search for something"))
+
+        assert resp.status_code == 200
+        # Check that "Used web_search" appears in an edit call
+        edit_calls = mock_bot.edit_message_text.call_args_list
+        edit_texts = [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
+        assert any("Used web_search" in t for t in edit_texts), (
+            f"Expected 'Used web_search' in edits, got: {edit_texts}"
+        )
+
+    def test_workflow_step_progress_display(self, monkeypatch):
+        """Workflow streaming should show step start/complete status lines."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.workflow import StepCompletedEvent, StepStartedEvent, WorkflowCompletedEvent
+
+        mock_step_started = MagicMock(spec=StepStartedEvent)
+        mock_step_started.step_name = "analyze_data"
+
+        mock_step_completed = MagicMock(spec=StepCompletedEvent)
+        mock_step_completed.step_name = "analyze_data"
+        mock_step_completed.content = "Analysis complete"
+
+        mock_wf_completed = MagicMock(spec=WorkflowCompletedEvent)
+        mock_wf_completed.content = "Final workflow result"
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_step_started
+            yield mock_step_completed
+            yield mock_wf_completed
+
+        workflow = AsyncMock()
+        workflow.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(workflow=workflow, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("run workflow"))
+
+        assert resp.status_code == 200
+        # Workflow should have been called with stream=True
+        workflow.arun.assert_called_once()
+        call_kwargs = workflow.arun.call_args[1]
+        assert call_kwargs["stream"] is True
+        assert call_kwargs["stream_events"] is True
+
+        # Check for step progress in messages
+        send_calls = mock_bot.send_message.call_args_list
+        edit_calls = mock_bot.edit_message_text.call_args_list
+        all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
+        assert any("Running step: analyze_data" in t for t in all_texts), f"Expected step progress, got: {all_texts}"
+
+    def test_workflow_parallel_execution_status(self, monkeypatch):
+        """Workflow streaming should show parallel execution status."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.workflow import ParallelExecutionStartedEvent, WorkflowCompletedEvent
+
+        mock_parallel = MagicMock(spec=ParallelExecutionStartedEvent)
+        mock_parallel.parallel_step_count = 3
+
+        mock_wf_completed = MagicMock(spec=WorkflowCompletedEvent)
+        mock_wf_completed.content = "All done"
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_parallel
+            yield mock_wf_completed
+
+        workflow = AsyncMock()
+        workflow.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(workflow=workflow, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("parallel work"))
+
+        assert resp.status_code == 200
+        send_calls = mock_bot.send_message.call_args_list
+        edit_calls = mock_bot.edit_message_text.call_args_list
+        all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
+        assert any("Running 3 steps in parallel" in t for t in all_texts), f"Expected parallel status, got: {all_texts}"
+
+    def test_workflow_error_handling_in_stream(self, monkeypatch):
+        """Workflow error events should display error message."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.workflow import WorkflowErrorEvent
+
+        mock_error = MagicMock(spec=WorkflowErrorEvent)
+        mock_error.error = "Step failed: timeout"
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_error
+
+        workflow = AsyncMock()
+        workflow.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(workflow=workflow, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("fail workflow"))
+
+        assert resp.status_code == 200
+        send_calls = mock_bot.send_message.call_args_list
+        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        assert any("Step failed: timeout" in t for t in sent_texts), f"Expected error message, got: {sent_texts}"
