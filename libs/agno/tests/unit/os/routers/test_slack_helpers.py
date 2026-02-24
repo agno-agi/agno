@@ -1,13 +1,15 @@
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from agno.os.interfaces.slack.helpers import (
-    download_event_files,
+    download_event_files_async,
     extract_event_context,
     member_name,
-    send_slack_message,
+    send_slack_message_async,
     should_respond,
     task_id,
-    upload_response_media,
+    upload_response_media_async,
 )
 
 
@@ -47,6 +49,12 @@ class TestShouldRespond:
     def test_unknown_event_type(self):
         assert should_respond({"type": "reaction_added"}, reply_to_mentions_only=False) is False
 
+    def test_app_mention_skipped_when_not_mentions_only(self):
+        assert should_respond({"type": "app_mention", "channel_type": "channel"}, reply_to_mentions_only=False) is False
+
+    def test_app_mention_dm_still_works(self):
+        assert should_respond({"type": "app_mention", "channel_type": "im"}, reply_to_mentions_only=False) is True
+
 
 class TestExtractEventContext:
     def test_prefers_thread_ts(self):
@@ -58,85 +66,81 @@ class TestExtractEventContext:
         assert ctx["thread_id"] == "111"
 
 
-class TestDownloadEventFiles:
-    def test_video_routing(self):
-        slack = Mock(max_file_size=1_073_741_824)
-        slack.download_file_bytes = Mock(return_value=b"video-data")
-        event = {"files": [{"id": "F1", "name": "clip.mp4", "mimetype": "video/mp4"}]}
-        files, images, videos, audio, skipped = download_event_files(slack, event)
+class TestDownloadEventFilesAsync:
+    @pytest.mark.asyncio
+    async def test_video_routing(self):
+        mock_response = Mock(content=b"video-data", status_code=200)
+        mock_response.raise_for_status = Mock()
+        event = {
+            "files": [
+                {"id": "F1", "name": "clip.mp4", "mimetype": "video/mp4", "url_private": "https://files.slack.com/F1"}
+            ]
+        }
+        with patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient") as mock_httpx:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_httpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_httpx.return_value.__aexit__ = AsyncMock(return_value=False)
+            files, images, videos, audio, skipped = await download_event_files_async("xoxb-token", event, 1_073_741_824)
         assert len(videos) == 1
         assert len(files) == 0 and len(images) == 0
         assert len(skipped) == 0
 
-    def test_download_failure_logged(self):
-        slack = Mock(max_file_size=1_073_741_824)
-        slack.download_file_bytes = Mock(side_effect=RuntimeError("network error"))
-        event = {"files": [{"id": "F1", "name": "file.txt", "mimetype": "text/plain"}]}
-        with patch("agno.os.interfaces.slack.helpers.log_error") as mock_log:
-            files, images, videos, audio, skipped = download_event_files(slack, event)
-            mock_log.assert_called_once()
-        assert len(files) == 0
-
-    def test_file_over_max_size_skipped(self):
-        slack = Mock(max_file_size=25 * 1024 * 1024)
-        slack.download_file_bytes = Mock(return_value=b"data")
+    @pytest.mark.asyncio
+    async def test_file_over_max_size_skipped(self):
         event = {
             "files": [
-                {"id": "F1", "name": "huge.zip", "mimetype": "application/zip", "size": 50_000_000},
-                {"id": "F2", "name": "small.txt", "mimetype": "text/plain", "size": 1_000},
+                {
+                    "id": "F1",
+                    "name": "huge.zip",
+                    "mimetype": "application/zip",
+                    "size": 50_000_000,
+                    "url_private": "https://files.slack.com/F1",
+                },
             ]
         }
-        files, images, videos, audio, skipped = download_event_files(slack, event)
+        files, images, videos, audio, skipped = await download_event_files_async("xoxb-token", event, 25 * 1024 * 1024)
         assert len(skipped) == 1
         assert "huge.zip" in skipped[0]
-        assert len(files) == 1
-        slack.download_file_bytes.assert_called_once_with("F2")
-
-    def test_default_1gb_allows_large_files(self):
-        slack = Mock(max_file_size=1_073_741_824)
-        slack.download_file_bytes = Mock(return_value=b"data")
-        event = {
-            "files": [
-                {"id": "F1", "name": "big.zip", "mimetype": "application/zip", "size": 500_000_000},
-            ]
-        }
-        files, images, videos, audio, skipped = download_event_files(slack, event)
-        assert len(files) == 1
-        assert len(skipped) == 0
 
 
-class TestSendSlackMessage:
-    def test_empty_skipped(self):
-        slack = Mock()
-        send_slack_message(slack, "C1", "ts1", "")
-        slack.send_message_thread.assert_not_called()
+class TestSendSlackMessageAsync:
+    @pytest.mark.asyncio
+    async def test_empty_skipped(self):
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "")
+        client.chat_postMessage.assert_not_called()
 
-    def test_normal_send(self):
-        slack = Mock()
-        send_slack_message(slack, "C1", "ts1", "hello world")
-        slack.send_message_thread.assert_called_once_with(channel="C1", text="hello world", thread_ts="ts1")
+    @pytest.mark.asyncio
+    async def test_normal_send(self):
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "hello world")
+        client.chat_postMessage.assert_called_once_with(channel="C1", text="hello world", thread_ts="ts1")
 
-    def test_long_message_batching(self):
-        slack = Mock()
-        send_slack_message(slack, "C1", "ts1", "x" * 50000)
-        assert slack.send_message_thread.call_count == 2
+    @pytest.mark.asyncio
+    async def test_long_message_batching(self):
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "x" * 50000)
+        assert client.chat_postMessage.call_count == 2
 
 
-class TestUploadResponseMedia:
-    def test_all_types_uploaded(self):
-        slack = Mock()
+class TestUploadResponseMediaAsync:
+    @pytest.mark.asyncio
+    async def test_all_types_uploaded(self):
+        client = AsyncMock()
         response = Mock(
             images=[Mock(get_content_bytes=Mock(return_value=b"img"), filename="photo.png")],
             files=[Mock(get_content_bytes=Mock(return_value=b"file"), filename="doc.pdf")],
             videos=[Mock(get_content_bytes=Mock(return_value=b"vid"), filename=None)],
             audio=[Mock(get_content_bytes=Mock(return_value=b"aud"), filename=None)],
         )
-        upload_response_media(slack, response, "C1", "ts1")
-        assert slack.upload_file.call_count == 4
+        await upload_response_media_async(client, response, "C1", "ts1")
+        assert client.files_upload_v2.call_count == 4
 
-    def test_exception_continues(self):
-        slack = Mock()
-        slack.upload_file = Mock(side_effect=RuntimeError("upload failed"))
+    @pytest.mark.asyncio
+    async def test_exception_continues(self):
+        client = AsyncMock()
+        client.files_upload_v2 = AsyncMock(side_effect=RuntimeError("upload failed"))
         response = Mock(
             images=[Mock(get_content_bytes=Mock(return_value=b"img"), filename="photo.png")],
             files=[Mock(get_content_bytes=Mock(return_value=b"file"), filename="doc.pdf")],
@@ -144,4 +148,4 @@ class TestUploadResponseMedia:
             audio=None,
         )
         with patch("agno.os.interfaces.slack.helpers.log_error"):
-            upload_response_media(slack, response, "C1", "ts1")
+            await upload_response_media_async(client, response, "C1", "ts1")

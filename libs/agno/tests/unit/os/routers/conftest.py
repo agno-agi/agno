@@ -30,6 +30,7 @@ def make_signed_request(client: TestClient, body: dict, signing_secret: str = SI
 def build_app(agent_mock: Mock, **kwargs) -> FastAPI:
     from agno.os.interfaces.slack.router import attach_routes
 
+    kwargs.setdefault("streaming", False)
     app = FastAPI()
     router = APIRouter()
     attach_routes(router, agent=agent_mock, **kwargs)
@@ -58,6 +59,9 @@ def make_slack_mock(**kwargs):
 
 
 def slack_event_with_files(files: list, event_type: str = "message") -> dict:
+    for f in files:
+        f.setdefault("url_private", f"https://files.slack.com/{f.get('id', 'F0')}")
+        f.setdefault("size", 100)
     return {
         "type": "event_callback",
         "event": {
@@ -70,6 +74,26 @@ def slack_event_with_files(files: list, event_type: str = "message") -> dict:
             "files": files,
         },
     }
+
+
+def make_httpx_mock(responses: list[bytes] | bytes = b"file-data"):
+    if isinstance(responses, bytes):
+        responses = [responses]
+    idx = {"i": 0}
+
+    async def _get(*args, **kwargs):
+        data = responses[min(idx["i"], len(responses) - 1)]
+        idx["i"] += 1
+        resp = Mock()
+        resp.content = data
+        resp.raise_for_status = Mock()
+        return resp
+
+    client = AsyncMock()
+    client.get = _get
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
 
 
 def make_stream_mock():

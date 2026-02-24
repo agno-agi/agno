@@ -152,10 +152,14 @@ class TestStreamingFallbacks:
         )
         agent.name = "Test Agent"
         mock_slack = make_slack_mock(token="xoxb-test")
+        mock_client = AsyncMock()
+        mock_client.assistant_threads_setStatus = AsyncMock()
+        mock_client.chat_stream = AsyncMock(return_value=make_stream_mock())
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
             patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             client = TestClient(app)
@@ -239,8 +243,51 @@ class TestStreamingFallbacks:
             status_calls = mock_client.assistant_threads_setStatus.call_args_list
             clear_calls = [c for c in status_calls if c.kwargs.get("status") == ""]
             assert len(clear_calls) >= 1
-            # Fallback message sent
-            mock_slack.send_message_thread.assert_called()
+            # Fallback message sent via async helper
+            mock_client.chat_postMessage.assert_called()
+
+
+class TestErrorResolvesTaskCards:
+    @pytest.mark.asyncio
+    async def test_exception_resolves_pending_task_cards(self):
+        from agno.run.agent import RunEvent
+
+        async def _stream_with_tool_then_crash(*args, **kwargs):
+            yield Mock(
+                event=RunEvent.tool_call_started.value,
+                tool=Mock(tool_name="search_web", tool_call_id="tc_1"),
+                content=None,
+                images=None,
+                videos=None,
+                audio=None,
+                files=None,
+            )
+            raise RuntimeError("mid-stream crash after tool start")
+
+        agent = AsyncMock()
+        agent.name = "Test Agent"
+        agent.arun = _stream_with_tool_then_crash
+        mock_slack = make_slack_mock(token="xoxb-test")
+        mock_stream = make_stream_mock()
+        mock_client = AsyncMock()
+        mock_client.assistant_threads_setStatus = AsyncMock()
+        mock_client.chat_stream = AsyncMock(return_value=mock_stream)
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(agent, streaming=True, reply_to_mentions_only=False)
+            client = TestClient(app)
+            resp = make_signed_request(client, _streaming_body())
+            assert resp.status_code == 200
+
+            await asyncio.sleep(2.0)
+            mock_stream.stop.assert_called()
+            stop_kwargs = mock_stream.stop.call_args.kwargs
+            assert "chunks" in stop_kwargs
+            assert any(c.get("status") == "error" for c in stop_kwargs["chunks"])
 
 
 class TestStreamingTitle:

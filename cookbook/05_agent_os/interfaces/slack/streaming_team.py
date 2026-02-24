@@ -13,6 +13,7 @@ Requirements:
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
@@ -53,6 +54,8 @@ stock_team = Team(
     members=[stock_searcher, company_info_agent],
     markdown=True,
     show_members_responses=False,
+    db=SqliteDb(db_file="tmp/stock_team.db"),
+    add_history_to_context=True,
 )
 
 # ---------------------------------------------------------------------------

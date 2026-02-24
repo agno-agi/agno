@@ -1,11 +1,19 @@
 import json
 import time
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import APIRouter, FastAPI
 
-from .conftest import build_app, make_agent_mock, make_signed_request, make_slack_mock, slack_event_with_files
+from .conftest import (
+    build_app,
+    make_agent_mock,
+    make_async_client_mock,
+    make_httpx_mock,
+    make_signed_request,
+    make_slack_mock,
+    slack_event_with_files,
+)
 
 
 async def _wait_for_agent_call(agent_mock: AsyncMock, timeout: float = 5.0):
@@ -18,14 +26,86 @@ async def _wait_for_agent_call(agent_mock: AsyncMock, timeout: float = 5.0):
 
 
 @pytest.mark.asyncio
+async def test_session_id_namespaced_with_entity_id():
+    agent_mock = make_agent_mock()
+    agent_mock.name = "Research Bot"
+    agent_mock.id = "researcher"
+    mock_slack = make_slack_mock()
+    with (
+        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+    ):
+        app = build_app(agent_mock, reply_to_mentions_only=False)
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        thread_ts = "1708123456.000100"
+        body = {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel_type": "im",
+                "text": "hello",
+                "user": "U123",
+                "channel": "C123",
+                "ts": "1708123456.000200",
+                "thread_ts": thread_ts,
+            },
+        }
+        resp = make_signed_request(client, body)
+        assert resp.status_code == 200
+        await _wait_for_agent_call(agent_mock)
+
+        call_kwargs = agent_mock.arun.call_args
+        session_id = call_kwargs.kwargs.get("session_id") or call_kwargs[1].get("session_id")
+        assert session_id == f"researcher:{thread_ts}"
+
+
+@pytest.mark.asyncio
+async def test_user_id_is_none_for_shared_thread():
+    agent_mock = make_agent_mock()
+    mock_slack = make_slack_mock()
+    with (
+        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+    ):
+        app = build_app(agent_mock, reply_to_mentions_only=False)
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        body = {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel_type": "im",
+                "text": "hello",
+                "user": "U456",
+                "channel": "C123",
+                "ts": str(time.time()),
+            },
+        }
+        resp = make_signed_request(client, body)
+        assert resp.status_code == 200
+        await _wait_for_agent_call(agent_mock)
+
+        call_kwargs = agent_mock.arun.call_args
+        user_id = call_kwargs.kwargs.get("user_id") or call_kwargs[1].get("user_id")
+        assert user_id is None
+
+
+@pytest.mark.asyncio
 async def test_mixed_files_categorized_correctly():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
-    mock_slack.download_file_bytes = Mock(side_effect=[b"csv-data", b"img-data", b"zip-data"])
+    mock_httpx = make_httpx_mock([b"csv-data", b"img-data", b"zip-data"])
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+        patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
         app = build_app(agent_mock)
@@ -56,11 +136,13 @@ async def test_mixed_files_categorized_correctly():
 async def test_non_whitelisted_mime_type_passes_none():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
-    mock_slack.download_file_bytes = Mock(return_value=b"zipdata")
+    mock_httpx = make_httpx_mock(b"zipdata")
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+        patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
         app = build_app(agent_mock)
@@ -169,10 +251,11 @@ def test_bot_subtype_blocked():
 async def test_file_share_subtype_not_blocked():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
-    mock_slack.download_file_bytes = Mock(return_value=b"file-data")
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+        patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=make_httpx_mock(b"file-data")),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
         from fastapi.testclient import TestClient
@@ -188,7 +271,15 @@ async def test_file_share_subtype_not_blocked():
                 "user": "U456",
                 "channel": "C123",
                 "ts": str(time.time()),
-                "files": [{"id": "F1", "name": "doc.txt", "mimetype": "text/plain"}],
+                "files": [
+                    {
+                        "id": "F1",
+                        "name": "doc.txt",
+                        "mimetype": "text/plain",
+                        "url_private": "https://files.slack.com/F1",
+                        "size": 100,
+                    }
+                ],
             },
         }
         resp = make_signed_request(client, body)

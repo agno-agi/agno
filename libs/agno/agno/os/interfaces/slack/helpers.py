@@ -1,7 +1,8 @@
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
+
 from agno.media import Audio, File, Image, Video
-from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
 
 
@@ -27,6 +28,11 @@ def should_respond(event: dict, reply_to_mentions_only: bool) -> bool:
     is_dm = channel_type == "im"
     if reply_to_mentions_only and event_type == "message" and not is_dm:
         return False
+    # When responding to all messages, skip app_mention to avoid duplicates.
+    # Slack fires both app_mention and message for the same @mention — the
+    # message event already covers it.
+    if not reply_to_mentions_only and event_type == "app_mention" and not is_dm:
+        return False
     return True
 
 
@@ -39,8 +45,8 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     }
 
 
-def download_event_files(
-    slack_tools: SlackTools, event: dict
+async def download_event_files_async(
+    token: str, event: dict, max_file_size: int
 ) -> Tuple[List[File], List[Image], List[Video], List[Audio], List[str]]:
     files: List[File] = []
     images: List[Image] = []
@@ -51,23 +57,30 @@ def download_event_files(
     if not event.get("files"):
         return files, images, videos, audio, skipped
 
-    max_file_size = slack_tools.max_file_size
+    headers = {"Authorization": f"Bearer {token}"}
 
-    for file_info in event["files"]:
-        file_id = file_info.get("id")
-        filename = file_info.get("name", "file")
-        mimetype = file_info.get("mimetype", "application/octet-stream")
-        file_size = file_info.get("size", 0)
+    async with httpx.AsyncClient() as client:
+        for file_info in event["files"]:
+            file_id = file_info.get("id")
+            filename = file_info.get("name", "file")
+            mimetype = file_info.get("mimetype", "application/octet-stream")
+            file_size = file_info.get("size", 0)
 
-        if file_size > max_file_size:
-            limit_mb = max_file_size / (1024 * 1024)
-            actual_mb = file_size / (1024 * 1024)
-            skipped.append(f"{filename} ({actual_mb:.1f}MB — exceeds {limit_mb:.0f}MB limit)")
-            continue
+            if file_size > max_file_size:
+                limit_mb = max_file_size / (1024 * 1024)
+                actual_mb = file_size / (1024 * 1024)
+                skipped.append(f"{filename} ({actual_mb:.1f}MB — exceeds {limit_mb:.0f}MB limit)")
+                continue
 
-        try:
-            file_content = slack_tools.download_file_bytes(file_id)
-            if file_content is not None:
+            url_private = file_info.get("url_private")
+            if not url_private:
+                continue
+
+            try:
+                resp = await client.get(url_private, headers=headers, timeout=30)
+                resp.raise_for_status()
+                file_content = resp.content
+
                 if mimetype.startswith("image/"):
                     fmt = mimetype.split("/")[-1]
                     images.append(Image(content=file_content, id=file_id, mime_type=mimetype, format=fmt))
@@ -76,17 +89,15 @@ def download_event_files(
                 elif mimetype.startswith("audio/"):
                     audio.append(Audio(content=file_content, mime_type=mimetype))
                 else:
-                    # Slack sends MIME types (e.g. application/zip) that agno's File
-                    # rejects. Pass mime_type=None so the file is still delivered.
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
-        except Exception as e:
-            log_error(f"Failed to download file {file_id}: {e}")
+            except Exception as e:
+                log_error(f"Failed to download file {file_id}: {e}")
 
     return files, images, videos, audio, skipped
 
 
-def upload_response_media(slack_tools: SlackTools, response: Any, channel_id: str, thread_ts: str) -> None:
+async def upload_response_media_async(async_client: Any, response: Any, channel_id: str, thread_ts: str) -> None:
     media_attrs = [
         ("images", "image.png"),
         ("files", "file"),
@@ -101,7 +112,7 @@ def upload_response_media(slack_tools: SlackTools, response: Any, channel_id: st
             content_bytes = item.get_content_bytes()
             if content_bytes:
                 try:
-                    slack_tools.upload_file(
+                    await async_client.files_upload_v2(
                         channel=channel_id,
                         content=content_bytes,
                         filename=getattr(item, "filename", None) or default_name,
@@ -111,8 +122,8 @@ def upload_response_media(slack_tools: SlackTools, response: Any, channel_id: st
                     log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
 
 
-def send_slack_message(
-    slack_tools: SlackTools, channel: str, thread_ts: str, message: str, italics: bool = False
+async def send_slack_message_async(
+    async_client: Any, channel: str, thread_ts: str, message: str, italics: bool = False
 ) -> None:
     if not message or not message.strip():
         return
@@ -122,12 +133,12 @@ def send_slack_message(
             return "\n".join([f"_{line}_" for line in text.split("\n")])
         return text
 
-    max_len = 39900  # Slack's limit is 40K; leave room for "[N/M] " batch prefix
+    max_len = 39900
     if len(message) <= max_len:
-        slack_tools.send_message_thread(channel=channel, text=_format(message), thread_ts=thread_ts)
+        await async_client.chat_postMessage(channel=channel, text=_format(message), thread_ts=thread_ts)
         return
 
     message_batches = [message[i : i + max_len] for i in range(0, len(message), max_len)]
     for i, batch in enumerate(message_batches, 1):
         batch_message = f"[{i}/{len(message_batches)}] {batch}"
-        slack_tools.send_message_thread(channel=channel, text=_format(batch_message), thread_ts=thread_ts)
+        await async_client.chat_postMessage(channel=channel, text=_format(batch_message), thread_ts=thread_ts)

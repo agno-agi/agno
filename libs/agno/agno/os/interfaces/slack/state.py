@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal
+from typing import TYPE_CHECKING, Dict, List, Literal
+
+if TYPE_CHECKING:
+    from agno.run.base import BaseRunOutputEvent
 
 TaskStatus = Literal["in_progress", "complete", "error"]
 
@@ -28,7 +33,7 @@ class StreamState:
     files: list = field(default_factory=list)
 
     # Used by router to select DISPATCH (agent/team) vs WORKFLOW_DISPATCH (workflow)
-    entity_type: str = "agent"
+    entity_type: Literal["agent", "team", "workflow"] = "agent"
     entity_name: str = ""
 
     workflow_final_content: str = ""
@@ -60,7 +65,21 @@ class StreamState:
                 chunks.append({"type": "task_update", "id": key, "title": card.title, "status": status})
         return chunks
 
-    def collect_media(self, chunk: Any) -> None:
+    def append_content(self, text: str) -> None:
+        self.text_buffer += str(text)
+
+    def append_error(self, error_msg: str) -> None:
+        self.text_buffer += f"\n_Error: {error_msg}_"
+
+    def has_content(self) -> bool:
+        return bool(self.text_buffer)
+
+    def flush(self) -> str:
+        result = self.text_buffer
+        self.text_buffer = ""
+        return result
+
+    def collect_media(self, chunk: BaseRunOutputEvent) -> None:
         # Media can't be streamed inline — Slack requires a separate upload after
         # the stream ends. We collect here and upload_response_media() sends them.
         for img in getattr(chunk, "images", None) or []:
