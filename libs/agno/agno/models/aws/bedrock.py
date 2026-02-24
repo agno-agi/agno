@@ -94,12 +94,13 @@ class AwsBedrock(Model):
         if not self.session and self.client is not None:
             return self.client
 
+        # Return directly (not via self.client) so concurrent callers
+        # on the same model instance each get their own client.
         if self.session:
-            self.client = self.session.client(
+            return self.session.client(
                 "bedrock-runtime",
                 region_name=self.aws_region or self.session.region_name,
             )
-            return self.client
 
         self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
@@ -144,14 +145,16 @@ class AwsBedrock(Model):
                     "boto3 session has no credentials. Check your AWS configuration "
                     "(environment variables, config files, IAM role, etc.)."
                 )
+            # Use local variables (not self.async_session) so concurrent
+            # callers each get their own session and client.
             frozen = credentials.get_frozen_credentials()
-            self.async_session = aioboto3.Session(
+            async_session = aioboto3.Session(
                 aws_access_key_id=frozen.access_key,
                 aws_secret_access_key=frozen.secret_key,
                 aws_session_token=frozen.token,
                 region_name=self.aws_region or self.session.region_name,
             )
-            return self.async_session.client("bedrock-runtime")
+            return async_session.client("bedrock-runtime")
 
         if self.async_session is None:
             self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")

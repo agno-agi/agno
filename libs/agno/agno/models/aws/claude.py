@@ -131,10 +131,14 @@ class Claude(AnthropicClaude):
             # Use global sync client when no custom http_client is provided
             client_params["http_client"] = get_default_sync_client()
 
-        self.client = AnthropicBedrock(
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.client.
+        client = AnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.client
+        if not self.session:
+            self.client = client
+        return client
 
     def get_async_client(self):
         """
@@ -163,10 +167,14 @@ class Claude(AnthropicClaude):
             # Use global async client when no custom http_client is provided
             client_params["http_client"] = get_default_async_client()
 
-        self.async_client = AsyncAnthropicBedrock(
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.async_client.
+        async_client = AsyncAnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.async_client
+        if not self.session:
+            self.async_client = async_client
+        return async_client
 
     def get_request_params(
         self,
