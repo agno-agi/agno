@@ -11,7 +11,7 @@ Validates:
 3. Media collector resets per run_code call (no cross-call leaks)
 4. Token usage stays proportional to text, not screenshot bytes
 
-Run: PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/05_agent_os/code_mode/cm_mcp_playwright_agentic.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/mcp_playwright.py
 """
 
 import asyncio

@@ -9,7 +9,7 @@ This is the "tool-writing agent" pattern: one team member specializes
 in writing Python programs that call multiple tools efficiently.
 
 Run:
-  PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/05_agent_os/code_mode/cm_team.py
+  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/team.py
 """
 
 import time

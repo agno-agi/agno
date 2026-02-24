@@ -8,7 +8,7 @@ in a single exec() pass — loops, filters, and formatting included.
 Compares token usage: Code Mode vs Traditional tool_call mode.
 
 Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/code_mode/basic.py
+  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/basic.py
 """
 
 from agno.agent import Agent

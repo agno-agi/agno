@@ -15,7 +15,7 @@ Before the fix: str(ToolResult) would dump ~40KB+ of audio bytes + image
 URLs into the model context. After: media flows through RunOutput sideband.
 
 Requires: OPENAI_API_KEY, ELEVEN_LABS_API_KEY
-Run: PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/05_agent_os/code_mode/cm_media_pipeline.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/media_pipeline.py
 """
 
 import time

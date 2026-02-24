@@ -10,7 +10,7 @@ from across all four toolkits, then writes one code block that pipelines:
 Compares token usage and tool call count: Code Mode vs Traditional.
 
 Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/code_mode/data_pipeline.py
+  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/data_pipeline.py
 """
 
 from pathlib import Path
@@ -78,8 +78,8 @@ if __name__ == "__main__":
     print("=" * 70)
 
     cm = CodeModeTool(tools=[yf, duckdb, calc, files])
-    print(f"Total tools: {len(cm._sync_functions)}")
-    print(f"Discovery mode: {cm._discovery_enabled}")
+    print(f"Total tools: {len(cm.sandbox_functions)}")
+    print(f"Discovery mode: {cm.discovery_enabled}")
 
     code_agent = Agent(
         name="Code Mode Agent",

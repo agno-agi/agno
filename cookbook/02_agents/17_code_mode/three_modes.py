@@ -10,7 +10,7 @@ Three patterns:
   3. Dual-model: cheap planner + strong code writer (code_model=...)
 
 Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/code_mode/first_class.py
+  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/three_modes.py
 """
 
 import time

@@ -11,7 +11,7 @@ With code_mode: the model writes ONE program with a loop -> 1-2 turns total.
 
 No API keys needed (YFinance is free).
 
-Run: PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/05_agent_os/code_mode/cm_portfolio_analyzer.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/portfolio_analyzer.py
 """
 
 import time

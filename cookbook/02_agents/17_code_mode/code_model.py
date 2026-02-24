@@ -12,7 +12,7 @@ Benefits:
   - Works with ANY model as the planning model (even non-coding models)
 
 Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/code_mode/code_model_demo.py
+  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/code_model.py
 """
 
 import time
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     print("CODE MODEL DEMO")
     print("Planning model: Claude Sonnet 4")
     print("Code model: Claude Sonnet 4")
-    print(f"Tools: {len(cm._sync_functions)}")
+    print(f"Tools: {len(cm.sandbox_functions)}")
     print("=" * 70)
 
     agent = Agent(
