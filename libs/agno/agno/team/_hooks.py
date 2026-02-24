@@ -36,7 +36,6 @@ from agno.utils.events import (
 from agno.utils.hooks import (
     copy_args_for_background,
     filter_hook_args,
-    is_guardrail_hook,
     should_run_hook_in_background,
 )
 from agno.utils.log import (
@@ -238,36 +237,28 @@ def _execute_pre_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
-        "metadata": run_context.metadata if run_context else None,
     }
 
-    all_args.update(kwargs)
-
-    # Global background mode: run guardrails synchronously, buffer everything else.
-    # See agent/_hooks.py execute_pre_hooks for full pattern explanation.
+    # Check if background_tasks is available and ALL hooks should run in background
+    # Note: Pre-hooks running in background may not be able to modify run_input
     if team._run_hooks_in_background is True and background_tasks is not None:
-        pending_bg_hooks = []
-        for hook in hooks:
-            if is_guardrail_hook(hook):
-                filtered_args = filter_hook_args(hook, all_args)
-                try:
-                    hook(**filtered_args)
-                except (InputCheckError, OutputCheckError):
-                    raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
-            else:
-                pending_bg_hooks.append(hook)
+        # Schedule ALL pre_hooks as background tasks
+        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
-        for hook in pending_bg_hooks:
+        for hook in hooks:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
+
+            # Add to background tasks
             background_tasks.add_task(hook, **filtered_args)
         return
+
+    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
+            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -283,6 +274,7 @@ def _execute_pre_hooks(
                 store_events=team.store_events,
             )
         try:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
 
             hook(**filtered_args)
@@ -338,40 +330,28 @@ async def _aexecute_pre_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
-        "metadata": run_context.metadata if run_context else None,
     }
 
-    all_args.update(kwargs)
-
-    # Global background mode — see _execute_pre_hooks for pattern explanation.
+    # Check if background_tasks is available and ALL hooks should run in background
+    # Note: Pre-hooks running in background may not be able to modify run_input
     if team._run_hooks_in_background is True and background_tasks is not None:
-        pending_bg_hooks = []
-        for hook in hooks:
-            if is_guardrail_hook(hook):
-                filtered_args = filter_hook_args(hook, all_args)
-                try:
-                    from inspect import iscoroutinefunction
-
-                    if iscoroutinefunction(hook):
-                        await hook(**filtered_args)
-                    else:
-                        hook(**filtered_args)
-                except (InputCheckError, OutputCheckError):
-                    raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
-            else:
-                pending_bg_hooks.append(hook)
+        # Schedule ALL pre_hooks as background tasks
+        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
-        for hook in pending_bg_hooks:
+        for hook in hooks:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
+
+            # Add to background tasks (both sync and async hooks supported)
             background_tasks.add_task(hook, **filtered_args)
         return
+
+    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
+            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -387,6 +367,7 @@ async def _aexecute_pre_hooks(
                 store_events=team.store_events,
             )
         try:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
 
             from inspect import iscoroutinefunction
@@ -394,6 +375,7 @@ async def _aexecute_pre_hooks(
             if iscoroutinefunction(hook):
                 await hook(**filtered_args)
             else:
+                # Synchronous function
                 hook(**filtered_args)
 
             if stream_events:
@@ -446,35 +428,27 @@ def _execute_post_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
-        "metadata": run_context.metadata if run_context else None,
     }
 
-    all_args.update(kwargs)
-
-    # Global background mode — see _execute_pre_hooks for pattern explanation.
+    # Check if background_tasks is available and ALL hooks should run in background
     if team._run_hooks_in_background is True and background_tasks is not None:
-        pending_bg_hooks = []
-        for hook in hooks:
-            if is_guardrail_hook(hook):
-                filtered_args = filter_hook_args(hook, all_args)
-                try:
-                    hook(**filtered_args)
-                except (InputCheckError, OutputCheckError):
-                    raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
-            else:
-                pending_bg_hooks.append(hook)
+        # Schedule ALL post_hooks as background tasks
+        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
-        for hook in pending_bg_hooks:
+        for hook in hooks:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
+
+            # Add to background tasks
             background_tasks.add_task(hook, **filtered_args)
         return
+
+    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
+            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -491,6 +465,7 @@ def _execute_post_hooks(
                 store_events=team.store_events,
             )
         try:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
 
             hook(**filtered_args)
@@ -543,40 +518,27 @@ async def _aexecute_post_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
-        "metadata": run_context.metadata if run_context else None,
     }
 
-    all_args.update(kwargs)
-
-    # Global background mode — see _execute_pre_hooks for pattern explanation.
+    # Check if background_tasks is available and ALL hooks should run in background
     if team._run_hooks_in_background is True and background_tasks is not None:
-        pending_bg_hooks = []
-        for hook in hooks:
-            if is_guardrail_hook(hook):
-                filtered_args = filter_hook_args(hook, all_args)
-                try:
-                    from inspect import iscoroutinefunction
-
-                    if iscoroutinefunction(hook):
-                        await hook(**filtered_args)
-                    else:
-                        hook(**filtered_args)
-                except (InputCheckError, OutputCheckError):
-                    raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
-            else:
-                pending_bg_hooks.append(hook)
+        # Schedule ALL post_hooks as background tasks
+        # Copy args to prevent race conditions
         bg_args = copy_args_for_background(all_args)
-        for hook in pending_bg_hooks:
+        for hook in hooks:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, bg_args)
+
+            # Add to background tasks (both sync and async hooks supported)
             background_tasks.add_task(hook, **filtered_args)
         return
+
+    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
+            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -593,6 +555,7 @@ async def _aexecute_post_hooks(
                 store_events=team.store_events,
             )
         try:
+            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
 
             from inspect import iscoroutinefunction
