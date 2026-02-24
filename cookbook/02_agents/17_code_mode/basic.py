@@ -1,7 +1,7 @@
 """
 Code Mode — Real-World Example with YFinanceTools
 ==================================================
-Demonstrates CodeModeTool wrapping a real Agno toolkit.
+Demonstrates ToolExecuteMode wrapping a real Agno toolkit.
 The LLM writes Python code that calls multiple YFinance tools
 in a single exec() pass — loops, filters, and formatting included.
 
@@ -12,8 +12,8 @@ Run:
 """
 
 from agno.agent import Agent
-from agno.code_mode import CodeModeTool
 from agno.models.anthropic import Claude
+from agno.tool_execute_mode import ToolExecuteMode
 from agno.tools.yfinance import YFinanceTools
 
 TASK = (
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     code_agent = Agent(
         name="Code Mode Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[CodeModeTool(tools=[yf])],
+        tools=[ToolExecuteMode(tools=[yf])],
         tool_call_limit=3,
         instructions=CODE_MODE_INSTRUCTIONS,
         markdown=True,

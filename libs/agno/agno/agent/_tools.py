@@ -136,8 +136,8 @@ def get_tools(
         agent_tools.extend(resolved_tools)
 
     # Add code mode tool if initialized
-    if agent._code_mode_tool is not None:
-        agent_tools.append(agent._code_mode_tool)
+    if agent._tool_execute_mode is not None:
+        agent_tools.append(agent._tool_execute_mode)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -262,8 +262,8 @@ async def aget_tools(
             agent_tools.append(tool)
 
     # Add code mode tool if initialized
-    if agent._code_mode_tool is not None:
-        agent_tools.append(agent._code_mode_tool)
+    if agent._tool_execute_mode is not None:
+        agent_tools.append(agent._tool_execute_mode)
 
     # Add tools for accessing memory
     if agent.read_chat_history:

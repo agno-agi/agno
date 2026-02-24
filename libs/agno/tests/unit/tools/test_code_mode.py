@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from agno.code_mode import CodeModeTool
+from agno.tool_execute_mode import ToolExecuteMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 
@@ -87,17 +87,17 @@ class SimpleToolkit(Toolkit):
 
 @pytest.fixture
 def code_mode_callables():
-    return CodeModeTool(tools=[search_items, get_item_details])
+    return ToolExecuteMode(tools=[search_items, get_item_details])
 
 
 @pytest.fixture
 def code_mode_toolkit():
-    return CodeModeTool(tools=[SimpleToolkit()])
+    return ToolExecuteMode(tools=[SimpleToolkit()])
 
 
 @pytest.fixture
 def code_mode_mixed():
-    return CodeModeTool(tools=[SimpleToolkit(), search_items])
+    return ToolExecuteMode(tools=[SimpleToolkit(), search_items])
 
 
 class TestInitialization:
@@ -113,7 +113,7 @@ class TestInitialization:
 
     def test_accepts_function_objects(self):
         func = Function.from_callable(search_items)
-        cm = CodeModeTool(tools=[func])
+        cm = ToolExecuteMode(tools=[func])
         assert "search_items" in cm.sandbox_functions
 
     def test_accepts_mixed_types(self, code_mode_mixed):
@@ -132,24 +132,24 @@ class TestHITLExclusion:
     def test_excludes_requires_confirmation(self):
         func = Function.from_callable(search_items)
         func.requires_confirmation = True
-        cm = CodeModeTool(tools=[func])
+        cm = ToolExecuteMode(tools=[func])
         assert "search_items" not in cm.sandbox_functions
 
     def test_excludes_requires_user_input(self):
         func = Function.from_callable(search_items)
         func.requires_user_input = True
-        cm = CodeModeTool(tools=[func])
+        cm = ToolExecuteMode(tools=[func])
         assert "search_items" not in cm.sandbox_functions
 
     def test_excludes_external_execution(self):
         func = Function.from_callable(search_items)
         func.external_execution = True
-        cm = CodeModeTool(tools=[func])
+        cm = ToolExecuteMode(tools=[func])
         assert "search_items" not in cm.sandbox_functions
 
     def test_non_hitl_tools_included(self):
         func = Function.from_callable(search_items)
-        cm = CodeModeTool(tools=[func])
+        cm = ToolExecuteMode(tools=[func])
         assert "search_items" in cm.sandbox_functions
 
 
@@ -172,7 +172,7 @@ class TestStubGeneration:
         assert "Returns:" in code_mode_callables.stubs
 
     def test_stubs_exclude_framework_params(self):
-        cm = CodeModeTool(tools=[tool_needing_agent])
+        cm = ToolExecuteMode(tools=[tool_needing_agent])
         assert "agent" not in cm.stubs.split("def tool_needing_agent(")[1].split(")")[0]
         assert "query: str" in cm.stubs
 
@@ -260,7 +260,7 @@ class TestCodeExecution:
         assert "ZeroDivisionError" in output
 
     def test_max_code_length_enforced(self):
-        cm = CodeModeTool(tools=[search_items], max_code_length=10)
+        cm = ToolExecuteMode(tools=[search_items], max_code_length=10)
         output = cm.run_code("x = 1\n" * 100)
         assert "exceeds maximum length" in output
 
@@ -315,7 +315,7 @@ class TestCodeExecution:
 
 class TestFrameworkInjection:
     def test_agent_forwarded_when_requested(self):
-        cm = CodeModeTool(tools=[tool_needing_agent])
+        cm = ToolExecuteMode(tools=[tool_needing_agent])
         mock_agent = Mock()
         run_code_func = cm.functions.get("run_code")
         if run_code_func:
@@ -327,7 +327,7 @@ class TestFrameworkInjection:
         assert data["query"] == "test"
 
     def test_run_context_forwarded_when_requested(self):
-        cm = CodeModeTool(tools=[tool_needing_run_context])
+        cm = ToolExecuteMode(tools=[tool_needing_run_context])
         mock_ctx = Mock()
         run_code_func = cm.functions.get("run_code")
         if run_code_func:
@@ -419,19 +419,19 @@ class TestAdditionalModules:
     def test_additional_module_available(self):
         import datetime
 
-        cm = CodeModeTool(tools=[search_items], additional_modules={"datetime": datetime})
+        cm = ToolExecuteMode(tools=[search_items], additional_modules={"datetime": datetime})
         output = cm.run_code("result = str(type(datetime.date.today()))")
         assert "date" in output
 
 
 class TestReturnVariable:
     def test_custom_return_variable(self):
-        cm = CodeModeTool(tools=[search_items], return_variable="answer")
+        cm = ToolExecuteMode(tools=[search_items], return_variable="answer")
         output = cm.run_code('answer = "custom return"')
         assert "custom return" in output
 
     def test_custom_variable_takes_priority(self):
-        cm = CodeModeTool(tools=[search_items], return_variable="answer")
+        cm = ToolExecuteMode(tools=[search_items], return_variable="answer")
         output = cm.run_code('answer = "correct"\nresult = "fallback"')
         assert output == "correct"
 
@@ -451,93 +451,93 @@ def _make_many_callables(n: int):
 
 class TestDiscoveryMode:
     def test_auto_enables_above_threshold(self):
-        cm = CodeModeTool(tools=_make_many_callables(20), discovery_threshold=15)
+        cm = ToolExecuteMode(tools=_make_many_callables(20), discovery_threshold=15)
         assert cm.discovery_enabled is True
 
     def test_auto_disables_below_threshold(self):
-        cm = CodeModeTool(tools=_make_many_callables(5), discovery_threshold=15)
+        cm = ToolExecuteMode(tools=_make_many_callables(5), discovery_threshold=15)
         assert cm.discovery_enabled is False
 
     def test_auto_disables_at_threshold(self):
-        cm = CodeModeTool(tools=_make_many_callables(15), discovery_threshold=15)
+        cm = ToolExecuteMode(tools=_make_many_callables(15), discovery_threshold=15)
         assert cm.discovery_enabled is False
 
     def test_explicit_true_with_few_tools(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         assert cm.discovery_enabled is True
 
     def test_explicit_false_with_many_tools(self):
-        cm = CodeModeTool(tools=_make_many_callables(20), discovery=False)
+        cm = ToolExecuteMode(tools=_make_many_callables(20), discovery=False)
         assert cm.discovery_enabled is False
 
     def test_invalid_discovery_value_raises(self):
         with pytest.raises(ValueError, match="discovery must be"):
-            CodeModeTool(tools=[search_items], discovery="always")
+            ToolExecuteMode(tools=[search_items], discovery="always")
 
     def test_registers_search_tools_when_enabled(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         assert "search_tools" in cm.functions
 
     def test_registers_async_search_tools(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         assert "search_tools" in cm.async_functions
 
     def test_no_search_tools_when_disabled(self):
-        cm = CodeModeTool(tools=[search_items], discovery=False)
+        cm = ToolExecuteMode(tools=[search_items], discovery=False)
         assert "search_tools" not in cm.functions
 
     def test_run_code_still_registered_in_discovery(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         assert "run_code" in cm.functions
         assert "run_code" in cm.async_functions
 
 
 class TestSearchTools:
     def test_search_by_name(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         result = cm.search_tools("search_items")
         assert "def search_items(" in result
 
     def test_search_by_description_keyword(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         result = cm.search_tools("keyword")
         assert "def search_items(" in result
 
     def test_search_no_match(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         result = cm.search_tools("nonexistent_xyz")
         assert "No functions found" in result
 
     def test_search_returns_multiple(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         result = cm.search_tools("item")
         assert "search_items" in result
         assert "get_item_details" in result
 
     def test_search_empty_query_rejected(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         result = cm.search_tools("")
         assert "at least 2 characters" in result
 
     def test_search_short_query_rejected(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         result = cm.search_tools("a")
         assert "at least 2 characters" in result
 
     def test_search_caps_at_10(self):
-        cm = CodeModeTool(tools=_make_many_callables(20), discovery=True)
+        cm = ToolExecuteMode(tools=_make_many_callables(20), discovery=True)
         result = cm.search_tools("tool")
         assert "showing first 10" in result
 
     def test_search_count_reported(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         result = cm.search_tools("item")
         assert "Found 2 function(s)" in result
 
 
 class TestDiscoveryCatalog:
     def test_catalog_in_run_code_description(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         funcs = cm.get_functions()
         desc = funcs["run_code"].description or ""
         assert "use search_tools for full signatures" in desc
@@ -545,21 +545,21 @@ class TestDiscoveryCatalog:
         assert "get_item_details:" in desc
 
     def test_full_stubs_not_in_run_code_when_discovery(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         funcs = cm.get_functions()
         desc = funcs["run_code"].description or ""
         assert "def search_items(" not in desc
         assert "def get_item_details(" not in desc
 
     def test_standard_mode_has_full_stubs(self):
-        cm = CodeModeTool(tools=[search_items], discovery=False)
+        cm = ToolExecuteMode(tools=[search_items], discovery=False)
         funcs = cm.get_functions()
         desc = funcs["run_code"].description or ""
         assert "Available functions:" in desc
         assert "def search_items(" in desc
 
     def test_catalog_not_duplicated(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         cm.get_functions()
         cm.get_functions()
         funcs = cm.get_functions()
@@ -569,19 +569,19 @@ class TestDiscoveryCatalog:
 
 class TestDiscoveryExecution:
     def test_all_tools_callable_in_discovery_mode(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         output = cm.run_code('data = json.loads(search_items(query="test"))\nresult = data[0]["name"]')
         assert "result for test" in output
 
     def test_unsearched_tool_still_callable(self):
-        cm = CodeModeTool(tools=[search_items, get_item_details], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], discovery=True)
         output = cm.run_code("result = get_item_details(item_id=42)")
         data = json.loads(output)
         assert data["name"] == "Widget"
 
     def test_code_execution_identical_to_standard(self):
-        cm_discovery = CodeModeTool(tools=[search_items], discovery=True)
-        cm_standard = CodeModeTool(tools=[search_items], discovery=False)
+        cm_discovery = ToolExecuteMode(tools=[search_items], discovery=True)
+        cm_standard = ToolExecuteMode(tools=[search_items], discovery=False)
         code = 'result = search_items(query="hello")'
         assert cm_discovery.run_code(code) == cm_standard.run_code(code)
 
@@ -589,13 +589,13 @@ class TestDiscoveryExecution:
 class TestRebuild:
     def test_rebuild_updates_functions(self):
         toolkit = SimpleToolkit()
-        cm = CodeModeTool(tools=[toolkit], discovery=True)
+        cm = ToolExecuteMode(tools=[toolkit], discovery=True)
         assert "greet" in cm.sandbox_functions
         cm.rebuild()
         assert "greet" in cm.sandbox_functions
 
     def test_rebuild_resets_stubs_injected(self):
-        cm = CodeModeTool(tools=[search_items], discovery=True)
+        cm = ToolExecuteMode(tools=[search_items], discovery=True)
         cm.get_functions()
         assert cm.sync_stubs_injected is True
         cm.rebuild()
@@ -612,30 +612,30 @@ def _mock_model_response(code: str):
 class TestCodeModelInit:
     def test_code_model_disables_discovery(self):
         mock_model = Mock()
-        cm = CodeModeTool(tools=_make_many_callables(20), code_model=mock_model)
+        cm = ToolExecuteMode(tools=_make_many_callables(20), code_model=mock_model)
         assert cm.discovery_enabled is False
 
     def test_code_model_no_search_tools(self):
         mock_model = Mock()
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         assert "search_tools" not in cm.functions
 
     def test_code_model_registers_run_code(self):
         mock_model = Mock()
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         assert "run_code" in cm.functions
         assert "run_code" in cm.async_functions
 
     def test_code_model_generates_catalog(self):
         mock_model = Mock()
-        cm = CodeModeTool(tools=[search_items, get_item_details], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], code_model=mock_model)
         assert cm.catalog
         assert "search_items:" in cm.catalog
         assert "get_item_details:" in cm.catalog
 
     def test_code_model_run_code_description(self):
         mock_model = Mock()
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         funcs = cm.get_functions()
         desc = funcs["run_code"].description or ""
         assert "plain English" in desc
@@ -644,7 +644,7 @@ class TestCodeModelInit:
 
     def test_code_model_description_no_stubs(self):
         mock_model = Mock()
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         funcs = cm.get_functions()
         desc = funcs["run_code"].description or ""
         assert "def search_items(" not in desc
@@ -654,7 +654,7 @@ class TestCodeModelExecution:
     def test_run_code_delegates_to_code_model(self):
         mock_model = Mock()
         mock_model.response.return_value = _mock_model_response('result = "hello from code model"')
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         output = cm.run_code("Say hello")
         assert "hello from code model" in output
         mock_model.response.assert_called_once()
@@ -662,7 +662,7 @@ class TestCodeModelExecution:
     def test_code_model_receives_stubs_in_system(self):
         mock_model = Mock()
         mock_model.response.return_value = _mock_model_response('result = "ok"')
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         cm.run_code("Do something")
         messages = mock_model.response.call_args.kwargs["messages"]
         system_msg = messages[0]
@@ -672,7 +672,7 @@ class TestCodeModelExecution:
     def test_code_model_receives_task_in_user(self):
         mock_model = Mock()
         mock_model.response.return_value = _mock_model_response('result = "ok"')
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         cm.run_code("Find all laptops")
         messages = mock_model.response.call_args.kwargs["messages"]
         user_msg = messages[1]
@@ -685,7 +685,7 @@ class TestCodeModelExecution:
             _mock_model_response("x = 1 / 0"),
             _mock_model_response('result = "fixed"'),
         ]
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         output = cm.run_code("Calculate something")
         assert "fixed" in output
         assert mock_model.response.call_count == 2
@@ -697,7 +697,7 @@ class TestCodeModelExecution:
 
         mock_model = Mock()
         mock_model.response.return_value = _mock_model_response('result = failing_tool(query="test")')
-        cm = CodeModeTool(tools=[failing_tool], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[failing_tool], code_model=mock_model)
         output = cm.run_code("Call the tool")
         assert "Error: API rate limit exceeded" in output
         assert mock_model.response.call_count == 1
@@ -708,7 +708,7 @@ class TestCodeModelExecution:
             _mock_model_response("x = 1 / 0"),
             _mock_model_response('result = "ok"'),
         ]
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         cm.run_code("Do math")
         second_call_messages = mock_model.response.call_args_list[1].kwargs["messages"]
         user_msg = second_call_messages[1].content
@@ -718,7 +718,7 @@ class TestCodeModelExecution:
     def test_code_model_max_retries_exceeded(self):
         mock_model = Mock()
         mock_model.response.return_value = _mock_model_response("x = 1 / 0")
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model, max_code_retries=2)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model, max_code_retries=2)
         output = cm.run_code("Bad task")
         assert "failed after 2 attempts" in output
         assert mock_model.response.call_count == 2
@@ -728,7 +728,7 @@ class TestCodeModelExecution:
         mock_model.response.return_value = _mock_model_response(
             'data = json.loads(search_items(query="laptop"))\nresult = data[0]["name"]'
         )
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         output = cm.run_code("Search for laptops")
         assert "result for laptop" in output
 
@@ -739,7 +739,7 @@ class TestCodeModelExecution:
             'details = json.loads(get_item_details(item_id=items[0]["id"]))\n'
             "result = f\"{details['name']} ${details['price']}\""
         )
-        cm = CodeModeTool(tools=[search_items, get_item_details], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items, get_item_details], code_model=mock_model)
         output = cm.run_code("Search and get details")
         assert "Widget" in output
         assert "9.99" in output
@@ -748,23 +748,23 @@ class TestCodeModelExecution:
 class TestCodeModelExtractCode:
     def test_extract_python_fence(self):
         text = '```python\nresult = "hello"\n```'
-        assert CodeModeTool._extract_code_block(text) == 'result = "hello"'
+        assert ToolExecuteMode._extract_code_block(text) == 'result = "hello"'
 
     def test_extract_plain_fence(self):
         text = '```\nresult = "hello"\n```'
-        assert CodeModeTool._extract_code_block(text) == 'result = "hello"'
+        assert ToolExecuteMode._extract_code_block(text) == 'result = "hello"'
 
     def test_extract_no_fence(self):
         text = 'result = "hello"'
-        assert CodeModeTool._extract_code_block(text) == 'result = "hello"'
+        assert ToolExecuteMode._extract_code_block(text) == 'result = "hello"'
 
     def test_extract_with_surrounding_text(self):
         text = 'Here is the code:\n```python\nresult = "hello"\n```\nDone!'
-        assert CodeModeTool._extract_code_block(text) == 'result = "hello"'
+        assert ToolExecuteMode._extract_code_block(text) == 'result = "hello"'
 
     def test_extract_multiline(self):
         text = "```python\nx = 1\ny = 2\nresult = str(x + y)\n```"
-        code = CodeModeTool._extract_code_block(text)
+        code = ToolExecuteMode._extract_code_block(text)
         assert "x = 1" in code
         assert "result = str(x + y)" in code
 
@@ -774,7 +774,7 @@ class TestCodeModelAsync:
     async def test_arun_code_delegates_to_code_model(self):
         mock_model = Mock()
         mock_model.aresponse = AsyncMock(return_value=_mock_model_response('result = "async hello"'))
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         output = await cm.arun_code("Say hello async")
         assert "async hello" in output
         mock_model.aresponse.assert_called_once()
@@ -788,7 +788,7 @@ class TestCodeModelAsync:
                 _mock_model_response('result = "async fixed"'),
             ]
         )
-        cm = CodeModeTool(tools=[search_items], code_model=mock_model)
+        cm = ToolExecuteMode(tools=[search_items], code_model=mock_model)
         output = await cm.arun_code("Calculate")
         assert "async fixed" in output
         assert mock_model.aresponse.call_count == 2

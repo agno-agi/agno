@@ -2,7 +2,7 @@
 Code Mode — Multi-Toolkit Data Pipeline (36 tools)
 ====================================================
 Combines DuckDbTools(13) + YFinanceTools(9) + CalculatorTools(8) + FileTools(6)
-into a single CodeModeTool with 36 functions. Discovery mode auto-triggers
+into a single ToolExecuteMode with 36 functions. Discovery mode auto-triggers
 at this scale, so the LLM uses search_tools to find relevant functions
 from across all four toolkits, then writes one code block that pipelines:
   fetch stock data -> load into DuckDB -> run analytics -> calculate -> save report
@@ -16,8 +16,8 @@ Run:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.code_mode import CodeModeTool
 from agno.models.anthropic import Claude
+from agno.tool_execute_mode import ToolExecuteMode
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckdb import DuckDbTools
 from agno.tools.file import FileTools
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     print("CODE MODE (36 tools, discovery mode)")
     print("=" * 70)
 
-    cm = CodeModeTool(tools=[yf, duckdb, calc, files])
+    cm = ToolExecuteMode(tools=[yf, duckdb, calc, files])
     print(f"Total tools: {len(cm.sandbox_functions)}")
     print(f"Discovery mode: {cm.discovery_enabled}")
 

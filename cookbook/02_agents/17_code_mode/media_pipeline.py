@@ -2,20 +2,20 @@
 Code Mode — Media Generation Pipeline (Image + Audio)
 ======================================================
 Combines DALL-E (image generation) + ElevenLabs (audio/TTS) in a single
-code_mode agent. The model writes a program that:
+tool_execute_mode agent. The model writes a program that:
 1. Generates an image from a description
 2. Generates speech narration about the image
 3. Returns both media through the sideband pipeline
 
 This validates that ToolResult with mixed media types (images + audio)
-flows correctly through the code_mode media collector without serializing
+flows correctly through the tool_execute_mode media collector without serializing
 binary data into the context window.
 
 Before the fix: str(ToolResult) would dump ~40KB+ of audio bytes + image
 URLs into the model context. After: media flows through RunOutput sideband.
 
 Requires: OPENAI_API_KEY, ELEVEN_LABS_API_KEY
-Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/media_pipeline.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_tool_execute_mode/media_pipeline.py
 """
 
 import time
@@ -34,7 +34,7 @@ agent = Agent(
             target_directory="tmp/media_pipeline",
         ),
     ],
-    code_mode=True,
+    tool_execute_mode=True,
     markdown=True,
 )
 
