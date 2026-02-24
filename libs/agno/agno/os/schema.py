@@ -117,7 +117,7 @@ class TeamSummaryResponse(BaseModel):
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
         db_id = team.db.id if team.db else None
-        mode = team.mode.value if team.mode else None
+        mode = team.mode.value if hasattr(team, "mode") and team.mode else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
 
 
