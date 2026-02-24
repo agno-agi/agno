@@ -207,14 +207,24 @@ def has_async_db(agent: Agent) -> bool:
 
 
 def get_models(agent: Agent) -> None:
+    from agno.metrics import ModelType
+
     if agent.model is not None:
         agent.model = get_model(agent.model)
+        if agent.model is not None:
+            agent.model.model_type = ModelType.MODEL
     if agent.reasoning_model is not None:
         agent.reasoning_model = get_model(agent.reasoning_model)
+        if agent.reasoning_model is not None:
+            agent.reasoning_model.model_type = ModelType.REASONING_MODEL
     if agent.parser_model is not None:
         agent.parser_model = get_model(agent.parser_model)
+        if agent.parser_model is not None:
+            agent.parser_model.model_type = ModelType.PARSER_MODEL
     if agent.output_model is not None:
         agent.output_model = get_model(agent.output_model)
+        if agent.output_model is not None:
+            agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model

@@ -10,7 +10,7 @@ from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -589,9 +589,6 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             provider_response = self.get_client().responses.create(
@@ -661,9 +658,6 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -735,9 +729,6 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
             tool_use: Dict[str, Any] = {}
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -812,9 +803,6 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
             tool_use: Dict[str, Any] = {}
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -1005,7 +993,7 @@ class OpenAIResponses(Model):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data["response_id"] = stream_event.response.id
-            if not assistant_message.metrics.time_to_first_token:
+            if assistant_message.metrics is not None and not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
 
         # 2. Add citations
@@ -1103,17 +1091,17 @@ class OpenAIResponses(Model):
 
         return model_response, tool_use
 
-    def _get_metrics(self, response_usage: ResponseUsage) -> Metrics:
+    def _get_metrics(self, response_usage: ResponseUsage) -> MessageMetrics:
         """
-        Parse the given OpenAI-specific usage into an Agno Metrics object.
+        Parse the given OpenAI-specific usage into an Agno MessageMetrics object.
 
         Args:
             response: The response from the provider.
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0

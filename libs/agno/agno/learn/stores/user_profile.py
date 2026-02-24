@@ -151,6 +151,7 @@ class UserProfileStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_response=kwargs.get("run_response"),
         )
 
     async def aprocess(
@@ -173,6 +174,7 @@ class UserProfileStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_response=kwargs.get("run_response"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -834,6 +836,7 @@ class UserProfileStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
     ) -> str:
         """Extract user profile information from messages and save.
 
@@ -880,6 +883,11 @@ class UserProfileStore(LearningStore):
             tools=functions,
         )
 
+        if run_response is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_response)
+
         if response.tool_executions:
             self.profile_updated = True
 
@@ -893,6 +901,7 @@ class UserProfileStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
@@ -928,6 +937,11 @@ class UserProfileStore(LearningStore):
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_response is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_response)
 
         if response.tool_executions:
             self.profile_updated = True
