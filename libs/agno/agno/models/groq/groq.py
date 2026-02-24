@@ -14,6 +14,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages
 from agno.utils.openai import images_to_message
 
 try:
@@ -297,24 +298,8 @@ class Groq(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         compress_tool_results: bool = False,
     ) -> List[Dict[str, Any]]:
-        formatted: List[Dict[str, Any]] = []
-        for m in messages:
-            if m.role == "tool" and not m.tool_call_id and m.tool_calls:
-                for tc in m.tool_calls:
-                    tc_id = tc.get("tool_call_id")
-                    if tc_id is None:
-                        continue
-                    tc_content = tc.get("content")
-                    if tc_content is None:
-                        tc_content = ""
-                    if isinstance(tc_content, list):
-                        tc_content = "\n".join(str(item) for item in tc_content if item is not None)
-                    elif not isinstance(tc_content, str):
-                        tc_content = str(tc_content)
-                    formatted.append({"role": "tool", "content": tc_content, "tool_call_id": tc_id})
-            else:
-                formatted.append(self.format_message(m, response_format, compress_tool_results))
-        return formatted
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+        return [self.format_message(m, response_format, compress_tool_results) for m in messages]
 
     def invoke(
         self,

@@ -12,6 +12,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -255,16 +256,32 @@ class AwsBedrock(Model):
 
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
+
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+
         for message in messages:
             if message.role == "system":
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
                 content = message.get_content(use_compressed_content=compress_tool_results)
+                if isinstance(content, list):
+                    content = "\n".join(str(item) for item in content if item is not None)
+                if content is None:
+                    content = ""
                 tool_result = {
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
                 }
-                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                tool_result_entry = {"toolResult": tool_result}
+
+                # Merge consecutive tool results into one user message (Bedrock requires role alternation)
+                if formatted_messages and formatted_messages[-1].get("role") == "user":
+                    prev_content = formatted_messages[-1].get("content", [])
+                    if prev_content and isinstance(prev_content[0], dict) and "toolResult" in prev_content[0]:
+                        prev_content.append(tool_result_entry)
+                        continue
+
+                formatted_message: Dict[str, Any] = {"role": "user", "content": [tool_result_entry]}
                 formatted_messages.append(formatted_message)
             else:
                 formatted_message = {"role": message.role, "content": []}

@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages, tool_result_text
 
 try:
     from anthropic.types import (
@@ -278,6 +279,8 @@ def format_messages(
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
+    messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+
     for message in messages:
         content = message.content or ""
         # Both "system" and "developer" roles should be extracted as system messages
@@ -344,18 +347,26 @@ def format_messages(
                         )
                     )
         elif message.role == "tool":
-            content = []
-
-            # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
+            tool_result_block = {
+                "type": "tool_result",
+                "tool_use_id": message.tool_call_id,
+                "content": tool_result_text(tool_result),
+            }
 
-            content.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
-                    "content": str(tool_result),
-                }
-            )
+            # Anthropic requires strict user/assistant alternation.
+            # Merge consecutive tool results into the previous user message.
+            if (
+                chat_messages
+                and chat_messages[-1].get("role") == "user"
+                and isinstance(chat_messages[-1].get("content"), list)
+            ):
+                prev_content = chat_messages[-1]["content"]
+                if prev_content and isinstance(prev_content[0], dict) and prev_content[0].get("type") == "tool_result":
+                    prev_content.append(tool_result_block)  # type: ignore
+                    continue
+
+            content = [tool_result_block]
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:

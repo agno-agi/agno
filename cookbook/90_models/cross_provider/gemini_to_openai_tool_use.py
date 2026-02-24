@@ -25,7 +25,7 @@ from agno.tools.calculator import CalculatorTools
 # ---------------------------------------------------------------------------
 # Storage Configuration
 # ---------------------------------------------------------------------------
-agent_db = SqliteDb(db_file="tmp/cross_provider.db", table_name="agent_sessions")
+agent_db = SqliteDb(db_file="tmp/cross_provider.db", session_table="agent_sessions")
 
 # ---------------------------------------------------------------------------
 # Shared Configuration

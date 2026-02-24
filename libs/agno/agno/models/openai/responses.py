@@ -18,6 +18,7 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
+from agno.utils.models.tool_messages import normalize_tool_result_messages
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -456,6 +457,10 @@ class OpenAIResponses(Model):
                     if isinstance(fc_id, str) and isinstance(call_id, str):
                         fc_id_to_call_id[fc_id] = call_id
 
+        messages_to_format = normalize_tool_result_messages(
+            messages_to_format, compress_tool_results=compress_tool_results
+        )
+
         for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
@@ -486,7 +491,9 @@ class OpenAIResponses(Model):
             elif message.role == "tool":
                 tool_result = message.get_content(use_compressed_content=compress_tool_results)
 
-                if message.tool_call_id and tool_result is not None:
+                if message.tool_call_id:
+                    if tool_result is None:
+                        tool_result = ""
                     function_call_id = message.tool_call_id
                     # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
                     if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
@@ -499,26 +506,6 @@ class OpenAIResponses(Model):
                     formatted_messages.append(
                         {"type": "function_call_output", "call_id": call_id_value, "output": tool_result}
                     )
-                elif message.tool_calls:
-                    # Gemini combined tool message: emit one output per tool call
-                    for tc in message.tool_calls:
-                        tc_id = tc.get("tool_call_id")
-                        if tc_id is None:
-                            continue
-                        tc_content = tc.get("content")
-                        if tc_content is None:
-                            tc_content = ""
-                        if isinstance(tc_content, list):
-                            tc_content = "\n".join(str(item) for item in tc_content if item is not None)
-                        elif not isinstance(tc_content, str):
-                            tc_content = str(tc_content)
-                        if isinstance(tc_id, str) and tc_id in fc_id_to_call_id:
-                            call_id_value = fc_id_to_call_id[tc_id]
-                        else:
-                            call_id_value = tc_id
-                        formatted_messages.append(
-                            {"type": "function_call_output", "call_id": call_id_value, "output": tc_content}
-                        )
             # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 # Only skip re-sending prior function_call items when we have a previous_response_id
@@ -909,7 +896,10 @@ class OpenAIResponses(Model):
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+                new_id = tool_call_ids[_fc_message_index] if _fc_message_index < len(tool_call_ids) else None
+                # Only overwrite if the new ID is not None, preserving existing fallback IDs
+                if new_id is not None:
+                    _fc_message.tool_call_id = new_id
                 messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:

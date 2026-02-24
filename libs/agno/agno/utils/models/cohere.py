@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Sequence
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages
 
 
 def _format_images_for_message(message: Message, images: Sequence[Image]) -> List[Dict[str, Any]]:
@@ -57,6 +58,8 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
     Returns:
         List[Dict[str, Any]]: The formatted messages.
     """
+    messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+
     formatted_messages = []
     for message in messages:
         # Use compressed content for tool messages if compression is active
@@ -91,23 +94,7 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
 
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # Normalize cross-provider tool messages (e.g., Gemini stores content as list)
         if message.role == "tool":
-            # Split Gemini combined tool messages into one message per tool call
-            if not message.tool_call_id and message.tool_calls:
-                for tc in message.tool_calls:
-                    tc_id = tc.get("tool_call_id")
-                    if tc_id is None:
-                        continue
-                    tc_content = tc.get("content")
-                    if tc_content is None:
-                        tc_content = ""
-                    if isinstance(tc_content, list):
-                        tc_content = "\n".join(str(item) for item in tc_content if item is not None)
-                    elif not isinstance(tc_content, str):
-                        tc_content = str(tc_content)
-                    formatted_messages.append({"role": "tool", "content": tc_content, "tool_call_id": tc_id})
-                continue
             tool_content = message_dict.get("content")
             if isinstance(tool_content, list):
                 message_dict["content"] = "\n".join(str(item) for item in tool_content if item is not None)

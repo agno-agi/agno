@@ -17,6 +17,7 @@ from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
 
@@ -385,32 +386,16 @@ class OpenAIChat(Model):
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
-        # Manually add the content field even if it is None
-        if message.content is None:
+        # Ensure content field is always present (OpenAI requires it)
+        # Use "content" not in dict rather than message.content is None,
+        # because tool messages may have compressed_content set via get_content()
+        if "content" not in message_dict:
             message_dict["content"] = ""
         return message_dict
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
-        formatted: List[Dict[str, Any]] = []
-        for m in messages:
-            # Split Gemini combined tool messages into one message per tool call.
-            # Gemini stores all tool results in a single Message with no top-level tool_call_id.
-            if m.role == "tool" and not m.tool_call_id and m.tool_calls:
-                for tc in m.tool_calls:
-                    tc_id = tc.get("tool_call_id")
-                    if tc_id is None:
-                        continue
-                    tc_content = tc.get("content")
-                    if tc_content is None:
-                        tc_content = ""
-                    if isinstance(tc_content, list):
-                        tc_content = "\n".join(str(item) for item in tc_content if item is not None)
-                    elif not isinstance(tc_content, str):
-                        tc_content = str(tc_content)
-                    formatted.append({"role": "tool", "content": tc_content, "tool_call_id": tc_id})
-            else:
-                formatted.append(self._format_message(m, compress_tool_results))
-        return formatted
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+        return [self._format_message(m, compress_tool_results) for m in messages]
 
     def invoke(
         self,

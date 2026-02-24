@@ -11,6 +11,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages
 from agno.utils.models.watsonx import format_images_for_message
 
 try:
@@ -172,24 +173,8 @@ class WatsonX(Model):
         return message_dict
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
-        formatted: List[Dict[str, Any]] = []
-        for m in messages:
-            if m.role == "tool" and not m.tool_call_id and m.tool_calls:
-                for tc in m.tool_calls:
-                    tc_id = tc.get("tool_call_id")
-                    if tc_id is None:
-                        continue
-                    tc_content = tc.get("content")
-                    if tc_content is None:
-                        tc_content = ""
-                    if isinstance(tc_content, list):
-                        tc_content = "\n".join(str(item) for item in tc_content if item is not None)
-                    elif not isinstance(tc_content, str):
-                        tc_content = str(tc_content)
-                    formatted.append({"role": "tool", "content": tc_content, "tool_call_id": tc_id})
-            else:
-                formatted.append(self._format_message(m, compress_tool_results))
-        return formatted
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+        return [self._format_message(m, compress_tool_results) for m in messages]
 
     def invoke(
         self,

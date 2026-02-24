@@ -220,6 +220,7 @@ class TestOpenAIChatSplitting:
         assert fmt[4]["role"] == "assistant"
 
     def test_split_handles_list_content_in_tc(self):
+        # When compress_tool_results=False (default), prefer original content over tc content
         msgs = [
             Message(
                 role="tool",
@@ -228,9 +229,13 @@ class TestOpenAIChatSplitting:
             )
         ]
         fmt = self.model._format_messages(msgs)
-        assert fmt[0]["content"] == "nested1\nnested2"
+        assert fmt[0]["content"] == "orig"
+        # When compressing, use tc content
+        fmt_compressed = self.model._format_messages(msgs, compress_tool_results=True)
+        assert fmt_compressed[0]["content"] == "nested1\nnested2"
 
     def test_split_handles_none_content_in_tc(self):
+        # When original content exists, prefer it even if tc content is None
         msgs = [
             Message(
                 role="tool",
@@ -239,7 +244,7 @@ class TestOpenAIChatSplitting:
             )
         ]
         fmt = self.model._format_messages(msgs)
-        assert fmt[0]["content"] == ""
+        assert fmt[0]["content"] == "orig"
 
     def test_split_skips_tc_without_id(self):
         msgs = [

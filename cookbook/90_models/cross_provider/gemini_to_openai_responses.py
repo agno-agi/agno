@@ -26,14 +26,14 @@ from agno.tools.yfinance import YFinanceTools
 # ---------------------------------------------------------------------------
 # Storage Configuration
 # ---------------------------------------------------------------------------
-agent_db = SqliteDb(db_file="tmp/cross_provider.db", table_name="responses_sessions")
+agent_db = SqliteDb(db_file="tmp/cross_provider.db", session_table="responses_sessions")
 
 # ---------------------------------------------------------------------------
 # Shared Configuration
 # ---------------------------------------------------------------------------
 tools = [
     CalculatorTools(),
-    YFinanceTools(stock_price=True, analyst_recommendations=True),
+    YFinanceTools(),
 ]
 session_id = "cross-provider-responses"
 instructions = """\
