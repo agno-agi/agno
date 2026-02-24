@@ -154,6 +154,7 @@ class SessionContextStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_response=kwargs.get("run_response"),
         )
 
     async def aprocess(
@@ -178,6 +179,7 @@ class SessionContextStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_response=kwargs.get("run_response"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -493,6 +495,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
     ) -> str:
         """Extract session context from messages and save.
 
@@ -540,13 +543,25 @@ class SessionContextStore(LearningStore):
             existing_context=existing_context,
         )
 
-        messages_for_model = [system_message]
+        messages_for_model = [
+            system_message,
+            # For models that require a non-system message
+            Message(
+                role="user",
+                content="Please analyze the conversation and update the session context using the available tools.",
+            ),
+        ]
 
         model_copy = deepcopy(self.model)
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_response is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_response)
 
         if response.tool_executions:
             self.context_updated = True
@@ -562,6 +577,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
@@ -596,13 +612,25 @@ class SessionContextStore(LearningStore):
             existing_context=existing_context,
         )
 
-        messages_for_model = [system_message]
+        messages_for_model = [
+            system_message,
+            # For models that require a non-system message
+            Message(
+                role="user",
+                content="Please analyze the conversation and update the session context using the available tools.",
+            ),
+        ]
 
         model_copy = deepcopy(self.model)
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_response is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_response)
 
         if response.tool_executions:
             self.context_updated = True

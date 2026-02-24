@@ -7,6 +7,10 @@ from agno.models.openai import OpenAIChat
 from agno.tools.gmail import GmailTools
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 class FindEmailOutput(BaseModel):
     message_id: str = Field(..., description="The message id of the email")
@@ -107,50 +111,55 @@ agent = Agent(
 
 # Example 1: Find the last email from a specific sender
 email = "<replace_with_email_address>"
-response = agent.print_response(
-    f"Find the last email from {email} along with the message id, references and in-reply-to",
-    markdown=True,
-    stream=True,
-    output_schema=FindEmailOutput,
-)
 
-# Example 2: Mark an email as read/unread (useful for processing workflows)
-# Note: You would typically get the message_id from a search operation first
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    response = agent.print_response(
+        f"Find the last email from {email} along with the message id, references and in-reply-to",
+        markdown=True,
+        stream=True,
+        output_schema=FindEmailOutput,
+    )
 
-# Mark as read (removes UNREAD label)
-agent.print_response(
-    f"""Mark the last email received from {email} as unread.""",
-    markdown=True,
-    stream=True,
-)
+    # Example 2: Mark an email as read/unread (useful for processing workflows)
+    # Note: You would typically get the message_id from a search operation first
 
-# Example 3: Send a new email with attachments
-# agent.print_response(
-#     f"""Send an email to {email} with subject 'Subject'
-#     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
-#     markdown=True,
-#     stream=True,
-# )
+    # Mark as read (removes UNREAD label)
+    agent.print_response(
+        f"""Mark the last email received from {email} as unread.""",
+        markdown=True,
+        stream=True,
+    )
 
-# LABEL MANAGEMENT EXAMPLES
+    # Example 3: Send a new email with attachments
+    # agent.print_response(
+    #     f"""Send an email to {email} with subject 'Subject'
+    #     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
+    #     markdown=True,
+    #     stream=True,
+    # )
 
-# Example 4.1: List all custom labels
-label_manager_agent.print_response(
-    "List all my custom labels in Gmail.",
-    markdown=True,
-    stream=True,
-)
+    # LABEL MANAGEMENT EXAMPLES
 
-# Example 4.2: Apply labels to organize emails
-label_manager_agent.print_response(
-    "Apply the 'Newsletters' label to emails from 'newsletter@company.com'. Process the last 5 emails.",
-    markdown=True,
-    stream=True,
-)
+    # Example 4.1: List all custom labels
+    label_manager_agent.print_response(
+        "List all my custom labels in Gmail.",
+        markdown=True,
+        stream=True,
+    )
 
-# Example 4.3: Remove labels from emails
-label_manager_agent.print_response(
-    "Remove the 'Urgent' label from emails containing 'resolved' in the subject. Process up to 5 emails.",
-    markdown=True,
-    stream=True,
-)
+    # Example 4.2: Apply labels to organize emails
+    label_manager_agent.print_response(
+        "Apply the 'Newsletters' label to emails from 'newsletter@company.com'. Process the last 5 emails.",
+        markdown=True,
+        stream=True,
+    )
+
+    # Example 4.3: Remove labels from emails
+    label_manager_agent.print_response(
+        "Remove the 'Urgent' label from emails containing 'resolved' in the subject. Process up to 5 emails.",
+        markdown=True,
+        stream=True,
+    )

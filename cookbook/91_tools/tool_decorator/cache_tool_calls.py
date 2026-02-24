@@ -1,8 +1,19 @@
+"""
+Cache Tool Calls
+=============================
+
+Demonstrates cache tool calls.
+"""
+
 import json
 
 import httpx
 from agno.agent import Agent
 from agno.tools import tool
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 @tool(stop_after_tool_call=True, cache_results=True)
@@ -29,4 +40,9 @@ agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
-agent.print_response("What are the top hackernews stories?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What are the top hackernews stories?", stream=True)

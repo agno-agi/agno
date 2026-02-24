@@ -14,10 +14,16 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "mysql+asyncmy://ai:ai@localhost:3306/ai"
 db = AsyncMySQLDb(db_url=db_url)
 
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 class Article(BaseModel):
     title: str
     summary: str
@@ -53,6 +59,9 @@ hn_team = Team(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 async def main():
     """Run the agent queries in the same event loop"""
     session_id = str(uuid.uuid4())

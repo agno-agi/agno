@@ -1,9 +1,20 @@
+"""
+Mistral Image Ocr With Structured Output
+========================================
+
+Cookbook example for `mistral/image_ocr_with_structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
 from pydantic import BaseModel
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class GroceryItem(BaseModel):
@@ -30,3 +41,10 @@ agent.print_response(
     "From this restaurant bill, extract the bill number, item names and associated prices, and total price and return it as a string in a Json object",
     images=[Image(url="https://i.imghippo.com/files/kgXi81726851246.jpg")],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -33,7 +33,7 @@ from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
@@ -279,6 +279,11 @@ class Workflow:
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
+
+        # Component metadata (set by get_workflows during DB loading)
+        self._version: Optional[int] = None
+        self._stage: Optional[str] = None
+
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
@@ -559,19 +564,19 @@ class Workflow:
 
         return session.session_data["session_state"]  # type: ignore
 
-    async def adelete_session(self, session_id: str):
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
         # -*- Delete session
-        await self.db.delete_session(session_id=session_id)  # type: ignore
+        await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
 
-    def delete_session(self, session_id: str):
+    def delete_session(self, session_id: str, user_id: Optional[str] = None):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
         # -*- Delete session
-        self.db.delete_session(session_id=session_id)
+        self.db.delete_session(session_id=session_id, user_id=user_id)
 
     # -*- Serialization Functions
     def to_dict(self) -> Dict[str, Any]:
@@ -978,7 +983,11 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if self._workflow_session is not None and self._workflow_session.session_id == session_id:
+        if (
+            self._workflow_session is not None
+            and self._workflow_session.session_id == session_id
+            and (user_id is None or self._workflow_session.user_id == user_id)
+        ):
             return self._workflow_session
 
         # Try to load from database
@@ -986,7 +995,7 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id))
+            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1020,7 +1029,11 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if self._workflow_session is not None and self._workflow_session.session_id == session_id:
+        if (
+            self._workflow_session is not None
+            and self._workflow_session.session_id == session_id
+            and (user_id is None or self._workflow_session.user_id == user_id)
+        ):
             return self._workflow_session
 
         # Try to load from database
@@ -1028,7 +1041,7 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id))
+            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1057,6 +1070,7 @@ class Workflow:
     async def aget_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[WorkflowSession]:
         """Load an WorkflowSession from database.
 
@@ -1072,7 +1086,9 @@ class Workflow:
 
         # Try to load from database
         if self.db is not None:
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id_to_load))
+            workflow_session = cast(
+                WorkflowSession, await self._aread_session(session_id=session_id_to_load, user_id=user_id)
+            )
             return workflow_session
 
         log_warning(f"WorkflowSession {session_id_to_load} not found in db")
@@ -1081,6 +1097,7 @@ class Workflow:
     def get_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[WorkflowSession]:
         """Load an WorkflowSession from database.
 
@@ -1097,7 +1114,7 @@ class Workflow:
 
         # Try to load from database
         if self.db is not None and session_id_to_load is not None:
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))
+            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load, user_id=user_id))
             return workflow_session
 
         log_warning(f"WorkflowSession {session_id_to_load} not found in db")
@@ -1119,8 +1136,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            await self._aupsert_session(session=session)  # type: ignore
-            log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+            result = await self._aupsert_session(session=session)  # type: ignore
+            if result is None:
+                log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
 
     def save_session(self, session: WorkflowSession) -> None:
         """Save the WorkflowSession to storage
@@ -1138,8 +1158,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+            result = self._upsert_session(session=session)
+            if result is None:
+                log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
+            else:
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
@@ -1190,23 +1213,28 @@ class Workflow:
         return session.get_chat_history(last_n_runs=last_n_runs)
 
     # -*- Session Database Functions
-    async def _aread_session(self, session_id: str) -> Optional[WorkflowSession]:
+    async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = await self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            if self._has_async_db():
+                session = await self.db.get_session(
+                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+                )  # type: ignore
+            else:
+                session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    def _read_session(self, session_id: str) -> Optional[WorkflowSession]:
+    def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -1780,6 +1808,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2024,6 +2053,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2364,6 +2394,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2626,6 +2657,7 @@ class Workflow:
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
+                workflow_run_response.files = output_files
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
@@ -4513,9 +4545,9 @@ class Workflow:
             "session_id": self.session_id,
         }
 
-    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
+    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> RunMetrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
-        session_metrics = Metrics()
+        session_metrics = RunMetrics()
 
         # Aggregate metrics from all steps
         for step_name, step_metrics in workflow_metrics.steps.items():
@@ -4526,36 +4558,46 @@ class Workflow:
 
         return session_metrics
 
-    def _get_session_metrics(self, session: WorkflowSession) -> Metrics:
+    def _get_session_metrics(self, session: WorkflowSession) -> SessionMetrics:
         """Get existing session metrics from the database"""
         if session.session_data and "session_metrics" in session.session_data:
             session_metrics_from_db = session.session_data.get("session_metrics")
             if session_metrics_from_db is not None:
                 if isinstance(session_metrics_from_db, dict):
-                    return Metrics(**session_metrics_from_db)
-                elif isinstance(session_metrics_from_db, Metrics):
+                    return SessionMetrics.from_dict(session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, SessionMetrics):
                     return session_metrics_from_db
-        return Metrics()
+                elif isinstance(session_metrics_from_db, RunMetrics):
+                    # Convert legacy RunMetrics to SessionMetrics
+                    return SessionMetrics(
+                        input_tokens=session_metrics_from_db.input_tokens,
+                        output_tokens=session_metrics_from_db.output_tokens,
+                        total_tokens=session_metrics_from_db.total_tokens,
+                        audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                        audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                        audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                        cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                        cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                        reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    )
+        return SessionMetrics()
 
     def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
-        """Calculate and update session metrics"""
+        """Calculate and update session metrics - convert run Metrics to SessionMetrics."""
         # Get existing session metrics
         session_metrics = self._get_session_metrics(session=session)
 
         # If workflow has metrics, convert and add them to session metrics
         if workflow_run_response.metrics:
-            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)  # type: ignore[arg-type]
+            run_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)  # type: ignore[arg-type]
+            session_metrics.accumulate_from_run(run_metrics)
 
-            session_metrics += run_session_metrics
-
-        session_metrics.time_to_first_token = None
-
-        # Store updated session metrics - CONVERT TO DICT FOR JSON SERIALIZATION
+        # Store updated session metrics
         if not session.session_data:
             session.session_data = {}
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:
@@ -4567,7 +4609,7 @@ class Workflow:
 
         return self._get_session_metrics(session=session)
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:
@@ -4844,15 +4886,19 @@ class Workflow:
         """
         from copy import copy, deepcopy
         from dataclasses import fields
+        from inspect import signature
 
         from agno.utils.log import log_debug, log_warning
+
+        # Get the set of valid __init__ parameter names
+        init_params = set(signature(self.__class__.__init__).parameters.keys()) - {"self"}
 
         # Extract the fields to set for the new Workflow
         fields_for_new_workflow: Dict[str, Any] = {}
 
         for f in fields(self):
-            # Skip private fields (not part of __init__ signature)
-            if f.name.startswith("_"):
+            # Skip private fields and fields not accepted by __init__
+            if f.name.startswith("_") or f.name not in init_params:
                 continue
 
             field_value = getattr(self, f.name)
@@ -5084,22 +5130,32 @@ def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
 ) -> List["Workflow"]:
-    """Get all workflows from the database"""
+    """
+    Get all workflows from the database.
+
+    Sets _version and _stage on each workflow from the component metadata.
+    """
     workflows: List[Workflow] = []
     try:
         components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
         for component in components:
-            config = db.get_config(component_id=component["component_id"])
-            if config is not None:
-                workflow_config = config.get("config")
-                if workflow_config is not None:
-                    component_id = component["component_id"]
-                    if "id" not in workflow_config:
-                        workflow_config["id"] = component_id
-                    workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                    # Ensure workflow.id is set to the component_id
-                    workflow.id = component_id
-                    workflows.append(workflow)
+            try:
+                config = db.get_config(component_id=component["component_id"])
+                if config is not None:
+                    workflow_config = config.get("config")
+                    if workflow_config is not None:
+                        component_id = component["component_id"]
+                        if "id" not in workflow_config:
+                            workflow_config["id"] = component_id
+                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                        workflow.id = component_id
+                        workflow._version = component.get("current_version")
+                        workflow._stage = config.get("stage")
+                        workflows.append(workflow)
+            except Exception as e:
+                component_id = component.get("component_id", "unknown")
+                log_error(f"Error loading Workflow {component_id} from database: {e}")
+                continue
         return workflows
 
     except Exception as e:

@@ -11,7 +11,7 @@ from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
@@ -291,7 +291,7 @@ class Step:
         else:
             raise ValueError("No executor configured")
 
-    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[RunMetrics]:
         """Extract metrics from agent or team response"""
         if hasattr(response, "metrics") and response.metrics:
             return response.metrics
@@ -1437,7 +1437,7 @@ class Step:
                 or not self.active_executor.store_tool_messages
                 or not self.active_executor.store_history_messages
             ):  # type: ignore
-                self.active_executor._scrub_run_output_for_storage(executor_run_response)  # type: ignore
+                self.active_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response
@@ -1515,6 +1515,7 @@ class Step:
         images = getattr(response, "images", None)
         videos = getattr(response, "videos", None)
         audio = getattr(response, "audio", None)
+        files = getattr(response, "files", None)
 
         # Extract metrics from response
         metrics = self._extract_metrics_from_response(response)
@@ -1530,6 +1531,7 @@ class Step:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             metrics=metrics,
         )
 

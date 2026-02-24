@@ -1,5 +1,16 @@
+"""
+Anthropic Web Fetch
+===================
+
+Cookbook example for `anthropic/web_fetch.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Claude(id="claude-opus-4-5", betas=["web-fetch-2025-09-10"]),
@@ -17,3 +28,10 @@ agent.print_response(
     "Tell me more about https://en.wikipedia.org/wiki/Glacier_National_Park_(U.S.)",
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

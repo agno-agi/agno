@@ -1,4 +1,4 @@
-"""🔧 Example: Using the OpenAITools Toolkit for Image Generation
+"""Example: Using the OpenAITools Toolkit for Image Generation
 
 This script demonstrates how to use the `OpenAITools` toolkit, which includes a tool for generating images using OpenAI's DALL-E within an Agno Agent.
 
@@ -16,6 +16,10 @@ from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
 from agno.utils.media import save_base64_data
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools(image_model="gpt-image-1")],
@@ -28,3 +32,10 @@ response = agent.run(
 
 if response.images and response.images[0].content:
     save_base64_data(str(response.images[0].content), "tmp/coffee_shop.png")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass
