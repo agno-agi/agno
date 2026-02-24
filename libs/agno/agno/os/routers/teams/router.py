@@ -469,7 +469,7 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 teams.append(await team.get_team_config())
             else:
-                team_response = await TeamResponse.from_team(team=team)
+                team_response = await TeamResponse.from_team(team=team, is_component=False)
                 teams.append(team_response)
 
         # Also load teams from database
@@ -480,7 +480,7 @@ def get_team_router(
             exclude_ids = registry.get_team_ids() if registry else None
             db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
             for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team)
+                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                 teams.append(team_response)
 
         return teams
