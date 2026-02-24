@@ -146,7 +146,7 @@ def execute_pre_hooks(
             log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
 
     # Update the input on the run_response
@@ -256,7 +256,7 @@ async def aexecute_pre_hooks(
             log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
 
     # Update the input on the run_response
@@ -362,7 +362,7 @@ def execute_post_hooks(
             log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
 
 
@@ -465,5 +465,5 @@ async def aexecute_post_hooks(
             log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)

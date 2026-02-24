@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import iscoroutinefunction
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -303,7 +304,7 @@ def _execute_pre_hooks(
             log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
 
     # Update the input on the run_response
@@ -350,8 +351,6 @@ async def _aexecute_pre_hooks(
             if is_guardrail_hook(hook):
                 filtered_args = filter_hook_args(hook, all_args)
                 try:
-                    from inspect import iscoroutinefunction
-
                     if iscoroutinefunction(hook):
                         await hook(**filtered_args)
                     else:
@@ -389,8 +388,6 @@ async def _aexecute_pre_hooks(
         try:
             filtered_args = filter_hook_args(hook, all_args)
 
-            from inspect import iscoroutinefunction
-
             if iscoroutinefunction(hook):
                 await hook(**filtered_args)
             else:
@@ -412,7 +409,7 @@ async def _aexecute_pre_hooks(
             log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
 
     # Update the input on the run_response
@@ -512,7 +509,7 @@ def _execute_post_hooks(
             log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the post-hook changed it
+            # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
 
 
@@ -555,8 +552,6 @@ async def _aexecute_post_hooks(
             if is_guardrail_hook(hook):
                 filtered_args = filter_hook_args(hook, all_args)
                 try:
-                    from inspect import iscoroutinefunction
-
                     if iscoroutinefunction(hook):
                         await hook(**filtered_args)
                     else:
@@ -595,8 +590,6 @@ async def _aexecute_post_hooks(
         try:
             filtered_args = filter_hook_args(hook, all_args)
 
-            from inspect import iscoroutinefunction
-
             if iscoroutinefunction(hook):
                 await hook(**filtered_args)
             else:
@@ -618,5 +611,5 @@ async def _aexecute_post_hooks(
             log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
             log_exception(e)
         finally:
-            # Reset global log mode incase an agent in the post-hook changed it
+            # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
