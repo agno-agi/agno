@@ -3,9 +3,32 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 import httpx
+from pydantic import BaseModel, Field
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
+
+
+class ReplyButton(BaseModel):
+    """A quick-reply button."""
+
+    id: str = Field(..., description="Unique button identifier (e.g. 'yes', 'no').")
+    title: str = Field(..., description="Button display text, max 20 characters.")
+
+
+class ListRow(BaseModel):
+    """A selectable row inside a list section."""
+
+    id: str = Field(..., description="Unique row identifier.")
+    title: str = Field(..., description="Row title text.")
+    description: Optional[str] = Field(None, description="Optional row description.")
+
+
+class ListSection(BaseModel):
+    """A titled section containing selectable rows."""
+
+    title: str = Field(..., description="Section heading.")
+    rows: List[ListRow] = Field(..., description="Selectable rows in this section.")
 
 
 class WhatsAppTools(Toolkit):
@@ -79,7 +102,13 @@ class WhatsAppTools(Toolkit):
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            error_body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"raw": response.text}
+            raise httpx.HTTPStatusError(
+                f"{response.status_code}: {error_body}",
+                request=response.request,
+                response=response,
+            )
         return response.json()
 
     def send_text_message(
@@ -160,7 +189,7 @@ class WhatsAppTools(Toolkit):
     def send_reply_buttons(
         self,
         body_text: str,
-        buttons: List[Dict[str, str]],
+        buttons: List[ReplyButton],
         recipient: Optional[str] = None,
         header: Optional[str] = None,
         footer: Optional[str] = None,
@@ -169,7 +198,7 @@ class WhatsAppTools(Toolkit):
 
         Args:
             body_text: The message body text (max 1024 chars).
-            buttons: List of button dicts, each with 'id' and 'title' keys. Max 3 buttons, title max 20 chars.
+            buttons: List of ReplyButton objects, each with 'id' and 'title'. Max 3 buttons, title max 20 chars.
             recipient: Recipient phone number. Uses default if not provided.
             header: Optional header text.
             footer: Optional footer text.
@@ -185,7 +214,7 @@ class WhatsAppTools(Toolkit):
             if len(buttons) > 3:
                 return json.dumps({"error": "WhatsApp allows a maximum of 3 reply buttons"})
 
-            action_buttons = [{"type": "reply", "reply": {"id": btn["id"], "title": btn["title"]}} for btn in buttons]
+            action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title}} for btn in buttons]
 
             interactive: Dict[str, Any] = {
                 "type": "button",
@@ -214,7 +243,7 @@ class WhatsAppTools(Toolkit):
         self,
         body_text: str,
         button_text: str,
-        sections: List[Dict[str, Any]],
+        sections: List[ListSection],
         recipient: Optional[str] = None,
         header: Optional[str] = None,
         footer: Optional[str] = None,
@@ -224,7 +253,7 @@ class WhatsAppTools(Toolkit):
         Args:
             body_text: The message body text.
             button_text: Text on the list button (max 20 chars).
-            sections: List of section dicts with 'title' and 'rows'. Each row has 'id', 'title', optional 'description'.
+            sections: List of ListSection objects, each with a 'title' and 'rows' list. Each row has 'id', 'title', optional 'description'.
             recipient: Recipient phone number. Uses default if not provided.
             header: Optional header text.
             footer: Optional footer text.
@@ -237,12 +266,19 @@ class WhatsAppTools(Toolkit):
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
 
+            if len(sections) > 10:
+                return json.dumps({"error": "WhatsApp allows a maximum of 10 sections"})
+
+            total_rows = sum(len(s.rows) for s in sections)
+            if total_rows > 10:
+                return json.dumps({"error": f"WhatsApp allows a maximum of 10 rows total across all sections (got {total_rows}). Reduce the number of rows."})
+
             interactive: Dict[str, Any] = {
                 "type": "list",
                 "body": {"text": body_text},
                 "action": {
                     "button": button_text,
-                    "sections": sections,
+                    "sections": [s.model_dump(exclude_none=True) for s in sections],
                 },
             }
             if header:

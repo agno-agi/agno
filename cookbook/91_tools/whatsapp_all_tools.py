@@ -50,7 +50,6 @@ agent = Agent(
         "Always confirm what was sent and include the message_id from the response.",
         "If a tool returns an error, report it clearly and do not retry automatically.",
     ],
-    show_tool_calls=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -102,7 +101,7 @@ if __name__ == "__main__":
     print("--- send_image ---")
     agent.print_response(
         f"Send an image to {recipient} using the URL "
-        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/Agno_logo.png/320px-Agno_logo.png "
+        "https://cdn.prod.website-files.com/6796d350b8c706e4533e7e32/6796d350b8c706e4533e8011_Agno%20Logo.png"
         "with caption 'Check out the Agno logo!'."
     )
 
@@ -111,8 +110,8 @@ if __name__ == "__main__":
     print("--- send_document ---")
     agent.print_response(
         f"Send a PDF document to {recipient} from the URL "
-        "https://www.w3.org/WAI/WCAG21/wcag21.pdf "
-        "with filename 'wcag21.pdf' and caption 'WCAG 2.1 Accessibility Guidelines'."
+        "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf "
+        "with filename 'thairecipes.pdf' and caption 'Thai Recipes!'."
     )
 
     # 7. send_location
@@ -135,6 +134,4 @@ if __name__ == "__main__":
     # Replace WAMID below with a real inbound message ID.
     print("--- mark_as_read ---")
     wamid_inbound = "wamid.REPLACE_WITH_REAL_INBOUND_MESSAGE_ID"
-    agent.print_response(
-        f"Mark the message {wamid_inbound} as read."
-    )
+    agent.print_response(f"Mark the message {wamid_inbound} as read.")

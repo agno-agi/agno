@@ -23,7 +23,6 @@ image_agent = Agent(
         id="models/gemini-2.5-flash-image",
         response_modalities=["Text", "Image"],
     ),
-    debug_mode=True,
 )
 
 

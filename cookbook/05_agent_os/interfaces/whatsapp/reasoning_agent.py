@@ -27,7 +27,6 @@ reasoning_finance_agent = Agent(
         ReasoningTools(add_instructions=True),
         YFinanceTools(),
     ],
-    debug_mode=True,
     instructions="Use tables to display data. When you use thinking tools, keep the thinking brief.",
     add_datetime_to_context=True,
     markdown=True,

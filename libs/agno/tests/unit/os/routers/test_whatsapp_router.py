@@ -219,6 +219,100 @@ def test_non_whatsapp_object_ignored():
         assert data["status"] == "ignored"
 
 
+# === Interactive Message Processing ===
+
+
+@pytest.mark.asyncio
+async def test_button_reply_processing():
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        mock_tools = Mock()
+        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
+        mock_tools_cls.return_value = mock_tools
+
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook(
+            "interactive",
+            interactive={"type": "button_reply", "button_reply": {"id": "btn_yes", "title": "Yes"}},
+        )
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+
+        agent_mock.arun.assert_called_once()
+        call_args = agent_mock.arun.call_args
+        assert call_args[0][0] == "Yes"
+        assert call_args.kwargs["user_id"] == "sender_phone"
+
+
+@pytest.mark.asyncio
+async def test_list_reply_processing():
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        mock_tools = Mock()
+        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
+        mock_tools_cls.return_value = mock_tools
+
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook(
+            "interactive",
+            interactive={
+                "type": "list_reply",
+                "list_reply": {"id": "rome", "title": "Rome, Italy", "description": "Colosseum & Vatican"},
+            },
+        )
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+
+        agent_mock.arun.assert_called_once()
+        call_args = agent_mock.arun.call_args
+        assert call_args[0][0] == "Rome, Italy: Colosseum & Vatican"
+
+
+@pytest.mark.asyncio
+async def test_list_reply_without_description():
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        mock_tools = Mock()
+        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
+        mock_tools_cls.return_value = mock_tools
+
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook(
+            "interactive",
+            interactive={"type": "list_reply", "list_reply": {"id": "rome", "title": "Rome, Italy"}},
+        )
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+
+        agent_mock.arun.assert_called_once()
+        call_args = agent_mock.arun.call_args
+        assert call_args[0][0] == "Rome, Italy"
+
+
 def test_empty_messages_no_crash():
     agent_mock = _make_agent_mock()
     with (

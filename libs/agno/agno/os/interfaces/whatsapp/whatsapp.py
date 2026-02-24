@@ -22,6 +22,7 @@ class Whatsapp(BaseInterface):
         prefix: str = "/whatsapp",
         tags: Optional[List[str]] = None,
         show_reasoning: bool = True,
+        send_user_number_to_context: bool = False,
     ):
         self.agent = agent
         self.team = team
@@ -29,6 +30,7 @@ class Whatsapp(BaseInterface):
         self.prefix = prefix
         self.tags = tags or ["Whatsapp"]
         self.show_reasoning = show_reasoning
+        self.send_user_number_to_context = send_user_number_to_context
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Whatsapp requires an agent, team, or workflow")
@@ -42,6 +44,7 @@ class Whatsapp(BaseInterface):
             team=self.team,
             workflow=self.workflow,
             show_reasoning=self.show_reasoning,
+            send_user_number_to_context=self.send_user_number_to_context,
         )
 
         return self.router

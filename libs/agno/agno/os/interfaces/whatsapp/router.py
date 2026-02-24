@@ -33,6 +33,7 @@ def attach_routes(
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     show_reasoning: bool = True,
+    send_user_number_to_context: bool = False,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
@@ -141,6 +142,24 @@ def attach_routes(
                 message_text = message.get("document", {}).get("caption", "Process the document")
                 message_doc = message["document"]["id"]
 
+            elif msg_type == "interactive":
+                interactive = message.get("interactive", {})
+                interactive_type = interactive.get("type")
+                if interactive_type == "button_reply":
+                    reply = interactive.get("button_reply", {})
+                    message_text = reply.get("title", "")
+                    log_info(f"Button reply: id={reply.get('id')} title={message_text}")
+                elif interactive_type == "list_reply":
+                    reply = interactive.get("list_reply", {})
+                    message_text = reply.get("title", "")
+                    description = reply.get("description", "")
+                    if description:
+                        message_text = f"{message_text}: {description}"
+                    log_info(f"List reply: id={reply.get('id')} title={message_text}")
+                else:
+                    log_warning(f"Unknown interactive type: {interactive_type}")
+                    return
+
             else:
                 log_warning(f"Unknown message type: {msg_type}")
                 return
@@ -148,7 +167,13 @@ def attach_routes(
             phone_number = message["from"]
             log_info(f"Processing message from {phone_number}: {message_text}")
 
+            dependencies = None
+            if send_user_number_to_context:
+                dependencies = {"User info": f"User's Whatsapp number = {phone_number}"}
+
             if agent:
+                if send_user_number_to_context:
+                    agent.add_dependencies_to_context = True
                 response = await agent.arun(  # type: ignore[misc]
                     message_text,
                     user_id=phone_number,
@@ -157,8 +182,11 @@ def attach_routes(
                     files=[File(content=await get_media_async(message_doc))] if message_doc else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
+                    dependencies=dependencies,
                 )
             elif team:
+                if send_user_number_to_context:
+                    team.add_dependencies_to_context = True
                 response = await team.arun(  # type: ignore
                     message_text,
                     user_id=phone_number,
@@ -167,8 +195,11 @@ def attach_routes(
                     images=[Image(content=await get_media_async(message_image))] if message_image else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
+                    dependencies=dependencies,
                 )
             elif workflow:
+                if send_user_number_to_context:
+                    workflow.add_dependencies_to_context = True
                 response = await workflow.arun(  # type: ignore
                     message_text,
                     user_id=phone_number,
@@ -177,6 +208,7 @@ def attach_routes(
                     files=[File(content=await get_media_async(message_doc))] if message_doc else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
+                    dependencies=dependencies,
                 )
 
             if response.status == "ERROR":

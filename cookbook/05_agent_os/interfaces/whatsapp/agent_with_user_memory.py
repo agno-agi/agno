@@ -48,7 +48,6 @@ personal_agent = Agent(
         First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.
         Use DuckDuckGo search tool to find latest information about things in the conversations
     """),
-    debug_mode=True,
 )
 
 

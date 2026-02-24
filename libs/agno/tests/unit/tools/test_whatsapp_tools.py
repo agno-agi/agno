@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.tools.whatsapp import WhatsAppTools
+from agno.tools.whatsapp import ListRow, ListSection, ReplyButton, WhatsAppTools
 
 ENV = {
     "WHATSAPP_ACCESS_TOKEN": "test-token",
@@ -16,6 +16,7 @@ def whatsapp_tools():
     with patch.dict("os.environ", ENV):
         with patch("agno.tools.whatsapp.httpx") as mock_httpx:
             mock_response = Mock()
+            mock_response.status_code = 200
             mock_response.json.return_value = {"messages": [{"id": "wamid.test123"}]}
             mock_response.raise_for_status = Mock()
             mock_httpx.post.return_value = mock_response
@@ -125,8 +126,8 @@ def test_send_template_message_with_components(whatsapp_tools):
 
 def test_send_reply_buttons(whatsapp_tools):
     buttons = [
-        {"id": "btn_yes", "title": "Yes"},
-        {"id": "btn_no", "title": "No"},
+        ReplyButton(id="btn_yes", title="Yes"),
+        ReplyButton(id="btn_no", title="No"),
     ]
     result = whatsapp_tools.send_reply_buttons(body_text="Do you agree?", buttons=buttons, recipient="+1234567890")
     parsed = json.loads(result)
@@ -140,7 +141,7 @@ def test_send_reply_buttons(whatsapp_tools):
 
 
 def test_send_reply_buttons_max_3(whatsapp_tools):
-    buttons = [{"id": f"btn_{i}", "title": f"Btn {i}"} for i in range(4)]
+    buttons = [ReplyButton(id=f"btn_{i}", title=f"Btn {i}") for i in range(4)]
     result = whatsapp_tools.send_reply_buttons(body_text="Too many", buttons=buttons, recipient="+1234567890")
     parsed = json.loads(result)
     assert "error" in parsed
@@ -148,7 +149,7 @@ def test_send_reply_buttons_max_3(whatsapp_tools):
 
 
 def test_send_reply_buttons_with_header_footer(whatsapp_tools):
-    buttons = [{"id": "btn_1", "title": "OK"}]
+    buttons = [ReplyButton(id="btn_1", title="OK")]
     result = whatsapp_tools.send_reply_buttons(
         body_text="Body", buttons=buttons, recipient="+1234567890", header="Header", footer="Footer"
     )
@@ -163,13 +164,13 @@ def test_send_reply_buttons_with_header_footer(whatsapp_tools):
 
 def test_send_list_message(whatsapp_tools):
     sections = [
-        {
-            "title": "Options",
-            "rows": [
-                {"id": "row_1", "title": "Option A", "description": "First option"},
-                {"id": "row_2", "title": "Option B"},
+        ListSection(
+            title="Options",
+            rows=[
+                ListRow(id="row_1", title="Option A", description="First option"),
+                ListRow(id="row_2", title="Option B"),
             ],
-        }
+        )
     ]
     result = whatsapp_tools.send_list_message(
         body_text="Choose one",
