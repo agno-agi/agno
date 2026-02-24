@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agno.code_mode import CodeModeTool
 from agno.tools import Toolkit
-from agno.tools.code_mode import CodeModeTool
 from agno.tools.function import Function
 
 

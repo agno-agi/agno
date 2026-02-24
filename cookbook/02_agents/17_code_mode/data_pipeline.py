@@ -16,9 +16,9 @@ Run:
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.code_mode import CodeModeTool
 from agno.models.anthropic import Claude
 from agno.tools.calculator import CalculatorTools
-from agno.tools.code_mode import CodeModeTool
 from agno.tools.duckdb import DuckDbTools
 from agno.tools.file import FileTools
 from agno.tools.yfinance import YFinanceTools

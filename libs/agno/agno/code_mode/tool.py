@@ -1,37 +1,19 @@
 import builtins
 import collections
 import datetime
-import io
 import json
 import math
 import re
-from collections import OrderedDict
-from contextlib import redirect_stdout
-from inspect import getdoc, iscoroutinefunction, signature
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
 
+from agno.code_mode.sandbox import execute_code
+from agno.code_mode.stubs import collect_functions, generate_catalog, generate_stub_map, resolve_discovery
 from agno.tools import Toolkit
 from agno.tools.function import Function, ToolResult
-from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
     from agno.models.base import Model
-
-
-class _SafeCallable:
-    __slots__ = ("_fn", "__name__", "__doc__")
-
-    def __init__(self, fn: Callable, name: str, doc: Optional[str]):
-        self._fn = fn
-        self.__name__ = name
-        self.__doc__ = doc or ""
-
-    def __call__(self, *args: Any, **kwargs: Any) -> str:
-        return self._fn(*args, **kwargs)
-
-    def __repr__(self) -> str:
-        return f"<tool {self.__name__}>"
 
 
 class CodeModeTool(Toolkit):
@@ -170,14 +152,20 @@ class CodeModeTool(Toolkit):
         allowed = allowed_builtins or _default_builtins
         self.safe_builtins: Dict[str, Any] = {k: getattr(builtins, k) for k in allowed if hasattr(builtins, k)}
 
-        self.sandbox_functions: Dict[str, Function] = self._collect_functions(tools, async_mode=False)
-        self.sandbox_async_functions: Dict[str, Function] = self._collect_functions(tools, async_mode=True)
+        self.sandbox_functions: Dict[str, Function] = collect_functions(tools, async_mode=False)
+        self.sandbox_async_functions: Dict[str, Function] = collect_functions(tools, async_mode=True)
 
-        self.stub_map: Dict[str, str] = self._generate_stub_map(self.sandbox_functions)
+        self.stub_map: Dict[str, str] = generate_stub_map(
+            self.sandbox_functions, self.framework_params, self.json_type_map
+        )
         self.stubs = "\n\n".join(self.stub_map.values())
 
-        self.discovery_enabled = self._resolve_discovery(discovery)
-        self.catalog = self._generate_catalog() if (self.discovery_enabled or self.code_model is not None) else ""
+        self.discovery_enabled = resolve_discovery(
+            self.code_model, discovery, len(self.sandbox_functions), self.discovery_threshold
+        )
+        self.catalog = (
+            generate_catalog(self.sandbox_functions) if (self.discovery_enabled or self.code_model is not None) else ""
+        )
         self.sync_stubs_injected = False
         self.async_stubs_injected = False
 
@@ -192,7 +180,8 @@ class CodeModeTool(Toolkit):
         if self.code_model is not None:
             self.instructions = (
                 "You have access to a `run_code` tool that accepts plain English task descriptions.\n"
-                "A specialized code model generates and executes the code for you.\n"
+                "A specialized code-generation model will write and execute Python code "
+                "that calls the available tools. You do NOT need to write code yourself.\n"
                 "Describe what data to fetch, what computations to perform, and the desired output format.\n"
                 "You do NOT need to write code yourself."
             )
@@ -225,7 +214,7 @@ class CodeModeTool(Toolkit):
         """
         if self.code_model is not None:
             return self._run_with_code_model(code, use_async=False)
-        result = self._execute_code(code, use_async=False)
+        result = execute_code(self, code, use_async=False)
         if isinstance(result, ToolResult):
             return result
         if result.startswith(self.exec_error_prefix):
@@ -240,7 +229,7 @@ class CodeModeTool(Toolkit):
         loop = asyncio.get_running_loop()
         self.caller_loop = loop
         try:
-            result = await loop.run_in_executor(None, self._execute_code, code, True)
+            result = await loop.run_in_executor(None, execute_code, self, code, True)
         finally:
             self.caller_loop = None
         if isinstance(result, ToolResult):
@@ -291,14 +280,14 @@ class CodeModeTool(Toolkit):
         return self.search_tools(query)
 
     def rebuild(self) -> None:
-        self.sandbox_functions = self._collect_functions(self.source_tools, async_mode=False)
-        self.sandbox_async_functions = self._collect_functions(self.source_tools, async_mode=True)
+        self.sandbox_functions = collect_functions(self.source_tools, async_mode=False)
+        self.sandbox_async_functions = collect_functions(self.source_tools, async_mode=True)
 
-        self.stub_map = self._generate_stub_map(self.sandbox_functions)
+        self.stub_map = generate_stub_map(self.sandbox_functions, self.framework_params, self.json_type_map)
         self.stubs = "\n\n".join(self.stub_map.values())
 
         if self.discovery_enabled or self.code_model is not None:
-            self.catalog = self._generate_catalog()
+            self.catalog = generate_catalog(self.sandbox_functions)
 
         self.sync_stubs_injected = False
         self.async_stubs_injected = False
@@ -312,86 +301,6 @@ class CodeModeTool(Toolkit):
         funcs = super().get_async_functions()
         self._inject_async_stubs(funcs)
         return funcs
-
-    def _resolve_discovery(self, discovery: Union[bool, str]) -> bool:
-        if self.code_model is not None:
-            return False
-        if discovery == "auto":
-            return len(self.sandbox_functions) > self.discovery_threshold
-        if isinstance(discovery, bool):
-            return discovery
-        raise ValueError(f"discovery must be True, False, or 'auto', got {discovery!r}")
-
-    def _collect_functions(
-        self,
-        tools: List[Union["Toolkit", Callable, Function]],
-        async_mode: bool = False,
-    ) -> Dict[str, Function]:
-        collected: Dict[str, Function] = OrderedDict()
-        for tool in tools:
-            if isinstance(tool, Toolkit):
-                toolkit_funcs = tool.get_async_functions() if async_mode else tool.get_functions()
-                for name, func in toolkit_funcs.items():
-                    if self._should_include(func):
-                        func = func.model_copy(deep=True)
-                        if not func.skip_entrypoint_processing:
-                            func.process_entrypoint()
-                        collected[name] = func
-            elif isinstance(tool, Function):
-                if self._should_include(tool):
-                    tool = tool.model_copy(deep=True)
-                    if not tool.skip_entrypoint_processing:
-                        tool.process_entrypoint()
-                    collected[tool.name] = tool
-            elif callable(tool):
-                func = Function.from_callable(tool)
-                if self._should_include(func):
-                    collected[func.name] = func
-        return collected
-
-    def _should_include(self, func: Function) -> bool:
-        for attr in ("requires_confirmation", "requires_user_input", "external_execution"):
-            if getattr(func, attr, None):
-                log_warning(f"CodeModeTool: Excluding '{func.name}' ({attr})")
-                return False
-        return True
-
-    def _generate_stub_map(self, functions: Dict[str, Function]) -> Dict[str, str]:
-        stub_map: Dict[str, str] = OrderedDict()
-        for name, func in functions.items():
-            params = func.parameters.get("properties", {})
-            required = set(func.parameters.get("required", []))
-
-            args: List[str] = []
-            for pname, schema in params.items():
-                if pname in self.framework_params:
-                    continue
-                py_type = self.json_type_map.get(schema.get("type", "string"), "Any")
-                if pname in required:
-                    args.append(f"{pname}: {py_type}")
-                else:
-                    default = schema.get("default")
-                    args.append(f"{pname}: {py_type} = {default!r}")
-
-            doc = func.description or "No description"
-            if func.entrypoint is not None:
-                full_doc = getdoc(func.entrypoint)
-                if full_doc:
-                    doc = full_doc
-
-            sig = ", ".join(args)
-            stub = f"def {name}({sig}) -> str:\n"
-            stub += f'    """{doc}\n    """'
-            stub_map[name] = stub
-        return stub_map
-
-    def _generate_catalog(self) -> str:
-        lines = []
-        for name, func in self.sandbox_functions.items():
-            desc = func.description or "No description"
-            first_line = desc.split("\n")[0][:100]
-            lines.append(f"- {name}: {first_line}")
-        return "\n".join(lines)
 
     def _inject_sync_stubs(self, funcs: Dict[str, Function]) -> None:
         if self.sync_stubs_injected:
@@ -429,191 +338,6 @@ class CodeModeTool(Toolkit):
         else:
             base = run_code_func.description or ""
             run_code_func.description = base + "\n\nAvailable functions:\n\n" + self.stubs
-
-    def _make_wrapper(
-        self,
-        name: str,
-        func: Function,
-        media_collector: Optional[Dict[str, List[Any]]] = None,
-    ) -> Callable:
-        code_mode_tool = self
-        param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in self.framework_params]
-
-        def wrapper(*args: Any, **kwargs: Any) -> str:
-            entrypoint = func.entrypoint
-            if entrypoint is None:
-                return f"Error: Tool '{name}' has no entrypoint"
-
-            for i, arg in enumerate(args):
-                if i < len(param_names):
-                    kwargs[param_names[i]] = arg
-
-            framework_args = code_mode_tool._get_framework_args(entrypoint)
-
-            if iscoroutinefunction(entrypoint):
-                result = code_mode_tool._bridge_async(entrypoint, framework_args, kwargs)
-            else:
-                result = entrypoint(**framework_args, **kwargs)
-
-            if isinstance(result, ToolResult):
-                if media_collector is not None:
-                    code_mode_tool._collect_media(media_collector, result)
-                return result.content
-            if isinstance(result, (dict, list)):
-                try:
-                    return json.dumps(result)
-                except (TypeError, ValueError):
-                    return str(result)
-            return str(result) if result is not None else ""
-
-        wrapper.__name__ = name
-        wrapper.__doc__ = func.description
-        return wrapper
-
-    def _get_framework_args(self, entrypoint: Callable) -> Dict[str, Any]:
-        args: Dict[str, Any] = {}
-        run_code_func = self.functions.get("run_code")
-        if run_code_func is None:
-            return args
-
-        try:
-            sig = signature(entrypoint)
-        except (ValueError, TypeError):
-            return args
-
-        param_names = set(sig.parameters.keys())
-        if "agent" in param_names:
-            args["agent"] = run_code_func._agent
-        if "team" in param_names:
-            args["team"] = run_code_func._team
-        if "run_context" in param_names:
-            args["run_context"] = run_code_func._run_context
-        if "images" in param_names:
-            args["images"] = run_code_func._images
-        if "videos" in param_names:
-            args["videos"] = run_code_func._videos
-        if "audios" in param_names:
-            args["audios"] = run_code_func._audios
-        if "files" in param_names:
-            args["files"] = run_code_func._files
-        return args
-
-    def _bridge_async(self, entrypoint: Callable, framework_args: Dict, user_kwargs: Dict) -> Any:
-        import asyncio
-        import concurrent.futures
-
-        coro = entrypoint(**framework_args, **user_kwargs)
-
-        if self.caller_loop is not None and self.caller_loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(coro, self.caller_loop)
-            return future.result()
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, coro).result()
-        else:
-            return asyncio.run(coro)
-
-    def _build_namespace(
-        self,
-        use_async: bool = False,
-        media_collector: Optional[Dict[str, List[Any]]] = None,
-    ) -> Tuple[Dict[str, Any], Set[str]]:
-        preapproved = dict(self.preapproved_modules)
-        preapproved.update(self.additional_modules)
-
-        _real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
-
-        def _restricted_import(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name in preapproved:
-                return preapproved[name]
-            top_level = name.split(".")[0]
-            if top_level in self.blocked_modules:
-                raise ImportError(f"Import of '{name}' is not allowed.")
-            return _real_import(name, *args, **kwargs)
-
-        builtins_dict = dict(self.safe_builtins)
-        builtins_dict["__import__"] = _restricted_import
-
-        namespace: Dict[str, Any] = {"__builtins__": builtins_dict}
-        namespace.update(preapproved)
-
-        functions = self.sandbox_async_functions if use_async else self.sandbox_functions
-        for name, func in functions.items():
-            wrapper = self._make_wrapper(name, func, media_collector=media_collector)
-            namespace[name] = _SafeCallable(wrapper, name, func.description)
-
-        base_keys = set(namespace.keys())
-        return namespace, base_keys
-
-    def _extract_result(
-        self,
-        namespace: Dict[str, Any],
-        stdout: str,
-        base_keys: Set[str],
-        media_collector: Optional[Dict[str, List[Any]]] = None,
-    ) -> str:
-        result = namespace.get(self.return_variable)
-        output_parts: List[str] = []
-        if isinstance(result, ToolResult):
-            if media_collector is not None:
-                self._collect_media(media_collector, result)
-            output_parts.append(result.content)
-        elif result is not None:
-            output_parts.append(str(result))
-        if stdout:
-            output_parts.append(stdout.strip())
-        if output_parts:
-            return "\n".join(output_parts)
-
-        user_vars = {k: v for k, v in namespace.items() if k not in base_keys and not k.startswith("_")}
-        if user_vars:
-            last_value = list(user_vars.values())[-1]
-            if isinstance(last_value, ToolResult):
-                if media_collector is not None:
-                    self._collect_media(media_collector, last_value)
-                return last_value.content
-            return str(last_value)
-
-        return (
-            f"Code executed successfully but produced no output. "
-            f"Set a `{self.return_variable}` variable or use print()."
-        )
-
-    def _execute_code(self, code: str, use_async: bool = False) -> Union[str, ToolResult]:
-        try:
-            if len(code) > self.max_code_length:
-                return f"{self.exec_error_prefix}Code exceeds maximum length of {self.max_code_length} characters."
-
-            code = prepare_python_code(code)
-            log_debug(f"CodeModeTool executing:\n{code}")
-
-            media_collector: Dict[str, List[Any]] = {"images": [], "videos": [], "audios": [], "files": []}
-            namespace, base_keys = self._build_namespace(use_async=use_async, media_collector=media_collector)
-
-            stdout_buf = io.StringIO()
-            with redirect_stdout(stdout_buf):
-                exec(code, namespace)
-
-            output = self._extract_result(namespace, stdout_buf.getvalue(), base_keys, media_collector=media_collector)
-            if any(media_collector.values()):
-                return ToolResult(
-                    content=output,
-                    images=media_collector["images"] or None,
-                    videos=media_collector["videos"] or None,
-                    audios=media_collector["audios"] or None,
-                    files=media_collector["files"] or None,
-                )
-            return output
-        except SyntaxError as e:
-            return f"{self.exec_error_prefix}SyntaxError: {e}"
-        except Exception as e:
-            return f"{self.exec_error_prefix}{type(e).__name__}: {e}"
 
     @staticmethod
     def _extract_code_block(text: str) -> str:
@@ -657,7 +381,7 @@ class CodeModeTool(Toolkit):
         for attempt in range(self.max_code_retries):
             code = self._generate_code(task, error=last_error)
             log_debug(f"CodeModeTool code_model attempt {attempt + 1}:\n{code}")
-            result = self._execute_code(code, use_async=use_async)
+            result = execute_code(self, code, use_async=use_async)
             if isinstance(result, ToolResult):
                 return result
             if not result.startswith(self.exec_error_prefix):
@@ -676,7 +400,7 @@ class CodeModeTool(Toolkit):
             for attempt in range(self.max_code_retries):
                 code = await self._agenerate_code(task, error=last_error)
                 log_debug(f"CodeModeTool code_model attempt {attempt + 1}:\n{code}")
-                result = await loop.run_in_executor(None, self._execute_code, code, use_async)
+                result = await loop.run_in_executor(None, execute_code, self, code, use_async)
                 if isinstance(result, ToolResult):
                     return result
                 if not result.startswith(self.exec_error_prefix):
@@ -686,14 +410,3 @@ class CodeModeTool(Toolkit):
             return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
         finally:
             self.caller_loop = None
-
-    @staticmethod
-    def _collect_media(collector: Dict[str, List[Any]], tool_result: ToolResult) -> None:
-        if tool_result.images:
-            collector["images"].extend(tool_result.images)
-        if tool_result.videos:
-            collector["videos"].extend(tool_result.videos)
-        if tool_result.audios:
-            collector["audios"].extend(tool_result.audios)
-        if tool_result.files:
-            collector["files"].extend(tool_result.files)

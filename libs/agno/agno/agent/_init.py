@@ -233,7 +233,7 @@ def get_models(agent: Agent) -> None:
 
 
 def _set_code_mode(agent: Agent) -> None:
-    from agno.tools.code_mode import CodeModeTool
+    from agno.code_mode import CodeModeTool
 
     if agent.code_mode_tools is not None:
         tools_to_wrap = list(agent.code_mode_tools)
