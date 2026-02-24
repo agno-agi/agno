@@ -5,7 +5,6 @@ import asyncio
 import pytest
 
 from agno.models.metrics import RunMetrics
-from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.workflow import Condition, Parallel, Step, StepInput, StepOutput, Workflow
 from agno.workflow.types import WorkflowMetrics
