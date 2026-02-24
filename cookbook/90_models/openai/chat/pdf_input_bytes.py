@@ -1,4 +1,3 @@
-
 """
 Openai Pdf Input Bytes
 =========================
@@ -8,8 +7,8 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import File
-from agno.utils.media import download_file
 from agno.models.openai.chat import OpenAIChat
+from agno.utils.media import download_file
 
 # ---------------------------------------------------------------------------
 # Create Agent

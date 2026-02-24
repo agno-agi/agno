@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple, Union
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
 
 
 def is_groq_reasoning_model(reasoning_model: Model) -> bool:
@@ -16,19 +20,27 @@ def is_groq_reasoning_model(reasoning_model: Model) -> bool:
     )
 
 
-def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.agent import RunOutput
-
+def get_groq_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
+) -> Optional[Message]:
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
+        reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_response
+    if run_response is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response, run_response, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
@@ -46,19 +58,27 @@ def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Opt
     )
 
 
-async def aget_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.agent import RunOutput
-
+async def aget_groq_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
+) -> Optional[Message]:
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
+        reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_response
+    if run_response is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response, run_response, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -541,7 +541,7 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
-            metrics=Metrics(duration=0),
+            metrics=MessageMetrics(duration=0),
         )
     )
 
@@ -562,7 +562,7 @@ def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: T
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
-            metrics=Metrics(duration=0),
+            metrics=MessageMetrics(duration=0),
         )
     )
 
