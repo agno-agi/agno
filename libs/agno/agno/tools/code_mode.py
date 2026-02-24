@@ -18,158 +18,154 @@ from agno.utils.log import log_debug, log_warning
 if TYPE_CHECKING:
     from agno.models.base import Model
 
-ALLOWED_BUILTINS: Set[str] = {
-    "len",
-    "min",
-    "max",
-    "sum",
-    "sorted",
-    "reversed",
-    "range",
-    "enumerate",
-    "zip",
-    "map",
-    "filter",
-    "any",
-    "all",
-    "str",
-    "int",
-    "float",
-    "bool",
-    "dict",
-    "list",
-    "set",
-    "tuple",
-    "round",
-    "abs",
-    "print",
-    "isinstance",
-    "type",
-    "format",
-    "pow",
-    "divmod",
-    "ord",
-    "chr",
-    "hex",
-    "bin",
-    "oct",
-    "ValueError",
-    "TypeError",
-    "KeyError",
-    "IndexError",
-    "Exception",
-    "True",
-    "False",
-    "None",
-}
-
-JSON_TYPE_MAP: Dict[str, str] = {
-    "string": "str",
-    "number": "float",
-    "integer": "int",
-    "boolean": "bool",
-    "array": "list",
-    "object": "dict",
-}
-
-FRAMEWORK_PARAMS: Set[str] = {
-    "self",
-    "agent",
-    "team",
-    "run_context",
-    "fc",
-    "images",
-    "videos",
-    "audios",
-    "files",
-}
-
-EXEC_ERROR_PREFIX = "[[EXEC_ERROR]] "
-
-BLOCKED_MODULES: Set[str] = {
-    "os",
-    "sys",
-    "subprocess",
-    "shutil",
-    "socket",
-    "http",
-    "urllib",
-    "requests",
-    "pathlib",
-    "io",
-    "builtins",
-    "importlib",
-    "ctypes",
-    "multiprocessing",
-    "threading",
-    "signal",
-    "code",
-    "codeop",
-    "compileall",
-    "runpy",
-    "inspect",
-    "gc",
-    "traceback",
-}
-
-CODE_MODEL_SYSTEM = (
-    "You are a Python code generator. Write a SINGLE complete Python program "
-    "that accomplishes the user's task by calling the provided tool functions.\n\n"
-    "RULES:\n"
-    "- Call functions DIRECTLY: get_stock_price(symbol='AAPL'), NOT module.func().\n"
-    "- `json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
-    "- All tool functions return JSON strings. Use json.loads() to parse them.\n"
-    "- Store your final answer in a variable called `result` (as a formatted string).\n"
-    "- Handle errors with try/except where appropriate.\n"
-    "- Output ONLY the Python code inside a ```python code fence. No explanation.\n\n"
-    "AVAILABLE FUNCTIONS:\n\n"
-)
-
-DEFAULT_CODE_MODE_INSTRUCTIONS = (
-    "You have access to a code execution environment via the `run_code` tool.\n"
-    "Write ONE complete Python program per call that handles the entire task.\n"
-    "Call tool functions DIRECTLY by name (e.g., get_stock_price(symbol='AAPL')).\n"
-    "`json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
-    "All tool functions return JSON strings — use json.loads() to parse results.\n"
-    "Store your final answer in a variable called `result` as a formatted string.\n"
-    "Use loops to process multiple items efficiently in a single call."
-)
-
-DEFAULT_CODE_MODEL_INSTRUCTIONS = (
-    "You have access to a `run_code` tool that accepts plain English task descriptions.\n"
-    "A specialized code model generates and executes the code for you.\n"
-    "Describe what data to fetch, what computations to perform, and the desired output format.\n"
-    "You do NOT need to write code yourself."
-)
-
-# Pre-approved modules injected into the sandbox namespace.
-# These are references to the real stdlib modules — the sandbox exec() dict
-# is a separate namespace, so there is no collision with our own imports.
-_PREAPPROVED_MODULES: Dict[str, Any] = {
-    "json": json,
-    "math": math,
-    "datetime": datetime,
-    "re": re,
-    "collections": collections,
-}
-
-
-class _SafeCallable:
-    __slots__ = ("_fn", "__name__", "__doc__")
-
-    def __init__(self, fn: Callable, name: str, doc: Optional[str]):
-        self._fn = fn
-        self.__name__ = name
-        self.__doc__ = doc or ""
-
-    def __call__(self, *args: Any, **kwargs: Any) -> str:
-        return self._fn(*args, **kwargs)
-
-    def __repr__(self) -> str:
-        return f"<tool {self.__name__}>"
-
 
 class CodeModeTool(Toolkit):
+    EXEC_ERROR_PREFIX = "[[EXEC_ERROR]] "
+
+    ALLOWED_BUILTINS: Set[str] = {
+        "len",
+        "min",
+        "max",
+        "sum",
+        "sorted",
+        "reversed",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "any",
+        "all",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "dict",
+        "list",
+        "set",
+        "tuple",
+        "round",
+        "abs",
+        "print",
+        "isinstance",
+        "type",
+        "format",
+        "pow",
+        "divmod",
+        "ord",
+        "chr",
+        "hex",
+        "bin",
+        "oct",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "Exception",
+        "True",
+        "False",
+        "None",
+    }
+
+    BLOCKED_MODULES: Set[str] = {
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "socket",
+        "http",
+        "urllib",
+        "requests",
+        "pathlib",
+        "io",
+        "builtins",
+        "importlib",
+        "ctypes",
+        "multiprocessing",
+        "threading",
+        "signal",
+        "code",
+        "codeop",
+        "compileall",
+        "runpy",
+        "inspect",
+        "gc",
+        "traceback",
+    }
+
+    FRAMEWORK_PARAMS: Set[str] = {
+        "self",
+        "agent",
+        "team",
+        "run_context",
+        "fc",
+        "images",
+        "videos",
+        "audios",
+        "files",
+    }
+
+    JSON_TYPE_MAP: Dict[str, str] = {
+        "string": "str",
+        "number": "float",
+        "integer": "int",
+        "boolean": "bool",
+        "array": "list",
+        "object": "dict",
+    }
+
+    PREAPPROVED_MODULES: Dict[str, Any] = {
+        "json": json,
+        "math": math,
+        "datetime": datetime,
+        "re": re,
+        "collections": collections,
+    }
+
+    CODE_MODEL_SYSTEM = (
+        "You are a Python code generator. Write a SINGLE complete Python program "
+        "that accomplishes the user's task by calling the provided tool functions.\n\n"
+        "RULES:\n"
+        "- Call functions DIRECTLY: get_stock_price(symbol='AAPL'), NOT module.func().\n"
+        "- `json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
+        "- All tool functions return JSON strings. Use json.loads() to parse them.\n"
+        "- Store your final answer in a variable called `result` (as a formatted string).\n"
+        "- Handle errors with try/except where appropriate.\n"
+        "- Output ONLY the Python code inside a ```python code fence. No explanation.\n\n"
+        "AVAILABLE FUNCTIONS:\n\n"
+    )
+
+    DEFAULT_CODE_MODE_INSTRUCTIONS = (
+        "You have access to a code execution environment via the `run_code` tool.\n"
+        "Write ONE complete Python program per call that handles the entire task.\n"
+        "Call tool functions DIRECTLY by name (e.g., get_stock_price(symbol='AAPL')).\n"
+        "`json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
+        "All tool functions return JSON strings — use json.loads() to parse results.\n"
+        "Store your final answer in a variable called `result` as a formatted string.\n"
+        "Use loops to process multiple items efficiently in a single call."
+    )
+
+    DEFAULT_CODE_MODEL_INSTRUCTIONS = (
+        "You have access to a `run_code` tool that accepts plain English task descriptions.\n"
+        "A specialized code model generates and executes the code for you.\n"
+        "Describe what data to fetch, what computations to perform, and the desired output format.\n"
+        "You do NOT need to write code yourself."
+    )
+
+    class _SafeCallable:
+        __slots__ = ("_fn", "__name__", "__doc__")
+
+        def __init__(self, fn: Callable, name: str, doc: Optional[str]):
+            self._fn = fn
+            self.__name__ = name
+            self.__doc__ = doc or ""
+
+        def __call__(self, *args: Any, **kwargs: Any) -> str:
+            return self._fn(*args, **kwargs)
+
+        def __repr__(self) -> str:
+            return f"<tool {self.__name__}>"
+
     def __init__(
         self,
         tools: List[Union["Toolkit", Callable, Function]],
@@ -191,11 +187,11 @@ class CodeModeTool(Toolkit):
         self.max_code_length = max_code_length
         self.discovery_threshold = discovery_threshold
         self.additional_modules: Dict[str, Any] = additional_modules or {}
+        self.caller_loop: Any = None
 
-        allowed = allowed_builtins or ALLOWED_BUILTINS
+        allowed = allowed_builtins or self.ALLOWED_BUILTINS
         self.safe_builtins: Dict[str, Any] = {k: getattr(builtins, k) for k in allowed if hasattr(builtins, k)}
 
-        # Collected sandbox functions (separate from Toolkit.functions which holds run_code/search_tools)
         self.sandbox_functions: Dict[str, Function] = self._collect_functions(tools, async_mode=False)
         self.sandbox_async_functions: Dict[str, Function] = self._collect_functions(tools, async_mode=True)
 
@@ -207,26 +203,18 @@ class CodeModeTool(Toolkit):
         self.sync_stubs_injected = False
         self.async_stubs_injected = False
 
-        # Caller event loop for MCP async bridge (set transiently during arun_code)
-        self.caller_loop: Any = None
-
         sync_tools: List[Any] = [self.run_code]
         async_tools: List[Any] = [(self.arun_code, "run_code")]
         if self.discovery_enabled and self.code_model is None:
             sync_tools.insert(0, self.search_tools)
             async_tools.insert(0, (self.asearch_tools, "search_tools"))
 
-        super().__init__(
-            name="code_mode",
-            tools=sync_tools,
-            async_tools=async_tools,
-            **kwargs,
-        )
+        super().__init__(name="code_mode", tools=sync_tools, async_tools=async_tools, **kwargs)
 
         if self.code_model is not None:
-            self.instructions = DEFAULT_CODE_MODEL_INSTRUCTIONS
+            self.instructions = self.DEFAULT_CODE_MODEL_INSTRUCTIONS
         else:
-            self.instructions = DEFAULT_CODE_MODE_INSTRUCTIONS
+            self.instructions = self.DEFAULT_CODE_MODE_INSTRUCTIONS
         self.add_instructions = True
 
     def _resolve_discovery(self, discovery: Union[bool, str]) -> bool:
@@ -280,9 +268,9 @@ class CodeModeTool(Toolkit):
 
             args: List[str] = []
             for pname, schema in params.items():
-                if pname in FRAMEWORK_PARAMS:
+                if pname in self.FRAMEWORK_PARAMS:
                     continue
-                py_type = JSON_TYPE_MAP.get(schema.get("type", "string"), "Any")
+                py_type = self.JSON_TYPE_MAP.get(schema.get("type", "string"), "Any")
                 if pname in required:
                     args.append(f"{pname}: {py_type}")
                 else:
@@ -363,7 +351,7 @@ class CodeModeTool(Toolkit):
         media_collector: Optional[Dict[str, List[Any]]] = None,
     ) -> Callable:
         code_mode_tool = self
-        param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in FRAMEWORK_PARAMS]
+        param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in self.FRAMEWORK_PARAMS]
 
         def wrapper(*args: Any, **kwargs: Any) -> str:
             entrypoint = func.entrypoint
@@ -383,7 +371,7 @@ class CodeModeTool(Toolkit):
 
             if isinstance(result, ToolResult):
                 if media_collector is not None:
-                    _collect_media(media_collector, result)
+                    code_mode_tool._collect_media(media_collector, result)
                 return result.content
             if isinstance(result, (dict, list)):
                 try:
@@ -430,9 +418,6 @@ class CodeModeTool(Toolkit):
 
         coro = entrypoint(**framework_args, **user_kwargs)
 
-        # When running inside run_in_executor (from arun_code), caller_loop
-        # points to the original event loop which is free to process coroutines.
-        # Required for MCP tools whose sessions are bound to that loop.
         if self.caller_loop is not None and self.caller_loop.is_running():
             future = asyncio.run_coroutine_threadsafe(coro, self.caller_loop)
             return future.result()
@@ -453,7 +438,7 @@ class CodeModeTool(Toolkit):
         use_async: bool = False,
         media_collector: Optional[Dict[str, List[Any]]] = None,
     ) -> Tuple[Dict[str, Any], Set[str]]:
-        preapproved = dict(_PREAPPROVED_MODULES)
+        preapproved = dict(self.PREAPPROVED_MODULES)
         preapproved.update(self.additional_modules)
 
         _real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
@@ -462,7 +447,7 @@ class CodeModeTool(Toolkit):
             if name in preapproved:
                 return preapproved[name]
             top_level = name.split(".")[0]
-            if top_level in BLOCKED_MODULES:
+            if top_level in self.BLOCKED_MODULES:
                 raise ImportError(f"Import of '{name}' is not allowed.")
             return _real_import(name, *args, **kwargs)
 
@@ -475,7 +460,7 @@ class CodeModeTool(Toolkit):
         functions = self.sandbox_async_functions if use_async else self.sandbox_functions
         for name, func in functions.items():
             wrapper = self._make_wrapper(name, func, media_collector=media_collector)
-            namespace[name] = _SafeCallable(wrapper, name, func.description)
+            namespace[name] = self._SafeCallable(wrapper, name, func.description)
 
         base_keys = set(namespace.keys())
         return namespace, base_keys
@@ -491,7 +476,7 @@ class CodeModeTool(Toolkit):
         output_parts: List[str] = []
         if isinstance(result, ToolResult):
             if media_collector is not None:
-                _collect_media(media_collector, result)
+                self._collect_media(media_collector, result)
             output_parts.append(result.content)
         elif result is not None:
             output_parts.append(str(result))
@@ -505,7 +490,7 @@ class CodeModeTool(Toolkit):
             last_value = list(user_vars.values())[-1]
             if isinstance(last_value, ToolResult):
                 if media_collector is not None:
-                    _collect_media(media_collector, last_value)
+                    self._collect_media(media_collector, last_value)
                 return last_value.content
             return str(last_value)
 
@@ -517,7 +502,7 @@ class CodeModeTool(Toolkit):
     def _execute_code(self, code: str, use_async: bool = False) -> Union[str, ToolResult]:
         try:
             if len(code) > self.max_code_length:
-                return f"{EXEC_ERROR_PREFIX}Code exceeds maximum length of {self.max_code_length} characters."
+                return f"{self.EXEC_ERROR_PREFIX}Code exceeds maximum length of {self.max_code_length} characters."
 
             code = prepare_python_code(code)
             log_debug(f"CodeModeTool executing:\n{code}")
@@ -540,9 +525,9 @@ class CodeModeTool(Toolkit):
                 )
             return output
         except SyntaxError as e:
-            return f"{EXEC_ERROR_PREFIX}SyntaxError: {e}"
+            return f"{self.EXEC_ERROR_PREFIX}SyntaxError: {e}"
         except Exception as e:
-            return f"{EXEC_ERROR_PREFIX}{type(e).__name__}: {e}"
+            return f"{self.EXEC_ERROR_PREFIX}{type(e).__name__}: {e}"
 
     def rebuild(self) -> None:
         self.sandbox_functions = self._collect_functions(self.source_tools, async_mode=False)
@@ -567,7 +552,7 @@ class CodeModeTool(Toolkit):
     def _generate_code(self, task: str, error: Optional[str] = None) -> str:
         from agno.models.message import Message
 
-        system = CODE_MODEL_SYSTEM + self.stubs
+        system = self.CODE_MODEL_SYSTEM + self.stubs
         user_content = task
         if error:
             user_content += f"\n\nPrevious attempt failed with:\n{error}\n\nFix the code and try again."
@@ -582,7 +567,7 @@ class CodeModeTool(Toolkit):
     async def _agenerate_code(self, task: str, error: Optional[str] = None) -> str:
         from agno.models.message import Message
 
-        system = CODE_MODEL_SYSTEM + self.stubs
+        system = self.CODE_MODEL_SYSTEM + self.stubs
         user_content = task
         if error:
             user_content += f"\n\nPrevious attempt failed with:\n{error}\n\nFix the code and try again."
@@ -602,9 +587,9 @@ class CodeModeTool(Toolkit):
             result = self._execute_code(code, use_async=use_async)
             if isinstance(result, ToolResult):
                 return result
-            if not result.startswith(EXEC_ERROR_PREFIX):
+            if not result.startswith(self.EXEC_ERROR_PREFIX):
                 return result
-            last_error = result[len(EXEC_ERROR_PREFIX) :]
+            last_error = result[len(self.EXEC_ERROR_PREFIX) :]
             log_debug(f"CodeModeTool code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
 
@@ -621,9 +606,9 @@ class CodeModeTool(Toolkit):
                 result = await loop.run_in_executor(None, self._execute_code, code, use_async)
                 if isinstance(result, ToolResult):
                     return result
-                if not result.startswith(EXEC_ERROR_PREFIX):
+                if not result.startswith(self.EXEC_ERROR_PREFIX):
                     return result
-                last_error = result[len(EXEC_ERROR_PREFIX) :]
+                last_error = result[len(self.EXEC_ERROR_PREFIX) :]
                 log_debug(f"CodeModeTool code_model attempt {attempt + 1} failed: {last_error}")
             return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
         finally:
@@ -690,8 +675,8 @@ class CodeModeTool(Toolkit):
         result = self._execute_code(code, use_async=False)
         if isinstance(result, ToolResult):
             return result
-        if result.startswith(EXEC_ERROR_PREFIX):
-            return result[len(EXEC_ERROR_PREFIX) :]
+        if result.startswith(self.EXEC_ERROR_PREFIX):
+            return result[len(self.EXEC_ERROR_PREFIX) :]
         return result
 
     async def arun_code(self, code: str) -> Union[str, ToolResult]:
@@ -707,17 +692,17 @@ class CodeModeTool(Toolkit):
             self.caller_loop = None
         if isinstance(result, ToolResult):
             return result
-        if result.startswith(EXEC_ERROR_PREFIX):
-            return result[len(EXEC_ERROR_PREFIX) :]
+        if result.startswith(self.EXEC_ERROR_PREFIX):
+            return result[len(self.EXEC_ERROR_PREFIX) :]
         return result
 
-
-def _collect_media(collector: Dict[str, List[Any]], tool_result: ToolResult) -> None:
-    if tool_result.images:
-        collector["images"].extend(tool_result.images)
-    if tool_result.videos:
-        collector["videos"].extend(tool_result.videos)
-    if tool_result.audios:
-        collector["audios"].extend(tool_result.audios)
-    if tool_result.files:
-        collector["files"].extend(tool_result.files)
+    @staticmethod
+    def _collect_media(collector: Dict[str, List[Any]], tool_result: ToolResult) -> None:
+        if tool_result.images:
+            collector["images"].extend(tool_result.images)
+        if tool_result.videos:
+            collector["videos"].extend(tool_result.videos)
+        if tool_result.audios:
+            collector["audios"].extend(tool_result.audios)
+        if tool_result.files:
+            collector["files"].extend(tool_result.files)
