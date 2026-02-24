@@ -36,8 +36,8 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.agent import Agent
+    from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
-    from agno.run.team import TeamRunOutput
 
 
 class ReasoningEventType(str, Enum):
@@ -89,7 +89,7 @@ class ReasoningConfig:
     debug_mode: bool = False
     debug_level: Literal[1, 2] = 1
     run_context: Optional[RunContext] = None
-    run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None
+    run_metrics: Optional["RunMetrics"] = None
 
 
 @dataclass
@@ -203,56 +203,56 @@ class ReasoningManager:
 
         reasoning_agent = self._get_reasoning_agent(model)
         reasoning_message: Optional[Message] = None
-        run_response = self.config.run_response
+        run_metrics = self.config.run_metrics
 
         try:
             if model_type == "deepseek":
                 from agno.reasoning.deepseek import get_deepseek_reasoning
 
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                reasoning_message = get_deepseek_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "anthropic":
                 from agno.reasoning.anthropic import get_anthropic_reasoning
 
                 log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
-                reasoning_message = get_anthropic_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "openai":
                 from agno.reasoning.openai import get_openai_reasoning
 
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                reasoning_message = get_openai_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_openai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "groq":
                 from agno.reasoning.groq import get_groq_reasoning
 
                 log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                reasoning_message = get_groq_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_groq_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "ollama":
                 from agno.reasoning.ollama import get_ollama_reasoning
 
                 log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                reasoning_message = get_ollama_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "ai_foundry":
                 from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
 
                 log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
-                reasoning_message = get_ai_foundry_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_ai_foundry_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "gemini":
                 from agno.reasoning.gemini import get_gemini_reasoning
 
                 log_debug("Starting Gemini Reasoning", center=True, symbol="=")
-                reasoning_message = get_gemini_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_gemini_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "vertexai":
                 from agno.reasoning.vertexai import get_vertexai_reasoning
 
                 log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
-                reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
             log_error(f"Reasoning error: {e}")
@@ -279,58 +279,56 @@ class ReasoningManager:
 
         reasoning_agent = self._get_reasoning_agent(model)
         reasoning_message: Optional[Message] = None
-        run_response = self.config.run_response
+        run_metrics = self.config.run_metrics
 
         try:
             if model_type == "deepseek":
                 from agno.reasoning.deepseek import aget_deepseek_reasoning
 
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_deepseek_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "anthropic":
                 from agno.reasoning.anthropic import aget_anthropic_reasoning
 
                 log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_anthropic_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "openai":
                 from agno.reasoning.openai import aget_openai_reasoning
 
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_openai_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_openai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "groq":
                 from agno.reasoning.groq import aget_groq_reasoning
 
                 log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_groq_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_groq_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "ollama":
                 from agno.reasoning.ollama import aget_ollama_reasoning
 
                 log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_ollama_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "ai_foundry":
                 from agno.reasoning.azure_ai_foundry import aget_ai_foundry_reasoning
 
                 log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_ai_foundry_reasoning(
-                    reasoning_agent, messages, run_response=run_response
-                )
+                reasoning_message = await aget_ai_foundry_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "gemini":
                 from agno.reasoning.gemini import aget_gemini_reasoning
 
                 log_debug("Starting Gemini Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_gemini_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_gemini_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "vertexai":
                 from agno.reasoning.vertexai import aget_vertexai_reasoning
 
                 log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_vertexai_reasoning(reasoning_agent, messages, run_response=run_response)
+                reasoning_message = await aget_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
             log_error(f"Reasoning error: {e}")
@@ -835,10 +833,12 @@ class ReasoningManager:
                 reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
 
                 # Accumulate reasoning model metrics
-                if self.config.run_response is not None:
+                if self.config.run_metrics is not None:
                     from agno.metrics import accumulate_eval_metrics
 
-                    accumulate_eval_metrics(reasoning_agent_response, self.config.run_response, prefix="reasoning")
+                    accumulate_eval_metrics(
+                        reasoning_agent_response.metrics, self.config.run_metrics, prefix="reasoning"
+                    )
 
                 if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                     log_warning("Reasoning error. Reasoning response is empty")
@@ -948,10 +948,12 @@ class ReasoningManager:
                 )
 
                 # Accumulate reasoning model metrics
-                if self.config.run_response is not None:
+                if self.config.run_metrics is not None:
                     from agno.metrics import accumulate_eval_metrics
 
-                    accumulate_eval_metrics(reasoning_agent_response, self.config.run_response, prefix="reasoning")
+                    accumulate_eval_metrics(
+                        reasoning_agent_response.metrics, self.config.run_metrics, prefix="reasoning"
+                    )
 
                 if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                     log_warning("Reasoning error. Reasoning response is empty")
