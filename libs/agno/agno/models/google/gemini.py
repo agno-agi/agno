@@ -17,7 +17,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.base import Model, RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -111,6 +111,9 @@ class Gemini(Model):
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
     thinking_level: Optional[str] = None  # "low", "high"
     request_params: Optional[Dict[str, Any]] = None
+
+    # Gemini returns cumulative token counts in each streaming chunk, so only collect on final chunk
+    collect_metrics_on_completion: bool = True
 
     # Client parameters
     credentials: Optional[Credentials] = None
@@ -483,9 +486,6 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().models.generate_content(
                 model=self.id,
@@ -544,9 +544,6 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             for response in self.get_client().models.generate_content_stream(
                 model=self.id,
@@ -602,9 +599,6 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_client().aio.models.generate_content(
                 model=self.id,
@@ -664,9 +658,6 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_client().aio.models.generate_content_stream(
@@ -1054,7 +1045,7 @@ class Gemini(Model):
         combined_function_result: List = []
         tool_names: List[str] = []
 
-        message_metrics = Metrics()
+        message_metrics = MessageMetrics()
 
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
@@ -1065,7 +1056,8 @@ class Gemini(Model):
                 )
                 if result.tool_name:
                     tool_names.append(result.tool_name)
-                message_metrics += result.metrics
+                if result.metrics is not None:
+                    message_metrics += result.metrics
 
         tool_name = ", ".join(tool_names) if tool_names else None
 
@@ -1391,7 +1383,7 @@ class Gemini(Model):
                 model_response.citations = citations
 
             # Extract usage metadata if present
-            if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
+            if self._should_collect_metrics(response_delta, candidate) and response_delta.usage_metadata is not None:
                 model_response.response_usage = self._get_metrics(response_delta.usage_metadata)
 
         return model_response
@@ -1434,22 +1426,34 @@ class Gemini(Model):
 
         return new_instance
 
-    def _get_metrics(self, response_usage: GenerateContentResponseUsageMetadata) -> Metrics:
+    def _should_collect_metrics(self, response: GenerateContentResponse, candidate: Any) -> bool:
         """
-        Parse the given Google Gemini usage into an Agno Metrics object.
+        Determine if metrics should be collected from the streaming response.
+        """
+        if not hasattr(response, "usage_metadata") or response.usage_metadata is None:
+            return False
+
+        if not self.collect_metrics_on_completion:
+            return True
+
+        return hasattr(candidate, "finish_reason") and candidate.finish_reason is not None
+
+    def _get_metrics(self, response_usage: GenerateContentResponseUsageMetadata) -> MessageMetrics:
+        """
+        Parse the given Google Gemini usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Google Gemini
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
         metrics.output_tokens = response_usage.candidates_token_count or 0
         if response_usage.thoughts_token_count is not None:
-            metrics.output_tokens += response_usage.thoughts_token_count or 0
+            metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0

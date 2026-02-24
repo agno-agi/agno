@@ -268,7 +268,13 @@ class AgentAsJudgeEval(BaseEval):
             output_schema=response_schema,
         )
 
-    def _evaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[AgentAsJudgeEvaluation]:
+    def _evaluate(
+        self,
+        input: str,
+        output: str,
+        evaluator_agent: Agent,
+        run_response: Optional[Any] = None,
+    ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair."""
         try:
             prompt = dedent(f"""\
@@ -282,6 +288,13 @@ class AgentAsJudgeEval(BaseEval):
             """)
 
             response = evaluator_agent.run(prompt, stream=False)
+
+            # Accumulate eval model metrics into the original run_response
+            if run_response is not None and response.metrics is not None:
+                from agno.metrics import accumulate_eval_metrics
+
+                accumulate_eval_metrics(response, run_response)
+
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {judge_response}")
@@ -320,7 +333,13 @@ class AgentAsJudgeEval(BaseEval):
             logger.exception(f"Evaluation failed: {e}")
             return None
 
-    async def _aevaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[AgentAsJudgeEvaluation]:
+    async def _aevaluate(
+        self,
+        input: str,
+        output: str,
+        evaluator_agent: Agent,
+        run_response: Optional[Any] = None,
+    ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair asynchronously."""
         try:
             prompt = dedent(f"""\
@@ -334,6 +353,13 @@ class AgentAsJudgeEval(BaseEval):
             """)
 
             response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
+
+            # Accumulate eval model metrics into the original run_response
+            if run_response is not None and response.metrics is not None:
+                from agno.metrics import accumulate_eval_metrics
+
+                accumulate_eval_metrics(response, run_response)
+
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {judge_response}")
@@ -444,6 +470,7 @@ class AgentAsJudgeEval(BaseEval):
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
+        run_response: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria.
 
@@ -471,7 +498,13 @@ class AgentAsJudgeEval(BaseEval):
 
         # Batch mode if cases provided
         if batch_mode and cases is not None:
-            return self._run_batch(cases=cases, run_id=run_id, print_summary=print_summary, print_results=print_results)
+            return self._run_batch(
+                cases=cases,
+                run_id=run_id,
+                print_summary=print_summary,
+                print_results=print_results,
+                run_response=run_response,
+            )
 
         # Validate single mode has both input and output
         if input is None or output is None:
@@ -495,7 +528,9 @@ class AgentAsJudgeEval(BaseEval):
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            evaluation = self._evaluate(input=input, output=output, evaluator_agent=evaluator)
+            evaluation = self._evaluate(
+                input=input, output=output, evaluator_agent=evaluator, run_response=run_response
+            )
 
             if evaluation:
                 result.results.append(evaluation)
@@ -543,6 +578,7 @@ class AgentAsJudgeEval(BaseEval):
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
+        run_response: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria asynchronously.
 
@@ -571,7 +607,11 @@ class AgentAsJudgeEval(BaseEval):
         # Batch mode if cases provided
         if batch_mode and cases is not None:
             return await self._arun_batch(
-                cases=cases, run_id=run_id, print_summary=print_summary, print_results=print_results
+                cases=cases,
+                run_id=run_id,
+                print_summary=print_summary,
+                print_results=print_results,
+                run_response=run_response,
             )
 
         # Validate single mode has both input and output
@@ -593,7 +633,9 @@ class AgentAsJudgeEval(BaseEval):
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            evaluation = await self._aevaluate(input=input, output=output, evaluator_agent=evaluator)
+            evaluation = await self._aevaluate(
+                input=input, output=output, evaluator_agent=evaluator, run_response=run_response
+            )
 
             if evaluation:
                 result.results.append(evaluation)
@@ -640,6 +682,7 @@ class AgentAsJudgeEval(BaseEval):
         *,
         print_summary: bool = True,
         print_results: bool = False,
+        run_response: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Private helper: Evaluate multiple input/output pairs.
 
@@ -665,7 +708,9 @@ class AgentAsJudgeEval(BaseEval):
                 status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
                 live_log.update(status)
 
-                evaluation = self._evaluate(input=case["input"], output=case["output"], evaluator_agent=evaluator)
+                evaluation = self._evaluate(
+                    input=case["input"], output=case["output"], evaluator_agent=evaluator, run_response=run_response
+                )
                 if evaluation:
                     result.results.append(evaluation)
                     result.compute_stats()
@@ -711,6 +756,7 @@ class AgentAsJudgeEval(BaseEval):
         *,
         print_summary: bool = True,
         print_results: bool = False,
+        run_response: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Private helper: Evaluate multiple input/output pairs asynchronously.
 
@@ -734,7 +780,10 @@ class AgentAsJudgeEval(BaseEval):
                 live_log.update(status)
 
                 evaluation = await self._aevaluate(
-                    input=case["input"], output=case["output"], evaluator_agent=evaluator
+                    input=case["input"],
+                    output=case["output"],
+                    evaluator_agent=evaluator,
+                    run_response=run_response,
                 )
                 if evaluation:
                     result.results.append(evaluation)
@@ -798,9 +847,13 @@ class AgentAsJudgeEval(BaseEval):
         original_db = self.db
         self.db = None
 
-        # Run evaluation and capture result
+        # Run evaluation and capture result (pass run_output for eval metrics accumulation)
         result = self.run(
-            input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary
+            input=input_str,
+            output=output_str,
+            print_results=self.print_results,
+            print_summary=self.print_summary,
+            run_response=run_output,
         )
 
         # Restore DB and log with context from run_output
@@ -840,9 +893,13 @@ class AgentAsJudgeEval(BaseEval):
         original_db = self.db
         self.db = None
 
-        # Run evaluation and capture result
+        # Run evaluation and capture result (pass run_output for eval metrics accumulation)
         result = await self.arun(
-            input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary
+            input=input_str,
+            output=output_str,
+            print_results=self.print_results,
+            print_summary=self.print_summary,
+            run_response=run_output,
         )
 
         # Restore DB and log with context from run_output
