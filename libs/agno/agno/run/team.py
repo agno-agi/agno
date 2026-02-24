@@ -174,6 +174,11 @@ class TeamRunEvent(str, Enum):
     run_paused = "TeamRunPaused"
     run_continued = "TeamRunContinued"
 
+    # Task mode events
+    task_iteration_started = "TeamTaskIterationStarted"
+    task_iteration_completed = "TeamTaskIterationCompleted"
+    task_state_updated = "TeamTaskStateUpdated"
+
     custom_event = "CustomEvent"
 
 
@@ -485,6 +490,34 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class TaskIterationStartedEvent(BaseTeamRunEvent):
+    """Event sent when a task iteration starts in tasks mode"""
+
+    event: str = TeamRunEvent.task_iteration_started.value
+    iteration: int = 0
+    max_iterations: int = 0
+
+
+@dataclass
+class TaskIterationCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a task iteration completes in tasks mode"""
+
+    event: str = TeamRunEvent.task_iteration_completed.value
+    iteration: int = 0
+    max_iterations: int = 0
+    task_summary: Optional[str] = None
+
+
+@dataclass
+class TaskStateUpdatedEvent(BaseTeamRunEvent):
+    """Event sent when the task state is updated in tasks mode"""
+
+    event: str = TeamRunEvent.task_state_updated.value
+    task_summary: Optional[str] = None
+    goal_complete: bool = False
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
@@ -525,6 +558,9 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    TaskIterationStartedEvent,
+    TaskIterationCompletedEvent,
+    TaskStateUpdatedEvent,
     CustomEvent,
 ]
 
@@ -562,6 +598,9 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
+    TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
+    TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 
