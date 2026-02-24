@@ -28,6 +28,11 @@ web_research_agent = Agent(
 )
 
 # Setup our AgentOS app
+# Each Telegram interface can use a different prefix (and optionally a different bot token).
+# If you want truly separate bots, pass token= to each instance:
+#   Telegram(agent=basic_agent, prefix="/basic", token="BOT_TOKEN_1"),
+#   Telegram(agent=web_research_agent, prefix="/web-research", token="BOT_TOKEN_2"),
+# When token is omitted, TELEGRAM_TOKEN env var is used for all instances.
 agent_os = AgentOS(
     agents=[basic_agent, web_research_agent],
     interfaces=[

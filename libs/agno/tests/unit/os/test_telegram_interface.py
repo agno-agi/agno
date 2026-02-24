@@ -294,6 +294,8 @@ def _build_telegram_client(
     help_message=None,
     error_message=None,
     show_reasoning=False,
+    stream=False,
+    token=None,
 ):
     from fastapi import APIRouter
 
@@ -308,7 +310,10 @@ def _build_telegram_client(
         reply_to_mentions_only=reply_to_mentions_only,
         reply_to_bot_messages=reply_to_bot_messages,
         show_reasoning=show_reasoning,
+        stream=stream,
     )
+    if token is not None:
+        kwargs["token"] = token
     if start_message is not None:
         kwargs["start_message"] = start_message
     if help_message is not None:
@@ -2277,3 +2282,342 @@ class TestTeamWorkflowProcessing:
         mock_bot.send_message.assert_called_with(
             12345, "Workflow reply", parse_mode="HTML", reply_to_message_id=None, message_thread_id=None
         )
+
+
+class TestStreamingErrorHandling:
+    """Test that streaming mode sends error messages back to the user."""
+
+    def _text_update(self, text="Hello"):
+        return {
+            "update_id": 1,
+            "message": {
+                "message_id": 100,
+                "from": {"id": 67890, "is_bot": False, "first_name": "Test"},
+                "chat": {"id": 12345, "type": "private"},
+                "text": text,
+            },
+        }
+
+    def test_streaming_error_sends_error_message(self, monkeypatch):
+        """When streaming returns ERROR status, error message should be sent to user."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.agent import RunOutput
+
+        mock_run_output = MagicMock(spec=RunOutput)
+        mock_run_output.status = "ERROR"
+        mock_run_output.content = "Something went wrong"
+        mock_run_output.reasoning_content = None
+        mock_run_output.images = None
+        mock_run_output.audio = None
+        mock_run_output.videos = None
+        mock_run_output.files = None
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_run_output
+
+        agent = AsyncMock()
+        agent.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("trigger error"))
+
+        assert resp.status_code == 200
+        # Verify error message was sent to the user
+        send_calls = mock_bot.send_message.call_args_list
+        sent_texts = [call[0][1] if len(call[0]) > 1 else call[1].get("text", "") for call in send_calls]
+        assert any("Sorry" in str(t) for t in sent_texts), f"Expected error message in sends, got: {sent_texts}"
+
+    def test_streaming_success_no_error_message(self, monkeypatch):
+        """When streaming succeeds, no error message should be sent."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.run.agent import RunContentEvent, RunOutput
+
+        mock_content_event = MagicMock(spec=RunContentEvent)
+        mock_content_event.content = "Hello world"
+
+        mock_run_output = MagicMock(spec=RunOutput)
+        mock_run_output.status = "COMPLETED"
+        mock_run_output.content = "Hello world"
+        mock_run_output.reasoning_content = None
+        mock_run_output.images = None
+        mock_run_output.audio = None
+        mock_run_output.videos = None
+        mock_run_output.files = None
+
+        async def fake_stream(*args, **kwargs):
+            yield mock_content_event
+            yield mock_run_output
+
+        agent = AsyncMock()
+        agent.arun = MagicMock(return_value=fake_stream())
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent, stream=True)
+            resp = client.post("/telegram/webhook", json=self._text_update("hello"))
+
+        assert resp.status_code == 200
+        send_calls = mock_bot.send_message.call_args_list
+        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        assert not any("Sorry" in t for t in sent_texts)
+
+
+class TestUnsupportedFileType:
+    """Test handling of unsupported file types (e.g. .xls, .zip)."""
+
+    def test_unsupported_mime_type_sends_warning(self, monkeypatch):
+        """When user sends .xls file, a warning message should be sent."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "Processed file"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "documents/file_123.xls"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-xls-bytes")
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890, "is_bot": False},
+                        "chat": {"id": 12345, "type": "private"},
+                        "document": {
+                            "file_id": "xls_file_id",
+                            "file_name": "data.xls",
+                            "mime_type": "application/vnd.ms-excel",
+                            "file_size": 5000,
+                        },
+                        "caption": "Process this spreadsheet",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        # Verify warning message was sent
+        send_calls = mock_bot.send_message.call_args_list
+        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        assert any("not directly supported" in t for t in sent_texts), (
+            f"Expected unsupported file type warning, got: {sent_texts}"
+        )
+        # Agent should still be called (we try to process anyway)
+        agent.arun.assert_called_once()
+
+    def test_supported_mime_type_no_warning(self, monkeypatch):
+        """When user sends a supported file (PDF), no warning should be sent."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "PDF processed"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "documents/file_123.pdf"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-pdf-bytes")
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890, "is_bot": False},
+                        "chat": {"id": 12345, "type": "private"},
+                        "document": {
+                            "file_id": "pdf_file_id",
+                            "file_name": "report.pdf",
+                            "mime_type": "application/pdf",
+                            "file_size": 5000,
+                        },
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        send_calls = mock_bot.send_message.call_args_list
+        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        assert not any("not directly supported" in t for t in sent_texts)
+
+
+class TestFileSizeLimit:
+    """Test handling of files exceeding Telegram's download size limit."""
+
+    def test_oversized_file_sends_warning(self, monkeypatch):
+        """When user sends a file >20MB, a warning should be sent."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock()
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890, "is_bot": False},
+                        "chat": {"id": 12345, "type": "private"},
+                        "document": {
+                            "file_id": "big_file_id",
+                            "file_name": "huge_video.mp4",
+                            "mime_type": "video/mp4",
+                            "file_size": 25 * 1024 * 1024,  # 25 MB
+                        },
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        send_calls = mock_bot.send_message.call_args_list
+        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
+        assert any("20 MB" in t or "download limit" in t for t in sent_texts), (
+            f"Expected file size warning, got: {sent_texts}"
+        )
+        # File should NOT have been downloaded
+        mock_bot.get_file.assert_not_called()
+
+    def test_file_under_limit_downloads_normally(self, monkeypatch):
+        """Files under the 20MB limit should be downloaded normally."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "File processed"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+
+        mock_file_info = MagicMock()
+        mock_file_info.file_path = "documents/small_file.pdf"
+        mock_bot = AsyncMock()
+        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
+        mock_bot.download_file = AsyncMock(return_value=b"fake-pdf-bytes")
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890, "is_bot": False},
+                        "chat": {"id": 12345, "type": "private"},
+                        "document": {
+                            "file_id": "small_file_id",
+                            "file_name": "report.pdf",
+                            "mime_type": "application/pdf",
+                            "file_size": 5 * 1024 * 1024,  # 5 MB
+                        },
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_bot.get_file.assert_called_with("small_file_id")
+        agent.arun.assert_called_once()
+
+
+class TestMultiBotTokenParam:
+    """Test that the token parameter allows multiple bot configurations."""
+
+    def test_token_param_used_instead_of_env(self, monkeypatch):
+        """When token param is passed, it should be used instead of TELEGRAM_TOKEN env."""
+        monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
+
+        agent = MagicMock()
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot) as mock_telebot_cls:
+            client = _build_telegram_client(agent=agent, token="custom-bot-token")
+            resp = client.get("/telegram/status")
+
+        assert resp.status_code == 200
+        mock_telebot_cls.assert_called_with("custom-bot-token")
+
+    def test_env_token_used_when_no_param(self, monkeypatch):
+        """When no token param, TELEGRAM_TOKEN env should be used."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "env-bot-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        agent = MagicMock()
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot) as mock_telebot_cls:
+            client = _build_telegram_client(agent=agent)
+            resp = client.get("/telegram/status")
+
+        assert resp.status_code == 200
+        mock_telebot_cls.assert_called_with("env-bot-token")
+
+    def test_missing_token_raises_error(self, monkeypatch):
+        """When no token param and no TELEGRAM_TOKEN env, should raise ValueError."""
+        monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
+
+        from agno.os.interfaces.telegram.router import attach_routes
+
+        agent = MagicMock()
+
+        with pytest.raises(ValueError, match="TELEGRAM_TOKEN.*not set.*no token"):
+            from fastapi import APIRouter
+
+            router = APIRouter(prefix="/telegram")
+            attach_routes(router=router, agent=agent)
+
+    def test_telegram_class_accepts_token(self, monkeypatch):
+        """Telegram class should accept and store the token parameter."""
+        monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+        agent = MagicMock()
+        tg = Telegram(agent=agent, token="my-bot-token")
+        assert tg.token == "my-bot-token"
+
+    def test_telegram_class_token_default_none(self, monkeypatch):
+        """Token parameter should default to None."""
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        agent = MagicMock()
+        tg = Telegram(agent=agent)
+        assert tg.token is None

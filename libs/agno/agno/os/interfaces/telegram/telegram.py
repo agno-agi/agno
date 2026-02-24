@@ -33,6 +33,7 @@ class Telegram(BaseInterface):
         workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
         prefix: str = "/telegram",
         tags: Optional[List[str]] = None,
+        token: Optional[str] = None,
         reply_to_mentions_only: bool = True,
         reply_to_bot_messages: bool = True,
         start_message: str = DEFAULT_START_MESSAGE,
@@ -49,6 +50,7 @@ class Telegram(BaseInterface):
         self.workflow = workflow
         self.prefix = prefix
         self.tags = tags or ["Telegram"]
+        self.token = token
         self.reply_to_mentions_only = reply_to_mentions_only
         self.reply_to_bot_messages = reply_to_bot_messages
         self.start_message = start_message
@@ -71,6 +73,7 @@ class Telegram(BaseInterface):
             agent=self.agent,
             team=self.team,
             workflow=self.workflow,
+            token=self.token,
             reply_to_mentions_only=self.reply_to_mentions_only,
             reply_to_bot_messages=self.reply_to_bot_messages,
             start_message=self.start_message,

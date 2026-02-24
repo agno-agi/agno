@@ -31,6 +31,7 @@ TG_CHUNK_SIZE = 4000
 TG_MAX_CAPTION_LENGTH = 1024
 TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
 TG_STREAM_EDIT_INTERVAL = 1.0  # Minimum seconds between message edits to avoid rate limits
+TG_MAX_FILE_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20 MB — Telegram API download limit
 
 
 def _escape_html(text: str) -> str:
@@ -149,6 +150,7 @@ def attach_routes(
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    token: Optional[str] = None,
     reply_to_mentions_only: bool = True,
     reply_to_bot_messages: bool = True,
     start_message: str = DEFAULT_START_MESSAGE,
@@ -165,9 +167,9 @@ def attach_routes(
 
     entity_type = "agent" if agent else "team" if team else "workflow"
 
-    token = os.getenv("TELEGRAM_TOKEN")
+    token = token or os.getenv("TELEGRAM_TOKEN")
     if not token:
-        raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+        raise ValueError("TELEGRAM_TOKEN environment variable is not set and no token was provided")
 
     bot = AsyncTeleBot(token)
 
@@ -266,11 +268,19 @@ def attach_routes(
         audio_file_id: Optional[str],
         video_file_id: Optional[str],
         document_meta: Optional[dict],
-    ) -> tuple[Optional[List[Image]], Optional[List[Audio]], Optional[List[Video]], Optional[List[File]]]:
+    ) -> tuple[
+        Optional[List[Image]], Optional[List[Audio]], Optional[List[Video]], Optional[List[File]], Optional[str]
+    ]:
+        """Download inbound media from Telegram and wrap in typed objects.
+
+        Returns a tuple of (images, audio, videos, files, warning).
+        The warning string is set when a document has an unsupported MIME type.
+        """
         images: Optional[List[Image]] = None
         audio: Optional[List[Audio]] = None
         videos: Optional[List[Video]] = None
         files: Optional[List[File]] = None
+        warning: Optional[str] = None
 
         if image_file_id:
             image_bytes = await _get_file_bytes(image_file_id)
@@ -285,18 +295,35 @@ def attach_routes(
             if video_bytes:
                 videos = [Video(content=video_bytes)]
         if document_meta:
-            doc_bytes = await _get_file_bytes(document_meta["file_id"])
-            if doc_bytes:
-                doc_mime = document_meta.get("mime_type")
-                files = [
-                    File(
-                        content=doc_bytes,
-                        mime_type=doc_mime if doc_mime in File.valid_mime_types() else None,
-                        filename=document_meta.get("file_name"),
-                    )
-                ]
+            doc_name = document_meta.get("file_name", "unknown")
+            doc_size = document_meta.get("file_size", 0)
+            if doc_size and doc_size > TG_MAX_FILE_DOWNLOAD_SIZE:
+                size_mb = doc_size / (1024 * 1024)
+                log_warning(f"File too large to download: {doc_name} ({size_mb:.1f} MB)")
+                warning = (
+                    f"The file '{doc_name}' ({size_mb:.1f} MB) exceeds the 20 MB download limit "
+                    "for Telegram bots. Please send a smaller file."
+                )
+            else:
+                doc_bytes = await _get_file_bytes(document_meta["file_id"])
+                if doc_bytes:
+                    doc_mime = document_meta.get("mime_type")
+                    if doc_mime and doc_mime not in File.valid_mime_types():
+                        log_warning(f"Unsupported file type: {doc_mime} ({doc_name})")
+                        warning = (
+                            f"Note: The file type '{doc_mime}' ({doc_name}) is not directly supported. "
+                            "I'll try my best to process it, but results may vary. "
+                            "Supported types: PDF, JSON, DOCX, TXT, HTML, CSS, CSV, XML, RTF, and code files."
+                        )
+                    files = [
+                        File(
+                            content=doc_bytes,
+                            mime_type=doc_mime if doc_mime in File.valid_mime_types() else None,
+                            filename=doc_name,
+                        )
+                    ]
 
-        return images, audio, videos, files
+        return images, audio, videos, files, warning
 
     async def _get_file_bytes(file_id: str) -> Optional[bytes]:
         try:
@@ -617,9 +644,12 @@ def attach_routes(
 
             reply_to = incoming_message_id if is_group else None
 
-            images, audio, videos, files = await _download_inbound_media(
+            images, audio, videos, files, file_warning = await _download_inbound_media(
                 parsed.image_file_id, parsed.audio_file_id, parsed.video_file_id, parsed.document_meta
             )
+
+            if file_warning:
+                await _send_message_safe(chat_id, file_warning, message_thread_id=forum_thread_id)
 
             run_kwargs: dict = dict(
                 user_id=user_id,
@@ -647,6 +677,12 @@ def attach_routes(
                 if response:
                     if response.status == "ERROR":
                         log_error(response.content)
+                        await _send_text_chunked(
+                            chat_id,
+                            error_message,
+                            reply_to_message_id=reply_to,
+                            message_thread_id=forum_thread_id,
+                        )
                         return
 
                     if show_reasoning:
