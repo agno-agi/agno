@@ -251,9 +251,6 @@ class Llama(Model):
         """
         Sends an asynchronous chat completion request to the Llama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = await self.get_async_client().chat.completions.create(
@@ -283,9 +280,6 @@ class Llama(Model):
         """
         Send a streaming chat completion request to the Llama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         try:
             assistant_message.metrics.start_timer()
 
@@ -319,9 +313,6 @@ class Llama(Model):
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         try:

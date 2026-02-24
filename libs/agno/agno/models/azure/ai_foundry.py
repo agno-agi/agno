@@ -214,9 +214,6 @@ class AzureAIFoundry(Model):
         Send a chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().complete(
                 messages=[format_message(m, compress_tool_results) for m in messages],
@@ -255,9 +252,6 @@ class AzureAIFoundry(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().complete(
                 messages=[format_message(m, compress_tool_results) for m in messages],
@@ -295,9 +289,6 @@ class AzureAIFoundry(Model):
         Send a streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().complete(
@@ -335,9 +326,6 @@ class AzureAIFoundry(Model):
         Sends an asynchronous streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().complete(

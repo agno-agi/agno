@@ -173,9 +173,6 @@ class WatsonX(Model):
         Send a chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             client = self.get_client()
 
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -209,9 +206,6 @@ class WatsonX(Model):
         Sends an asynchronous chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 
@@ -252,9 +246,6 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             for chunk in client.chat_stream(messages=formatted_messages, **request_params):
@@ -280,9 +271,6 @@ class WatsonX(Model):
         Sends an asynchronous streaming chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 

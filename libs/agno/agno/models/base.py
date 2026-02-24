@@ -1099,6 +1099,10 @@ class Model(ABC):
             compress_tool_results=compress_tool_results,
         )
 
+        # Set TTFT after response arrives (guard ensures first-call-wins)
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
@@ -1157,6 +1161,10 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         )
+
+        # Set TTFT after response arrives (guard ensures first-call-wins)
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
@@ -1293,6 +1301,9 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         ):
+            # Set TTFT when first chunk arrives (guard ensures first-call-wins)
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
             for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
                 model_response_delta=response_delta,
@@ -1564,6 +1575,9 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         ):
+            # Set TTFT when first chunk arrives (guard ensures first-call-wins)
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
             for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
                 model_response_delta=response_delta,

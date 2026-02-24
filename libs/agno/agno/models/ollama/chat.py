@@ -242,9 +242,6 @@ class Ollama(Model):
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().chat(
@@ -273,9 +270,6 @@ class Ollama(Model):
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = await self.get_async_client().chat(
@@ -302,9 +296,6 @@ class Ollama(Model):
         """
         Sends a streaming chat request to the Ollama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat(
@@ -330,9 +321,6 @@ class Ollama(Model):
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         async for chunk in await self.get_async_client().chat(
