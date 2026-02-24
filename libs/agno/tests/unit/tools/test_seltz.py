@@ -22,49 +22,65 @@ from agno.tools.seltz import SeltzTools
 def mock_seltz_client():
     """Create a mock Seltz API client."""
     with patch("agno.tools.seltz.Seltz") as mock_seltz:
-        mock_client = Mock()
-        mock_seltz.return_value = mock_client
-        return mock_client
+        with patch("agno.tools.seltz.Includes"):
+            mock_client = Mock()
+            mock_seltz.return_value = mock_client
+            return mock_client
 
 
 @pytest.fixture
 def seltz_tools(mock_seltz_client):
     """Create SeltzTools instance with mocked API."""
-    with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-        tools = SeltzTools()
-        tools.client = mock_seltz_client
-        return tools
+    with patch("agno.tools.seltz.Includes"):
+        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+            tools = SeltzTools()
+            tools.client = mock_seltz_client
+            return tools
 
 
 def create_mock_document(url: str, content: str | None = None):
-    """Helper function to create mock document."""
+    """Helper function to create mock document that mimics SDK Document."""
     doc = Mock()
     doc.url = url
     doc.content = content
+
+    # Mock to_dict() method from new SDK
+    def to_dict():
+        result = {}
+        if url is not None:
+            result["url"] = url
+        if content is not None:
+            result["content"] = content
+        return result
+
+    doc.to_dict = to_dict
     return doc
 
 
 def test_init_with_api_key():
     """Test initialization with provided API key."""
     with patch("agno.tools.seltz.Seltz") as mock_seltz:
-        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-            SeltzTools()
-            mock_seltz.assert_called_once_with(api_key="test_key")
+        with patch("agno.tools.seltz.Includes"):
+            with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+                SeltzTools()
+                mock_seltz.assert_called_once_with(api_key="test_key")
 
 
 def test_init_with_search_disabled():
     """Test initialization with search tool disabled."""
-    with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-        tools = SeltzTools(enable_search=False)
-        assert "search_seltz" not in [func.name for func in tools.functions.values()]
+    with patch("agno.tools.seltz.Includes"):
+        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+            tools = SeltzTools(enable_search=False)
+            assert "search_seltz" not in [func.name for func in tools.functions.values()]
 
 
 def test_init_with_custom_endpoint():
     """Test initialization with custom endpoint and insecure flag."""
     with patch("agno.tools.seltz.Seltz") as mock_seltz:
-        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-            SeltzTools(endpoint="custom.endpoint.ai", insecure=True)
-            mock_seltz.assert_called_once_with(api_key="test_key", endpoint="custom.endpoint.ai", insecure=True)
+        with patch("agno.tools.seltz.Includes"):
+            with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+                SeltzTools(endpoint="custom.endpoint.ai", insecure=True)
+                mock_seltz.assert_called_once_with(api_key="test_key", endpoint="custom.endpoint.ai", insecure=True)
 
 
 def test_search_success(seltz_tools, mock_seltz_client):
@@ -73,13 +89,23 @@ def test_search_success(seltz_tools, mock_seltz_client):
     mock_response.documents = [create_mock_document(url="https://example.com", content="Example content")]
     mock_seltz_client.search.return_value = mock_response
 
-    result = seltz_tools.search_seltz("test query", max_documents=3)
-    result_data = json.loads(result)
+    with patch("agno.tools.seltz.Includes") as mock_includes:
+        mock_includes_instance = Mock()
+        mock_includes.return_value = mock_includes_instance
 
-    assert len(result_data) == 1
-    assert result_data[0]["url"] == "https://example.com"
-    assert result_data[0]["content"] == "Example content"
-    mock_seltz_client.search.assert_called_with("test query", max_documents=3)
+        result = seltz_tools.search_seltz("test query", max_documents=3)
+        result_data = json.loads(result)
+
+        assert len(result_data) == 1
+        assert result_data[0]["url"] == "https://example.com"
+        assert result_data[0]["content"] == "Example content"
+        mock_includes.assert_called_with(max_documents=3)
+        mock_seltz_client.search.assert_called_with(
+            query="test query",
+            includes=mock_includes_instance,
+            context=None,
+            profile=None,
+        )
 
 
 def test_search_default_limit(seltz_tools, mock_seltz_client):
@@ -88,12 +114,22 @@ def test_search_default_limit(seltz_tools, mock_seltz_client):
     mock_response.documents = [create_mock_document(url="https://example.com")]
     mock_seltz_client.search.return_value = mock_response
 
-    result = seltz_tools.search_seltz("test query")
-    result_data = json.loads(result)
+    with patch("agno.tools.seltz.Includes") as mock_includes:
+        mock_includes_instance = Mock()
+        mock_includes.return_value = mock_includes_instance
 
-    assert len(result_data) == 1
-    assert result_data[0]["url"] == "https://example.com"
-    mock_seltz_client.search.assert_called_with("test query", max_documents=10)
+        result = seltz_tools.search_seltz("test query")
+        result_data = json.loads(result)
+
+        assert len(result_data) == 1
+        assert result_data[0]["url"] == "https://example.com"
+        mock_includes.assert_called_with(max_documents=10)
+        mock_seltz_client.search.assert_called_with(
+            query="test query",
+            includes=mock_includes_instance,
+            context=None,
+            profile=None,
+        )
 
 
 def test_parse_documents_with_missing_fields(seltz_tools):
@@ -120,21 +156,25 @@ def test_search_empty_query(seltz_tools):
 def test_search_without_api_key():
     """Test search without API key returns error."""
     with patch("agno.tools.seltz.Seltz"):
-        with patch.dict("os.environ", {"SELTZ_API_KEY": ""}, clear=False):
-            with patch.object(SeltzTools, "__init__", lambda self, **kwargs: None):
-                tools = SeltzTools()
-                tools.client = None
-                tools.max_documents = 10
-                tools.show_results = False
-                result = tools.search_seltz("test query")
-                assert "SELTZ_API_KEY not set" in result
+        with patch("agno.tools.seltz.Includes"):
+            with patch.dict("os.environ", {"SELTZ_API_KEY": ""}, clear=False):
+                with patch.object(SeltzTools, "__init__", lambda self, **kwargs: None):
+                    tools = SeltzTools()
+                    tools.client = None
+                    tools.max_documents = 10
+                    tools.context = None
+                    tools.profile = None
+                    tools.show_results = False
+                    result = tools.search_seltz("test query")
+                    assert "SELTZ_API_KEY not set" in result
 
 
 def test_init_invalid_max_documents():
     """Test initialization with invalid max_documents raises error."""
-    with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-        with pytest.raises(ValueError, match="max_documents must be greater than 0"):
-            SeltzTools(max_documents=0)
+    with patch("agno.tools.seltz.Includes"):
+        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+            with pytest.raises(ValueError, match="max_documents must be greater than 0"):
+                SeltzTools(max_documents=0)
 
 
 def test_search_invalid_max_documents(seltz_tools):
@@ -149,6 +189,8 @@ def test_parse_documents_skips_empty(seltz_tools):
     empty_doc = Mock()
     empty_doc.url = None
     empty_doc.content = None
+    # Mock to_dict() returning empty dict (new SDK behavior)
+    empty_doc.to_dict = Mock(return_value={})
 
     result = seltz_tools._parse_documents([empty_doc])
     result_data = json.loads(result)
@@ -156,12 +198,27 @@ def test_parse_documents_skips_empty(seltz_tools):
     assert len(result_data) == 0
 
 
+def test_parse_documents_fallback_without_to_dict(seltz_tools):
+    """Test parsing documents without to_dict method (fallback for old SDK)."""
+    old_style_doc = Mock(spec=["url", "content"])
+    old_style_doc.url = "https://example.com"
+    old_style_doc.content = "Test content"
+
+    result = seltz_tools._parse_documents([old_style_doc])
+    result_data = json.loads(result)
+
+    assert len(result_data) == 1
+    assert result_data[0]["url"] == "https://example.com"
+    assert result_data[0]["content"] == "Test content"
+
+
 def test_init_with_all_flag():
     """Test initialization with all=True enables all tools."""
     with patch("agno.tools.seltz.Seltz"):
-        with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-            tools = SeltzTools(all=True, enable_search=False)
-            assert "search_seltz" in [func.name for func in tools.functions.values()]
+        with patch("agno.tools.seltz.Includes"):
+            with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+                tools = SeltzTools(all=True, enable_search=False)
+                assert "search_seltz" in [func.name for func in tools.functions.values()]
 
 
 @pytest.mark.parametrize(
@@ -179,5 +236,38 @@ def test_error_handling(seltz_tools, mock_seltz_client, exception):
     """Test error handling in search."""
     mock_seltz_client.search.side_effect = exception
 
-    result = seltz_tools.search_seltz("test query")
-    assert "Error" in result
+    with patch("agno.tools.seltz.Includes"):
+        result = seltz_tools.search_seltz("test query")
+        assert "Error" in result
+
+
+def test_search_with_context(seltz_tools, mock_seltz_client):
+    """Test search with context parameter."""
+    mock_response = Mock()
+    mock_response.documents = [create_mock_document(url="https://example.com", content="Example content")]
+    mock_seltz_client.search.return_value = mock_response
+
+    with patch("agno.tools.seltz.Includes") as mock_includes:
+        mock_includes_instance = Mock()
+        mock_includes.return_value = mock_includes_instance
+
+        result = seltz_tools.search_seltz("test query", context="looking for Python tutorials")
+        result_data = json.loads(result)
+
+        assert len(result_data) == 1
+        mock_seltz_client.search.assert_called_with(
+            query="test query",
+            includes=mock_includes_instance,
+            context="looking for Python tutorials",
+            profile=None,
+        )
+
+
+def test_init_with_context_and_profile():
+    """Test initialization with context and profile parameters."""
+    with patch("agno.tools.seltz.Seltz"):
+        with patch("agno.tools.seltz.Includes"):
+            with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
+                tools = SeltzTools(context="default context", profile="test_profile")
+                assert tools.context == "default context"
+                assert tools.profile == "test_profile"

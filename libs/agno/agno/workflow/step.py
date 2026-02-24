@@ -30,7 +30,16 @@ from agno.session.workflow import WorkflowSession
 from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import (
+    ErrorRequirement,
+    OnError,
+    OnReject,
+    StepInput,
+    StepOutput,
+    StepRequirement,
+    StepType,
+    UserInputField,
+)
 
 StepExecutor = Callable[
     [StepInput],
@@ -72,6 +81,23 @@ class Step:
     add_workflow_history: Optional[bool] = None
     num_history_runs: int = 3
 
+    # Human-in-the-loop (HITL) configuration
+    # If True, the step will pause before execution and require user confirmation
+    requires_confirmation: bool = False
+    # Message to display to the user when requesting confirmation
+    confirmation_message: Optional[str] = None
+    # What to do when step is rejected: OnReject.skip (skip step, continue workflow) or OnReject.cancel (cancel workflow)
+    on_reject: Union[OnReject, str] = OnReject.skip
+    # If True, the step will pause before execution and require user input
+    requires_user_input: bool = False
+    # Message to display to the user when requesting input
+    user_input_message: Optional[str] = None
+    # Schema for user input fields (list of dicts with name, field_type, description, required)
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+    # What to do when step encounters an error: OnError.fail (default), OnError.skip, OnError.pause (HITL)
+    # OnError.pause triggers HITL allowing user to retry or skip the failed step
+    on_error: Union[OnError, str] = OnError.skip
+
     _retry_count: int = 0
 
     def __init__(
@@ -87,7 +113,34 @@ class Step:
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
+        requires_confirmation: bool = False,
+        confirmation_message: Optional[str] = None,
+        on_reject: Union[OnReject, str] = OnReject.skip,
+        requires_user_input: bool = False,
+        user_input_message: Optional[str] = None,
+        user_input_schema: Optional[List[Dict[str, Any]]] = None,
+        on_error: Union[OnError, str] = OnError.skip,
     ):
+        # Auto-detect HITL metadata from @hitl decorator on executor function
+        if executor is not None:
+            from agno.workflow.decorators import get_pause_metadata
+
+            hitl_metadata = get_pause_metadata(executor)
+            if hitl_metadata:
+                # Use decorator values as defaults, but allow explicit params to override
+                if name is None and hitl_metadata.get("name"):
+                    name = hitl_metadata["name"]
+                if not requires_confirmation and hitl_metadata.get("requires_confirmation"):
+                    requires_confirmation = hitl_metadata["requires_confirmation"]
+                if confirmation_message is None and hitl_metadata.get("confirmation_message"):
+                    confirmation_message = hitl_metadata["confirmation_message"]
+                if not requires_user_input and hitl_metadata.get("requires_user_input"):
+                    requires_user_input = hitl_metadata["requires_user_input"]
+                if user_input_message is None and hitl_metadata.get("user_input_message"):
+                    user_input_message = hitl_metadata["user_input_message"]
+                if user_input_schema is None and hitl_metadata.get("user_input_schema"):
+                    user_input_schema = hitl_metadata["user_input_schema"]
+
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
             name = getattr(executor, "__name__", None)
@@ -107,6 +160,13 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
+        self.requires_confirmation = requires_confirmation
+        self.confirmation_message = confirmation_message
+        self.on_reject = on_reject
+        self.requires_user_input = requires_user_input
+        self.user_input_message = user_input_message
+        self.user_input_schema = user_input_schema
+        self.on_error = on_error
         self.step_id = step_id
 
         if step_id is None:
@@ -127,6 +187,13 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input_schema": self.user_input_schema,
+            "on_reject": self.on_reject,
+            "on_error": self.on_error,
         }
 
         if self.agent is not None:
@@ -193,6 +260,13 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
+            requires_confirmation=config.get("requires_confirmation", False),
+            confirmation_message=config.get("confirmation_message"),
+            on_reject=config.get("on_reject", "cancel"),
+            requires_user_input=config.get("requires_user_input", False),
+            user_input_message=config.get("user_input_message"),
+            user_input_schema=config.get("user_input_schema"),
+            on_error=config.get("on_error", "fail"),
             agent=agent,
             team=team,
             executor=executor,
@@ -233,6 +307,80 @@ class Step:
             )
 
         return links
+
+    def create_step_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for HITL pause (confirmation or user input).
+
+        Args:
+            step_index: Index of the step in the workflow.
+            step_input: The prepared input for the step.
+
+        Returns:
+            StepRequirement configured for this step's HITL needs.
+        """
+        user_input_schema = self._normalize_user_input_schema() if self.requires_user_input else None
+
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            step_type="Step",
+            requires_confirmation=self.requires_confirmation,
+            confirmation_message=self.confirmation_message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            requires_user_input=self.requires_user_input,
+            user_input_message=self.user_input_message,
+            user_input_schema=user_input_schema,
+            step_input=step_input,
+        )
+
+    def create_error_requirement(
+        self,
+        step_index: int,
+        error: Exception,
+    ) -> ErrorRequirement:
+        """Create an ErrorRequirement for HITL pause on error.
+
+        Args:
+            step_index: Index of the step in the workflow.
+            error: The exception that was raised.
+
+        Returns:
+            ErrorRequirement configured for error handling.
+        """
+        return ErrorRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            retry_count=self._retry_count,
+        )
+
+    def _normalize_user_input_schema(self) -> Optional[List[UserInputField]]:
+        """Normalize user_input_schema to a list of UserInputField objects."""
+        if not self.user_input_schema:
+            return None
+
+        result: List[UserInputField] = []
+        for f in self.user_input_schema:
+            if isinstance(f, UserInputField):
+                result.append(f)
+            elif isinstance(f, dict):
+                result.append(
+                    UserInputField(
+                        name=f["name"],
+                        field_type=f.get("field_type", "str"),
+                        description=f.get("description"),
+                        required=f.get("required", True),
+                        allowed_values=f.get("allowed_values"),
+                    )
+                )
+        return result
 
     @property
     def executor_name(self) -> str:
@@ -484,6 +632,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -503,6 +660,16 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if hasattr(response, "is_paused") and response.is_paused:
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -743,6 +910,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
                             images=images,
@@ -777,6 +953,20 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if (
+                            active_executor_run_response is not None
+                            and hasattr(active_executor_run_response, "is_paused")
+                            and active_executor_run_response.is_paused
+                        ):
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -1009,6 +1199,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1028,6 +1227,16 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if hasattr(response, "is_paused") and response.is_paused:
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -1262,6 +1471,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
                             images=images,
@@ -1296,6 +1514,20 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if (
+                            active_executor_run_response is not None
+                            and hasattr(active_executor_run_response, "is_paused")
+                            and active_executor_run_response.is_paused
+                        ):
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         final_response = active_executor_run_response  # type: ignore
                     else:
