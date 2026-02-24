@@ -28,6 +28,23 @@ from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.models.openai.responses import OpenAIResponses
 
+try:
+    import groq  # noqa: F401
+
+    HAS_GROQ = True
+except ImportError:
+    HAS_GROQ = False
+
+try:
+    import cerebras.cloud.sdk  # noqa: F401
+
+    HAS_CEREBRAS = True
+except (ImportError, ModuleNotFoundError):
+    HAS_CEREBRAS = False
+
+requires_groq = pytest.mark.skipif(not HAS_GROQ, reason="groq SDK not installed")
+requires_cerebras = pytest.mark.skipif(not HAS_CEREBRAS, reason="cerebras-cloud-sdk not installed")
+
 
 # ---------------------------------------------------------------------------
 # Helper: build Gemini-style combined tool message
@@ -456,6 +473,7 @@ class TestDeepSeekCrossProvider:
 # ===========================================================================
 # 5. Groq
 # ===========================================================================
+@requires_groq
 class TestGroqCrossProvider:
     def setup_method(self):
         from agno.models.groq import Groq
@@ -555,11 +573,14 @@ class TestOpenAILikeInheritors:
 
     @pytest.fixture(
         params=[
-            ("openrouter", "OpenRouter", "openai/gpt-4o"),
-            ("aimlapi", "AIMLAPI", "gpt-4o"),
-            ("cerebras_openai", "CerebrasOpenAI", "llama-3.3-70b"),
+            pytest.param(("openrouter", "OpenRouter", "openai/gpt-4o"), id="OpenRouter"),
+            pytest.param(("aimlapi", "AIMLAPI", "gpt-4o"), id="AIMLAPI"),
+            pytest.param(
+                ("cerebras_openai", "CerebrasOpenAI", "llama-3.3-70b"),
+                id="CerebrasOpenAI",
+                marks=requires_cerebras,
+            ),
         ],
-        ids=["OpenRouter", "AIMLAPI", "CerebrasOpenAI"],
     )
     def model(self, request):
         module_name, class_name, model_id = request.param
