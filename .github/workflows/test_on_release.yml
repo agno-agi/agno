@@ -846,7 +846,8 @@ jobs:
           ./libs/agno/tests/integration/teams/test_structured_output.py \
           ./libs/agno/tests/integration/teams/test_tool_compression.py \
           ./libs/agno/tests/integration/teams/test_metrics.py \
-          ./libs/agno/tests/integration/teams/test_parser_model.py
+          ./libs/agno/tests/integration/teams/test_parser_model.py \
+          ./libs/agno/tests/integration/teams/test_tasks_mode_streaming.py
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest
