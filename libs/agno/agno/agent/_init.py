@@ -243,7 +243,7 @@ def _set_tool_execute_mode(agent: Agent) -> None:
                 "tool_execute_mode=True requires tools to be a list (not a callable factory). "
                 "Use tool_execute_mode_tools to specify which tools to wrap."
             )
-        tools_to_wrap = list(agent.tools)
+        tools_to_wrap = [t for t in agent.tools if not isinstance(t, dict)]
         agent.tools = []
 
     if not tools_to_wrap:
