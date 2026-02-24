@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -544,17 +544,17 @@ class OllamaAnthropic(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage]) -> MessageMetrics:
         """
-        Parse the given Anthropic-specific usage into an Agno Metrics object.
+        Parse the given Anthropic-specific usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from the API
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0
