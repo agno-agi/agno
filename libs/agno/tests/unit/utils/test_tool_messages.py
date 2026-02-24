@@ -330,3 +330,291 @@ class TestMixedMessages:
         assert result[2].tool_name == "add"
         assert result[6].tool_call_id == "c2"
         assert result[6].content == '{"result": 10}'
+
+
+class TestIdempotency:
+    def test_double_normalize_produces_same_result(self):
+        combined = _gemini_combined([("c1", "a", "r1"), ("c2", "b", "r2")])
+        once = normalize_tool_result_messages([combined], compress_tool_results=True)
+        twice = normalize_tool_result_messages(once, compress_tool_results=True)
+        assert [(m.tool_call_id, m.content, m.tool_name, m.compressed_content) for m in twice] == [
+            (m.tool_call_id, m.content, m.tool_name, m.compressed_content) for m in once
+        ]
+
+    def test_triple_normalize_stable(self):
+        combined = _gemini_combined([("c1", "fn", "result")])
+        first = normalize_tool_result_messages([combined])
+        second = normalize_tool_result_messages(first)
+        third = normalize_tool_result_messages(second)
+        assert len(third) == 1
+        assert third[0].tool_call_id == "c1"
+        assert third[0].content == "result"
+
+
+class TestEmptyStringToolCallId:
+    def test_empty_string_id_not_treated_as_missing(self):
+        msg = Message(role="tool", content="result", tool_call_id="", tool_name="fn")
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 1
+        assert result[0].tool_call_id == ""
+        assert result[0].content == "result"
+
+    def test_empty_string_id_with_tool_calls_does_not_split(self):
+        msg = Message(
+            role="tool",
+            content="result",
+            tool_call_id="",
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "r1"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 1
+        assert result[0].tool_call_id == ""
+
+    def test_empty_string_id_with_list_content_normalizes(self):
+        msg = Message(role="tool", content=["a", "b"], tool_call_id="", tool_name="fn")
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 1
+        assert result[0].content == "a\nb"
+        assert result[0].tool_call_id == ""
+
+
+class TestNonStringToolCallId:
+    def test_integer_id_cast_to_string(self):
+        msg = Message(
+            role="tool",
+            content=["r1"],
+            tool_calls=[{"tool_call_id": 123, "tool_name": "fn", "content": "r1"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 1
+        assert result[0].tool_call_id == "123"
+
+    def test_float_id_cast_to_string(self):
+        msg = Message(
+            role="tool",
+            content=["r1"],
+            tool_calls=[{"tool_call_id": 1.5, "tool_name": "fn", "content": "r1"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert result[0].tool_call_id == "1.5"
+
+    def test_bool_id_cast_to_string(self):
+        msg = Message(
+            role="tool",
+            content=["r1"],
+            tool_calls=[{"tool_call_id": True, "tool_name": "fn", "content": "r1"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert result[0].tool_call_id == "True"
+
+
+class TestSplitFieldPreservation:
+    def test_provider_data_preserved(self):
+        msg = Message(
+            role="tool",
+            content=["r1", "r2"],
+            provider_data={"gemini_safety": {"rating": "safe"}},
+            tool_calls=[
+                {"tool_call_id": "c1", "tool_name": "a", "content": "r1"},
+                {"tool_call_id": "c2", "tool_name": "b", "content": "r2"},
+            ],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 2
+        assert result[0].provider_data == {"gemini_safety": {"rating": "safe"}}
+        assert result[1].provider_data == {"gemini_safety": {"rating": "safe"}}
+
+    def test_from_history_preserved(self):
+        msg = Message(
+            role="tool",
+            content=["r1"],
+            from_history=True,
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "r1"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert result[0].from_history is True
+
+    def test_created_at_preserved(self):
+        msg = Message(
+            role="tool",
+            content=["r1"],
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "r1"}],
+        )
+        original_ts = msg.created_at
+        result = normalize_tool_result_messages([msg])
+        assert result[0].created_at == original_ts
+
+    def test_metrics_not_shared_between_splits(self):
+        msg = _gemini_combined([("c1", "a", "r1"), ("c2", "b", "r2")])
+        result = normalize_tool_result_messages([msg])
+        assert result[0].metrics is not result[1].metrics
+        assert result[0].metrics is not msg.metrics
+
+
+class TestMixedContentTypes:
+    def test_content_list_with_dict_item(self):
+        msg = Message(
+            role="tool",
+            content=[{"nested": {"key": [1, 2]}}],
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "compressed"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert "nested" in result[0].content
+
+    def test_content_list_with_int_item(self):
+        msg = Message(
+            role="tool",
+            content=[42],
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "compressed"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert result[0].content == "42"
+
+    def test_content_list_with_none_item_falls_back_to_tc(self):
+        msg = Message(
+            role="tool",
+            content=[None],
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "fallback"}],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 1
+        assert result[0].content is None or result[0].content == "fallback"
+
+    def test_content_list_with_mixed_types(self):
+        msg = Message(
+            role="tool",
+            content=["plain", {"nested": True}, 7],
+            tool_name="a, b, c",
+            tool_calls=[
+                {"tool_call_id": "c1", "tool_name": "a", "content": "x1"},
+                {"tool_call_id": "c2", "tool_name": "b", "content": "x2"},
+                {"tool_call_id": "c3", "tool_name": "c", "content": "x3"},
+            ],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 3
+        assert result[0].content == "plain"
+        assert "nested" in result[1].content
+        assert result[2].content == "7"
+
+
+class TestScalarContentWithMultipleToolCalls:
+    def test_scalar_content_reused_for_each_split(self):
+        msg = Message(
+            role="tool",
+            content="shared-output",
+            tool_calls=[
+                {"tool_call_id": "c1", "tool_name": "a", "content": "tc1"},
+                {"tool_call_id": "c2", "tool_name": "b", "content": "tc2"},
+            ],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 2
+        assert result[0].content == "shared-output"
+        assert result[1].content == "shared-output"
+
+
+class TestToolNameFallbackOverflow:
+    def test_names_shorter_than_tool_calls(self):
+        msg = Message(
+            role="tool",
+            content=["r1", "r2", "r3"],
+            tool_name="first, second",
+            tool_calls=[
+                {"tool_call_id": "c1", "content": "x1"},
+                {"tool_call_id": "c2", "content": "x2"},
+                {"tool_call_id": "c3", "content": "x3"},
+            ],
+        )
+        result = normalize_tool_result_messages([msg])
+        assert result[0].tool_name == "first"
+        assert result[1].tool_name == "second"
+        assert result[2].tool_name is None
+
+
+class TestFunctionRolePassthrough:
+    def test_function_role_not_processed_as_tool(self):
+        msg = Message(role="function", name="legacy_fn", content='{"ok": true}')
+        result = normalize_tool_result_messages([msg])
+        assert result[0] is msg
+
+    def test_function_role_content_not_modified(self):
+        msg = Message(role="function", content=["a", "b"])
+        result = normalize_tool_result_messages([msg])
+        assert result[0] is msg
+        assert result[0].content == ["a", "b"]
+
+
+class TestCombinedWithoutToolCalls:
+    def test_list_content_no_tool_calls_normalizes_content(self):
+        msg = Message(role="tool", content=["r1", "r2"], tool_name="a, b")
+        result = normalize_tool_result_messages([msg])
+        assert len(result) == 1
+        assert result[0].content == "r1\nr2"
+
+    def test_list_content_no_tool_calls_preserves_tool_call_id(self):
+        msg = Message(role="tool", content=["r1"], tool_call_id="c1", tool_name="fn")
+        result = normalize_tool_result_messages([msg])
+        assert result[0].tool_call_id == "c1"
+        assert result[0].content == "r1"
+
+
+class TestLargeMessages:
+    def test_100_tool_calls(self):
+        tool_calls_data = [(f"call_{i}", f"tool_{i}", f"result_{i}") for i in range(100)]
+        combined = _gemini_combined(tool_calls_data)
+        result = normalize_tool_result_messages([combined])
+        assert len(result) == 100
+        assert result[0].tool_call_id == "call_0"
+        assert result[0].content == "result_0"
+        assert result[99].tool_call_id == "call_99"
+        assert result[99].content == "result_99"
+
+    def test_100_tool_calls_with_compression(self):
+        tool_calls_data = [(f"call_{i}", f"tool_{i}", f"result_{i}") for i in range(100)]
+        combined = _gemini_combined(tool_calls_data)
+        result = normalize_tool_result_messages([combined], compress_tool_results=True)
+        assert len(result) == 100
+        for i, msg in enumerate(result):
+            assert msg.tool_call_id == f"call_{i}"
+            assert msg.compressed_content == f"result_{i}"
+
+
+class TestNestedJsonRoundTrip:
+    def test_nested_dict_through_normalize_serialize_restore(self):
+        msg = Message(
+            role="tool",
+            content=[{"outer": {"inner": [1, {"deep": True}]}}],
+            tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": {"summary": {"tokens": [1, 2, 3]}}}],
+        )
+        normalized = normalize_tool_result_messages([msg], compress_tool_results=True)
+        assert len(normalized) == 1
+        assert "outer" in normalized[0].content
+        assert normalized[0].compressed_content is not None
+
+        serialized = normalized[0].to_dict()
+        restored = Message.from_dict(serialized)
+        renormalized = normalize_tool_result_messages([restored], compress_tool_results=True)
+        assert renormalized[0].tool_call_id == "c1"
+        assert renormalized[0].content == normalized[0].content
+
+
+class TestInputNotMutated:
+    def test_original_messages_list_unchanged(self):
+        combined = _gemini_combined([("c1", "a", "r1"), ("c2", "b", "r2")])
+        original_msgs = [combined]
+        original_len = len(original_msgs)
+        original_content = combined.content.copy() if isinstance(combined.content, list) else combined.content
+        original_tc = combined.tool_calls.copy() if combined.tool_calls else None
+
+        normalize_tool_result_messages(original_msgs)
+
+        assert len(original_msgs) == original_len
+        assert combined.content == original_content
+        assert combined.tool_calls == original_tc
+
+    def test_original_message_fields_not_modified(self):
+        msg = Message(role="tool", content=["a", "b"], tool_call_id="c1", tool_name="fn")
+        original_content = msg.content.copy()
+        normalize_tool_result_messages([msg])
+        assert msg.content == original_content

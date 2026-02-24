@@ -1,3 +1,4 @@
+import copy
 from typing import Any, List, Optional, Union
 
 from agno.models.message import Message
@@ -26,11 +27,14 @@ def normalize_tool_result_messages(
 
         # Case 1: Gemini combined tool message
         # Detection: role="tool", no top-level tool_call_id, has tool_calls list
-        if not msg.tool_call_id and msg.tool_calls:
+        # Use `is None` (not falsy check) so empty-string IDs are treated as present
+        if msg.tool_call_id is None and msg.tool_calls:
             content_list = msg.content if isinstance(msg.content, list) else None
 
             for idx, tc in enumerate(msg.tool_calls):
                 tc_id = tc.get("tool_call_id") or tc.get("id") or tc.get("call_id")
+                if tc_id is not None:
+                    tc_id = str(tc_id)
                 tc_name = tc.get("tool_name")
 
                 if not tc_name and msg.tool_name and "," in msg.tool_name:
@@ -56,7 +60,7 @@ def normalize_tool_result_messages(
                 # Final content: prefer original, fall back to tc content
                 content_value = original if original is not None else tc.get("content")
 
-                if not tc_id:
+                if tc_id is None:
                     log_warning(f"Skipping tool call entry with no ID in combined message (tool_name={tc_name})")
                     continue
 
@@ -77,7 +81,10 @@ def normalize_tool_result_messages(
                     compressed_content=compressed if compressed is not None else None,
                     tool_call_id=tc_id,
                     tool_name=tc_name,
-                    metrics=msg.metrics,
+                    metrics=copy.copy(msg.metrics),
+                    provider_data=msg.provider_data,
+                    from_history=msg.from_history,
+                    created_at=msg.created_at,
                 )
                 normalized.append(new_msg)
             continue
