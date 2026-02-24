@@ -356,6 +356,8 @@ def parse_tools(
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
+                if agent._team is not None:
+                    _func._team = agent._team
                 # Respect the function's explicit strict setting if set
                 effective_strict = strict if _func.strict is None else _func.strict
                 _func.process_entrypoint(strict=effective_strict)
@@ -381,6 +383,8 @@ def parse_tools(
             tool.process_entrypoint(strict=effective_strict)
 
             tool._agent = agent
+            if agent._team is not None:
+                tool._team = agent._team
             if strict and tool.strict is None:
                 tool.strict = True
             if agent.tool_hooks is not None:
@@ -419,6 +423,8 @@ def parse_tools(
                         )
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
+                if agent._team is not None:
+                    _func._team = agent._team
                 if strict:
                     _func.strict = True
                 if agent.tool_hooks is not None:
