@@ -11,3 +11,4 @@ Accuracy examples evaluate how well responses match expected outputs.
 - `accuracy_with_tools.py` - Accuracy evaluation for a tool-using agent.
 - `db_logging.py` - Accuracy evaluation with PostgreSQL result logging.
 - `evaluator_agent.py` - Accuracy evaluation using a custom evaluator agent.
+- `accuracy_eval_metrics.py` - Eval model metrics accumulated into agent run_output under "eval_model" detail key.

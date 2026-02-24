@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
@@ -62,27 +61,6 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
-
-
-def calculate_run_metrics(
-    agent: Agent, messages: List[Message], current_run_metrics: Optional[Metrics] = None
-) -> Metrics:
-    """Sum the metrics of the given messages into a Metrics object"""
-    metrics = current_run_metrics or Metrics()
-
-    assistant_message_role = agent.model.assistant_message_role if agent.model is not None else "assistant"
-    for m in messages:
-        if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-            metrics += m.metrics
-
-    # If the run metrics were already initialized, keep the time related metrics
-    if current_run_metrics is not None:
-        metrics.timer = current_run_metrics.timer
-        metrics.duration = current_run_metrics.duration
-        metrics.time_to_first_token = current_run_metrics.time_to_first_token
-
-    return metrics
-
 
 ###########################################################################
 # Reasoning
@@ -302,6 +280,7 @@ def reason(
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
             run_context=run_context,
+            run_response=run_response,
         )
     )
 
@@ -348,6 +327,7 @@ async def areason(
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
             run_context=run_context,
+            run_response=run_response,
         )
     )
 
@@ -382,7 +362,11 @@ def process_parser_response(
 
 
 def parse_response_with_parser_model(
-    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    agent: Agent,
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.agent._messages import get_messages_for_parser_model
@@ -402,6 +386,13 @@ def parse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(parser_model_response, agent.parser_model, ModelType.PARSER_MODEL, run_response)
+
         process_parser_response(
             agent=agent,
             model_response=model_response,
@@ -414,7 +405,11 @@ def parse_response_with_parser_model(
 
 
 async def aparse_response_with_parser_model(
-    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    agent: Agent,
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.agent._messages import get_messages_for_parser_model
@@ -434,6 +429,13 @@ async def aparse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(parser_model_response, agent.parser_model, ModelType.PARSER_MODEL, run_response)
+
         process_parser_response(
             agent=agent,
             model_response=model_response,
@@ -477,6 +479,7 @@ def parse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             ):
                 yield from handle_model_response_chunk(
                     agent,
@@ -544,6 +547,7 @@ async def aparse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             )
             async for model_response_event in model_response_stream:  # type: ignore
                 for event in handle_model_response_chunk(
@@ -580,7 +584,9 @@ async def aparse_response_with_parser_model_stream(
             log_warning("A response model is required to parse the response with a parser model")
 
 
-def generate_response_with_output_model(agent: Agent, model_response: ModelResponse, run_messages: RunMessages) -> None:
+def generate_response_with_output_model(
+    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_response: Optional[RunOutput] = None
+) -> None:
     """Parse the model response using the output model."""
     from agno.agent._messages import get_messages_for_output_model
 
@@ -589,6 +595,13 @@ def generate_response_with_output_model(agent: Agent, model_response: ModelRespo
 
     messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
     output_model_response: ModelResponse = agent.output_model.response(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(output_model_response, agent.output_model, ModelType.OUTPUT_MODEL, run_response)
+
     model_response.content = output_model_response.content
 
 
@@ -621,7 +634,9 @@ def generate_response_with_output_model_stream(
 
     model_response = ModelResponse(content="")
 
-    for model_response_event in agent.output_model.response_stream(messages=messages_for_output_model):
+    for model_response_event in agent.output_model.response_stream(
+        messages=messages_for_output_model, run_response=run_response
+    ):
         yield from handle_model_response_chunk(
             agent,
             session=session,
@@ -643,12 +658,10 @@ def generate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
 async def agenerate_response_with_output_model(
-    agent: Agent, model_response: ModelResponse, run_messages: RunMessages
+    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_response: Optional[RunOutput] = None
 ) -> None:
     """Parse the model response using the output model."""
     from agno.agent._messages import get_messages_for_output_model
@@ -658,6 +671,13 @@ async def agenerate_response_with_output_model(
 
     messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
     output_model_response: ModelResponse = await agent.output_model.aresponse(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(output_model_response, agent.output_model, ModelType.OUTPUT_MODEL, run_response)
+
     model_response.content = output_model_response.content
 
 
@@ -690,7 +710,9 @@ async def agenerate_response_with_output_model_stream(
 
     model_response = ModelResponse(content="")
 
-    model_response_stream = agent.output_model.aresponse_stream(messages=messages_for_output_model)
+    model_response_stream = agent.output_model.aresponse_stream(
+        messages=messages_for_output_model, run_response=run_response
+    )
 
     async for model_response_event in model_response_stream:
         for event in handle_model_response_chunk(
@@ -715,8 +737,6 @@ async def agenerate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
 # ---------------------------------------------------------------------------
@@ -985,10 +1005,6 @@ def update_run_response(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1117,10 +1133,6 @@ def handle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
     # Determine reasoning completed
     if stream_events and reasoning_state["reasoning_started"]:
@@ -1273,10 +1285,6 @@ async def ahandle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
