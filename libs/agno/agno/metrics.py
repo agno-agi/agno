@@ -787,7 +787,7 @@ def accumulate_eval_metrics(
 
 def merge_background_metrics(
     run_response: "Union[RunOutput, TeamRunOutput]",
-    background_metrics: "List[Optional[RunMetrics]]",
+    background_metrics: "List[RunMetrics]",
 ) -> None:
     """Merge background task metrics into run_response.metrics on the main thread.
 

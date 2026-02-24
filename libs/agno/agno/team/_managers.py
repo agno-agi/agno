@@ -286,8 +286,8 @@ async def _astart_learning_task(
     run_messages: RunMessages,
     session: TeamSession,
     user_id: Optional[str],
-    existing_task: Optional[asyncio.Task[None]] = None,
-) -> Optional[asyncio.Task[None]]:
+    existing_task: Optional[asyncio.Task[Optional[RunMetrics]]] = None,
+) -> Optional[asyncio.Task[Optional[RunMetrics]]]:
     """Start learning extraction as async task.
 
     Args:
