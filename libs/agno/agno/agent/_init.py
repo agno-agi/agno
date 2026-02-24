@@ -215,9 +215,35 @@ def get_models(agent: Agent) -> None:
         agent.parser_model = get_model(agent.parser_model)
     if agent.output_model is not None:
         agent.output_model = get_model(agent.output_model)
+    if agent.code_model is not None:
+        agent.code_model = get_model(agent.code_model)
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
+
+
+def _set_code_mode(agent: Agent) -> None:
+    from agno.tools.code_mode import CodeModeTool
+
+    if agent.code_mode_tools is not None:
+        tools_to_wrap = list(agent.code_mode_tools)
+    else:
+        if not isinstance(agent.tools, list):
+            raise ValueError(
+                "code_mode=True requires tools to be a list (not a callable factory). "
+                "Use code_mode_tools to specify which tools to wrap."
+            )
+        tools_to_wrap = list(agent.tools)
+        agent.tools = []
+
+    if not tools_to_wrap:
+        log_warning("code_mode=True but no tools to wrap")
+        return
+
+    agent._code_mode_tool = CodeModeTool(
+        tools=tools_to_wrap,
+        code_model=agent.code_model,
+    )
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
@@ -240,6 +266,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_compression_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
+    if agent.code_mode:
+        _set_code_mode(agent)
 
     log_debug(f"Agent ID: {agent.id}", center=True)
 

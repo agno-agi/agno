@@ -135,6 +135,10 @@ def get_tools(
         _raise_if_async_tools_in_list(resolved_tools)
         agent_tools.extend(resolved_tools)
 
+    # Add code mode tool if initialized
+    if agent._code_mode_tool is not None:
+        agent_tools.append(agent._code_mode_tool)
+
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
@@ -256,6 +260,10 @@ async def aget_tools(
 
             # Add the tool (MCP tools that passed checks, or any non-MCP tool)
             agent_tools.append(tool)
+
+    # Add code mode tool if initialized
+    if agent._code_mode_tool is not None:
+        agent_tools.append(agent._code_mode_tool)
 
     # Add tools for accessing memory
     if agent.read_chat_history:

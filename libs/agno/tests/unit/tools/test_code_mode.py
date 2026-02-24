@@ -342,6 +342,79 @@ class TestFrameworkInjection:
         assert "result for test" in output
 
 
+class TestPreapprovedModules:
+    def test_datetime_available(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = str(type(datetime.date.today()))")
+        assert "date" in output
+
+    def test_datetime_operations(self, code_mode_callables):
+        output = code_mode_callables.run_code("now = datetime.datetime.now()\nresult = str(now.year)")
+        assert "202" in output
+
+    def test_re_available(self, code_mode_callables):
+        output = code_mode_callables.run_code('result = str(re.findall(r"[0-9]+", "abc123def456"))')
+        assert "123" in output
+        assert "456" in output
+
+    def test_re_sub(self, code_mode_callables):
+        output = code_mode_callables.run_code('result = re.sub(r"\\d+", "X", "hello42world99")')
+        assert output == "helloXworldX"
+
+    def test_collections_counter(self, code_mode_callables):
+        output = code_mode_callables.run_code('c = collections.Counter("abracadabra")\nresult = str(c.most_common(2))')
+        assert "a" in output
+        assert "5" in output
+
+    def test_collections_defaultdict(self, code_mode_callables):
+        output = code_mode_callables.run_code(
+            "d = collections.defaultdict(list)\nd['k'].append(1)\nresult = str(dict(d))"
+        )
+        assert "k" in output
+        assert "1" in output
+
+
+class TestPreapprovedBuiltins:
+    def test_pow(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = str(pow(2, 10))")
+        assert output == "1024"
+
+    def test_pow_three_arg(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = str(pow(2, 10, 100))")
+        assert output == "24"
+
+    def test_divmod(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = str(divmod(17, 5))")
+        assert output == "(3, 2)"
+
+    def test_ord(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = str(ord('A'))")
+        assert output == "65"
+
+    def test_chr(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = chr(65)")
+        assert output == "A"
+
+    def test_hex(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = hex(255)")
+        assert output == "0xff"
+
+    def test_bin(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = bin(42)")
+        assert output == "0b101010"
+
+    def test_oct(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = oct(8)")
+        assert output == "0o10"
+
+    def test_format_builtin(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = format(255, '08b')")
+        assert output == "11111111"
+
+    def test_format_float(self, code_mode_callables):
+        output = code_mode_callables.run_code("result = format(3.14159, '.2f')")
+        assert output == "3.14"
+
+
 class TestAdditionalModules:
     def test_additional_module_available(self):
         import datetime

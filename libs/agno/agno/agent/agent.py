@@ -187,6 +187,14 @@ class Agent:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
+    # --- Code Mode ---
+    # Enable code mode: the agent writes Python code to orchestrate tool calls.
+    code_mode: bool = False
+    # A dedicated model for generating code (optional; main model writes code if not set).
+    code_model: Optional[Model] = None
+    # Tools to wrap in code mode. If None and code_mode=True, ALL user tools are wrapped.
+    code_mode_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
+
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
     read_chat_history: bool = False
@@ -409,6 +417,9 @@ class Agent:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        code_mode: bool = False,
+        code_model: Optional[Union[Model, str]] = None,
+        code_mode_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -561,6 +572,10 @@ class Agent:
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
 
+        self.code_mode = code_mode
+        self.code_model = code_model  # type: ignore[assignment]
+        self.code_mode_tools = code_mode_tools
+
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
         self.add_search_knowledge_instructions = add_search_knowledge_instructions
@@ -635,6 +650,7 @@ class Agent:
         self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
+        self._code_mode_tool: Optional[Any] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -652,6 +668,9 @@ class Agent:
         self.callable_knowledge_cache_key = callable_knowledge_cache_key
         self._callable_tools_cache: Dict[str, List[Any]] = {}
         self._callable_knowledge_cache: Dict[str, Any] = {}
+
+        if self.code_mode_tools and not self.code_mode:
+            log_warning("code_mode_tools provided but code_mode=False — code_mode_tools will be ignored")
 
         _init.get_models(self)
 
