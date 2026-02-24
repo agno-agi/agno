@@ -79,18 +79,26 @@ class ModelMetrics(BaseMetrics):
         self.reasoning_tokens += other.reasoning_tokens or 0
         if other.cost is not None:
             self.cost = (self.cost or 0) + other.cost
-        # Merge provider_metrics
+        # Merge provider_metrics (sum numeric values, keep latest for others)
         if other.provider_metrics is not None:
             if self.provider_metrics is None:
                 self.provider_metrics = {}
-            self.provider_metrics.update(other.provider_metrics)
+            for k, v in other.provider_metrics.items():
+                if (
+                    k in self.provider_metrics
+                    and isinstance(v, (int, float))
+                    and isinstance(self.provider_metrics[k], (int, float))
+                ):
+                    self.provider_metrics[k] += v
+                else:
+                    self.provider_metrics[k] = v
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         return {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+            if v is not None and (not isinstance(v, int) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
         }
 
     @classmethod
@@ -116,7 +124,7 @@ class ToolCallMetrics:
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer", None)
-        return {k: v for k, v in metrics_dict.items() if v is not None and (not isinstance(v, (int, float)) or v != 0)}
+        return {k: v for k, v in metrics_dict.items() if v is not None and (not isinstance(v, int) or v != 0)}
 
     def start_timer(self):
         """Start the timer and record start time."""
@@ -178,7 +186,7 @@ class MessageMetrics(BaseMetrics):
         return {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+            if v is not None and (not isinstance(v, int) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
         }
 
     @classmethod
@@ -226,11 +234,20 @@ class MessageMetrics(BaseMetrics):
             result.time_to_first_token = self_ttft
         elif other_ttft is not None:
             result.time_to_first_token = other_ttft
-        # Merge provider_metrics
+        # Merge provider_metrics (sum numeric values, keep latest for others)
         self_provider_metrics = self.provider_metrics
         other_provider_metrics = getattr(other, "provider_metrics", None)
         if self_provider_metrics is not None or other_provider_metrics is not None:
-            result.provider_metrics = {**(self_provider_metrics or {}), **(other_provider_metrics or {})}
+            merged_pm: Dict[str, Any] = {}
+            if self_provider_metrics:
+                merged_pm.update(self_provider_metrics)
+            if other_provider_metrics:
+                for k, v in other_provider_metrics.items():
+                    if k in merged_pm and isinstance(v, (int, float)) and isinstance(merged_pm[k], (int, float)):
+                        merged_pm[k] += v
+                    else:
+                        merged_pm[k] = v
+            result.provider_metrics = merged_pm
         return result
 
     def __radd__(self, other: Any) -> "MessageMetrics":
@@ -290,7 +307,7 @@ class RunMetrics(BaseMetrics):
                     {
                         k: v
                         for k, v in model_metric.items()
-                        if k in valid_model_metrics_fields and v is not None and v != 0
+                        if k in valid_model_metrics_fields and v is not None and (not isinstance(v, int) or v != 0)
                     }
                     for model_metric in model_metrics_list
                 ]
@@ -298,9 +315,7 @@ class RunMetrics(BaseMetrics):
         return {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None
-            and (not isinstance(v, (int, float)) or v != 0)
-            and (not isinstance(v, (dict, list)) or len(v) > 0)
+            if v is not None and (not isinstance(v, int) or v != 0) and (not isinstance(v, (dict, list)) or len(v) > 0)
         }
 
     @classmethod
@@ -385,7 +400,7 @@ class RunMetrics(BaseMetrics):
         elif other_cost is not None:
             result.cost = other_cost
 
-        # Merge additional_metrics
+        # Merge additional_metrics (sum numeric values, keep latest for others)
         self_am = self.additional_metrics
         other_am = getattr(other, "additional_metrics", None)
         if self_am is not None or other_am is not None:
@@ -393,7 +408,15 @@ class RunMetrics(BaseMetrics):
             if self_am:
                 result.additional_metrics.update(self_am)
             if other_am:
-                result.additional_metrics.update(other_am)
+                for k, v in other_am.items():
+                    if (
+                        k in result.additional_metrics
+                        and isinstance(v, (int, float))
+                        and isinstance(result.additional_metrics[k], (int, float))
+                    ):
+                        result.additional_metrics[k] += v
+                    else:
+                        result.additional_metrics[k] = v
 
         return result
 
@@ -451,7 +474,7 @@ class SessionMetrics(BaseMetrics):
                     {
                         k: v
                         for k, v in model_metric.items()
-                        if k in valid_model_metrics_fields and v is not None and v != 0
+                        if k in valid_model_metrics_fields and v is not None and (not isinstance(v, int) or v != 0)
                     }
                     for model_metric in model_metrics_list
                 ]
@@ -459,9 +482,7 @@ class SessionMetrics(BaseMetrics):
         return {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None
-            and (not isinstance(v, (int, float)) or v != 0)
-            and (not isinstance(v, (dict, list)) or len(v) > 0)
+            if v is not None and (not isinstance(v, int) or v != 0) and (not isinstance(v, (dict, list)) or len(v) > 0)
         }
 
     @classmethod
@@ -503,11 +524,19 @@ class SessionMetrics(BaseMetrics):
         if run_metrics.cost is not None:
             self.cost = (self.cost or 0) + run_metrics.cost
 
-        # Merge additional_metrics
+        # Merge additional_metrics (sum numeric values, keep latest for others)
         if run_metrics.additional_metrics is not None:
             if self.additional_metrics is None:
                 self.additional_metrics = {}
-            self.additional_metrics.update(run_metrics.additional_metrics)
+            for k, v in run_metrics.additional_metrics.items():
+                if (
+                    k in self.additional_metrics
+                    and isinstance(v, (int, float))
+                    and isinstance(self.additional_metrics[k], (int, float))
+                ):
+                    self.additional_metrics[k] += v
+                else:
+                    self.additional_metrics[k] = v
 
         # Merge per-model details: Dict[str, List[ModelMetrics]] -> Dict[str, List[ModelMetrics]]
         if run_metrics.details:
@@ -565,7 +594,7 @@ class SessionMetrics(BaseMetrics):
         elif other_cost is not None:
             cost = other_cost
 
-        # Merge additional_metrics
+        # Merge additional_metrics (sum numeric values, keep latest for others)
         merged_am = None
         other_am = getattr(other, "additional_metrics", None)
         if self.additional_metrics is not None or other_am is not None:
@@ -573,7 +602,11 @@ class SessionMetrics(BaseMetrics):
             if self.additional_metrics:
                 merged_am.update(self.additional_metrics)
             if other_am:
-                merged_am.update(other_am)
+                for k, v in other_am.items():
+                    if k in merged_am and isinstance(v, (int, float)) and isinstance(merged_am[k], (int, float)):
+                        merged_am[k] += v
+                    else:
+                        merged_am[k] = v
 
         return SessionMetrics(
             input_tokens=self.input_tokens + getattr(other, "input_tokens", 0),
@@ -804,8 +837,16 @@ def merge_background_metrics(
                     if not found:
                         metrics.details[model_type].append(ModelMetrics.from_dict(mm.to_dict()))
 
-        # Merge additional_metrics
+        # Merge additional_metrics (sum numeric values, keep latest for others)
         if bg_metrics.additional_metrics:
             if metrics.additional_metrics is None:
                 metrics.additional_metrics = {}
-            metrics.additional_metrics.update(bg_metrics.additional_metrics)
+            for k, v in bg_metrics.additional_metrics.items():
+                if (
+                    k in metrics.additional_metrics
+                    and isinstance(v, (int, float))
+                    and isinstance(metrics.additional_metrics[k], (int, float))
+                ):
+                    metrics.additional_metrics[k] += v
+                else:
+                    metrics.additional_metrics[k] = v
