@@ -1,70 +1,26 @@
 name: Claude Code
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened, assigned]
+    types: [opened]
   pull_request_review:
     types: [submitted]
 
 jobs:
-  # Automated code review on all non-draft PRs
-  # Uses both official plugins: code-review (4 agents) + pr-review-toolkit (6 agents)
-  review:
-    if: |
-      github.event_name == 'pull_request' &&
-      !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run Claude Code Review
-        id: claude-review
-        uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: |
-            code-review@claude-code-plugins
-            pr-review-toolkit@claude-code-plugins
-          track_progress: true
-          use_sticky_comment: true
-          show_full_output: true  # TEMP: remove after validation
-          claude_args: |
-            --model "claude-opus-4-6"
-          prompt: |
-            Review this PR: ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
-
-            After completing the review, you MUST end with a plain-text markdown summary of findings.
-            Never let the final action be a tool call.
-            If there are no issues, explicitly say "No high-confidence findings."
-
-            Agno-specific checks (always verify):
-            - Both sync and async variants exist for all new public methods
-            - No agent creation inside loops (agents should be reused)
-            - CLAUDE.md coding patterns are followed
-            - No f-strings for print lines where there are no variables
-
-  # Interactive assistant when @claude is mentioned
-  assistant:
+  claude:
+    concurrency:
+      group: claude-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
+    timeout-minutes: 15
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body || '', '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body || '', '@claude') || contains(github.event.issue.title || '', '@claude')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -78,8 +34,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Claude Code
-        id: claude
+      - name: Detect mode
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_URL: ${{ github.event.issue.pull_request.url || '' }}
+          COMMENT_BODY: ${{ github.event.comment.body || github.event.review.body || github.event.issue.body || '' }}
+        run: |
+          IS_PR="false"
+          case "$EVENT_NAME" in
+            pull_request_review_comment|pull_request_review) IS_PR="true" ;;
+            issue_comment) [ -n "$PR_URL" ] && IS_PR="true" ;;
+          esac
+
+          if [ "$IS_PR" = "true" ] && echo "$COMMENT_BODY" | grep -iqE '\breview\b'; then
+            echo "mode=review" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=assistant" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Claude Review
+        if: steps.detect.outputs.mode == 'review'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: |
+            code-review@claude-code-plugins
+            pr-review-toolkit@claude-code-plugins
+          use_sticky_comment: true
+          show_full_output: true
+          claude_args: |
+            --model "claude-opus-4-6"
+
+      - name: Claude Assistant
+        if: steps.detect.outputs.mode == 'assistant'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}

@@ -119,11 +119,13 @@ github_agent = Agent(
     ],
     tools=[
         GithubTools(
-            list_issues=True,
-            list_issue_comments=True,
-            get_pull_request=True,
-            get_issue=True,
-            get_pull_request_comments=True,
+            include_tools=[
+                "list_issues",
+                "list_issue_comments",
+                "get_pull_request",
+                "get_issue",
+                "get_pull_request_comments",
+            ]
         )
     ],
 )
@@ -137,9 +139,12 @@ local_python_agent = Agent(
         FileTools(base_dir=cwd),
         PythonTools(
             base_dir=Path(cwd),
-            list_files=True,
-            run_files=True,
-            uv_pip_install=True,
+            include_tools=[
+                "list_files",
+                "run_python_file_return_variable",
+                "save_to_file_and_run",
+                "uv_pip_install_package",
+            ],
         ),
     ],
 )

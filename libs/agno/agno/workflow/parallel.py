@@ -1,12 +1,12 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
-from copy import deepcopy
-from dataclasses import dataclass
+from copy import copy, deepcopy
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -52,10 +52,9 @@ class Parallel:
         Parallel("my_parallel", step1, step2)              # Name as first positional arg
     """
 
-    steps: WorkflowSteps
-
     name: Optional[str] = None
     description: Optional[str] = None
+    steps: WorkflowSteps = field(default_factory=list)
 
     def __init__(
         self,
@@ -221,13 +220,13 @@ class Parallel:
             steps=step_outputs,
         )
 
-    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[RunMetrics]:
         """Extract and aggregate metrics from parallel step outputs"""
         if not step_outputs:
             return None
 
         # Aggregate metrics from all parallel step outputs
-        total_metrics = Metrics()
+        total_metrics = RunMetrics()
 
         for result in step_outputs:
             if result.metrics:
@@ -303,6 +302,9 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            # (prevents race condition when agents have heterogeneous schemas)
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_result = step.execute(
@@ -314,7 +316,7 @@ class Parallel:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     session_state=step_session_state,
                     background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
@@ -455,6 +457,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_outputs = []
@@ -479,7 +483,7 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -629,6 +633,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 inner_step_result = await step.aexecute(
@@ -641,7 +647,7 @@ class Parallel:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
@@ -781,6 +787,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_outputs = []
@@ -805,7 +813,7 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
