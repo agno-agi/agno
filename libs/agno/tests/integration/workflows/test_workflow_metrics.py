@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.workflow import Condition, Parallel, Step, StepInput, StepOutput, Workflow
@@ -73,7 +73,7 @@ def test_workflow_duration_with_agent(shared_db, test_agent):
     if "agent_step" in response.metrics.steps:
         agent_step_metrics = response.metrics.steps["agent_step"]
         assert agent_step_metrics.metrics is not None
-        assert isinstance(agent_step_metrics.metrics, Metrics)
+        assert isinstance(agent_step_metrics.metrics, RunMetrics)
         assert agent_step_metrics.metrics.duration is not None
         assert agent_step_metrics.metrics.duration > 0
 
