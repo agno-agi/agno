@@ -102,24 +102,24 @@ def code_mode_mixed():
 
 class TestInitialization:
     def test_accepts_callables(self, code_mode_callables):
-        assert "search_items" in code_mode_callables._sync_functions
-        assert "get_item_details" in code_mode_callables._sync_functions
-        assert len(code_mode_callables._sync_functions) == 2
+        assert "search_items" in code_mode_callables.sandbox_functions
+        assert "get_item_details" in code_mode_callables.sandbox_functions
+        assert len(code_mode_callables.sandbox_functions) == 2
 
     def test_accepts_toolkit(self, code_mode_toolkit):
-        assert "greet" in code_mode_toolkit._sync_functions
-        assert "add" in code_mode_toolkit._sync_functions
-        assert len(code_mode_toolkit._sync_functions) == 2
+        assert "greet" in code_mode_toolkit.sandbox_functions
+        assert "add" in code_mode_toolkit.sandbox_functions
+        assert len(code_mode_toolkit.sandbox_functions) == 2
 
     def test_accepts_function_objects(self):
         func = Function.from_callable(search_items)
         cm = CodeModeTool(tools=[func])
-        assert "search_items" in cm._sync_functions
+        assert "search_items" in cm.sandbox_functions
 
     def test_accepts_mixed_types(self, code_mode_mixed):
-        assert "greet" in code_mode_mixed._sync_functions
-        assert "add" in code_mode_mixed._sync_functions
-        assert "search_items" in code_mode_mixed._sync_functions
+        assert "greet" in code_mode_mixed.sandbox_functions
+        assert "add" in code_mode_mixed.sandbox_functions
+        assert "search_items" in code_mode_mixed.sandbox_functions
 
     def test_registers_run_code(self, code_mode_callables):
         assert "run_code" in code_mode_callables.functions
@@ -133,53 +133,53 @@ class TestHITLExclusion:
         func = Function.from_callable(search_items)
         func.requires_confirmation = True
         cm = CodeModeTool(tools=[func])
-        assert "search_items" not in cm._sync_functions
+        assert "search_items" not in cm.sandbox_functions
 
     def test_excludes_requires_user_input(self):
         func = Function.from_callable(search_items)
         func.requires_user_input = True
         cm = CodeModeTool(tools=[func])
-        assert "search_items" not in cm._sync_functions
+        assert "search_items" not in cm.sandbox_functions
 
     def test_excludes_external_execution(self):
         func = Function.from_callable(search_items)
         func.external_execution = True
         cm = CodeModeTool(tools=[func])
-        assert "search_items" not in cm._sync_functions
+        assert "search_items" not in cm.sandbox_functions
 
     def test_non_hitl_tools_included(self):
         func = Function.from_callable(search_items)
         cm = CodeModeTool(tools=[func])
-        assert "search_items" in cm._sync_functions
+        assert "search_items" in cm.sandbox_functions
 
 
 class TestStubGeneration:
     def test_stubs_contain_function_names(self, code_mode_callables):
-        assert "def search_items(" in code_mode_callables._stubs
-        assert "def get_item_details(" in code_mode_callables._stubs
+        assert "def search_items(" in code_mode_callables.stubs
+        assert "def get_item_details(" in code_mode_callables.stubs
 
     def test_stubs_contain_parameters(self, code_mode_callables):
-        assert "query: str" in code_mode_callables._stubs
+        assert "query: str" in code_mode_callables.stubs
         # from_callable maps Python int to JSON Schema "integer" which maps to "int",
         # but the actual mapping depends on the schema. Check the param name exists.
-        assert "item_id:" in code_mode_callables._stubs
+        assert "item_id:" in code_mode_callables.stubs
 
     def test_stubs_contain_optional_defaults(self, code_mode_callables):
-        assert "category: str = None" in code_mode_callables._stubs
+        assert "category: str = None" in code_mode_callables.stubs
 
     def test_stubs_contain_docstrings(self, code_mode_callables):
-        assert "Search items by keyword" in code_mode_callables._stubs
-        assert "Returns:" in code_mode_callables._stubs
+        assert "Search items by keyword" in code_mode_callables.stubs
+        assert "Returns:" in code_mode_callables.stubs
 
     def test_stubs_exclude_framework_params(self):
         cm = CodeModeTool(tools=[tool_needing_agent])
-        assert "agent" not in cm._stubs.split("def tool_needing_agent(")[1].split(")")[0]
-        assert "query: str" in cm._stubs
+        assert "agent" not in cm.stubs.split("def tool_needing_agent(")[1].split(")")[0]
+        assert "query: str" in cm.stubs
 
     def test_stubs_from_toolkit_functions(self, code_mode_toolkit):
-        assert "def greet(" in code_mode_toolkit._stubs
-        assert "def add(" in code_mode_toolkit._stubs
-        assert "name: str" in code_mode_toolkit._stubs
+        assert "def greet(" in code_mode_toolkit.stubs
+        assert "def add(" in code_mode_toolkit.stubs
+        assert "name: str" in code_mode_toolkit.stubs
 
 
 class TestStubInjection:
@@ -452,23 +452,23 @@ def _make_many_callables(n: int):
 class TestDiscoveryMode:
     def test_auto_enables_above_threshold(self):
         cm = CodeModeTool(tools=_make_many_callables(20), discovery_threshold=15)
-        assert cm._discovery_enabled is True
+        assert cm.discovery_enabled is True
 
     def test_auto_disables_below_threshold(self):
         cm = CodeModeTool(tools=_make_many_callables(5), discovery_threshold=15)
-        assert cm._discovery_enabled is False
+        assert cm.discovery_enabled is False
 
     def test_auto_disables_at_threshold(self):
         cm = CodeModeTool(tools=_make_many_callables(15), discovery_threshold=15)
-        assert cm._discovery_enabled is False
+        assert cm.discovery_enabled is False
 
     def test_explicit_true_with_few_tools(self):
         cm = CodeModeTool(tools=[search_items], discovery=True)
-        assert cm._discovery_enabled is True
+        assert cm.discovery_enabled is True
 
     def test_explicit_false_with_many_tools(self):
         cm = CodeModeTool(tools=_make_many_callables(20), discovery=False)
-        assert cm._discovery_enabled is False
+        assert cm.discovery_enabled is False
 
     def test_invalid_discovery_value_raises(self):
         with pytest.raises(ValueError, match="discovery must be"):
@@ -590,17 +590,17 @@ class TestRebuild:
     def test_rebuild_updates_functions(self):
         toolkit = SimpleToolkit()
         cm = CodeModeTool(tools=[toolkit], discovery=True)
-        assert "greet" in cm._sync_functions
+        assert "greet" in cm.sandbox_functions
         cm.rebuild()
-        assert "greet" in cm._sync_functions
+        assert "greet" in cm.sandbox_functions
 
     def test_rebuild_resets_stubs_injected(self):
         cm = CodeModeTool(tools=[search_items], discovery=True)
         cm.get_functions()
-        assert cm._sync_stubs_injected is True
+        assert cm.sync_stubs_injected is True
         cm.rebuild()
-        assert cm._sync_stubs_injected is False
-        assert cm._async_stubs_injected is False
+        assert cm.sync_stubs_injected is False
+        assert cm.async_stubs_injected is False
 
 
 def _mock_model_response(code: str):
@@ -613,7 +613,7 @@ class TestCodeModelInit:
     def test_code_model_disables_discovery(self):
         mock_model = Mock()
         cm = CodeModeTool(tools=_make_many_callables(20), code_model=mock_model)
-        assert cm._discovery_enabled is False
+        assert cm.discovery_enabled is False
 
     def test_code_model_no_search_tools(self):
         mock_model = Mock()
@@ -629,9 +629,9 @@ class TestCodeModelInit:
     def test_code_model_generates_catalog(self):
         mock_model = Mock()
         cm = CodeModeTool(tools=[search_items, get_item_details], code_model=mock_model)
-        assert cm._catalog
-        assert "search_items:" in cm._catalog
-        assert "get_item_details:" in cm._catalog
+        assert cm.catalog
+        assert "search_items:" in cm.catalog
+        assert "get_item_details:" in cm.catalog
 
     def test_code_model_run_code_description(self):
         mock_model = Mock()
