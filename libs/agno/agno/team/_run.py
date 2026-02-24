@@ -373,7 +373,11 @@ def _run_tasks(
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+        # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+        if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+            log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+        else:
+            _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
         # Execute post-hooks
         if team.post_hooks is not None:
@@ -501,7 +505,6 @@ def _run_tasks_stream(
     from agno.team._managers import _start_learning_future, _start_memory_future
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
-        _convert_response_to_structured_format,
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
@@ -769,9 +772,6 @@ def _run_tasks_stream(
                 log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
-
-        # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
         # Yield RunContentCompletedEvent
         if stream_events:
@@ -1142,7 +1142,11 @@ def _run(
                     store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
@@ -2125,7 +2129,11 @@ async def _arun_tasks(
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+        # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+        if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+            log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+        else:
+            _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
         # Execute post-hooks
         if team.post_hooks is not None:
@@ -2260,7 +2268,6 @@ async def _arun_tasks_stream(
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _ahandle_model_response_stream,
-        _convert_response_to_structured_format,
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
     )
@@ -2540,9 +2547,6 @@ async def _arun_tasks_stream(
                 log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
-
-        # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
         # Yield RunContentCompletedEvent
         if stream_events:
@@ -2953,7 +2957,11 @@ async def _arun(
                     store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
@@ -4915,7 +4923,11 @@ def _continue_run(
                     )
 
                 # Convert to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # Store media
                 if team.store_media:
@@ -5564,7 +5576,11 @@ async def _acontinue_run(
                             team, run_response=run_response, session=team_session, run_context=run_context
                         )
 
-                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                    # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                    if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                        log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                    else:
+                        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                     if team.store_media:
                         store_media_util(run_response, model_response)
