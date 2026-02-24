@@ -52,7 +52,7 @@ def get_gemini_reasoning(
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
-        accumulate_eval_metrics(reasoning_agent_response, run_metrics, prefix="reasoning")
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.messages is not None:
@@ -82,7 +82,7 @@ async def aget_gemini_reasoning(
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
-        accumulate_eval_metrics(reasoning_agent_response, run_metrics, prefix="reasoning")
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.messages is not None:

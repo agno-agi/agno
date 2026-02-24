@@ -37,7 +37,7 @@ def get_vertexai_reasoning(
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
-        accumulate_eval_metrics(reasoning_agent_response, run_metrics, prefix="reasoning")
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
@@ -74,7 +74,7 @@ async def aget_vertexai_reasoning(
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
-        accumulate_eval_metrics(reasoning_agent_response, run_metrics, prefix="reasoning")
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None

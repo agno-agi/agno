@@ -18,6 +18,8 @@ from agno.utils.log import log_error, logger, set_log_level_to_debug, set_log_le
 if TYPE_CHECKING:
     from rich.console import Console
 
+    from agno.metrics import RunMetrics
+
 
 class AccuracyAgentResponse(BaseModel):
     accuracy_score: int = Field(..., description="Accuracy Score between 1 and 10 assigned to the Agent's answer.")
@@ -279,7 +281,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         evaluation_input: str,
         evaluator_expected_output: str,
         agent_output: str,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process."""
         try:
@@ -289,7 +291,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_metrics)
+                accumulate_eval_metrics(response.metrics, run_metrics)
 
             accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
@@ -312,7 +314,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         evaluation_input: str,
         evaluator_expected_output: str,
         agent_output: str,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process asynchronously."""
         try:
@@ -322,7 +324,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_metrics)
+                accumulate_eval_metrics(response.metrics, run_metrics)
 
             accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):

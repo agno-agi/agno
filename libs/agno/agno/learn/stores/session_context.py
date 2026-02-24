@@ -29,7 +29,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
@@ -41,6 +41,9 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -495,7 +498,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Extract session context from messages and save.
 
@@ -577,7 +580,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:

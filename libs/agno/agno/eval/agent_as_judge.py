@@ -21,6 +21,8 @@ from agno.utils.log import log_warning, logger, set_log_level_to_debug, set_log_
 if TYPE_CHECKING:
     from rich.console import Console
 
+    from agno.metrics import RunMetrics
+
 
 class NumericJudgeResponse(BaseModel):
     """Response schema for numeric scoring mode."""
@@ -273,7 +275,7 @@ class AgentAsJudgeEval(BaseEval):
         input: str,
         output: str,
         evaluator_agent: Agent,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair."""
         try:
@@ -293,7 +295,7 @@ class AgentAsJudgeEval(BaseEval):
             if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_metrics)
+                accumulate_eval_metrics(response.metrics, run_metrics)
 
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
@@ -338,7 +340,7 @@ class AgentAsJudgeEval(BaseEval):
         input: str,
         output: str,
         evaluator_agent: Agent,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair asynchronously."""
         try:
@@ -358,7 +360,7 @@ class AgentAsJudgeEval(BaseEval):
             if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_metrics)
+                accumulate_eval_metrics(response.metrics, run_metrics)
 
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
@@ -470,7 +472,7 @@ class AgentAsJudgeEval(BaseEval):
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria.
 
@@ -576,7 +578,7 @@ class AgentAsJudgeEval(BaseEval):
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria asynchronously.
 
@@ -680,7 +682,7 @@ class AgentAsJudgeEval(BaseEval):
         *,
         print_summary: bool = True,
         print_results: bool = False,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Private helper: Evaluate multiple input/output pairs.
 
@@ -754,7 +756,7 @@ class AgentAsJudgeEval(BaseEval):
         *,
         print_summary: bool = True,
         print_results: bool = False,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Private helper: Evaluate multiple input/output pairs asynchronously.
 

@@ -2,7 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,9 @@ from agno.utils.log import (
 )
 from agno.utils.prompts import get_json_output_prompt
 from agno.utils.string import parse_response_model_str
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 class MemorySearchResponse(BaseModel):
@@ -369,7 +372,7 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -424,7 +427,7 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -1044,7 +1047,7 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1113,7 +1116,7 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
-        run_metrics: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")

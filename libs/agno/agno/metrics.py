@@ -24,7 +24,6 @@ class ModelType(str, Enum):
 if TYPE_CHECKING:
     from agno.models.base import Model
     from agno.models.response import ModelResponse
-    from agno.run.agent import RunOutput
 
 
 # ---------------------------------------------------------------------------
@@ -716,18 +715,16 @@ def accumulate_model_metrics(
 
 
 def accumulate_eval_metrics(
-    eval_response: "RunOutput",
+    eval_metrics: Optional[RunMetrics] = None,
     run_metrics: Optional[RunMetrics] = None,
     prefix: str = "eval",
 ) -> None:
-    """Accumulate child agent metrics from a RunOutput into run_metrics.
+    """Accumulate child agent/eval metrics into run_metrics.
 
     Merges a child agent's metrics under "{prefix}_model" keys in details.
     """
-    if run_metrics is None or eval_response.metrics is None:
+    if run_metrics is None or eval_metrics is None:
         return
-
-    eval_metrics = eval_response.metrics
 
     if run_metrics.details is None:
         run_metrics.details = {}

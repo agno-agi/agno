@@ -836,7 +836,9 @@ class ReasoningManager:
                 if self.config.run_metrics is not None:
                     from agno.metrics import accumulate_eval_metrics
 
-                    accumulate_eval_metrics(reasoning_agent_response, self.config.run_metrics, prefix="reasoning")
+                    accumulate_eval_metrics(
+                        reasoning_agent_response.metrics, self.config.run_metrics, prefix="reasoning"
+                    )
 
                 if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                     log_warning("Reasoning error. Reasoning response is empty")
@@ -949,7 +951,9 @@ class ReasoningManager:
                 if self.config.run_metrics is not None:
                     from agno.metrics import accumulate_eval_metrics
 
-                    accumulate_eval_metrics(reasoning_agent_response, self.config.run_metrics, prefix="reasoning")
+                    accumulate_eval_metrics(
+                        reasoning_agent_response.metrics, self.config.run_metrics, prefix="reasoning"
+                    )
 
                 if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                     log_warning("Reasoning error. Reasoning response is empty")
