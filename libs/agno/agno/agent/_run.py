@@ -554,7 +554,11 @@ def _run(
                     store_media_util(run_response, model_response)
 
                 # 9. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
@@ -1626,7 +1630,11 @@ async def _arun(
                     )
 
                 # 11. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 12. Store media if enabled
                 if agent.store_media:
@@ -2930,7 +2938,11 @@ def _continue_run(
                     )
 
                 # 4. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 5. Store media if enabled
                 if agent.store_media:
@@ -3669,7 +3681,11 @@ async def _acontinue_run(
                     )
 
                 # 10. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 11. Store media if enabled
                 if agent.store_media:
