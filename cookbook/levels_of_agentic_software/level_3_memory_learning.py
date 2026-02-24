@@ -48,6 +48,7 @@ db = SqliteDb(db_file=str(WORKSPACE / "agents.db"))
 # Knowledge: Static docs (project conventions)
 # ---------------------------------------------------------------------------
 docs_knowledge = Knowledge(
+    name="L3 Coding Agent Knowledge",
     vector_db=ChromaDb(
         collection="coding-standards",
         path=str(WORKSPACE / "chromadb"),

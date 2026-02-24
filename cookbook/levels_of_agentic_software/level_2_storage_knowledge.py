@@ -41,6 +41,7 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 db = SqliteDb(db_file=str(WORKSPACE / "agents.db"))
 
 knowledge = Knowledge(
+    name="L2 Coding Agent Knowledge",
     vector_db=ChromaDb(
         collection="coding-standards",
         path=str(WORKSPACE / "chromadb"),
