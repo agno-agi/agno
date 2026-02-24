@@ -194,7 +194,7 @@ class EntityMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=effective_namespace,
-            run_response=kwargs.get("run_response"),
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -220,7 +220,7 @@ class EntityMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=effective_namespace,
-            run_response=kwargs.get("run_response"),
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -2636,7 +2636,7 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> None:
         """Extract entities from messages (sync)."""
         if not self.model or not self.db:
@@ -2667,10 +2667,10 @@ class EntityMemoryStore(LearningStore):
                 tools=functions,
             )
 
-            if run_response is not None and response.response_usage is not None:
+            if run_metrics is not None and response.response_usage is not None:
                 from agno.metrics import ModelType, accumulate_model_metrics
 
-                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_response)
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
             if response.tool_executions:
                 self.entity_updated = True
@@ -2686,7 +2686,7 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> None:
         """Extract entities from messages (async)."""
         if not self.model or not self.db:
@@ -2715,10 +2715,10 @@ class EntityMemoryStore(LearningStore):
                 tools=functions,
             )
 
-            if run_response is not None and response.response_usage is not None:
+            if run_metrics is not None and response.response_usage is not None:
                 from agno.metrics import ModelType, accumulate_model_metrics
 
-                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_response)
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
             if response.tool_executions:
                 self.entity_updated = True

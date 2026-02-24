@@ -273,7 +273,7 @@ class AgentAsJudgeEval(BaseEval):
         input: str,
         output: str,
         evaluator_agent: Agent,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair."""
         try:
@@ -289,11 +289,11 @@ class AgentAsJudgeEval(BaseEval):
 
             response = evaluator_agent.run(prompt, stream=False)
 
-            # Accumulate eval model metrics into the original run_response
-            if run_response is not None and response.metrics is not None:
+            # Accumulate eval model metrics into the parent run_metrics
+            if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_response)
+                accumulate_eval_metrics(response, run_metrics)
 
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
@@ -338,7 +338,7 @@ class AgentAsJudgeEval(BaseEval):
         input: str,
         output: str,
         evaluator_agent: Agent,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair asynchronously."""
         try:
@@ -354,11 +354,11 @@ class AgentAsJudgeEval(BaseEval):
 
             response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
 
-            # Accumulate eval model metrics into the original run_response
-            if run_response is not None and response.metrics is not None:
+            # Accumulate eval model metrics into the parent run_metrics
+            if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_response)
+                accumulate_eval_metrics(response, run_metrics)
 
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
@@ -470,7 +470,7 @@ class AgentAsJudgeEval(BaseEval):
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria.
 
@@ -503,7 +503,7 @@ class AgentAsJudgeEval(BaseEval):
                 run_id=run_id,
                 print_summary=print_summary,
                 print_results=print_results,
-                run_response=run_response,
+                run_metrics=run_metrics,
             )
 
         # Validate single mode has both input and output
@@ -528,9 +528,7 @@ class AgentAsJudgeEval(BaseEval):
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            evaluation = self._evaluate(
-                input=input, output=output, evaluator_agent=evaluator, run_response=run_response
-            )
+            evaluation = self._evaluate(input=input, output=output, evaluator_agent=evaluator, run_metrics=run_metrics)
 
             if evaluation:
                 result.results.append(evaluation)
@@ -578,7 +576,7 @@ class AgentAsJudgeEval(BaseEval):
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria asynchronously.
 
@@ -611,7 +609,7 @@ class AgentAsJudgeEval(BaseEval):
                 run_id=run_id,
                 print_summary=print_summary,
                 print_results=print_results,
-                run_response=run_response,
+                run_metrics=run_metrics,
             )
 
         # Validate single mode has both input and output
@@ -634,7 +632,7 @@ class AgentAsJudgeEval(BaseEval):
             live_log.update(status)
 
             evaluation = await self._aevaluate(
-                input=input, output=output, evaluator_agent=evaluator, run_response=run_response
+                input=input, output=output, evaluator_agent=evaluator, run_metrics=run_metrics
             )
 
             if evaluation:
@@ -682,7 +680,7 @@ class AgentAsJudgeEval(BaseEval):
         *,
         print_summary: bool = True,
         print_results: bool = False,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Private helper: Evaluate multiple input/output pairs.
 
@@ -709,7 +707,7 @@ class AgentAsJudgeEval(BaseEval):
                 live_log.update(status)
 
                 evaluation = self._evaluate(
-                    input=case["input"], output=case["output"], evaluator_agent=evaluator, run_response=run_response
+                    input=case["input"], output=case["output"], evaluator_agent=evaluator, run_metrics=run_metrics
                 )
                 if evaluation:
                     result.results.append(evaluation)
@@ -756,7 +754,7 @@ class AgentAsJudgeEval(BaseEval):
         *,
         print_summary: bool = True,
         print_results: bool = False,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AgentAsJudgeResult]:
         """Private helper: Evaluate multiple input/output pairs asynchronously.
 
@@ -783,7 +781,7 @@ class AgentAsJudgeEval(BaseEval):
                     input=case["input"],
                     output=case["output"],
                     evaluator_agent=evaluator,
-                    run_response=run_response,
+                    run_metrics=run_metrics,
                 )
                 if evaluation:
                     result.results.append(evaluation)
@@ -847,13 +845,13 @@ class AgentAsJudgeEval(BaseEval):
         original_db = self.db
         self.db = None
 
-        # Run evaluation and capture result (pass run_output for eval metrics accumulation)
+        # Run evaluation and capture result (pass run_output.metrics for eval metrics accumulation)
         result = self.run(
             input=input_str,
             output=output_str,
             print_results=self.print_results,
             print_summary=self.print_summary,
-            run_response=run_output,
+            run_metrics=run_output.metrics,
         )
 
         # Restore DB and log with context from run_output
@@ -893,13 +891,13 @@ class AgentAsJudgeEval(BaseEval):
         original_db = self.db
         self.db = None
 
-        # Run evaluation and capture result (pass run_output for eval metrics accumulation)
+        # Run evaluation and capture result (pass run_output.metrics for eval metrics accumulation)
         result = await self.arun(
             input=input_str,
             output=output_str,
             print_results=self.print_results,
             print_summary=self.print_summary,
-            run_response=run_output,
+            run_metrics=run_output.metrics,
         )
 
         # Restore DB and log with context from run_output

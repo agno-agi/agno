@@ -279,17 +279,17 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         evaluation_input: str,
         evaluator_expected_output: str,
         agent_output: str,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process."""
         try:
             response = evaluator_agent.run(evaluation_input, stream=False)
 
-            # Accumulate eval model metrics into the original run_response
-            if run_response is not None and response.metrics is not None:
+            # Accumulate eval model metrics into the parent run_metrics
+            if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_response)
+                accumulate_eval_metrics(response, run_metrics)
 
             accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
@@ -312,17 +312,17 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         evaluation_input: str,
         evaluator_expected_output: str,
         agent_output: str,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process asynchronously."""
         try:
             response = await evaluator_agent.arun(evaluation_input, stream=False)  # type: ignore[misc]
 
-            # Accumulate eval model metrics into the original run_response
-            if run_response is not None and response.metrics is not None:
+            # Accumulate eval model metrics into the parent run_metrics
+            if run_metrics is not None and response.metrics is not None:
                 from agno.metrics import accumulate_eval_metrics
 
-                accumulate_eval_metrics(response, run_response)
+                accumulate_eval_metrics(response, run_metrics)
 
             accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
@@ -410,7 +410,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     evaluation_input=evaluation_input,
                     evaluator_expected_output=eval_expected_output,
                     agent_output=output,
-                    run_response=run_response,
+                    run_metrics=run_response.metrics if run_response is not None else None,
                 )
                 if result is None:
                     logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")
@@ -557,7 +557,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     evaluation_input=evaluation_input,
                     evaluator_expected_output=eval_expected_output,
                     agent_output=output,
-                    run_response=run_response,
+                    run_metrics=run_response.metrics if run_response is not None else None,
                 )
                 if result is None:
                     logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")

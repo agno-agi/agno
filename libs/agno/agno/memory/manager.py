@@ -369,7 +369,7 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -410,7 +410,7 @@ class MemoryManager:
             db=self.db,
             update_memories=self.update_memories,
             add_memories=self.add_memories,
-            run_response=run_response,
+            run_metrics=run_metrics,
         )
 
         # We refresh from the DB
@@ -424,7 +424,7 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -464,7 +464,7 @@ class MemoryManager:
             db=self.db,
             update_memories=self.update_memories,
             add_memories=self.add_memories,
-            run_response=run_response,
+            run_metrics=run_metrics,
         )
 
         # We refresh from the DB
@@ -1044,7 +1044,7 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1091,11 +1091,11 @@ class MemoryManager:
             tools=_tools,
         )
 
-        # Accumulate memory model metrics to run_response
-        if run_response is not None and response.response_usage is not None:
+        # Accumulate memory model metrics
+        if run_metrics is not None and response.response_usage is not None:
             from agno.metrics import ModelType, accumulate_model_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.MEMORY_MODEL, run_response)
+            accumulate_model_metrics(response, model_copy, ModelType.MEMORY_MODEL, run_metrics)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -1113,7 +1113,7 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional[Any] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1175,11 +1175,11 @@ class MemoryManager:
             tools=_tools,
         )
 
-        # Accumulate memory model metrics to run_response
-        if run_response is not None and response.response_usage is not None:
+        # Accumulate memory model metrics
+        if run_metrics is not None and response.response_usage is not None:
             from agno.metrics import ModelType, accumulate_model_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.MEMORY_MODEL, run_response)
+            accumulate_model_metrics(response, model_copy, ModelType.MEMORY_MODEL, run_metrics)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True

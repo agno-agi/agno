@@ -280,7 +280,7 @@ def reason(
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
             run_context=run_context,
-            run_response=run_response,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -327,7 +327,7 @@ async def areason(
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
             run_context=run_context,
-            run_response=run_response,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -391,7 +391,12 @@ def parse_response_with_parser_model(
         if run_response is not None:
             from agno.metrics import ModelType, accumulate_model_metrics
 
-            accumulate_model_metrics(parser_model_response, agent.parser_model, ModelType.PARSER_MODEL, run_response)
+            accumulate_model_metrics(
+                parser_model_response,
+                agent.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics if run_response is not None else None,
+            )
 
         process_parser_response(
             agent=agent,
@@ -434,7 +439,12 @@ async def aparse_response_with_parser_model(
         if run_response is not None:
             from agno.metrics import ModelType, accumulate_model_metrics
 
-            accumulate_model_metrics(parser_model_response, agent.parser_model, ModelType.PARSER_MODEL, run_response)
+            accumulate_model_metrics(
+                parser_model_response,
+                agent.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics if run_response is not None else None,
+            )
 
         process_parser_response(
             agent=agent,
@@ -600,7 +610,12 @@ def generate_response_with_output_model(
     if run_response is not None:
         from agno.metrics import ModelType, accumulate_model_metrics
 
-        accumulate_model_metrics(output_model_response, agent.output_model, ModelType.OUTPUT_MODEL, run_response)
+        accumulate_model_metrics(
+            output_model_response,
+            agent.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics if run_response is not None else None,
+        )
 
     model_response.content = output_model_response.content
 
@@ -676,7 +691,12 @@ async def agenerate_response_with_output_model(
     if run_response is not None:
         from agno.metrics import ModelType, accumulate_model_metrics
 
-        accumulate_model_metrics(output_model_response, agent.output_model, ModelType.OUTPUT_MODEL, run_response)
+        accumulate_model_metrics(
+            output_model_response,
+            agent.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics if run_response is not None else None,
+        )
 
     model_response.content = output_model_response.content
 

@@ -684,7 +684,7 @@ def reason(
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
             run_context=run_context,
-            run_response=run_response,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -729,7 +729,7 @@ async def areason(
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
             run_context=run_context,
-            run_response=run_response,
+            run_metrics=run_response.metrics,
         )
     )
 
