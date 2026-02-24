@@ -34,7 +34,10 @@ researcher = Agent(
     name="Researcher",
     role="Researches topics and gathers information",
     model=OpenAIResponses(id="gpt-5.1"),
-    instructions=["Research the given topic thoroughly.", "Provide factual information."],
+    instructions=[
+        "Research the given topic thoroughly.",
+        "Provide factual information.",
+    ],
 )
 
 summarizer = Agent(
@@ -98,7 +101,9 @@ def streaming_with_events() -> None:
             print(f"  event:          {event.event}")
             print(f"  iteration:      {event.iteration}")
             print(f"  max_iterations: {event.max_iterations}")
-            print(f"  task_summary:   {event.task_summary[:100] if event.task_summary else None}...")
+            print(
+                f"  task_summary:   {event.task_summary[:100] if event.task_summary else None}..."
+            )
             print("=" * 60)
 
         # Handle task state updates - show all fields
@@ -107,7 +112,9 @@ def streaming_with_events() -> None:
             print("TASK STATE UPDATED")
             print("-" * 60)
             print(f"  event:         {event.event}")
-            print(f"  task_summary:  {event.task_summary[:100] if event.task_summary else None}...")
+            print(
+                f"  task_summary:  {event.task_summary[:100] if event.task_summary else None}..."
+            )
             print(f"  goal_complete: {event.goal_complete}")
             print("-" * 60)
 

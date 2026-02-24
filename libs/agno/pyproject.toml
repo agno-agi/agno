@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.3"
+version = "2.5.4"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
