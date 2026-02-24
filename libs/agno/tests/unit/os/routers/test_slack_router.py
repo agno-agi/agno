@@ -86,7 +86,7 @@ def test_explicit_token_passed_to_slack_tools():
     ):
         mock_cls.return_value = make_slack_mock()
         build_app(agent_mock, token="xoxb-explicit-token")
-        mock_cls.assert_called_once_with(token="xoxb-explicit-token", ssl=None)
+        mock_cls.assert_called_once_with(token="xoxb-explicit-token", ssl=None, max_file_size=1_073_741_824)
 
 
 def test_explicit_signing_secret_used():

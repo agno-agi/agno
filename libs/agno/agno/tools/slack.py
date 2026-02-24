@@ -35,6 +35,7 @@ class SlackTools(Toolkit):
         enable_get_user_info: bool = False,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
+        max_file_size: int = 1_073_741_824,  # 1GB
         **kwargs,
     ):
         """
@@ -56,12 +57,14 @@ class SlackTools(Toolkit):
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
+            max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
         """
         self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token, ssl=ssl)
         self.markdown = markdown
+        self.max_file_size = max_file_size
         self.output_directory = Path(output_directory) if output_directory else None
 
         if self.output_directory:
@@ -213,6 +216,13 @@ class SlackTools(Toolkit):
             else:
                 content_bytes = content
 
+            if len(content_bytes) > self.max_file_size:
+                limit_mb = self.max_file_size / (1024 * 1024)
+                actual_mb = len(content_bytes) / (1024 * 1024)
+                return json.dumps(
+                    {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB upload limit"}
+                )
+
             # Save to disk if output_directory is set
             file_path = self._save_file_to_disk(content_bytes, filename)
 
@@ -256,6 +266,13 @@ class SlackTools(Toolkit):
 
             filename = file_info.get("name", f"file_{file_id}")
             file_size = file_info.get("size", 0)
+
+            if file_size > self.max_file_size:
+                limit_mb = self.max_file_size / (1024 * 1024)
+                actual_mb = file_size / (1024 * 1024)
+                return json.dumps(
+                    {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB download limit"}
+                )
 
             # Download file content
             headers = {"Authorization": f"Bearer {self.token}"}
@@ -306,6 +323,14 @@ class SlackTools(Toolkit):
         try:
             response = self.client.files_info(file=file_id)
             file_info = response["file"]
+
+            file_size = file_info.get("size", 0)
+            if file_size > self.max_file_size:
+                limit_mb = self.max_file_size / (1024 * 1024)
+                actual_mb = file_size / (1024 * 1024)
+                filename = file_info.get("name", file_id)
+                logger.error(f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB download limit")
+                return None
 
             url_private = file_info.get("url_private")
             if not url_private:

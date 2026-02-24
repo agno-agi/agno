@@ -41,19 +41,29 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
 
 def download_event_files(
     slack_tools: SlackTools, event: dict
-) -> Tuple[List[File], List[Image], List[Video], List[Audio]]:
+) -> Tuple[List[File], List[Image], List[Video], List[Audio], List[str]]:
     files: List[File] = []
     images: List[Image] = []
     videos: List[Video] = []
     audio: List[Audio] = []
+    skipped: List[str] = []
 
     if not event.get("files"):
-        return files, images, videos, audio
+        return files, images, videos, audio, skipped
+
+    max_file_size = slack_tools.max_file_size
 
     for file_info in event["files"]:
         file_id = file_info.get("id")
         filename = file_info.get("name", "file")
         mimetype = file_info.get("mimetype", "application/octet-stream")
+        file_size = file_info.get("size", 0)
+
+        if file_size > max_file_size:
+            limit_mb = max_file_size / (1024 * 1024)
+            actual_mb = file_size / (1024 * 1024)
+            skipped.append(f"{filename} ({actual_mb:.1f}MB — exceeds {limit_mb:.0f}MB limit)")
+            continue
 
         try:
             file_content = slack_tools.download_file_bytes(file_id)
@@ -73,7 +83,7 @@ def download_event_files(
         except Exception as e:
             log_error(f"Failed to download file {file_id}: {e}")
 
-    return files, images, videos, audio
+    return files, images, videos, audio, skipped
 
 
 def upload_response_media(slack_tools: SlackTools, response: Any, channel_id: str, thread_ts: str) -> None:

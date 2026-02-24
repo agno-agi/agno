@@ -338,6 +338,7 @@ def attach_routes(
     suggested_prompts: Optional[List[Dict[str, str]]] = None,
     ssl: Optional[SSLContext] = None,
     buffer_size: int = 100,
+    max_file_size: int = 1_073_741_824,  # 1GB
 ) -> APIRouter:
     entity = agent or team or workflow
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
@@ -347,7 +348,7 @@ def attach_routes(
     # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
     op_suffix = entity_name.lower().replace(" ", "_")
 
-    slack_tools = SlackTools(token=token, ssl=ssl)
+    slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
 
     @router.post(
         "/events",
@@ -427,7 +428,12 @@ def attach_routes(
         except Exception:
             pass
 
-        files, images, videos, audio = download_event_files(slack_tools, event)
+        files, images, videos, audio, skipped = download_event_files(slack_tools, event)
+
+        message_text = ctx["message_text"]
+        if skipped:
+            notice = "[Skipped files: " + ", ".join(skipped) + "]"
+            message_text = f"{notice}\n{message_text}"
 
         run_kwargs: Dict[str, Any] = {
             "user_id": ctx["user"],
@@ -441,11 +447,11 @@ def attach_routes(
         try:
             response = None
             if agent:
-                response = await agent.arun(ctx["message_text"], **run_kwargs)  # type: ignore[misc]
+                response = await agent.arun(message_text, **run_kwargs)  # type: ignore[misc]
             elif team:
-                response = await team.arun(ctx["message_text"], **run_kwargs)  # type: ignore
+                response = await team.arun(message_text, **run_kwargs)  # type: ignore
             elif workflow:
-                response = await workflow.arun(ctx["message_text"], **run_kwargs)  # type: ignore
+                response = await workflow.arun(message_text, **run_kwargs)  # type: ignore
 
             if response:
                 if response.status == "ERROR":
@@ -510,7 +516,12 @@ def attach_routes(
             except Exception:
                 pass
 
-            files, images, videos, audio = download_event_files(slack_tools, event)
+            files, images, videos, audio, skipped = download_event_files(slack_tools, event)
+
+            message_text = ctx["message_text"]
+            if skipped:
+                notice = "[Skipped files: " + ", ".join(skipped) + "]"
+                message_text = f"{notice}\n{message_text}"
 
             response_stream = None
             run_kwargs: Dict[str, Any] = {
@@ -525,11 +536,11 @@ def attach_routes(
             }
 
             if agent:
-                response_stream = agent.arun(ctx["message_text"], **run_kwargs)
+                response_stream = agent.arun(message_text, **run_kwargs)
             elif team:
-                response_stream = team.arun(ctx["message_text"], **run_kwargs)  # type: ignore[assignment]
+                response_stream = team.arun(message_text, **run_kwargs)  # type: ignore[assignment]
             elif workflow:
-                response_stream = workflow.arun(ctx["message_text"], **run_kwargs)  # type: ignore[assignment]
+                response_stream = workflow.arun(message_text, **run_kwargs)  # type: ignore[assignment]
 
             if response_stream is None:
                 try:

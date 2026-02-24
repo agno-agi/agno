@@ -32,6 +32,7 @@ class Slack(BaseInterface):
         suggested_prompts: Optional[List[Dict[str, str]]] = None,
         ssl: Optional[SSLContext] = None,
         buffer_size: int = 100,
+        max_file_size: int = 1_073_741_824,  # 1GB
     ):
         self.agent = agent
         self.team = team
@@ -48,6 +49,7 @@ class Slack(BaseInterface):
         self.suggested_prompts = suggested_prompts
         self.ssl = ssl
         self.buffer_size = buffer_size
+        self.max_file_size = max_file_size
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -68,6 +70,7 @@ class Slack(BaseInterface):
             suggested_prompts=self.suggested_prompts,
             ssl=self.ssl,
             buffer_size=self.buffer_size,
+            max_file_size=self.max_file_size,
         )
 
         return self.router

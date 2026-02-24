@@ -60,21 +60,49 @@ class TestExtractEventContext:
 
 class TestDownloadEventFiles:
     def test_video_routing(self):
-        slack = Mock()
+        slack = Mock(max_file_size=1_073_741_824)
         slack.download_file_bytes = Mock(return_value=b"video-data")
         event = {"files": [{"id": "F1", "name": "clip.mp4", "mimetype": "video/mp4"}]}
-        files, images, videos, audio = download_event_files(slack, event)
+        files, images, videos, audio, skipped = download_event_files(slack, event)
         assert len(videos) == 1
         assert len(files) == 0 and len(images) == 0
+        assert len(skipped) == 0
 
     def test_download_failure_logged(self):
-        slack = Mock()
+        slack = Mock(max_file_size=1_073_741_824)
         slack.download_file_bytes = Mock(side_effect=RuntimeError("network error"))
         event = {"files": [{"id": "F1", "name": "file.txt", "mimetype": "text/plain"}]}
         with patch("agno.os.interfaces.slack.helpers.log_error") as mock_log:
-            files, images, videos, audio = download_event_files(slack, event)
+            files, images, videos, audio, skipped = download_event_files(slack, event)
             mock_log.assert_called_once()
         assert len(files) == 0
+
+    def test_file_over_max_size_skipped(self):
+        slack = Mock(max_file_size=25 * 1024 * 1024)
+        slack.download_file_bytes = Mock(return_value=b"data")
+        event = {
+            "files": [
+                {"id": "F1", "name": "huge.zip", "mimetype": "application/zip", "size": 50_000_000},
+                {"id": "F2", "name": "small.txt", "mimetype": "text/plain", "size": 1_000},
+            ]
+        }
+        files, images, videos, audio, skipped = download_event_files(slack, event)
+        assert len(skipped) == 1
+        assert "huge.zip" in skipped[0]
+        assert len(files) == 1
+        slack.download_file_bytes.assert_called_once_with("F2")
+
+    def test_default_1gb_allows_large_files(self):
+        slack = Mock(max_file_size=1_073_741_824)
+        slack.download_file_bytes = Mock(return_value=b"data")
+        event = {
+            "files": [
+                {"id": "F1", "name": "big.zip", "mimetype": "application/zip", "size": 500_000_000},
+            ]
+        }
+        files, images, videos, audio, skipped = download_event_files(slack, event)
+        assert len(files) == 1
+        assert len(skipped) == 0
 
 
 class TestSendSlackMessage:
