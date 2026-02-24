@@ -19,153 +19,22 @@ if TYPE_CHECKING:
     from agno.models.base import Model
 
 
+class _SafeCallable:
+    __slots__ = ("_fn", "__name__", "__doc__")
+
+    def __init__(self, fn: Callable, name: str, doc: Optional[str]):
+        self._fn = fn
+        self.__name__ = name
+        self.__doc__ = doc or ""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> str:
+        return self._fn(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"<tool {self.__name__}>"
+
+
 class CodeModeTool(Toolkit):
-    EXEC_ERROR_PREFIX = "[[EXEC_ERROR]] "
-
-    ALLOWED_BUILTINS: Set[str] = {
-        "len",
-        "min",
-        "max",
-        "sum",
-        "sorted",
-        "reversed",
-        "range",
-        "enumerate",
-        "zip",
-        "map",
-        "filter",
-        "any",
-        "all",
-        "str",
-        "int",
-        "float",
-        "bool",
-        "dict",
-        "list",
-        "set",
-        "tuple",
-        "round",
-        "abs",
-        "print",
-        "isinstance",
-        "type",
-        "format",
-        "pow",
-        "divmod",
-        "ord",
-        "chr",
-        "hex",
-        "bin",
-        "oct",
-        "ValueError",
-        "TypeError",
-        "KeyError",
-        "IndexError",
-        "Exception",
-        "True",
-        "False",
-        "None",
-    }
-
-    BLOCKED_MODULES: Set[str] = {
-        "os",
-        "sys",
-        "subprocess",
-        "shutil",
-        "socket",
-        "http",
-        "urllib",
-        "requests",
-        "pathlib",
-        "io",
-        "builtins",
-        "importlib",
-        "ctypes",
-        "multiprocessing",
-        "threading",
-        "signal",
-        "code",
-        "codeop",
-        "compileall",
-        "runpy",
-        "inspect",
-        "gc",
-        "traceback",
-    }
-
-    FRAMEWORK_PARAMS: Set[str] = {
-        "self",
-        "agent",
-        "team",
-        "run_context",
-        "fc",
-        "images",
-        "videos",
-        "audios",
-        "files",
-    }
-
-    JSON_TYPE_MAP: Dict[str, str] = {
-        "string": "str",
-        "number": "float",
-        "integer": "int",
-        "boolean": "bool",
-        "array": "list",
-        "object": "dict",
-    }
-
-    PREAPPROVED_MODULES: Dict[str, Any] = {
-        "json": json,
-        "math": math,
-        "datetime": datetime,
-        "re": re,
-        "collections": collections,
-    }
-
-    CODE_MODEL_SYSTEM = (
-        "You are a Python code generator. Write a SINGLE complete Python program "
-        "that accomplishes the user's task by calling the provided tool functions.\n\n"
-        "RULES:\n"
-        "- Call functions DIRECTLY: get_stock_price(symbol='AAPL'), NOT module.func().\n"
-        "- `json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
-        "- All tool functions return JSON strings. Use json.loads() to parse them.\n"
-        "- Store your final answer in a variable called `result` (as a formatted string).\n"
-        "- Handle errors with try/except where appropriate.\n"
-        "- Output ONLY the Python code inside a ```python code fence. No explanation.\n\n"
-        "AVAILABLE FUNCTIONS:\n\n"
-    )
-
-    DEFAULT_CODE_MODE_INSTRUCTIONS = (
-        "You have access to a code execution environment via the `run_code` tool.\n"
-        "Write ONE complete Python program per call that handles the entire task.\n"
-        "Call tool functions DIRECTLY by name (e.g., get_stock_price(symbol='AAPL')).\n"
-        "`json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
-        "All tool functions return JSON strings — use json.loads() to parse results.\n"
-        "Store your final answer in a variable called `result` as a formatted string.\n"
-        "Use loops to process multiple items efficiently in a single call."
-    )
-
-    DEFAULT_CODE_MODEL_INSTRUCTIONS = (
-        "You have access to a `run_code` tool that accepts plain English task descriptions.\n"
-        "A specialized code model generates and executes the code for you.\n"
-        "Describe what data to fetch, what computations to perform, and the desired output format.\n"
-        "You do NOT need to write code yourself."
-    )
-
-    class _SafeCallable:
-        __slots__ = ("_fn", "__name__", "__doc__")
-
-        def __init__(self, fn: Callable, name: str, doc: Optional[str]):
-            self._fn = fn
-            self.__name__ = name
-            self.__doc__ = doc or ""
-
-        def __call__(self, *args: Any, **kwargs: Any) -> str:
-            return self._fn(*args, **kwargs)
-
-        def __repr__(self) -> str:
-            return f"<tool {self.__name__}>"
-
     def __init__(
         self,
         tools: List[Union["Toolkit", Callable, Function]],
@@ -189,7 +58,116 @@ class CodeModeTool(Toolkit):
         self.additional_modules: Dict[str, Any] = additional_modules or {}
         self.caller_loop: Any = None
 
-        allowed = allowed_builtins or self.ALLOWED_BUILTINS
+        self.exec_error_prefix = "[[EXEC_ERROR]] "
+        self.blocked_modules: Set[str] = {
+            "os",
+            "sys",
+            "subprocess",
+            "shutil",
+            "socket",
+            "http",
+            "urllib",
+            "requests",
+            "pathlib",
+            "io",
+            "builtins",
+            "importlib",
+            "ctypes",
+            "multiprocessing",
+            "threading",
+            "signal",
+            "code",
+            "codeop",
+            "compileall",
+            "runpy",
+            "inspect",
+            "gc",
+            "traceback",
+        }
+        self.framework_params: Set[str] = {
+            "self",
+            "agent",
+            "team",
+            "run_context",
+            "fc",
+            "images",
+            "videos",
+            "audios",
+            "files",
+        }
+        self.json_type_map: Dict[str, str] = {
+            "string": "str",
+            "number": "float",
+            "integer": "int",
+            "boolean": "bool",
+            "array": "list",
+            "object": "dict",
+        }
+        self.preapproved_modules: Dict[str, Any] = {
+            "json": json,
+            "math": math,
+            "datetime": datetime,
+            "re": re,
+            "collections": collections,
+        }
+        self.code_model_system = (
+            "You are a Python code generator. Write a SINGLE complete Python program "
+            "that accomplishes the user's task by calling the provided tool functions.\n\n"
+            "RULES:\n"
+            "- Call functions DIRECTLY: get_stock_price(symbol='AAPL'), NOT module.func().\n"
+            "- `json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
+            "- All tool functions return JSON strings. Use json.loads() to parse them.\n"
+            "- Store your final answer in a variable called `result` (as a formatted string).\n"
+            "- Handle errors with try/except where appropriate.\n"
+            "- Output ONLY the Python code inside a ```python code fence. No explanation.\n\n"
+            "AVAILABLE FUNCTIONS:\n\n"
+        )
+
+        _default_builtins: Set[str] = {
+            "len",
+            "min",
+            "max",
+            "sum",
+            "sorted",
+            "reversed",
+            "range",
+            "enumerate",
+            "zip",
+            "map",
+            "filter",
+            "any",
+            "all",
+            "str",
+            "int",
+            "float",
+            "bool",
+            "dict",
+            "list",
+            "set",
+            "tuple",
+            "round",
+            "abs",
+            "print",
+            "isinstance",
+            "type",
+            "format",
+            "pow",
+            "divmod",
+            "ord",
+            "chr",
+            "hex",
+            "bin",
+            "oct",
+            "ValueError",
+            "TypeError",
+            "KeyError",
+            "IndexError",
+            "Exception",
+            "True",
+            "False",
+            "None",
+        }
+        allowed = allowed_builtins or _default_builtins
         self.safe_builtins: Dict[str, Any] = {k: getattr(builtins, k) for k in allowed if hasattr(builtins, k)}
 
         self.sandbox_functions: Dict[str, Function] = self._collect_functions(tools, async_mode=False)
@@ -212,10 +190,128 @@ class CodeModeTool(Toolkit):
         super().__init__(name="code_mode", tools=sync_tools, async_tools=async_tools, **kwargs)
 
         if self.code_model is not None:
-            self.instructions = self.DEFAULT_CODE_MODEL_INSTRUCTIONS
+            self.instructions = (
+                "You have access to a `run_code` tool that accepts plain English task descriptions.\n"
+                "A specialized code model generates and executes the code for you.\n"
+                "Describe what data to fetch, what computations to perform, and the desired output format.\n"
+                "You do NOT need to write code yourself."
+            )
         else:
-            self.instructions = self.DEFAULT_CODE_MODE_INSTRUCTIONS
+            self.instructions = (
+                "You have access to a code execution environment via the `run_code` tool.\n"
+                "Write ONE complete Python program per call that handles the entire task.\n"
+                "Call tool functions DIRECTLY by name (e.g., get_stock_price(symbol='AAPL')).\n"
+                "`json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
+                "All tool functions return JSON strings — use json.loads() to parse results.\n"
+                "Store your final answer in a variable called `result` as a formatted string.\n"
+                "Use loops to process multiple items efficiently in a single call."
+            )
         self.add_instructions = True
+
+    def run_code(self, code: str) -> Union[str, ToolResult]:
+        """Execute Python code that calls tool functions directly.
+
+        RULES:
+        - Call functions DIRECTLY: search(query="x"), NOT functions.search()
+        - json and math are pre-imported. Do NOT write import statements.
+        - All tool functions return JSON strings. Use json.loads() to parse them.
+        - Store your final answer in a variable called `result` (as a string).
+        - You can use: json, math, loops, conditionals, list comprehensions, try/except
+
+        Example:
+            data = json.loads(search(query="laptop"))
+            details = json.loads(get_details(product_id=data[0]["id"]))
+            result = f"Found: {details['name']} at ${details['price']}"
+        """
+        if self.code_model is not None:
+            return self._run_with_code_model(code, use_async=False)
+        result = self._execute_code(code, use_async=False)
+        if isinstance(result, ToolResult):
+            return result
+        if result.startswith(self.exec_error_prefix):
+            return result[len(self.exec_error_prefix) :]
+        return result
+
+    async def arun_code(self, code: str) -> Union[str, ToolResult]:
+        if self.code_model is not None:
+            return await self._arun_with_code_model(code, use_async=True)
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        self.caller_loop = loop
+        try:
+            result = await loop.run_in_executor(None, self._execute_code, code, True)
+        finally:
+            self.caller_loop = None
+        if isinstance(result, ToolResult):
+            return result
+        if result.startswith(self.exec_error_prefix):
+            return result[len(self.exec_error_prefix) :]
+        return result
+
+    def search_tools(self, query: str) -> str:
+        """Search available tool functions by keyword.
+
+        Returns matching function signatures with parameter types and docstrings.
+        Use this to discover what functions are available before writing code with run_code.
+
+        Args:
+            query: Search keyword (matches against function names and descriptions)
+
+        Example:
+            search_tools(query="stock price") -> returns stubs for price-related functions
+        """
+        if not query or len(query.strip()) < 2:
+            return (
+                f"Please provide a search query (at least 2 characters). "
+                f"There are {len(self.stub_map)} functions available."
+            )
+
+        query_lower = query.lower().strip()
+        matches = []
+        for name, stub in self.stub_map.items():
+            func = self.sandbox_functions.get(name)
+            desc = (func.description or "").lower() if func else ""
+            if query_lower in name.lower() or query_lower in desc:
+                matches.append(stub)
+
+        if not matches:
+            return f"No functions found matching '{query}'. Try a broader search term."
+
+        if len(matches) > 10:
+            shown = matches[:10]
+            return (
+                f"Found {len(matches)} functions, showing first 10. "
+                f"Use a more specific query to narrow results.\n\n" + "\n\n".join(shown)
+            )
+
+        return f"Found {len(matches)} function(s):\n\n" + "\n\n".join(matches)
+
+    async def asearch_tools(self, query: str) -> str:
+        return self.search_tools(query)
+
+    def rebuild(self) -> None:
+        self.sandbox_functions = self._collect_functions(self.source_tools, async_mode=False)
+        self.sandbox_async_functions = self._collect_functions(self.source_tools, async_mode=True)
+
+        self.stub_map = self._generate_stub_map(self.sandbox_functions)
+        self.stubs = "\n\n".join(self.stub_map.values())
+
+        if self.discovery_enabled or self.code_model is not None:
+            self.catalog = self._generate_catalog()
+
+        self.sync_stubs_injected = False
+        self.async_stubs_injected = False
+
+    def get_functions(self) -> Dict[str, Function]:
+        funcs = super().get_functions()
+        self._inject_sync_stubs(funcs)
+        return funcs
+
+    def get_async_functions(self) -> Dict[str, Function]:
+        funcs = super().get_async_functions()
+        self._inject_async_stubs(funcs)
+        return funcs
 
     def _resolve_discovery(self, discovery: Union[bool, str]) -> bool:
         if self.code_model is not None:
@@ -268,9 +364,9 @@ class CodeModeTool(Toolkit):
 
             args: List[str] = []
             for pname, schema in params.items():
-                if pname in self.FRAMEWORK_PARAMS:
+                if pname in self.framework_params:
                     continue
-                py_type = self.JSON_TYPE_MAP.get(schema.get("type", "string"), "Any")
+                py_type = self.json_type_map.get(schema.get("type", "string"), "Any")
                 if pname in required:
                     args.append(f"{pname}: {py_type}")
                 else:
@@ -334,16 +430,6 @@ class CodeModeTool(Toolkit):
             base = run_code_func.description or ""
             run_code_func.description = base + "\n\nAvailable functions:\n\n" + self.stubs
 
-    def get_functions(self) -> Dict[str, Function]:
-        funcs = super().get_functions()
-        self._inject_sync_stubs(funcs)
-        return funcs
-
-    def get_async_functions(self) -> Dict[str, Function]:
-        funcs = super().get_async_functions()
-        self._inject_async_stubs(funcs)
-        return funcs
-
     def _make_wrapper(
         self,
         name: str,
@@ -351,7 +437,7 @@ class CodeModeTool(Toolkit):
         media_collector: Optional[Dict[str, List[Any]]] = None,
     ) -> Callable:
         code_mode_tool = self
-        param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in self.FRAMEWORK_PARAMS]
+        param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in self.framework_params]
 
         def wrapper(*args: Any, **kwargs: Any) -> str:
             entrypoint = func.entrypoint
@@ -438,7 +524,7 @@ class CodeModeTool(Toolkit):
         use_async: bool = False,
         media_collector: Optional[Dict[str, List[Any]]] = None,
     ) -> Tuple[Dict[str, Any], Set[str]]:
-        preapproved = dict(self.PREAPPROVED_MODULES)
+        preapproved = dict(self.preapproved_modules)
         preapproved.update(self.additional_modules)
 
         _real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
@@ -447,7 +533,7 @@ class CodeModeTool(Toolkit):
             if name in preapproved:
                 return preapproved[name]
             top_level = name.split(".")[0]
-            if top_level in self.BLOCKED_MODULES:
+            if top_level in self.blocked_modules:
                 raise ImportError(f"Import of '{name}' is not allowed.")
             return _real_import(name, *args, **kwargs)
 
@@ -460,7 +546,7 @@ class CodeModeTool(Toolkit):
         functions = self.sandbox_async_functions if use_async else self.sandbox_functions
         for name, func in functions.items():
             wrapper = self._make_wrapper(name, func, media_collector=media_collector)
-            namespace[name] = self._SafeCallable(wrapper, name, func.description)
+            namespace[name] = _SafeCallable(wrapper, name, func.description)
 
         base_keys = set(namespace.keys())
         return namespace, base_keys
@@ -502,7 +588,7 @@ class CodeModeTool(Toolkit):
     def _execute_code(self, code: str, use_async: bool = False) -> Union[str, ToolResult]:
         try:
             if len(code) > self.max_code_length:
-                return f"{self.EXEC_ERROR_PREFIX}Code exceeds maximum length of {self.max_code_length} characters."
+                return f"{self.exec_error_prefix}Code exceeds maximum length of {self.max_code_length} characters."
 
             code = prepare_python_code(code)
             log_debug(f"CodeModeTool executing:\n{code}")
@@ -525,22 +611,9 @@ class CodeModeTool(Toolkit):
                 )
             return output
         except SyntaxError as e:
-            return f"{self.EXEC_ERROR_PREFIX}SyntaxError: {e}"
+            return f"{self.exec_error_prefix}SyntaxError: {e}"
         except Exception as e:
-            return f"{self.EXEC_ERROR_PREFIX}{type(e).__name__}: {e}"
-
-    def rebuild(self) -> None:
-        self.sandbox_functions = self._collect_functions(self.source_tools, async_mode=False)
-        self.sandbox_async_functions = self._collect_functions(self.source_tools, async_mode=True)
-
-        self.stub_map = self._generate_stub_map(self.sandbox_functions)
-        self.stubs = "\n\n".join(self.stub_map.values())
-
-        if self.discovery_enabled or self.code_model is not None:
-            self.catalog = self._generate_catalog()
-
-        self.sync_stubs_injected = False
-        self.async_stubs_injected = False
+            return f"{self.exec_error_prefix}{type(e).__name__}: {e}"
 
     @staticmethod
     def _extract_code_block(text: str) -> str:
@@ -552,7 +625,7 @@ class CodeModeTool(Toolkit):
     def _generate_code(self, task: str, error: Optional[str] = None) -> str:
         from agno.models.message import Message
 
-        system = self.CODE_MODEL_SYSTEM + self.stubs
+        system = self.code_model_system + self.stubs
         user_content = task
         if error:
             user_content += f"\n\nPrevious attempt failed with:\n{error}\n\nFix the code and try again."
@@ -567,7 +640,7 @@ class CodeModeTool(Toolkit):
     async def _agenerate_code(self, task: str, error: Optional[str] = None) -> str:
         from agno.models.message import Message
 
-        system = self.CODE_MODEL_SYSTEM + self.stubs
+        system = self.code_model_system + self.stubs
         user_content = task
         if error:
             user_content += f"\n\nPrevious attempt failed with:\n{error}\n\nFix the code and try again."
@@ -587,9 +660,9 @@ class CodeModeTool(Toolkit):
             result = self._execute_code(code, use_async=use_async)
             if isinstance(result, ToolResult):
                 return result
-            if not result.startswith(self.EXEC_ERROR_PREFIX):
+            if not result.startswith(self.exec_error_prefix):
                 return result
-            last_error = result[len(self.EXEC_ERROR_PREFIX) :]
+            last_error = result[len(self.exec_error_prefix) :]
             log_debug(f"CodeModeTool code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
 
@@ -606,95 +679,13 @@ class CodeModeTool(Toolkit):
                 result = await loop.run_in_executor(None, self._execute_code, code, use_async)
                 if isinstance(result, ToolResult):
                     return result
-                if not result.startswith(self.EXEC_ERROR_PREFIX):
+                if not result.startswith(self.exec_error_prefix):
                     return result
-                last_error = result[len(self.EXEC_ERROR_PREFIX) :]
+                last_error = result[len(self.exec_error_prefix) :]
                 log_debug(f"CodeModeTool code_model attempt {attempt + 1} failed: {last_error}")
             return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
         finally:
             self.caller_loop = None
-
-    def search_tools(self, query: str) -> str:
-        """Search available tool functions by keyword.
-
-        Returns matching function signatures with parameter types and docstrings.
-        Use this to discover what functions are available before writing code with run_code.
-
-        Args:
-            query: Search keyword (matches against function names and descriptions)
-
-        Example:
-            search_tools(query="stock price") -> returns stubs for price-related functions
-        """
-        if not query or len(query.strip()) < 2:
-            return (
-                f"Please provide a search query (at least 2 characters). "
-                f"There are {len(self.stub_map)} functions available."
-            )
-
-        query_lower = query.lower().strip()
-        matches = []
-        for name, stub in self.stub_map.items():
-            func = self.sandbox_functions.get(name)
-            desc = (func.description or "").lower() if func else ""
-            if query_lower in name.lower() or query_lower in desc:
-                matches.append(stub)
-
-        if not matches:
-            return f"No functions found matching '{query}'. Try a broader search term."
-
-        if len(matches) > 10:
-            shown = matches[:10]
-            return (
-                f"Found {len(matches)} functions, showing first 10. "
-                f"Use a more specific query to narrow results.\n\n" + "\n\n".join(shown)
-            )
-
-        return f"Found {len(matches)} function(s):\n\n" + "\n\n".join(matches)
-
-    async def asearch_tools(self, query: str) -> str:
-        return self.search_tools(query)
-
-    def run_code(self, code: str) -> Union[str, ToolResult]:
-        """Execute Python code that calls tool functions directly.
-
-        RULES:
-        - Call functions DIRECTLY: search(query="x"), NOT functions.search()
-        - json and math are pre-imported. Do NOT write import statements.
-        - All tool functions return JSON strings. Use json.loads() to parse them.
-        - Store your final answer in a variable called `result` (as a string).
-        - You can use: json, math, loops, conditionals, list comprehensions, try/except
-
-        Example:
-            data = json.loads(search(query="laptop"))
-            details = json.loads(get_details(product_id=data[0]["id"]))
-            result = f"Found: {details['name']} at ${details['price']}"
-        """
-        if self.code_model is not None:
-            return self._run_with_code_model(code, use_async=False)
-        result = self._execute_code(code, use_async=False)
-        if isinstance(result, ToolResult):
-            return result
-        if result.startswith(self.EXEC_ERROR_PREFIX):
-            return result[len(self.EXEC_ERROR_PREFIX) :]
-        return result
-
-    async def arun_code(self, code: str) -> Union[str, ToolResult]:
-        if self.code_model is not None:
-            return await self._arun_with_code_model(code, use_async=True)
-        import asyncio
-
-        loop = asyncio.get_running_loop()
-        self.caller_loop = loop
-        try:
-            result = await loop.run_in_executor(None, self._execute_code, code, True)
-        finally:
-            self.caller_loop = None
-        if isinstance(result, ToolResult):
-            return result
-        if result.startswith(self.EXEC_ERROR_PREFIX):
-            return result[len(self.EXEC_ERROR_PREFIX) :]
-        return result
 
     @staticmethod
     def _collect_media(collector: Dict[str, List[Any]], tool_result: ToolResult) -> None:
