@@ -69,3 +69,8 @@ class TestVerifySlackSignature:
         body = b'{"test": true}'
         ts = str(int(time.time()))
         assert verify_slack_signature(body, ts, "v0=deadbeef", signing_secret="secret") is False
+
+    def test_non_utf8_body_rejected(self):
+        body = b"\x80\x81\x82\xff"
+        ts = str(int(time.time()))
+        assert verify_slack_signature(body, ts, "v0=deadbeef", signing_secret="secret") is False

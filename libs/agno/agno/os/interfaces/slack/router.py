@@ -151,25 +151,25 @@ def attach_routes(
         except Exception:
             pass
 
-        files, images, videos, audio, skipped = await download_event_files_async(
-            slack_tools.token, event, slack_tools.max_file_size
-        )
-
-        message_text = ctx["message_text"]
-        if skipped:
-            notice = "[Skipped files: " + ", ".join(skipped) + "]"
-            message_text = f"{notice}\n{message_text}"
-
-        run_kwargs: Dict[str, Any] = {
-            "user_id": None,
-            "session_id": session_id,
-            "files": files if files else None,
-            "images": images if images else None,
-            "videos": videos if videos else None,
-            "audio": audio if audio else None,
-        }
-
         try:
+            files, images, videos, audio, skipped = await download_event_files_async(
+                slack_tools.token, event, slack_tools.max_file_size
+            )
+
+            message_text = ctx["message_text"]
+            if skipped:
+                notice = "[Skipped files: " + ", ".join(skipped) + "]"
+                message_text = f"{notice}\n{message_text}"
+
+            run_kwargs: Dict[str, Any] = {
+                "user_id": None,
+                "session_id": session_id,
+                "files": files if files else None,
+                "images": images if images else None,
+                "videos": videos if videos else None,
+                "audio": audio if audio else None,
+            }
+
             response = None
             if agent:
                 response = await agent.arun(message_text, **run_kwargs)  # type: ignore[misc]
@@ -215,6 +215,15 @@ def attach_routes(
                 message="Sorry, there was an error processing your message.",
                 thread_ts=ctx["thread_id"],
             )
+        finally:
+            # Clear "Thinking..." status. In streaming mode stream.stop() handles
+            # this automatically, but the non-streaming path must clear explicitly.
+            try:
+                await async_client.assistant_threads_setStatus(
+                    channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
+                )
+            except Exception:
+                pass
 
     async def _stream_slack_response(data: dict):
         from slack_sdk.web.async_client import AsyncWebClient

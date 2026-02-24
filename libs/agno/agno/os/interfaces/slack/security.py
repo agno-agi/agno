@@ -25,7 +25,12 @@ def verify_slack_signature(
     if abs(time.time() - ts) > 60 * 5:
         return False
 
-    sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
+    try:
+        body_str = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+
+    sig_basestring = f"v0:{timestamp}:{body_str}"
     my_signature = "v0=" + hmac.new(secret.encode("utf-8"), sig_basestring.encode("utf-8"), hashlib.sha256).hexdigest()
 
     return hmac.compare_digest(my_signature, slack_signature)

@@ -320,6 +320,42 @@ async def test_thread_reply_blocked_when_mentions_only():
         agent_mock.arun.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_non_streaming_clears_status_after_response():
+    agent_mock = make_agent_mock()
+    mock_slack = make_slack_mock()
+    mock_client = make_async_client_mock()
+    with (
+        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
+    ):
+        app = build_app(agent_mock, reply_to_mentions_only=False)
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        body = {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel_type": "im",
+                "text": "hello",
+                "user": "U123",
+                "channel": "C123",
+                "ts": str(time.time()),
+            },
+        }
+        resp = make_signed_request(client, body)
+        assert resp.status_code == 200
+        await _wait_for_agent_call(agent_mock)
+
+        # Status should be cleared (empty string) in the finally block
+        status_calls = mock_client.assistant_threads_setStatus.call_args_list
+        assert len(status_calls) >= 2
+        last_call = status_calls[-1]
+        assert last_call.kwargs.get("status") == ""
+
+
 def test_retry_header_skips_processing():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
