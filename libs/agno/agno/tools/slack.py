@@ -59,9 +59,10 @@ class SlackTools(Toolkit):
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
         """
-        self.token: Optional[str] = token or getenv("SLACK_TOKEN")
-        if self.token is None or self.token == "":
+        _token = token or getenv("SLACK_TOKEN")
+        if not _token:
             raise ValueError("SLACK_TOKEN is not set")
+        self.token: str = _token
         self.client = WebClient(token=self.token, ssl=ssl)
         self.markdown = markdown
         self.max_file_size = max_file_size
