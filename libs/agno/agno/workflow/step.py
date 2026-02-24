@@ -239,8 +239,14 @@ class Step:
             if registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 if registry_agent is not None:
-                    # Deep copy to isolate mutable state between concurrent requests
-                    agent = registry_agent.deep_copy()
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        agent = registry_agent.deep_copy()
+                    except Exception:
+                        log_warning(
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance"
+                        )
+                        agent = registry_agent
 
             # Fall back to database
             if agent is None and db is not None and agent_id is not None:
@@ -261,8 +267,14 @@ class Step:
             if registry and team_id:
                 registry_team = registry.get_team(team_id)
                 if registry_team is not None:
-                    # Deep copy to isolate mutable state between concurrent requests
-                    team = registry_team.deep_copy()
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        team = registry_team.deep_copy()
+                    except Exception:
+                        log_warning(
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance"
+                        )
+                        team = registry_team
 
             # Fall back to database
             if team is None and db is not None and team_id is not None:
