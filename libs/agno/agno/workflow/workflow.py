@@ -33,7 +33,7 @@ from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
@@ -279,6 +279,11 @@ class Workflow:
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
+
+        # Component metadata (set by get_workflows during DB loading)
+        self._version: Optional[int] = None
+        self._stage: Optional[str] = None
+
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
@@ -4540,9 +4545,9 @@ class Workflow:
             "session_id": self.session_id,
         }
 
-    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
+    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> RunMetrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
-        session_metrics = Metrics()
+        session_metrics = RunMetrics()
 
         # Aggregate metrics from all steps
         for step_name, step_metrics in workflow_metrics.steps.items():
@@ -4553,36 +4558,46 @@ class Workflow:
 
         return session_metrics
 
-    def _get_session_metrics(self, session: WorkflowSession) -> Metrics:
+    def _get_session_metrics(self, session: WorkflowSession) -> SessionMetrics:
         """Get existing session metrics from the database"""
         if session.session_data and "session_metrics" in session.session_data:
             session_metrics_from_db = session.session_data.get("session_metrics")
             if session_metrics_from_db is not None:
                 if isinstance(session_metrics_from_db, dict):
-                    return Metrics(**session_metrics_from_db)
-                elif isinstance(session_metrics_from_db, Metrics):
+                    return SessionMetrics.from_dict(session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, SessionMetrics):
                     return session_metrics_from_db
-        return Metrics()
+                elif isinstance(session_metrics_from_db, RunMetrics):
+                    # Convert legacy RunMetrics to SessionMetrics
+                    return SessionMetrics(
+                        input_tokens=session_metrics_from_db.input_tokens,
+                        output_tokens=session_metrics_from_db.output_tokens,
+                        total_tokens=session_metrics_from_db.total_tokens,
+                        audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                        audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                        audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                        cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                        cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                        reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    )
+        return SessionMetrics()
 
     def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
-        """Calculate and update session metrics"""
+        """Calculate and update session metrics - convert run Metrics to SessionMetrics."""
         # Get existing session metrics
         session_metrics = self._get_session_metrics(session=session)
 
         # If workflow has metrics, convert and add them to session metrics
         if workflow_run_response.metrics:
-            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)  # type: ignore[arg-type]
+            run_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)  # type: ignore[arg-type]
+            session_metrics.accumulate_from_run(run_metrics)
 
-            session_metrics += run_session_metrics
-
-        session_metrics.time_to_first_token = None
-
-        # Store updated session metrics - CONVERT TO DICT FOR JSON SERIALIZATION
+        # Store updated session metrics
         if not session.session_data:
             session.session_data = {}
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:
@@ -4594,7 +4609,7 @@ class Workflow:
 
         return self._get_session_metrics(session=session)
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:
@@ -5115,7 +5130,11 @@ def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
 ) -> List["Workflow"]:
-    """Get all workflows from the database"""
+    """
+    Get all workflows from the database.
+
+    Sets _version and _stage on each workflow from the component metadata.
+    """
     workflows: List[Workflow] = []
     try:
         components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
@@ -5129,13 +5148,13 @@ def get_workflows(
                         if "id" not in workflow_config:
                             workflow_config["id"] = component_id
                         workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                        # Ensure workflow.id is set to the component_id
                         workflow.id = component_id
+                        workflow._version = component.get("current_version")
+                        workflow._stage = config.get("stage")
                         workflows.append(workflow)
             except Exception as e:
                 component_id = component.get("component_id", "unknown")
                 log_error(f"Error loading Workflow {component_id} from database: {e}")
-                # Continue loading other workflows even if this one fails
                 continue
         return workflows
 
