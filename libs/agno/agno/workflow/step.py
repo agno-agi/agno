@@ -1805,6 +1805,7 @@ class Step:
             List of Image objects ready for agent processing
         """
         import base64
+        import binascii
 
         images = []
         for i, img_artifact in enumerate(image_artifacts):
@@ -1821,7 +1822,7 @@ class Step:
                             # Attempt UTF-8 decode in case bytes are base64-encoded text
                             base64_str: str = img_artifact.content.decode("utf-8")
                             actual_image_bytes = base64.b64decode(base64_str)
-                        except (UnicodeDecodeError, Exception):
+                        except (UnicodeDecodeError, binascii.Error):
                             # Raw image bytes (e.g., from Telegram, WhatsApp, or file uploads)
                             actual_image_bytes = img_artifact.content
                     else:
