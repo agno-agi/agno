@@ -17,14 +17,16 @@ class TaskCard:
 
 @dataclass
 class StreamState:
+    # Slack thread title — set once on first content to avoid repeated API calls
     title_set: bool = False
+    # Incremented per error; used to generate unique fallback task card IDs
     error_count: int = 0
 
     text_buffer: str = ""
 
+    # Counter for unique reasoning task card keys (reasoning_0, reasoning_1, ...)
     reasoning_round: int = 0
 
-    progress_started: bool = False
     task_cards: Dict[str, TaskCard] = field(default_factory=dict)
 
     images: list = field(default_factory=list)
@@ -32,10 +34,13 @@ class StreamState:
     audio: list = field(default_factory=list)
     files: list = field(default_factory=list)
 
-    # Used by router to select DISPATCH (agent/team) vs WORKFLOW_DISPATCH (workflow)
+    # Used by process_event to suppress nested agent events in workflow mode
     entity_type: Literal["agent", "team", "workflow"] = "agent"
+    # Leader/workflow name; member_name() compares against it to detect team members
     entity_name: str = ""
 
+    # Last StepOutput content; used by WorkflowCompleted as fallback when its
+    # own content is None. Not appended to text_buffer to avoid premature streaming.
     workflow_final_content: str = ""
 
     # Set by handlers on terminal events; router reads this for the final flush
@@ -43,7 +48,6 @@ class StreamState:
 
     def track_task(self, key: str, title: str) -> None:
         self.task_cards[key] = TaskCard(title=title)
-        self.progress_started = True
 
     def complete_task(self, key: str) -> None:
         card = self.task_cards.get(key)

@@ -22,6 +22,7 @@ def verify_slack_signature(
     except (ValueError, TypeError):
         return False
 
+    # Reject stale requests to block replay attacks (Slack's recommended window)
     if abs(time.time() - ts) > 60 * 5:
         return False
 
