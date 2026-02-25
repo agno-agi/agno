@@ -1,24 +1,48 @@
 # Design: Visual Quality Improvements for PowerPoint Template Assembly
 
 **Date:** 2026-02-19
-**Status:** Draft
+**Last Updated:** 2026-02-25
+**Status:** Implemented (Phase 1 + Phase 2)
 **Files affected:**
-- `cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py`
-- `cookbook/90_models/anthropic/skills/agent_with_powerpoint_template.py`
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
 
 ---
 
 ## Implementation Status
 
-**Template Style Extraction (Implemented):** The core template style extraction and application system described in Phase 2's "Style Architect" concept has been implemented as a deterministic extraction pipeline in `powerpoint_template_workflow.py`. Instead of using an AI agent for style analysis, the system directly parses the template's theme XML (`clrScheme`, `fontScheme`) and scans reference visual elements (tables, charts) to extract their styling. This is applied via [`_apply_table_style()`](powerpoint_template_workflow.py) and [`_apply_chart_style()`](powerpoint_template_workflow.py) during template assembly.
+### Phase 1: Deterministic Quality Improvements — COMPLETE ✅
 
-Key differences from the Phase 2 proposal:
-- **Deterministic extraction** instead of AI-based style analysis — more reliable and predictable
-- **Reference element priority** — when the template contains a matching visual element type, its styling takes absolute precedence
-- **Cascading fallback** — reference styling > theme colors/fonts > hardcoded defaults
-- **No new agents required** — integrated directly into Step 4 of the existing workflow
+All five Phase 1 improvements have been implemented in `powerpoint_template_workflow.py` (2026-02-25):
 
-See [`ARCHITECTURE_powerpoint_template_workflow.md`](ARCHITECTURE_powerpoint_template_workflow.md) for full details.
+| Fix | Function(s) | Status |
+|-----|------------|--------|
+| Shape coordinate rescaling | `_rescale_shape_xml()`, `_transfer_shapes()` | ✅ Implemented |
+| Footer standardization | `_populate_footer_placeholders()`, `--footer-text`, `--date-text`, `--show-slide-numbers` | ✅ Implemented |
+| Line-length wrap factor | `_compute_text_ratio()` | ✅ Implemented |
+| Source slide dimensions stored | `step_generate_content()` → `session_state["src_slide_width/height"]` | ✅ Implemented |
+| `fit_text()` fallback hardening | `_populate_placeholder_with_format()` | ✅ Implemented |
+
+**Template Style Extraction (earlier implementation):** The core template style extraction and application system was implemented as a deterministic extraction pipeline. The system directly parses the template's theme XML (`clrScheme`, `fontScheme`) and scans reference visual elements (tables, charts) to extract their styling. Applied via `_apply_table_style()` and `_apply_chart_style()` during template assembly:
+- **Deterministic extraction** instead of AI-based style analysis
+- **Reference element priority** — template's existing table/chart styling takes precedence
+- **Cascading fallback** — reference styling → theme colors/fonts → hardcoded defaults
+
+**Layout collision resolution (earlier implementation):** The `RegionMap` + `_compute_region_map()` system separates text and visual content into non-overlapping regions. `_ensure_text_on_top()` handles z-order. `_find_best_layout()` uses a scoring system to select the most appropriate template layout per slide.
+
+### Phase 2: Visual Review Agent — COMPLETE ✅
+
+The optional Step 5 visual quality review agent has been implemented (2026-02-25):
+
+| Component | Function(s) | Status |
+|-----------|------------|--------|
+| Pydantic schemas | `ShapeIssue`, `SlideQualityReport`, `PresentationQualityReport` | ✅ Implemented |
+| Rendering | `_render_pptx_to_images()` (LibreOffice headless) | ✅ Implemented |
+| Vision agent | `slide_quality_reviewer` (Gemini 2.5 Flash + `output_schema=SlideQualityReport`) | ✅ Implemented |
+| Correction dispatcher | `_apply_visual_corrections()` | ✅ Implemented |
+| Step 5 executor | `step_visual_quality_review()` | ✅ Implemented |
+| CLI flag | `--visual-review` | ✅ Implemented |
+
+See [`ARCHITECTURE_powerpoint_template_workflow.md`](ARCHITECTURE_powerpoint_template_workflow.md) for full details on all implementations.
 
 ---
 

@@ -383,7 +383,11 @@ def _hex_to_rgb(hex_color: str) -> tuple:
     if len(hex_color) != 6:
         return (0, 0, 0)
     try:
-        return (int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
+        return (
+            int(hex_color[0:2], 16),
+            int(hex_color[2:4], 16),
+            int(hex_color[4:6], 16),
+        )
     except ValueError:
         return (0, 0, 0)
 
@@ -393,6 +397,7 @@ def _relative_luminance(r: int, g: int, b: int) -> float:
 
     Returns a value between 0.0 (black) and 1.0 (white).
     """
+
     def _linearize(c):
         c_srgb = c / 255.0
         if c_srgb <= 0.03928:
@@ -416,7 +421,9 @@ def _contrast_ratio(color1_hex: str, color2_hex: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def _get_slide_background_color(slide, template_style: "TemplateStyle | None" = None) -> str:
+def _get_slide_background_color(
+    slide, template_style: "TemplateStyle | None" = None
+) -> str:
     """Determine the effective background color of a slide.
 
     Checks (in priority order):
@@ -449,7 +456,9 @@ def _get_slide_background_color(slide, template_style: "TemplateStyle | None" = 
                 return srgb.get("val", "")
             schemeClr = solidFill.find(ns_a + "schemeClr")
             if schemeClr is not None and template_style:
-                return _resolve_scheme_color(schemeClr.get("val", ""), template_style.theme)
+                return _resolve_scheme_color(
+                    schemeClr.get("val", ""), template_style.theme
+                )
         return ""
 
     try:
@@ -611,11 +620,15 @@ def _extract_table_styles_from_prs(prs) -> list:
                                     if solidFill is not None:
                                         srgb = solidFill.find("a:srgbClr", ns)
                                         if srgb is not None:
-                                            style.header_font_color_rgb = srgb.get("val", "")
+                                            style.header_font_color_rgb = srgb.get(
+                                                "val", ""
+                                            )
                                     # Font family
                                     latin = rPr.find("a:latin", ns)
                                     if latin is not None:
-                                        style.header_font_family = latin.get("typeface", "")
+                                        style.header_font_family = latin.get(
+                                            "typeface", ""
+                                        )
 
                     # Cell fill
                     tc_elem = cell._tc
@@ -646,10 +659,14 @@ def _extract_table_styles_from_prs(prs) -> list:
                                     if solidFill is not None:
                                         srgb = solidFill.find("a:srgbClr", ns)
                                         if srgb is not None:
-                                            style.cell_font_color_rgb = srgb.get("val", "")
+                                            style.cell_font_color_rgb = srgb.get(
+                                                "val", ""
+                                            )
                                     latin = rPr.find("a:latin", ns)
                                     if latin is not None:
-                                        style.cell_font_family = latin.get("typeface", "")
+                                        style.cell_font_family = latin.get(
+                                            "typeface", ""
+                                        )
 
                     # Cell fill
                     tc_elem = cell._tc
@@ -915,13 +932,23 @@ def _extract_template_styles(template_prs) -> TemplateStyle:
                             if pPr is not None:
                                 defRPr = pPr.find(ns_a + "defRPr")
                                 if defRPr is not None:
-                                    color_rgb = _extract_color_from_rPr(defRPr, ts.theme)
+                                    color_rgb = _extract_color_from_rPr(
+                                        defRPr, ts.theme
+                                    )
                                     sz = defRPr.get("sz")
-                                    if ph_idx == 0 and not ts.title_font_color_rgb and color_rgb:
+                                    if (
+                                        ph_idx == 0
+                                        and not ts.title_font_color_rgb
+                                        and color_rgb
+                                    ):
                                         ts.title_font_color_rgb = color_rgb
                                     if ph_idx == 0 and not ts.title_font_size_pt and sz:
                                         ts.title_font_size_pt = int(sz) // 100
-                                    if ph_idx == 1 and not ts.body_font_color_rgb and color_rgb:
+                                    if (
+                                        ph_idx == 1
+                                        and not ts.body_font_color_rgb
+                                        and color_rgb
+                                    ):
                                         ts.body_font_color_rgb = color_rgb
                                     if ph_idx == 1 and not ts.body_font_size_pt and sz:
                                         ts.body_font_size_pt = int(sz) // 100
@@ -936,9 +963,17 @@ def _extract_template_styles(template_prs) -> TemplateStyle:
                                             font_name = ts.theme.major_font
                                         elif typeface == "+mn-lt":
                                             font_name = ts.theme.minor_font
-                                    if ph_idx == 0 and not ts.title_font_family and font_name:
+                                    if (
+                                        ph_idx == 0
+                                        and not ts.title_font_family
+                                        and font_name
+                                    ):
                                         ts.title_font_family = font_name
-                                    if ph_idx == 1 and not ts.body_font_family and font_name:
+                                    if (
+                                        ph_idx == 1
+                                        and not ts.body_font_family
+                                        and font_name
+                                    ):
                                         ts.body_font_family = font_name
                             # Also check actual runs
                             if para.runs:
@@ -946,11 +981,19 @@ def _extract_template_styles(template_prs) -> TemplateStyle:
                                 if rPr is not None:
                                     color_rgb = _extract_color_from_rPr(rPr, ts.theme)
                                     sz = rPr.get("sz")
-                                    if ph_idx == 0 and not ts.title_font_color_rgb and color_rgb:
+                                    if (
+                                        ph_idx == 0
+                                        and not ts.title_font_color_rgb
+                                        and color_rgb
+                                    ):
                                         ts.title_font_color_rgb = color_rgb
                                     if ph_idx == 0 and not ts.title_font_size_pt and sz:
                                         ts.title_font_size_pt = int(sz) // 100
-                                    if ph_idx == 1 and not ts.body_font_color_rgb and color_rgb:
+                                    if (
+                                        ph_idx == 1
+                                        and not ts.body_font_color_rgb
+                                        and color_rgb
+                                    ):
                                         ts.body_font_color_rgb = color_rgb
                                     if ph_idx == 1 and not ts.body_font_size_pt and sz:
                                         ts.body_font_size_pt = int(sz) // 100
@@ -965,13 +1008,23 @@ def _extract_template_styles(template_prs) -> TemplateStyle:
                                             font_name = ts.theme.major_font
                                         elif typeface == "+mn-lt":
                                             font_name = ts.theme.minor_font
-                                    if ph_idx == 0 and not ts.title_font_family and font_name:
+                                    if (
+                                        ph_idx == 0
+                                        and not ts.title_font_family
+                                        and font_name
+                                    ):
                                         ts.title_font_family = font_name
-                                    if ph_idx == 1 and not ts.body_font_family and font_name:
+                                    if (
+                                        ph_idx == 1
+                                        and not ts.body_font_family
+                                        and font_name
+                                    ):
                                         ts.body_font_family = font_name
         except Exception as e:
             if VERBOSE:
-                print("[VERBOSE] Layout placeholder style extraction failed: %s" % str(e))
+                print(
+                    "[VERBOSE] Layout placeholder style extraction failed: %s" % str(e)
+                )
 
     if VERBOSE:
         print("[VERBOSE] Extracted template styles:")
@@ -1026,7 +1079,9 @@ def _apply_table_style(table_shape, template_style: TemplateStyle):
         else theme.minor_font or "Calibri"
     )
     header_font_size = Pt(
-        ref_style.header_font_size_pt if ref_style and ref_style.header_font_size_pt else 11
+        ref_style.header_font_size_pt
+        if ref_style and ref_style.header_font_size_pt
+        else 11
     )
     cell_font_size = Pt(
         ref_style.cell_font_size_pt if ref_style and ref_style.cell_font_size_pt else 10
@@ -1170,11 +1225,14 @@ def _apply_chart_style(chart_shape, template_style: TemplateStyle):
         else theme.minor_font or "Calibri"
     )
     font_size = str(
-        (ref_style.axis_font_size_pt if ref_style and ref_style.axis_font_size_pt else 10) * 100
+        (
+            ref_style.axis_font_size_pt
+            if ref_style and ref_style.axis_font_size_pt
+            else 10
+        )
+        * 100
     )
-    font_color = (
-        ref_style.axis_font_color_rgb if ref_style else (theme.dk1 or "000000")
-    )
+    font_color = ref_style.axis_font_color_rgb if ref_style else (theme.dk1 or "000000")
 
     for axis_tag in [qn("c:catAx"), qn("c:valAx"), qn("c:dateAx")]:
         for ax in chart_space.findall(".//" + axis_tag):
@@ -1224,12 +1282,14 @@ def _apply_chart_style(chart_shape, template_style: TemplateStyle):
             else font_family
         )
         leg_font_size = str(
-            (ref_style.legend_font_size_pt if ref_style and ref_style.legend_font_size_pt else 10)
+            (
+                ref_style.legend_font_size_pt
+                if ref_style and ref_style.legend_font_size_pt
+                else 10
+            )
             * 100
         )
-        leg_font_color = (
-            ref_style.legend_font_color_rgb if ref_style else font_color
-        )
+        leg_font_color = ref_style.legend_font_color_rgb if ref_style else font_color
 
         txPr = legend.find(qn("c:txPr"))
         if txPr is None:
@@ -1947,15 +2007,18 @@ def _compute_region_map(
     if content_mix == ContentMix.TEXT_AND_CHART:
         if chart_placeholders and content_placeholders:
             chart_ph = chart_placeholders[0]
-            text_ph = _best_text_placeholder(
-                layout,
-                avoid=ContentArea(
-                    left=chart_ph.left,
-                    top=chart_ph.top,
-                    width=chart_ph.width,
-                    height=chart_ph.height,
-                ),
-            ) or content_placeholders[0]
+            text_ph = (
+                _best_text_placeholder(
+                    layout,
+                    avoid=ContentArea(
+                        left=chart_ph.left,
+                        top=chart_ph.top,
+                        width=chart_ph.width,
+                        height=chart_ph.height,
+                    ),
+                )
+                or content_placeholders[0]
+            )
             return RegionMap(
                 text_region=ContentArea(
                     left=text_ph.left,
@@ -1994,15 +2057,18 @@ def _compute_region_map(
             allow_body_fallback=True,
         )
         if chart_ph is not None:
-            best_text = _best_text_placeholder(
-                layout,
-                avoid=ContentArea(
-                    left=chart_ph.left,
-                    top=chart_ph.top,
-                    width=chart_ph.width,
-                    height=chart_ph.height,
-                ),
-            ) or text_ph
+            best_text = (
+                _best_text_placeholder(
+                    layout,
+                    avoid=ContentArea(
+                        left=chart_ph.left,
+                        top=chart_ph.top,
+                        width=chart_ph.width,
+                        height=chart_ph.height,
+                    ),
+                )
+                or text_ph
+            )
             text_region = (
                 ContentArea(
                     left=best_text.left,
@@ -2036,15 +2102,18 @@ def _compute_region_map(
     if content_mix == ContentMix.TEXT_AND_TABLE:
         if table_placeholders and content_placeholders:
             table_ph = table_placeholders[0]
-            text_ph = _best_text_placeholder(
-                layout,
-                avoid=ContentArea(
-                    left=table_ph.left,
-                    top=table_ph.top,
-                    width=table_ph.width,
-                    height=table_ph.height,
-                ),
-            ) or content_placeholders[0]
+            text_ph = (
+                _best_text_placeholder(
+                    layout,
+                    avoid=ContentArea(
+                        left=table_ph.left,
+                        top=table_ph.top,
+                        width=table_ph.width,
+                        height=table_ph.height,
+                    ),
+                )
+                or content_placeholders[0]
+            )
             return RegionMap(
                 text_region=ContentArea(
                     left=text_ph.left,
@@ -2083,15 +2152,18 @@ def _compute_region_map(
             allow_body_fallback=True,
         )
         if table_ph is not None:
-            best_text = _best_text_placeholder(
-                layout,
-                avoid=ContentArea(
-                    left=table_ph.left,
-                    top=table_ph.top,
-                    width=table_ph.width,
-                    height=table_ph.height,
-                ),
-            ) or text_ph
+            best_text = (
+                _best_text_placeholder(
+                    layout,
+                    avoid=ContentArea(
+                        left=table_ph.left,
+                        top=table_ph.top,
+                        width=table_ph.width,
+                        height=table_ph.height,
+                    ),
+                )
+                or text_ph
+            )
             text_region = (
                 ContentArea(
                     left=best_text.left,
@@ -2456,9 +2528,7 @@ def _get_content_area(
     ]
     if candidates:
         ph = max(candidates, key=_placeholder_area)
-        return ContentArea(
-            left=ph.left, top=ph.top, width=ph.width, height=ph.height
-        )
+        return ContentArea(left=ph.left, top=ph.top, width=ph.width, height=ph.height)
 
     # Default: safe margins (5% left, 25% top, 90% width, 65% height)
     return ContentArea(
@@ -2658,7 +2728,9 @@ def _populate_placeholder_with_format(
                     run._r.insert(0, new_rPr)
         except Exception as e:
             if VERBOSE:
-                print("[VERBOSE] Re-applying template run properties failed: %s" % str(e))
+                print(
+                    "[VERBOSE] Re-applying template run properties failed: %s" % str(e)
+                )
 
     # When ref_run_xml is None (placeholder inherits from layout/master),
     # fit_text() will have set an explicit font that may not match the theme.
@@ -2667,13 +2739,11 @@ def _populate_placeholder_with_format(
         ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
         if is_title:
             target_font = (
-                template_style.title_font_family
-                or template_style.theme.major_font
+                template_style.title_font_family or template_style.theme.major_font
             )
         else:
             target_font = (
-                template_style.body_font_family
-                or template_style.theme.minor_font
+                template_style.body_font_family or template_style.theme.minor_font
             )
         if target_font:
             for para in tf.paragraphs:
@@ -2690,7 +2760,10 @@ def _populate_placeholder_with_format(
 
 
 def _transfer_tables(
-    slide, tables, content_area: ContentArea, template_style: "TemplateStyle | None" = None
+    slide,
+    tables,
+    content_area: ContentArea,
+    template_style: "TemplateStyle | None" = None,
 ):
     """Transfer extracted table data to a slide, repositioned to the content area.
 
@@ -2772,7 +2845,10 @@ def _transfer_images(slide, images, content_area: ContentArea):
 
 
 def _transfer_charts(
-    slide, charts, content_area: ContentArea, template_style: "TemplateStyle | None" = None
+    slide,
+    charts,
+    content_area: ContentArea,
+    template_style: "TemplateStyle | None" = None,
 ):
     """Transfer extracted chart data to a slide, sized to fill the content area.
 
@@ -2916,8 +2992,6 @@ def _remove_empty_textboxes(slide) -> None:
             pass
 
 
-
-
 def _populate_slide(
     new_slide,
     content: SlideContent,
@@ -3020,7 +3094,9 @@ def _populate_slide(
             populated_indices.add(ph_idx)
             title_placed = True
         elif ph_idx == 1:
-            if body_paragraphs and (preferred_text_ph is None or shape == preferred_text_ph):
+            if body_paragraphs and (
+                preferred_text_ph is None or shape == preferred_text_ph
+            ):
                 _populate_placeholder_with_format(
                     shape,
                     body_paragraphs,
@@ -3031,7 +3107,10 @@ def _populate_slide(
                 body_placed = True
             elif content.subtitle:
                 _populate_placeholder_with_format(
-                    shape, content.subtitle, is_title=True, template_style=template_style
+                    shape,
+                    content.subtitle,
+                    is_title=True,
+                    template_style=template_style,
                 )
                 populated_indices.add(ph_idx)
                 body_placed = True
@@ -3097,9 +3176,7 @@ def _populate_slide(
                     pass
 
     if not body_placed and body_paragraphs:
-        max_font = _compute_max_font_size(
-            region_map.text_region, len(body_paragraphs)
-        )
+        max_font = _compute_max_font_size(region_map.text_region, len(body_paragraphs))
         txBox = new_slide.shapes.add_textbox(
             region_map.text_region.left,
             region_map.text_region.top,
@@ -3144,7 +3221,6 @@ def _populate_slide(
             if VERBOSE:
                 print("[VERBOSE] Exception suppressed: %s" % str(e))
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-
 
     # Place visuals into the visual_region (separate from text)
     visual_area = region_map.visual_region
@@ -3214,7 +3290,9 @@ def _populate_slide(
                 "yes" if chart_ph is not None else "no",
             )
         )
-    _transfer_tables(new_slide, content.tables, visual_area, template_style=template_style)
+    _transfer_tables(
+        new_slide, content.tables, visual_area, template_style=template_style
+    )
     _transfer_images(new_slide, content.images, image_area or visual_area)
     _transfer_charts(
         new_slide, content.charts, visual_area, template_style=template_style
@@ -3326,7 +3404,6 @@ def _populate_slide(
     # Remove any empty text boxes (non-placeholders) that may remain from
     # certain templates and would otherwise sit on top of visuals.
     _remove_empty_textboxes(new_slide)
-
 
 
 # ---------------------------------------------------------------------------
@@ -3730,9 +3807,10 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
             "title": content.title,
             "subtitle": content.subtitle,
             "body_text": " | ".join(
-                t if isinstance(t, str) else t[0]
-                for t in content.body_paragraphs[:3]
-            ) if content.body_paragraphs else "",
+                t if isinstance(t, str) else t[0] for t in content.body_paragraphs[:3]
+            )
+            if content.body_paragraphs
+            else "",
             "bullet_count": len(content.body_paragraphs),
             "has_table": len(content.tables) > 0,
             "has_chart": len(content.charts) > 0,
@@ -3834,7 +3912,10 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
     ) % (user_prompt, slides_json)
 
     if VERBOSE:
-        print("[VERBOSE] Image planner input (first 500 chars):\n%s" % combined_message[:500])
+        print(
+            "[VERBOSE] Image planner input (first 500 chars):\n%s"
+            % combined_message[:500]
+        )
 
     # Run the image_planner agent directly with the combined message
     try:
@@ -3857,7 +3938,9 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
         else:
             result = str(response.content)
         if VERBOSE:
-            print("[VERBOSE] Image planner output (first 500 chars):\n%s" % result[:500])
+            print(
+                "[VERBOSE] Image planner output (first 500 chars):\n%s" % result[:500]
+            )
         return StepOutput(content=result, success=True)
 
     print("[WARNING] Image planner returned no content.")
