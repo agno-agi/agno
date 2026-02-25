@@ -329,7 +329,7 @@ def attach_routes(
                     await stream.append(markdown_text=state.flush())
 
             # Default to complete when no terminal error/cancel event arrived
-            final_status = state.terminal_status or "complete"
+            final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
             stop_kwargs: Dict[str, Any] = {}
             if state.has_content():

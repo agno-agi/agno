@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Literal
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional
 
 if TYPE_CHECKING:
     from agno.run.base import BaseRunOutputEvent
@@ -44,7 +44,7 @@ class StreamState:
     workflow_final_content: str = ""
 
     # Set by handlers on terminal events; router reads this for the final flush
-    terminal_status: str = ""
+    terminal_status: Optional[TaskStatus] = None
 
     def track_task(self, key: str, title: str) -> None:
         self.task_cards[key] = TaskCard(title=title)
