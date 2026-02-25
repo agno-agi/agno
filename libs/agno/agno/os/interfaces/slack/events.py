@@ -49,7 +49,7 @@ async def _emit_task(
     chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
         chunk["output"] = output[:200]  # Slack truncates longer task output
-    await stream.append(chunks=[chunk])
+    await stream.append(markdown_text="", chunks=[chunk])
 
 
 async def _wf_task(
