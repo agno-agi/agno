@@ -2,7 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.culture import CulturalKnowledge
@@ -17,6 +17,9 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 @dataclass
@@ -176,7 +179,7 @@ class CultureManager:
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Creates a cultural knowledge from a message or a list of messages"""
         self.set_log_level()
@@ -207,7 +210,7 @@ class CultureManager:
             db=self.db,
             update_knowledge=self.update_knowledge,
             add_knowledge=self.add_knowledge,
-            run_response=run_response,
+            run_metrics=run_metrics,
         )
 
         return response
@@ -216,7 +219,7 @@ class CultureManager:
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Creates a cultural knowledge from a message or a list of messages"""
         self.set_log_level()
@@ -251,7 +254,7 @@ class CultureManager:
             db=self.db,
             update_knowledge=self.update_knowledge,
             add_knowledge=self.add_knowledge,
-            run_response=run_response,
+            run_metrics=run_metrics,
         )
 
         return response
@@ -461,7 +464,7 @@ class CultureManager:
         db: BaseDb,
         update_knowledge: bool = True,
         add_knowledge: bool = True,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for culture manager")
@@ -499,11 +502,11 @@ class CultureManager:
             tools=_tools,
         )
 
-        # Accumulate culture model metrics to run_response
-        if run_response is not None and response.response_usage is not None:
+        # Accumulate culture model metrics
+        if run_metrics is not None and response.response_usage is not None:
             from agno.metrics import ModelType, accumulate_model_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.CULTURE_MODEL, run_response)
+            accumulate_model_metrics(response, model_copy, ModelType.CULTURE_MODEL, run_metrics)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.knowledge_updated = True
@@ -519,7 +522,7 @@ class CultureManager:
         db: AsyncBaseDb,
         update_knowledge: bool = True,
         add_knowledge: bool = True,
-        run_response: Optional[Any] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for cultural manager")
@@ -555,11 +558,11 @@ class CultureManager:
             tools=_tools,
         )
 
-        # Accumulate culture model metrics to run_response
-        if run_response is not None and response.response_usage is not None:
+        # Accumulate culture model metrics
+        if run_metrics is not None and response.response_usage is not None:
             from agno.metrics import ModelType, accumulate_model_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.CULTURE_MODEL, run_response)
+            accumulate_model_metrics(response, model_copy, ModelType.CULTURE_MODEL, run_metrics)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.knowledge_updated = True

@@ -294,8 +294,16 @@ class AwsBedrock(Model):
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
                 }
-                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
-                formatted_messages.append(formatted_message)
+                if (
+                    formatted_messages
+                    and formatted_messages[-1]["role"] == "user"
+                    and formatted_messages[-1]["content"]
+                    and "toolResult" in formatted_messages[-1]["content"][0]
+                ):
+                    formatted_messages[-1]["content"].append({"toolResult": tool_result})
+                else:
+                    formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                    formatted_messages.append(formatted_message)
             else:
                 formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):

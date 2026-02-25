@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
-    from agno.run.agent import RunOutput
-    from agno.run.team import TeamRunOutput
+    from agno.metrics import RunMetrics
 
 
 def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
@@ -25,7 +24,7 @@ def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
 def get_vertexai_reasoning(
     reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
     messages: List[Message],
-    run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
+    run_metrics: Optional["RunMetrics"] = None,
 ) -> Optional[Message]:
     """Get reasoning from a VertexAI Claude model."""
     try:
@@ -34,11 +33,11 @@ def get_vertexai_reasoning(
         logger.warning(f"Reasoning error: {e}")
         return None
 
-    # Accumulate reasoning agent metrics into the parent run_response
-    if run_response is not None:
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
-        accumulate_eval_metrics(reasoning_agent_response, run_response, prefix="reasoning")
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
@@ -62,7 +61,7 @@ def get_vertexai_reasoning(
 async def aget_vertexai_reasoning(
     reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
     messages: List[Message],
-    run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
+    run_metrics: Optional["RunMetrics"] = None,
 ) -> Optional[Message]:
     """Get reasoning from a VertexAI Claude model asynchronously."""
     try:
@@ -71,11 +70,11 @@ async def aget_vertexai_reasoning(
         logger.warning(f"Reasoning error: {e}")
         return None
 
-    # Accumulate reasoning agent metrics into the parent run_response
-    if run_response is not None:
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
-        accumulate_eval_metrics(reasoning_agent_response, run_response, prefix="reasoning")
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
