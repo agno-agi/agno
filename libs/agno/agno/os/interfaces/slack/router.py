@@ -36,6 +36,9 @@ _IGNORED_SUBTYPES = frozenset(
     }
 )
 
+# User-facing error message for failed requests
+_ERROR_MESSAGE = "Sorry, there was an error processing your message."
+
 
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
@@ -184,7 +187,7 @@ def attach_routes(
                     await send_slack_message_async(
                         async_client,
                         channel=ctx["channel_id"],
-                        message="Sorry, there was an error processing your message. Please try again later.",
+                        message=f"{_ERROR_MESSAGE} Please try again later.",
                         thread_ts=ctx["thread_id"],
                     )
                     return
@@ -212,7 +215,7 @@ def attach_routes(
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
-                message="Sorry, there was an error processing your message.",
+                message=_ERROR_MESSAGE,
                 thread_ts=ctx["thread_id"],
             )
         finally:
@@ -357,7 +360,7 @@ def attach_routes(
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
-                message="Sorry, there was an error processing your message.",
+                message=_ERROR_MESSAGE,
                 thread_ts=ctx["thread_id"],
             )
 

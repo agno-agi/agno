@@ -59,7 +59,7 @@ class StreamState:
         if card:
             card.status = "error"
 
-    def resolve_all_pending(self, status: str = "complete") -> List[dict]:
+    def resolve_all_pending(self, status: TaskStatus = "complete") -> List[dict]:
         # Called at stream end to close any cards left in_progress (e.g. if the
         # model finished without emitting a ToolCallCompleted for every start).
         chunks: List[dict] = []
