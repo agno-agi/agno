@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
+from agno.metrics import MessageMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ def add_reasoning_metrics_to_metadata(
         metrics_message = Message(
             role="assistant",
             content=run_response.reasoning_content,
-            metrics=Metrics(duration=reasoning_time_taken),
+            metrics=MessageMetrics(duration=reasoning_time_taken),
         )
 
         # Add the metrics message to the reasoning_messages
