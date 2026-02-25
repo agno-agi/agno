@@ -150,7 +150,11 @@ class TeamResponse(BaseModel):
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
-            "knowledge_filters": team.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in team.knowledge_filters]
+                if isinstance(team.knowledge_filters, list)
+                else team.knowledge_filters
+            ),
             "references_format": team.references_format,
         }
 
