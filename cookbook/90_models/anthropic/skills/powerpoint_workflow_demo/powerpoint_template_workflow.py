@@ -13,20 +13,28 @@ Prerequisites:
 
 Usage:
     # Basic usage with a template:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
         --template my_template.pptx
 
     # Full options: custom prompt, output path, verbose logging:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
         -t my_template.pptx -o report.pptx -p "Create a 5-slide AI trends presentation" -v
 
     # Disable streaming (more reliable for shorter prompts, may timeout on complex ones):
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
         -t my_template.pptx --no-stream
 
     # Skip AI image generation entirely:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_template_workflow.py \\
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
         -t my_template.pptx --no-images
+
+    # Require at least 3 AI-generated images across slides:
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+        -t my_template.pptx --min-images 3
+
+    # Let the image planner decide freely (no minimum enforced):
+    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+        -t my_template.pptx --min-images 0
 
 CLI Flags:
     --template, -t   Path to the .pptx template file (required).
@@ -35,6 +43,8 @@ CLI Flags:
     --no-images      Skip AI image generation (Steps 2 and 3).
     --no-stream      Disable streaming mode for Claude agent (more reliable for
                      shorter prompts, but may timeout on complex presentations).
+    --min-images     Minimum number of slides that must have AI-generated images
+                     (default: 1). Use 0 to let the image planner decide freely.
     --verbose, -v    Enable verbose/debug logging for troubleshooting.
 """
 
@@ -155,9 +165,13 @@ class SlideContent:
     images: list = field(default_factory=list)
     charts: list = field(default_factory=list)
     shapes_xml: list = field(default_factory=list)
+    text_shapes_xml: list = field(default_factory=list)
+    text_box_paragraphs: list = field(default_factory=list)
     # Track picture placeholders detected in the slide layout
     has_image_placeholder: bool = False
     image_placeholder_indices: list = field(default_factory=list)
+    # Tracks whether the slide contains any non-placeholder text boxes
+    has_text_box: bool = False
 
 
 @dataclass
@@ -1429,8 +1443,16 @@ def _extract_slide_content(slide) -> SlideContent:
                         if text:
                             content.body_paragraphs.append((text, para.level))
             else:
+                # Preserve non-placeholder text boxes as shapes to keep styling.
+                text_val = text_frame.text.strip()
+                if text_val:
+                    content.has_text_box = True
+                    for para in text_frame.paragraphs:
+                        t = para.text.strip()
+                        if t:
+                            content.text_box_paragraphs.append((t, para.level))
                 shape_xml = copy.deepcopy(shape._element)
-                content.shapes_xml.append(shape_xml)
+                content.text_shapes_xml.append(shape_xml)
         elif not shape.is_placeholder:
             shape_xml = copy.deepcopy(shape._element)
             content.shapes_xml.append(shape_xml)
@@ -1474,11 +1496,262 @@ def _is_picture_placeholder(shape) -> bool:
     return False
 
 
+def _placeholder_area(ph) -> int:
+    """Return placeholder area in EMU^2."""
+    try:
+        return int(ph.width) * int(ph.height)
+    except Exception:
+        return 0
+
+
+def _is_text_placeholder_type(ph_type) -> bool:
+    """Return True if placeholder type is intended for text content."""
+    return ph_type in (
+        PP_PLACEHOLDER.BODY,
+        PP_PLACEHOLDER.OBJECT,
+        PP_PLACEHOLDER.SUBTITLE,
+    )
+
+
+def _is_visual_placeholder_type(ph_type) -> bool:
+    """Return True if placeholder type is intended for visual content."""
+    return ph_type in (
+        PP_PLACEHOLDER.PICTURE,
+        PP_PLACEHOLDER.CHART,
+        PP_PLACEHOLDER.TABLE,
+    )
+
+
+def _largest_placeholder(layout, types=None, min_area: int = 0):
+    """Return the largest placeholder matching types and min_area, or None."""
+    best = None
+    best_area = 0
+    for ph in layout.placeholders:
+        try:
+            ph_type = ph.placeholder_format.type
+        except Exception:
+            continue
+        if types is not None and ph_type not in types:
+            continue
+        area = _placeholder_area(ph)
+        if area < min_area:
+            continue
+        if area > best_area:
+            best = ph
+            best_area = area
+    return best
+
+
+def _layout_placeholder_summary(layout) -> dict:
+    """Return counts of placeholder types for logging."""
+    summary = {
+        "title": 0,
+        "subtitle": 0,
+        "body": 0,
+        "object": 0,
+        "picture": 0,
+        "chart": 0,
+        "table": 0,
+        "other": 0,
+    }
+    for ph in layout.placeholders:
+        try:
+            ph_type = ph.placeholder_format.type
+        except Exception:
+            summary["other"] += 1
+            continue
+        if ph_type in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE):
+            summary["title"] += 1
+        elif ph_type == PP_PLACEHOLDER.SUBTITLE:
+            summary["subtitle"] += 1
+        elif ph_type == PP_PLACEHOLDER.BODY:
+            summary["body"] += 1
+        elif ph_type == PP_PLACEHOLDER.OBJECT:
+            summary["object"] += 1
+        elif ph_type == PP_PLACEHOLDER.PICTURE:
+            summary["picture"] += 1
+        elif ph_type == PP_PLACEHOLDER.CHART:
+            summary["chart"] += 1
+        elif ph_type == PP_PLACEHOLDER.TABLE:
+            summary["table"] += 1
+        else:
+            summary["other"] += 1
+    return summary
+
+
+def _layout_richness_score(layout) -> int:
+    """Heuristic for visually rich layouts (cards, shapes, picture slots)."""
+    score = 0
+    # Prefer layouts with multiple body placeholders (card-style layouts)
+    body_count = 0
+    for ph in layout.placeholders:
+        try:
+            if ph.placeholder_format.type == PP_PLACEHOLDER.BODY:
+                body_count += 1
+        except Exception:
+            continue
+    if body_count >= 2:
+        score += 10
+    if body_count >= 3:
+        score += 10
+
+    # Prefer layouts with at least one picture placeholder (visual interest)
+    has_pic = False
+    for ph in layout.placeholders:
+        if _is_picture_placeholder(ph):
+            has_pic = True
+            break
+    if has_pic:
+        score += 15
+
+    # Prefer layouts with non-placeholder shapes (cards, colored blocks)
+    non_placeholder_shapes = 0
+    for shape in layout.shapes:
+        try:
+            if shape.is_placeholder:
+                continue
+            # Ignore lines
+            if shape.shape_type == MSO_SHAPE_TYPE.LINE:
+                continue
+            non_placeholder_shapes += 1
+        except Exception:
+            continue
+    if non_placeholder_shapes >= 2:
+        score += 15
+    elif non_placeholder_shapes == 1:
+        score += 5
+
+    return score
+
+
+def _rect_overlap(a: ContentArea, b: ContentArea) -> int:
+    """Return overlap area between two rectangles (or 0)."""
+    x1 = max(a.left, b.left)
+    y1 = max(a.top, b.top)
+    x2 = min(a.left + a.width, b.left + b.width)
+    y2 = min(a.top + a.height, b.top + b.height)
+    if x2 <= x1 or y2 <= y1:
+        return 0
+    return (x2 - x1) * (y2 - y1)
+
+
+def _layout_non_placeholder_text_bounds(layout) -> list[ContentArea]:
+    """Collect bounds of non-placeholder text boxes defined in the layout."""
+    bounds = []
+    for shape in layout.shapes:
+        try:
+            if shape.is_placeholder:
+                continue
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = getattr(shape, "text", "")
+            if text and text.strip():
+                bounds.append(
+                    ContentArea(
+                        left=shape.left,
+                        top=shape.top,
+                        width=shape.width,
+                        height=shape.height,
+                    )
+                )
+        except Exception:
+            continue
+    return bounds
+
+
+def _best_visual_placeholder(
+    layout,
+    desired_types: set,
+    min_area: int,
+    reserved: list[ContentArea],
+    allow_body_fallback: bool = True,
+):
+    """Pick a visual placeholder that minimizes overlap with reserved text areas."""
+    candidates = []
+    for ph in layout.placeholders:
+        try:
+            ph_type = ph.placeholder_format.type
+        except Exception:
+            continue
+        if ph_type in desired_types:
+            candidates.append(ph)
+    if allow_body_fallback and not candidates:
+        for ph in layout.placeholders:
+            try:
+                ph_type = ph.placeholder_format.type
+            except Exception:
+                continue
+            if ph_type in (
+                PP_PLACEHOLDER.BODY,
+                PP_PLACEHOLDER.OBJECT,
+                PP_PLACEHOLDER.SUBTITLE,
+            ):
+                candidates.append(ph)
+
+    best = None
+    best_score = None
+    for ph in candidates:
+        area = _placeholder_area(ph)
+        if area < min_area and desired_types != {PP_PLACEHOLDER.PICTURE}:
+            # allow small picture placeholders but penalize small chart/table
+            pass
+        ph_bounds = ContentArea(
+            left=ph.left, top=ph.top, width=ph.width, height=ph.height
+        )
+        overlap = 0
+        for r in reserved:
+            overlap += _rect_overlap(ph_bounds, r)
+        # Prefer zero overlap, then minimal overlap, then largest area
+        score = (overlap == 0, -overlap, area)
+        if best_score is None or score > best_score:
+            best_score = score
+            best = ph
+    return best
+
+
+def _best_text_placeholder(layout, avoid: ContentArea | None = None):
+    """Pick a text placeholder with minimal overlap to avoid region."""
+    candidates = []
+    for ph in layout.placeholders:
+        try:
+            ph_type = ph.placeholder_format.type
+        except Exception:
+            continue
+        if ph_type in (
+            PP_PLACEHOLDER.BODY,
+            PP_PLACEHOLDER.OBJECT,
+            PP_PLACEHOLDER.SUBTITLE,
+        ):
+            candidates.append(ph)
+    if not candidates:
+        return None
+    best = None
+    best_score = None
+    for ph in candidates:
+        area = _placeholder_area(ph)
+        overlap = 0
+        if avoid is not None:
+            ph_bounds = ContentArea(
+                left=ph.left, top=ph.top, width=ph.width, height=ph.height
+            )
+            overlap = _rect_overlap(ph_bounds, avoid)
+        score = (overlap == 0, -overlap, area)
+        if best_score is None or score > best_score:
+            best_score = score
+            best = ph
+    return best
+
+
 def _classify_content_mix(
     content: SlideContent, has_generated_image: bool = False
 ) -> ContentMix:
     """Classify the mix of element types in a slide."""
-    has_text = bool(content.title or content.body_paragraphs or content.subtitle)
+    has_text = bool(
+        content.title
+        or content.body_paragraphs
+        or content.subtitle
+        or content.has_text_box
+    )
     has_table = len(content.tables) > 0
     has_chart = len(content.charts) > 0
     has_image = len(content.images) > 0
@@ -1487,6 +1760,12 @@ def _classify_content_mix(
 
     if visual_count == 0:
         return ContentMix.TEXT_ONLY
+    # If visuals exist but no text, still treat generated/user images as paired with text
+    # so we reserve space for titles/subtitles in the template.
+    if not has_text and has_generated_image:
+        return ContentMix.TEXT_AND_GENERATED_IMAGE
+    if not has_text and has_image:
+        return ContentMix.TEXT_AND_IMAGE
     if not has_text and visual_count > 0:
         return ContentMix.VISUAL_ONLY
     if visual_count > 1:
@@ -1571,7 +1850,10 @@ def _compute_region_map(
     content: SlideContent,
 ) -> RegionMap:
     """Compute separate text and visual regions based on content mix and layout."""
+    slide_area = int(slide_width) * int(slide_height)
+    min_area = int(slide_area * 0.10)
     content_area = _get_content_area(layout, slide_width, slide_height)
+    layout_text_bounds = _layout_non_placeholder_text_bounds(layout)
 
     # For text-only or visual-only slides, use the full content area
     if content_mix in (ContentMix.TEXT_ONLY, ContentMix.VISUAL_ONLY):
@@ -1585,31 +1867,270 @@ def _compute_region_map(
     # (e.g., "Two Content", "Content + Picture")
     content_placeholders = []
     picture_placeholders = []
+    chart_placeholders = []
+    table_placeholders = []
     for ph in layout.placeholders:
         if _is_picture_placeholder(ph):
             picture_placeholders.append(ph)
+        elif ph.placeholder_format.type == PP_PLACEHOLDER.CHART:
+            chart_placeholders.append(ph)
+        elif ph.placeholder_format.type == PP_PLACEHOLDER.TABLE:
+            table_placeholders.append(ph)
         elif ph.placeholder_format.idx > 0 and ph.has_text_frame:
             content_placeholders.append(ph)
 
-    # If layout has a picture placeholder + content placeholder, use native regions
-    if picture_placeholders and content_placeholders:
-        text_ph = content_placeholders[0]
-        pic_ph = picture_placeholders[0]
-        return RegionMap(
-            text_region=ContentArea(
-                left=text_ph.left,
-                top=text_ph.top,
-                width=text_ph.width,
-                height=text_ph.height,
-            ),
-            visual_region=ContentArea(
-                left=pic_ph.left,
-                top=pic_ph.top,
-                width=pic_ph.width,
-                height=pic_ph.height,
-            ),
-            layout_type="native",
+    if content_mix in (ContentMix.TEXT_AND_IMAGE, ContentMix.TEXT_AND_GENERATED_IMAGE):
+        # If layout has a picture placeholder + content placeholder, use native regions
+        if picture_placeholders and content_placeholders:
+            text_ph = content_placeholders[0]
+            pic_ph = picture_placeholders[0]
+            return RegionMap(
+                text_region=ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                ),
+                visual_region=ContentArea(
+                    left=pic_ph.left,
+                    top=pic_ph.top,
+                    width=pic_ph.width,
+                    height=pic_ph.height,
+                ),
+                layout_type="native",
+            )
+        text_ph = _largest_placeholder(
+            layout,
+            {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE},
+            min_area=0,
         )
+        reserved = list(layout_text_bounds)
+        if text_ph is not None:
+            reserved.append(
+                ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                )
+            )
+        pic_ph = _best_visual_placeholder(
+            layout,
+            {PP_PLACEHOLDER.PICTURE},
+            min_area=min_area,
+            reserved=reserved,
+            allow_body_fallback=True,
+        )
+        if pic_ph is not None:
+            text_region = (
+                ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                )
+                if text_ph is not None
+                else _get_content_area(
+                    layout,
+                    slide_width,
+                    slide_height,
+                    preferred_types={
+                        PP_PLACEHOLDER.BODY,
+                        PP_PLACEHOLDER.OBJECT,
+                        PP_PLACEHOLDER.SUBTITLE,
+                    },
+                )
+            )
+            return RegionMap(
+                text_region=text_region,
+                visual_region=ContentArea(
+                    left=pic_ph.left,
+                    top=pic_ph.top,
+                    width=pic_ph.width,
+                    height=pic_ph.height,
+                ),
+                layout_type="native",
+            )
+
+    # If content is chart/table/image and layout has a matching placeholder,
+    # use that placeholder for the visual region and derive text elsewhere.
+    if content_mix == ContentMix.TEXT_AND_CHART:
+        if chart_placeholders and content_placeholders:
+            chart_ph = chart_placeholders[0]
+            text_ph = _best_text_placeholder(
+                layout,
+                avoid=ContentArea(
+                    left=chart_ph.left,
+                    top=chart_ph.top,
+                    width=chart_ph.width,
+                    height=chart_ph.height,
+                ),
+            ) or content_placeholders[0]
+            return RegionMap(
+                text_region=ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                ),
+                visual_region=ContentArea(
+                    left=chart_ph.left,
+                    top=chart_ph.top,
+                    width=chart_ph.width,
+                    height=chart_ph.height,
+                ),
+                layout_type="native",
+            )
+        text_ph = _largest_placeholder(
+            layout,
+            {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE},
+            min_area=0,
+        )
+        reserved = list(layout_text_bounds)
+        if text_ph is not None:
+            reserved.append(
+                ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                )
+            )
+        chart_ph = _best_visual_placeholder(
+            layout,
+            {PP_PLACEHOLDER.CHART, PP_PLACEHOLDER.TABLE},
+            min_area=min_area,
+            reserved=reserved,
+            allow_body_fallback=True,
+        )
+        if chart_ph is not None:
+            best_text = _best_text_placeholder(
+                layout,
+                avoid=ContentArea(
+                    left=chart_ph.left,
+                    top=chart_ph.top,
+                    width=chart_ph.width,
+                    height=chart_ph.height,
+                ),
+            ) or text_ph
+            text_region = (
+                ContentArea(
+                    left=best_text.left,
+                    top=best_text.top,
+                    width=best_text.width,
+                    height=best_text.height,
+                )
+                if best_text is not None
+                else _get_content_area(
+                    layout,
+                    slide_width,
+                    slide_height,
+                    preferred_types={
+                        PP_PLACEHOLDER.BODY,
+                        PP_PLACEHOLDER.OBJECT,
+                        PP_PLACEHOLDER.SUBTITLE,
+                    },
+                )
+            )
+            return RegionMap(
+                text_region=text_region,
+                visual_region=ContentArea(
+                    left=chart_ph.left,
+                    top=chart_ph.top,
+                    width=chart_ph.width,
+                    height=chart_ph.height,
+                ),
+                layout_type="native",
+            )
+
+    if content_mix == ContentMix.TEXT_AND_TABLE:
+        if table_placeholders and content_placeholders:
+            table_ph = table_placeholders[0]
+            text_ph = _best_text_placeholder(
+                layout,
+                avoid=ContentArea(
+                    left=table_ph.left,
+                    top=table_ph.top,
+                    width=table_ph.width,
+                    height=table_ph.height,
+                ),
+            ) or content_placeholders[0]
+            return RegionMap(
+                text_region=ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                ),
+                visual_region=ContentArea(
+                    left=table_ph.left,
+                    top=table_ph.top,
+                    width=table_ph.width,
+                    height=table_ph.height,
+                ),
+                layout_type="native",
+            )
+        text_ph = _largest_placeholder(
+            layout,
+            {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE},
+            min_area=0,
+        )
+        reserved = list(layout_text_bounds)
+        if text_ph is not None:
+            reserved.append(
+                ContentArea(
+                    left=text_ph.left,
+                    top=text_ph.top,
+                    width=text_ph.width,
+                    height=text_ph.height,
+                )
+            )
+        table_ph = _best_visual_placeholder(
+            layout,
+            {PP_PLACEHOLDER.TABLE, PP_PLACEHOLDER.CHART},
+            min_area=min_area,
+            reserved=reserved,
+            allow_body_fallback=True,
+        )
+        if table_ph is not None:
+            best_text = _best_text_placeholder(
+                layout,
+                avoid=ContentArea(
+                    left=table_ph.left,
+                    top=table_ph.top,
+                    width=table_ph.width,
+                    height=table_ph.height,
+                ),
+            ) or text_ph
+            text_region = (
+                ContentArea(
+                    left=best_text.left,
+                    top=best_text.top,
+                    width=best_text.width,
+                    height=best_text.height,
+                )
+                if best_text is not None
+                else _get_content_area(
+                    layout,
+                    slide_width,
+                    slide_height,
+                    preferred_types={
+                        PP_PLACEHOLDER.BODY,
+                        PP_PLACEHOLDER.OBJECT,
+                        PP_PLACEHOLDER.SUBTITLE,
+                    },
+                )
+            )
+            return RegionMap(
+                text_region=text_region,
+                visual_region=ContentArea(
+                    left=table_ph.left,
+                    top=table_ph.top,
+                    width=table_ph.width,
+                    height=table_ph.height,
+                ),
+                layout_type="native",
+            )
 
     # Compute text ratio based on content volume
     text_ratio = _compute_text_ratio(content, content_mix)
@@ -1750,66 +2271,146 @@ def _find_best_layout(
     is_title_slide = slide_index == 0
     is_last_slide = slide_index == total_slides - 1
 
-    if is_title_slide:
-        for i, name in layout_names:
-            if "title slide" in name or (
-                "title" in name and "content" not in name and "only" not in name
-            ):
-                return layouts[i]
-        for i, name in layout_names:
+    slide_width = template_prs.slide_width
+    slide_height = template_prs.slide_height
+    slide_area = int(slide_width) * int(slide_height)
+    min_area = int(slide_area * 0.10)
+
+    def _score_layout(layout):
+        name = layout.name.lower()
+        score = 0
+
+        text_ph = _largest_placeholder(
+            layout,
+            types={PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE},
+        )
+        chart_ph = _largest_placeholder(layout, types={PP_PLACEHOLDER.CHART})
+        table_ph = _largest_placeholder(layout, types={PP_PLACEHOLDER.TABLE})
+        pic_ph = _largest_placeholder(layout, types={PP_PLACEHOLDER.PICTURE})
+
+        if is_title_slide:
+            has_title_ph = any(
+                ph.placeholder_format.type
+                in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+                for ph in layout.placeholders
+            )
+            if has_title_ph:
+                score += 120
             if "title" in name:
-                return layouts[i]
-        return layouts[0]
+                score += 20
+            if text_ph:
+                score += 10
+            return score
+        # Penalize title layouts for non-title slides
+        has_title_ph = any(
+            ph.placeholder_format.type
+            in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+            for ph in layout.placeholders
+        )
+        if has_title_ph:
+            score -= 80
+        if "title" in name:
+            score -= 40
 
-    if is_last_slide:
-        for i, name in layout_names:
+        if is_last_slide:
             if "blank" in name or "closing" in name or "end" in name:
-                return layouts[i]
+                score += 30
 
-    # Content-mix-specific layout selection (before generic fallbacks)
-    if not is_title_slide and not is_last_slide:
-        if content_mix in (
+        if content_mix in (ContentMix.TEXT_AND_CHART,):
+            if chart_ph:
+                score += 120
+                if _placeholder_area(chart_ph) >= min_area:
+                    score += 30
+            if text_ph:
+                score += 30
+        elif content_mix in (ContentMix.TEXT_AND_TABLE,):
+            if table_ph:
+                score += 120
+                if _placeholder_area(table_ph) >= min_area:
+                    score += 30
+            if text_ph:
+                score += 30
+        elif content_mix in (
             ContentMix.TEXT_AND_IMAGE,
             ContentMix.TEXT_AND_GENERATED_IMAGE,
         ):
-            # Look for "Content + Picture" or "Picture with Caption" layouts
-            for i, name in layout_names:
-                if "picture" in name and ("content" in name or "caption" in name):
-                    return layouts[i]
-            # Also try "Two Content" layouts
-            for i, name in layout_names:
-                if "two content" in name:
-                    return layouts[i]
-
-        elif content_mix in (ContentMix.TEXT_AND_TABLE,):
-            # Look for "Content + Table" layouts
-            for i, name in layout_names:
-                if "table" in name and "content" in name:
-                    return layouts[i]
-
+            if pic_ph:
+                score += 90
+                if _placeholder_area(pic_ph) >= min_area:
+                    score += 20
+            if text_ph:
+                score += 30
         elif content_mix == ContentMix.MIXED:
-            # Look for "Two Content" layouts for mixed content
-            for i, name in layout_names:
-                if "two content" in name:
-                    return layouts[i]
+            if chart_ph:
+                score += 60
+            if table_ph:
+                score += 60
+            if pic_ph:
+                score += 40
+            if text_ph:
+                score += 30
+        else:
+            if text_ph:
+                score += 60
 
-    for i, name in layout_names:
+        # Prefer visually rich layouts for text-only or light-content slides
+        if content_mix in (ContentMix.TEXT_ONLY,):
+            score += _layout_richness_score(layout)
+
         if "content" in name or "body" in name or "text" in name:
-            return layouts[i]
+            score += 5
+        if "two content" in name:
+            score += 3
 
-    for i, name in layout_names:
-        if "object" in name or "list" in name:
-            return layouts[i]
+        # Penalize layouts with only tiny visual placeholders
+        if content_mix in (
+            ContentMix.TEXT_AND_CHART,
+            ContentMix.TEXT_AND_TABLE,
+            ContentMix.TEXT_AND_IMAGE,
+            ContentMix.TEXT_AND_GENERATED_IMAGE,
+            ContentMix.MIXED,
+        ):
+            best_visual = max(
+                [
+                    _placeholder_area(p)
+                    for p in [chart_ph, table_ph, pic_ph]
+                    if p is not None
+                ]
+                or [0]
+            )
+            if best_visual and best_visual < min_area:
+                score -= 50
+
+        return score
+
+    best_layout = None
+    best_score = None
+    for layout in layouts:
+        score = _score_layout(layout)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_layout = layout
+
+    if best_layout is not None:
+        return best_layout
 
     if len(layouts) > 1:
         return layouts[1]
     return layouts[0]
 
 
-def _get_content_area(layout, slide_width: int, slide_height: int) -> ContentArea:
+def _get_content_area(
+    layout,
+    slide_width: int,
+    slide_height: int,
+    preferred_types: set | None = None,
+    min_area: int = 0,
+) -> ContentArea:
     """Derive the safe content area from a template layout's placeholders.
 
     Strategy:
+    0. If preferred_types is provided, choose the largest matching placeholder
+       above min_area.
     1. Look for a body placeholder (idx=1) -- its position defines the content area.
     2. If no body placeholder, look for any placeholder with idx > 0.
     3. If no placeholders at all, use a default safe margin.
@@ -1822,19 +2423,52 @@ def _get_content_area(layout, slide_width: int, slide_height: int) -> ContentAre
     Returns:
         ContentArea with the computed safe region.
     """
-    # Try body placeholder first (idx=1)
+    # Try preferred placeholder types first
+    if preferred_types:
+        ph = _largest_placeholder(layout, preferred_types, min_area=min_area)
+        if ph is not None:
+            return ContentArea(
+                left=ph.left, top=ph.top, width=ph.width, height=ph.height
+            )
+
+    # Prefer the largest text-oriented placeholder (body/object/subtitle)
+    text_ph = _largest_placeholder(
+        layout,
+        types={
+            PP_PLACEHOLDER.BODY,
+            PP_PLACEHOLDER.OBJECT,
+            PP_PLACEHOLDER.SUBTITLE,
+            PP_PLACEHOLDER.TABLE,  # allow table placeholder as a usable content area
+        },
+        min_area=0,
+    )
+    if text_ph is not None:
+        return ContentArea(
+            left=text_ph.left,
+            top=text_ph.top,
+            width=text_ph.width,
+            height=text_ph.height,
+        )
+
+    # Try body placeholder idx=1 explicitly if present
     for ph in layout.placeholders:
         if ph.placeholder_format.idx == 1:
             return ContentArea(
                 left=ph.left, top=ph.top, width=ph.width, height=ph.height
             )
 
-    # Try any non-title placeholder
-    for ph in layout.placeholders:
-        if ph.placeholder_format.idx > 0:
-            return ContentArea(
-                left=ph.left, top=ph.top, width=ph.width, height=ph.height
-            )
+    # Otherwise pick the largest non-title placeholder (avoiding picture if possible)
+    candidates = [
+        ph
+        for ph in layout.placeholders
+        if ph.placeholder_format.idx > 0
+        and ph.placeholder_format.type not in {PP_PLACEHOLDER.PICTURE}
+    ]
+    if candidates:
+        ph = max(candidates, key=_placeholder_area)
+        return ContentArea(
+            left=ph.left, top=ph.top, width=ph.width, height=ph.height
+        )
 
     # Default: safe margins (5% left, 25% top, 90% width, 65% height)
     return ContentArea(
@@ -1873,6 +2507,32 @@ def _fit_to_area(img_width: int, img_height: int, area: ContentArea) -> tuple:
     top = area.top + (area.height - new_height) // 2
 
     return left, top, new_width, new_height
+
+
+def _add_picture_within_bounds(slide, image_bytes: bytes, bounds: ContentArea):
+    """Insert image scaled to fit bounds while preserving aspect ratio."""
+    try:
+        from PIL import Image
+    except ImportError:
+        image_stream = BytesIO(image_bytes)
+        slide.shapes.add_picture(
+            image_stream, bounds.left, bounds.top, bounds.width, bounds.height
+        )
+        return
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as im:
+            img_w, img_h = im.size
+        image_stream = BytesIO(image_bytes)
+        left, top, width, height = _fit_to_area(
+            int(img_w * 9525), int(img_h * 9525), bounds
+        )
+        slide.shapes.add_picture(image_stream, left, top, width, height)
+    except Exception:
+        image_stream = BytesIO(image_bytes)
+        slide.shapes.add_picture(
+            image_stream, bounds.left, bounds.top, bounds.width, bounds.height
+        )
 
 
 def _populate_placeholder_with_format(
@@ -1954,7 +2614,20 @@ def _populate_placeholder_with_format(
 
     # Auto-fit text to placeholder bounds
     try:
-        max_size = 28 if is_title else 18
+        # Compute a safe max size based on placeholder height and line count
+        if is_title:
+            line_count = 1
+        else:
+            line_count = len(texts) if isinstance(texts, list) else 1
+        safe_max = _compute_max_font_size(
+            ContentArea(
+                left=shape.left, top=shape.top, width=shape.width, height=shape.height
+            ),
+            line_count,
+            is_title=is_title,
+        )
+        hard_max = 28 if is_title else 18
+        max_size = min(hard_max, safe_max)
         tf.fit_text(font_family=font_family, max_size=max_size)
     except Exception as e:
         # fit_text requires font metrics; fall back to MSO_AUTO_SIZE
@@ -2231,6 +2904,30 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
         spTree.remove(element)
 
 
+def _remove_empty_textboxes(slide) -> None:
+    """Remove non-placeholder text boxes with no visible text content."""
+    spTree = slide.shapes._spTree
+    to_remove = []
+    for shape in list(slide.shapes):
+        try:
+            if shape.is_placeholder:
+                continue
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = shape.text
+            if text is None or text.strip() == "":
+                to_remove.append(shape._element)
+        except Exception:
+            continue
+    for el in to_remove:
+        try:
+            spTree.remove(el)
+        except Exception:
+            pass
+
+
+
+
 def _populate_slide(
     new_slide,
     content: SlideContent,
@@ -2266,11 +2963,53 @@ def _populate_slide(
         new_slide.slide_layout, content_mix, slide_width, slide_height, content
     )
 
+    if VERBOSE:
+        summary = _layout_placeholder_summary(new_slide.slide_layout)
+        print(
+            "[VERBOSE] Layout '%s' placeholders: %s"
+            % (new_slide.slide_layout.name, summary)
+        )
+        print(
+            "[VERBOSE] Region map: layout_type=%s text=(%d,%d,%d,%d) visual=(%d,%d,%d,%d)"
+            % (
+                region_map.layout_type,
+                region_map.text_region.left,
+                region_map.text_region.top,
+                region_map.text_region.width,
+                region_map.text_region.height,
+                region_map.visual_region.left,
+                region_map.visual_region.top,
+                region_map.visual_region.width,
+                region_map.visual_region.height,
+            )
+        )
+
     # Track populated placeholder indices for cleanup
     populated_indices: set[int] = set()
 
     title_placed = False
     body_placed = False
+    body_paragraphs = list(content.body_paragraphs)
+    if content.text_box_paragraphs and content_mix != ContentMix.TEXT_ONLY:
+        body_paragraphs.extend(content.text_box_paragraphs)
+
+    # Prefer placeholder matching the computed text region when available
+    preferred_text_ph = None
+    if region_map.layout_type == "native":
+        for shape in new_slide.placeholders:
+            try:
+                if (
+                    shape.has_text_frame
+                    and not _is_visual_placeholder_type(shape.placeholder_format.type)
+                    and shape.left == region_map.text_region.left
+                    and shape.top == region_map.text_region.top
+                    and shape.width == region_map.text_region.width
+                    and shape.height == region_map.text_region.height
+                ):
+                    preferred_text_ph = shape
+                    break
+            except Exception:
+                continue
 
     # Resize body placeholder to text_region when using split layout
     if region_map.layout_type not in ("full", "native"):
@@ -2291,10 +3030,10 @@ def _populate_slide(
             populated_indices.add(ph_idx)
             title_placed = True
         elif ph_idx == 1:
-            if content.body_paragraphs:
+            if body_paragraphs and (preferred_text_ph is None or shape == preferred_text_ph):
                 _populate_placeholder_with_format(
                     shape,
-                    content.body_paragraphs,
+                    body_paragraphs,
                     is_title=False,
                     template_style=template_style,
                 )
@@ -2307,13 +3046,27 @@ def _populate_slide(
                 populated_indices.add(ph_idx)
                 body_placed = True
 
-    if not body_placed and content.body_paragraphs:
+    if preferred_text_ph is not None and not body_placed and body_paragraphs:
+        _populate_placeholder_with_format(
+            preferred_text_ph,
+            body_paragraphs,
+            is_title=False,
+            template_style=template_style,
+        )
+        populated_indices.add(preferred_text_ph.placeholder_format.idx)
+        body_placed = True
+
+    if not body_placed and body_paragraphs:
         for shape in new_slide.placeholders:
             ph_idx = shape.placeholder_format.idx
-            if ph_idx > 1 and shape.has_text_frame:
+            if (
+                ph_idx > 1
+                and shape.has_text_frame
+                and not _is_visual_placeholder_type(shape.placeholder_format.type)
+            ):
                 _populate_placeholder_with_format(
                     shape,
-                    content.body_paragraphs,
+                    body_paragraphs,
                     is_title=False,
                     template_style=template_style,
                 )
@@ -2353,9 +3106,9 @@ def _populate_slide(
                 except Exception:
                     pass
 
-    if not body_placed and content.body_paragraphs:
+    if not body_placed and body_paragraphs:
         max_font = _compute_max_font_size(
-            region_map.text_region, len(content.body_paragraphs)
+            region_map.text_region, len(body_paragraphs)
         )
         txBox = new_slide.shapes.add_textbox(
             region_map.text_region.left,
@@ -2365,7 +3118,7 @@ def _populate_slide(
         )
         tf = txBox.text_frame
         tf.word_wrap = True
-        for i, (text, level) in enumerate(content.body_paragraphs):
+        for i, (text, level) in enumerate(body_paragraphs):
             if i == 0:
                 para = tf.paragraphs[0]
             else:
@@ -2402,15 +3155,83 @@ def _populate_slide(
                 print("[VERBOSE] Exception suppressed: %s" % str(e))
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
+
     # Place visuals into the visual_region (separate from text)
-    _transfer_tables(
-        new_slide, content.tables, region_map.visual_region, template_style=template_style
-    )
-    _transfer_images(new_slide, content.images, region_map.visual_region)
+    visual_area = region_map.visual_region
+    image_area = None
+    if (content.images or generated_image_bytes) and (content.charts or content.tables):
+        reserved = list(_layout_non_placeholder_text_bounds(new_slide.slide_layout))
+        reserved.append(region_map.text_region)
+        min_area = int(slide_width) * int(slide_height)
+        min_area = int(min_area * 0.05)
+        pic_ph = _best_visual_placeholder(
+            new_slide.slide_layout,
+            {PP_PLACEHOLDER.PICTURE},
+            min_area=min_area,
+            reserved=reserved,
+            allow_body_fallback=False,
+        )
+        if pic_ph is not None:
+            image_area = ContentArea(
+                left=pic_ph.left,
+                top=pic_ph.top,
+                width=pic_ph.width,
+                height=pic_ph.height,
+            )
+        else:
+            gap = int(slide_width * 0.02)
+            # Split visual area to avoid overlap
+            if visual_area.width >= visual_area.height:
+                image_w = int(visual_area.width * 0.30)
+                image_area = ContentArea(
+                    left=visual_area.left + visual_area.width - image_w,
+                    top=visual_area.top,
+                    width=image_w,
+                    height=visual_area.height,
+                )
+                visual_area = ContentArea(
+                    left=visual_area.left,
+                    top=visual_area.top,
+                    width=max(1, visual_area.width - image_w - gap),
+                    height=visual_area.height,
+                )
+            else:
+                image_h = int(visual_area.height * 0.25)
+                image_area = ContentArea(
+                    left=visual_area.left,
+                    top=visual_area.top + visual_area.height - image_h,
+                    width=visual_area.width,
+                    height=image_h,
+                )
+                visual_area = ContentArea(
+                    left=visual_area.left,
+                    top=visual_area.top,
+                    width=visual_area.width,
+                    height=max(1, visual_area.height - image_h - gap),
+                )
+
+    if VERBOSE and content.charts:
+        chart_ph = _largest_placeholder(
+            new_slide.slide_layout, {PP_PLACEHOLDER.CHART}, min_area=0
+        )
+        print(
+            "[VERBOSE] Chart transfer region: (%d,%d,%d,%d) chart_placeholder=%s"
+            % (
+                visual_area.left,
+                visual_area.top,
+                visual_area.width,
+                visual_area.height,
+                "yes" if chart_ph is not None else "no",
+            )
+        )
+    _transfer_tables(new_slide, content.tables, visual_area, template_style=template_style)
+    _transfer_images(new_slide, content.images, image_area or visual_area)
     _transfer_charts(
-        new_slide, content.charts, region_map.visual_region, template_style=template_style
+        new_slide, content.charts, visual_area, template_style=template_style
     )
     _transfer_shapes(new_slide, content.shapes_xml)
+    if content_mix == ContentMix.TEXT_ONLY:
+        _transfer_shapes(new_slide, content.text_shapes_xml)
 
     # ------------------------------------------------------------------
     # Insert generated images into picture placeholders.
@@ -2421,26 +3242,78 @@ def _populate_slide(
         # Build a comprehensive set of picture placeholder indices using
         # the _is_picture_placeholder helper.
         _pic_ph_indices = set(content.image_placeholder_indices)
+        image_inserted = False
+        fallback_bounds = None
+        min_area = int(slide_width) * int(slide_height)
+        min_area = int(min_area * 0.10)
 
         for shape in list(new_slide.placeholders):
             if _is_picture_placeholder(shape):
                 _pic_ph_indices.add(shape.placeholder_format.idx)
 
-        # Insert the image into the first available picture placeholder
-        for shape in list(new_slide.placeholders):
-            ph_idx = shape.placeholder_format.idx
-            if ph_idx in _pic_ph_indices and ph_idx not in populated_indices:
+        # Choose a suitable picture placeholder (avoid tiny footer slots)
+        reserved = list(_layout_non_placeholder_text_bounds(new_slide.slide_layout))
+        reserved.append(region_map.text_region)
+        if image_area is not None:
+            fallback_bounds = (
+                image_area.left,
+                image_area.top,
+                image_area.width,
+                image_area.height,
+            )
+        pic_ph = _best_visual_placeholder(
+            new_slide.slide_layout,
+            {PP_PLACEHOLDER.PICTURE},
+            min_area=min_area,
+            reserved=reserved,
+            allow_body_fallback=False,
+        )
+        if pic_ph is not None and _placeholder_area(pic_ph) >= min_area:
+            try:
+                left, top, width, height = (
+                    pic_ph.left,
+                    pic_ph.top,
+                    pic_ph.width,
+                    pic_ph.height,
+                )
+                fallback_bounds = (left, top, width, height)
                 try:
-                    image_stream = BytesIO(generated_image_bytes)
-                    shape.insert_picture(image_stream)
-                    populated_indices.add(ph_idx)
-                    break  # Use first picture placeholder
-                except Exception as e:
-                    if VERBOSE:
-                        print("[VERBOSE] Exception suppressed: %s" % str(e))
+                    new_slide.shapes._spTree.remove(pic_ph._element)
+                except Exception:
+                    pass
+                _add_picture_within_bounds(
+                    new_slide,
+                    generated_image_bytes,
+                    ContentArea(left=left, top=top, width=width, height=height),
+                )
+                image_inserted = True
+                try:
+                    populated_indices.add(pic_ph.placeholder_format.idx)
+                except Exception:
+                    pass
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Exception suppressed: %s" % str(e))
+
+        # If no picture was inserted (e.g., placeholder insertion unsupported),
+        # fall back to adding the image as a regular picture scaled to the
+        # visual region (or placeholder bounds if captured).
+        if not image_inserted:
+            try:
+                if fallback_bounds:
+                    left, top, width, height = fallback_bounds
+                    bounds = ContentArea(left=left, top=top, width=width, height=height)
+                else:
+                    bounds = region_map.visual_region
+                _add_picture_within_bounds(new_slide, generated_image_bytes, bounds)
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Exception suppressed: %s" % str(e))
 
     # Ensure text renders on top of visual elements for mixed-content slides
-    if content_mix != ContentMix.TEXT_ONLY:
+    if content_mix != ContentMix.TEXT_ONLY and (
+        content.title or content.subtitle or content.body_paragraphs
+    ):
         _ensure_text_on_top(new_slide)
 
     # Ensure all text has sufficient contrast against the slide background
@@ -2459,6 +3332,11 @@ def _populate_slide(
     # tf.clear() alone is insufficient for picture and content placeholders.
     # ------------------------------------------------------------------
     _clear_unused_placeholders(new_slide, populated_indices)
+
+    # Remove any empty text boxes (non-placeholders) that may remain from
+    # certain templates and would otherwise sit on top of visuals.
+    _remove_empty_textboxes(new_slide)
+
 
 
 # ---------------------------------------------------------------------------
@@ -2841,7 +3719,13 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
         has_template_image_ph = False
         if template_prs is not None:
             try:
-                layout = _find_best_layout(template_prs, idx, total_gen_slides)
+                content_mix = _classify_content_mix(content, has_generated_image=False)
+                layout = _find_best_layout(
+                    template_prs,
+                    idx,
+                    total_gen_slides,
+                    content_mix=content_mix,
+                )
                 for ph in layout.placeholders:
                     ph_fmt = ph.placeholder_format
                     if ph_fmt is not None and ph_fmt.type == PP_PLACEHOLDER.PICTURE:
@@ -3253,6 +4137,12 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             content_mix=content_mix,
             has_generated_image=gen_img is not None,
         )
+        if VERBOSE:
+            summary = _layout_placeholder_summary(layout)
+            print(
+                "[VERBOSE] Slide %d chose layout '%s' placeholders: %s"
+                % (idx + 1, layout.name, summary)
+            )
 
         # Detect picture placeholders on the chosen template layout.
         # Uses both PP_PLACEHOLDER enum and XML-level fallback detection.
