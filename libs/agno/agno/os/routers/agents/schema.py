@@ -163,7 +163,11 @@ class AgentResponse(BaseModel):
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
-            "knowledge_filters": agent.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in agent.knowledge_filters]
+                if isinstance(agent.knowledge_filters, list)
+                else agent.knowledge_filters
+            ),
             "references_format": agent.references_format,
         }
 

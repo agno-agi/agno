@@ -30,9 +30,9 @@ def _make_memories(
     run_messages: RunMessages,
     user_id: Optional[str] = None,
 ) -> Optional[RunMetrics]:
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
         user_message_str is not None
@@ -45,9 +45,9 @@ def _make_memories(
             message=user_message_str,
             user_id=user_id,
             team_id=team.id,
-            run_response=collector,
+            run_metrics=collector,
         )
-    return collector.metrics
+    return collector
 
 
 async def _amake_memories(
@@ -55,9 +55,9 @@ async def _amake_memories(
     run_messages: RunMessages,
     user_id: Optional[str] = None,
 ) -> Optional[RunMetrics]:
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
         user_message_str is not None
@@ -70,9 +70,9 @@ async def _amake_memories(
             message=user_message_str,
             user_id=user_id,
             team_id=team.id,
-            run_response=collector,
+            run_metrics=collector,
         )
-    return collector.metrics
+    return collector
 
 
 async def _astart_memory_task(
@@ -200,9 +200,9 @@ def _process_learnings(
     if team._learning is None:
         return None
 
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     try:
         messages = list(run_messages.messages) if run_messages else []
         team._learning.process(
@@ -210,12 +210,12 @@ def _process_learnings(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
-            run_response=collector,
+            run_metrics=collector,
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
         log_warning(f"Error processing learnings: {e}")
-    return collector.metrics
+    return collector
 
 
 async def _aprocess_learnings(
@@ -228,9 +228,9 @@ async def _aprocess_learnings(
     if team._learning is None:
         return None
 
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     try:
         messages = list(run_messages.messages) if run_messages else []
         await team._learning.aprocess(
@@ -238,12 +238,12 @@ async def _aprocess_learnings(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
-            run_response=collector,
+            run_metrics=collector,
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
         log_warning(f"Error processing learnings: {e}")
-    return collector.metrics
+    return collector
 
 
 def _start_learning_future(

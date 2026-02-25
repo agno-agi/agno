@@ -297,6 +297,9 @@ class AgentOS:
         self._initialize_teams()
         self._initialize_workflows()
 
+        # Populate registry with code-defined agents/teams
+        self._populate_registry()
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -341,6 +344,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Populate registry with code-defined agents/teams
+        self._populate_registry()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -543,6 +549,31 @@ class AgentOS:
 
             # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
             workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
+    def _populate_registry(self) -> None:
+        """Populate the registry with code-defined agents and teams.
+
+        This ensures that workflows loaded from DB can rehydrate their steps
+        using code-defined agents/teams via the registry.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        if self.agents:
+            existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
+            for agent in self.agents:
+                agent_id = getattr(agent, "id", None)
+                if not isinstance(agent, RemoteAgent) and agent_id is not None and agent_id not in existing_agent_ids:
+                    self.registry.agents.append(agent)
+                    existing_agent_ids.add(agent_id)
+
+        if self.teams:
+            existing_team_ids = {getattr(t, "id", None) for t in self.registry.teams}
+            for team in self.teams:
+                team_id = getattr(team, "id", None)
+                if not isinstance(team, RemoteTeam) and team_id is not None and team_id not in existing_team_ids:
+                    self.registry.teams.append(team)
+                    existing_team_ids.add(team_id)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
