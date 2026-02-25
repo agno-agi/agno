@@ -11,7 +11,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.tool_messages import normalize_tool_result_messages
+from agno.utils.models.tool_messages import normalize_tool_result_messages, resolve_tool_call_id, tool_result_text
 from agno.utils.models.watsonx import format_images_for_message
 
 try:
@@ -159,14 +159,14 @@ class WatsonX(Model):
         if message.role == "tool" and compress_tool_results:
             message_dict["content"] = message.get_content(use_compressed_content=True)
 
-        # Normalize cross-provider tool messages (e.g., Gemini stores content as list)
         if message.role == "tool":
             if isinstance(message_dict.get("content"), list):
-                message_dict["content"] = "\n".join(str(item) for item in message_dict["content"] if item is not None)
+                message_dict["content"] = tool_result_text(message_dict["content"])
             if "tool_call_id" not in message_dict and message.tool_calls:
                 for tc in message.tool_calls:
-                    if tc.get("tool_call_id"):
-                        message_dict["tool_call_id"] = tc["tool_call_id"]
+                    tc_id = resolve_tool_call_id(tc)
+                    if tc_id is not None:
+                        message_dict["tool_call_id"] = tc_id
                         break
             message_dict.pop("tool_calls", None)
 

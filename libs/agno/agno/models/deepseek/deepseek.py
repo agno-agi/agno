@@ -6,6 +6,7 @@ from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_warning
+from agno.utils.models.tool_messages import resolve_tool_call_id, tool_result_text
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 
@@ -85,14 +86,14 @@ class DeepSeek(OpenAILike):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # Normalize cross-provider tool messages (e.g., Gemini stores content as list)
         if message.role == "tool":
             if isinstance(message_dict.get("content"), list):
-                message_dict["content"] = "\n".join(str(item) for item in message_dict["content"] if item is not None)
+                message_dict["content"] = tool_result_text(message_dict["content"])
             if "tool_call_id" not in message_dict and message.tool_calls:
                 for tc in message.tool_calls:
-                    if tc.get("tool_call_id"):
-                        message_dict["tool_call_id"] = tc["tool_call_id"]
+                    tc_id = resolve_tool_call_id(tc)
+                    if tc_id is not None:
+                        message_dict["tool_call_id"] = tc_id
                         break
             message_dict.pop("tool_calls", None)
 

@@ -16,7 +16,7 @@ def _coerce_to_str(value: Any) -> str:
     return str(value)
 
 
-def _resolve_tc_id(tc: dict) -> Optional[str]:
+def resolve_tool_call_id(tc: dict) -> Optional[str]:
     for key in ("tool_call_id", "id", "call_id"):
         val = tc.get(key)
         if val is not None:
@@ -47,7 +47,7 @@ def normalize_tool_result_messages(
             names = [n.strip() for n in msg.tool_name.split(",")] if msg.tool_name and "," in msg.tool_name else None
 
             for idx, tc in enumerate(msg.tool_calls):
-                tc_id = _resolve_tc_id(tc)
+                tc_id = resolve_tool_call_id(tc)
                 tc_name = tc.get("tool_name")
                 if not tc_name and names and idx < len(names):
                     tc_name = names[idx]

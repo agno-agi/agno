@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Sequence
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
-from agno.utils.models.tool_messages import normalize_tool_result_messages
+from agno.utils.models.tool_messages import normalize_tool_result_messages, tool_result_text
 
 
 def _format_images_for_message(message: Message, images: Sequence[Image]) -> List[Dict[str, Any]]:
@@ -97,7 +97,7 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
         if message.role == "tool":
             tool_content = message_dict.get("content")
             if isinstance(tool_content, list):
-                message_dict["content"] = "\n".join(str(item) for item in tool_content if item is not None)
+                message_dict["content"] = tool_result_text(tool_content)
             message_dict.pop("tool_calls", None)
 
         formatted_messages.append(message_dict)

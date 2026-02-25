@@ -18,7 +18,7 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
-from agno.utils.models.tool_messages import normalize_tool_result_messages
+from agno.utils.models.tool_messages import normalize_tool_result_messages, tool_result_text
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -500,9 +500,8 @@ class OpenAIResponses(Model):
                         call_id_value = fc_id_to_call_id[function_call_id]
                     else:
                         call_id_value = function_call_id
-                    # Normalize list content to string
                     if isinstance(tool_result, list):
-                        tool_result = "\n".join(str(item) for item in tool_result if item is not None)
+                        tool_result = tool_result_text(tool_result)
                     formatted_messages.append(
                         {"type": "function_call_output", "call_id": call_id_value, "output": tool_result}
                     )

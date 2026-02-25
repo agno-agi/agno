@@ -12,7 +12,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.tool_messages import normalize_tool_result_messages
+from agno.utils.models.tool_messages import normalize_tool_result_messages, tool_result_text
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -265,7 +265,7 @@ class AwsBedrock(Model):
             elif message.role == "tool":
                 content = message.get_content(use_compressed_content=compress_tool_results)
                 if isinstance(content, list):
-                    content = "\n".join(str(item) for item in content if item is not None)
+                    content = tool_result_text(content)
                 if content is None:
                     content = ""
                 tool_result = {
