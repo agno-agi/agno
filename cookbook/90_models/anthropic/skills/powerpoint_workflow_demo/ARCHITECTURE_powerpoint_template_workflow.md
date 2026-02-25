@@ -70,9 +70,16 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
         │  STEP 4: Template Assembly             │
         │                                        │
         │  Engine: Deterministic (no AI)          │
-        │  Role:  Takes your template's visual    │
-        │         design and maps all content +   │
-        │         images onto it                  │
+        │  Role:  FIRST builds a comprehensive    │
+        │         knowledge file from: the user   │
+        │         prompt, the full content plan,  │
+        │         a deep per-layout analysis of   │
+        │         the template design language,   │
+        │         and all AI image assets.        │
+        │         THEN maps all content + images  │
+        │         onto the template using that    │
+        │         knowledge file as the single    │
+        │         source of truth.                │
         │                                        │
         │  Output: Final polished .pptx file     │
         └────────────────────┬───────────────────┘
@@ -108,7 +115,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | 1 | **Claude** (Anthropic) | Writes all slide content from your prompt | AI Agent |
 | 2 | **Gemini** (Google) | Decides which slides benefit from images | AI Agent |
 | 3 | **NanoBanana** (Gemini) | Generates professional images for slides | AI Tool |
-| 4 | **Template Engine** | Applies your company's template styling | Deterministic Code |
+| 4 | **Template Engine** | Builds comprehensive knowledge file first (user intent + content plan + deep template design analysis + image assets), then applies your company's template styling using that as the single source of truth | Deterministic Code |
 | 5 *(opt)* | **Gemini 2.5 Flash** (vision) | Inspects rendered slides, corrects critical defects | AI Agent + Deterministic Code |
 
 ### What You Control
@@ -281,12 +288,17 @@ flowchart LR
 **Type:** Executor function
 **Function:** [`step_assemble_template()`](powerpoint_template_workflow.py)
 
+This is the most critical and knowledge-intensive step in the pipeline. Before constructing any slide, it first consolidates all necessary context into a comprehensive knowledge file that acts as the single source of truth for every design and content decision made during file generation.
+
 **Flow:**
 1. Copies the template file to the output path
 2. Opens the copy as the output presentation
 3. **Extracts template styles** via [`_extract_template_styles()`](powerpoint_template_workflow.py) — parses theme colors/fonts and scans reference visual elements (tables, charts) for their styling
-4. Removes all existing slides from the template copy using `lxml` XML manipulation
-5. For each generated slide:
+4. **Builds the assembly knowledge file** (single source of truth) — calls:
+   a. [`_analyze_template_in_depth()`](powerpoint_template_workflow.py) — deep per-layout analysis: every placeholder's position, font, color, bold; every decorative shape's fill/line/position; full accent palette; recurring motif colors; design language summary
+   b. [`_build_assembly_knowledge_file()`](powerpoint_template_workflow.py) — consolidates all four mandatory inputs: original user prompt, complete content plan from Step 1, template deep analysis, and all AI image assets (with pixel dimensions) into one dict stored in `session_state["assembly_knowledge"]`
+5. Removes all existing slides from the template copy using `lxml` XML manipulation
+6. For each generated slide:
    a. Extracts content via [`_extract_slide_content()`](powerpoint_template_workflow.py)
    b. Appends any AI-generated image from `session_state` as an [`ImageData`](powerpoint_template_workflow.py)
    c. Selects the best template layout via [`_find_best_layout()`](powerpoint_template_workflow.py)
@@ -295,7 +307,7 @@ flowchart LR
       - `template_style` for style-aware content rendering
       - `src_slide_width` / `src_slide_height` for shape coordinate rescaling
       - `footer_text`, `date_text`, `show_slide_number` for footer standardization
-6. Saves the final presentation
+7. Saves the final presentation
 
 ### Step 5: Visual Quality Review (Optional)
 
@@ -323,6 +335,88 @@ flowchart LR
 | `text_overflow` | `reduce_font_size` | Conservative 15% reduction on `rPr.sz` attributes above Pt(10) |
 | Visual blandness | (detect + warn only) | Not auto-fixed; logged with `--min-images` recommendation |
 | `overlap` with `reposition_element` | (not implemented in v1) | Deferred — reliable shape identification requires bounding-box matching |
+
+---
+
+## Template Deep Analysis & Assembly Knowledge File
+
+These functions implement the Step 4 prerequisite: building the comprehensive knowledge file before any PPTX slide is constructed. They are located in the source between the "Template Style Application Functions" section and the Step 4 executor.
+
+| Function | Purpose |
+|----------|---------|
+| [`_extract_shape_design_info(shape)`](powerpoint_template_workflow.py) | Low-level helper. Extracts fill color, line color/width, position, and size from any non-placeholder (decorative) shape element via direct XML traversal. Returns a plain `dict`. |
+| [`_analyze_template_in_depth(template_prs)`](powerpoint_template_workflow.py) | Thorough per-layout analysis of the template's complete design language. Returns a structured `dict` with five top-level keys: `slide_dimensions` (EMU + inches + aspect ratio), `theme` (full accent palette, dk1/dk2/lt1/lt2, major/minor fonts), `master_analysis` (background color + all decorative shapes), `layouts` (for every layout: name, background, per-placeholder typography + position %, all decorative shapes), `design_language_summary` (primary/secondary accent, full palette, heading/body fonts, typical font sizes, typography ratio, total layouts, recurring motif colors). |
+| [`_knowledge_json_default(obj)`](powerpoint_template_workflow.py) | JSON serialization fallback for bytes and other non-serializable types in the knowledge file. |
+| [`_build_assembly_knowledge_file(session_state, template_analysis)`](powerpoint_template_workflow.py) | Consolidates all four mandatory pipeline inputs into one `dict` before any slide construction begins. Keys: `input_1_user_intent` (exact original prompt), `input_2_content_plan` (full per-slide plan + content inventory: tables/charts/images/placeholders per slide), `input_3_template_design_language` (full output of `_analyze_template_in_depth`), `input_4_image_assets` (per-image: slide index, size in bytes, pixel dimensions via PIL, aspect ratio, intended position, slide title, whether target slide has a picture placeholder), `assembly_directives` (primary accent color, full palette, heading/body fonts, background color, target font sizes, footer settings, slide indices receiving generated images). |
+
+**Knowledge file structure:**
+
+```
+assembly_knowledge = {
+    "metadata": {...},
+    "input_1_user_intent": {
+        "original_prompt": str,          # Preserved exactly as provided
+        "prompt_length_chars": int,
+    },
+    "input_2_content_plan": {
+        "total_slides": int,
+        "generated_source_file": str,
+        "src_slide_width_emu": int,
+        "src_slide_height_emu": int,
+        "slides": list,                  # Full slides_data from Step 1
+        "content_inventory": {           # Quick-lookup maps
+            "slides_with_table": list,
+            "slides_with_chart": list,
+            "slides_with_existing_image": list,
+            "slides_with_image_placeholder": list,
+        },
+    },
+    "input_3_template_design_language": {  # Full _analyze_template_in_depth output
+        "slide_dimensions": {...},
+        "theme": {...},
+        "master_analysis": {...},
+        "layouts": [...],               # One entry per slide layout
+        "design_language_summary": {...},
+    },
+    "input_4_image_assets": {
+        "total_generated_images": int,
+        "slide_indices_with_images": list,
+        "assets": [                     # One entry per AI-generated image
+            {
+                "slide_index": int,
+                "content_type": str,
+                "size_bytes": int,
+                "has_image_data": bool,
+                "intended_position": str,
+                "slide_title": str,
+                "has_picture_placeholder": bool,
+                "width_px": int | None,
+                "height_px": int | None,
+                "aspect_ratio": float | None,
+            },
+            ...
+        ],
+    },
+    "assembly_directives": {            # Synthesized design guidance
+        "primary_accent_color_hex": str,
+        "secondary_accent_color_hex": str,
+        "full_color_palette": list,
+        "heading_font": str,
+        "body_font": str,
+        "background_color_hex": str,
+        "primary_text_color_hex": str,
+        "target_title_font_size_pt": int,
+        "target_body_font_size_pt": int,
+        "target_slide_width_emu": int,
+        "target_slide_height_emu": int,
+        "template_has_picture_layouts": bool,
+        "slides_receiving_generated_images": list,
+        "footer_text": str,
+        "date_text": str,
+        "show_slide_numbers": bool,
+    },
+}
+```
 
 ---
 
@@ -363,7 +457,8 @@ flowchart LR
 | Function | Purpose |
 |----------|---------|
 | [`_fit_to_area()`](powerpoint_template_workflow.py) | Aspect-ratio-preserving scaling. Fits an image within a `ContentArea` and centers it. Returns `left, top, width, height` tuple in EMU. |
-| [`_populate_placeholder_with_format()`](powerpoint_template_workflow.py) | Preserves template paragraph/run XML formatting. Captures `pPr` and `rPr` elements from the first template paragraph, clears the text frame, inserts new text with cloned formatting. Enables `word_wrap` and calls `fit_text()` for auto-sizing. Falls back to `MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE` **and** applies a manual font size cap via `_compute_max_font_size()` when `fit_text()` fails (headless servers without font files). |
+| [`_populate_placeholder_with_format()`](powerpoint_template_workflow.py) | Preserves template paragraph/run XML formatting. Captures `pPr` and `rPr` elements from the first template paragraph, clears the text frame, inserts new text with cloned formatting. Enables `word_wrap` and calls `fit_text()` for auto-sizing with a cap from `_compute_max_font_size()`. Falls back to `MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE` **and** a manual `rPr.sz` cap when `fit_text()` fails (headless servers without font files). Also explicitly re-enables `word_wrap` after the fallback path. |
+| [`_compute_max_font_size()`](powerpoint_template_workflow.py) | Computes the largest font size that fits all text in a region. Uses `LINE_SPACING_FACTOR=1.8` (raised from 1.5 after live testing — accounts for paragraph spacing above/below lines, not just line height). Body clamp: `min(16, ...)`. Title clamp: `min(28, ...)`. |
 | [`_ensure_text_contrast()`](powerpoint_template_workflow.py) | WCAG-based contrast check. For each text run, computes contrast ratio vs. the slide background; if below threshold, replaces the text color with `dk1` (dark) or `lt1` (light) based on background luminance. |
 | [`_ensure_text_on_top()`](powerpoint_template_workflow.py) | Reorders shapes in the XML `spTree` so text elements always render above charts, tables, and pictures. |
 
@@ -378,12 +473,14 @@ All transfer functions receive a [`ContentArea`](powerpoint_template_workflow.py
 | [`_transfer_charts()`](powerpoint_template_workflow.py) | Recreates charts from `CategoryChartData` within the content area. Accepts optional `template_style` — when provided, calls [`_apply_chart_style()`](powerpoint_template_workflow.py) for reference chart styling. |
 | [`_rescale_shape_xml()`](powerpoint_template_workflow.py) | Rescales a shape element's `xfrm/off` (origin) and `xfrm/ext` (size) EMU coordinates from source slide dimensions to a target `ContentArea`. Modifies in-place. Handles both plain shapes and group shapes by iterating all `xfrm` elements in the subtree. |
 | [`_transfer_shapes()`](powerpoint_template_workflow.py) | Deep-copies raw shape XML to the target slide's `spTree`. Reassigns element IDs to avoid collisions. When `src_width`, `src_height`, and `target_area` are provided (non-zero), calls `_rescale_shape_xml()` to proportionally rescale each shape from source to target space — preventing shapes from Claude's default-dimension slide from landing at wrong coordinates on the template. |
+| [`_clear_unused_placeholders()`](powerpoint_template_workflow.py) | Removes unpopulated placeholder XML elements from the slide shape tree. Guards against accidentally removing real content: shapes with `has_chart=True` or `has_table=True` are kept; for `PICTURE`-type shapes, the guard checks for **actual image data** (`shape.image`) before preserving — empty picture placeholders with no image are removed. This was corrected after live testing revealed the previous guard was dead code (python-pptx reports all placeholders as type `PLACEHOLDER`, not `PICTURE`). |
+| [`_remove_empty_textboxes()`](powerpoint_template_workflow.py) | Removes non-placeholder text boxes with no visible text. Also includes a **second pass** that removes empty placeholder text frames that survived `_clear_unused_placeholders()` — catches "Click to add text/image/icon" stragglers on layouts with multiple body placeholders. |
 
 ### Footer Standardization
 
 | Function | Purpose |
 |----------|---------|
-| [`_populate_footer_placeholders()`](powerpoint_template_workflow.py) | Populates footer placeholder indices 10 (date), 11 (footer text), and 12 (slide number) before `_clear_unused_placeholders()` runs, so configured footer content is retained instead of stripped. Footer values come from `--footer-text`, `--date-text`, and `--show-slide-numbers` CLI flags. |
+| [`_populate_footer_placeholders()`](powerpoint_template_workflow.py) | Populates footer placeholder indices 10 (date), 11 (footer text), and 12 (slide number) before `_clear_unused_placeholders()` runs, so configured footer content is retained instead of stripped. Footer values come from `--footer-text`, `--date-text`, and `--show-slide-numbers` CLI flags. **Fallback:** when `footer_text` is provided but no idx=11 placeholder exists on the slide (e.g. title slides where the footer is a master shape, not an editable placeholder), a free-floating text box is added at the slide's bottom 7% zone using the template body font. |
 
 ### Slide Assembly Orchestrator
 
@@ -401,7 +498,8 @@ All transfer functions receive a [`ContentArea`](powerpoint_template_workflow.py
 
 | Function | Purpose |
 |----------|---------|
-| [`_render_pptx_to_images()`](powerpoint_template_workflow.py) | Renders all slides to PNG using LibreOffice headless subprocess. Returns sorted list of PNG paths. Raises `RuntimeError` if LibreOffice is not installed. |
+| [`_render_pptx_to_images()`](powerpoint_template_workflow.py) | Renders all slides to PNG using LibreOffice headless subprocess. Tries two naming patterns (`<base>-slide-*.png`, `<base>*.png`) then falls back to collecting **all `*.png` files** in the render directory (handles zero-padded names like `report18001.png` that some LibreOffice versions produce). Raises `RuntimeError` if LibreOffice is not installed. |
+| [`_best_visual_placeholder()`](powerpoint_template_workflow.py) | Picks the best visual placeholder for inserting an image or chart. Score tuple: `(area>=min_area, overlap==0, -overlap, area)` — area sufficiency is the **primary** sort key. This was corrected after live testing revealed that the previous `(overlap==0, -overlap, area)` tuple allowed tiny zero-overlap footer placeholders to outrank large content placeholders, causing images to be placed in a small footer-left slot. |
 | [`_apply_visual_corrections()`](powerpoint_template_workflow.py) | Dispatches critical-severity issue fixes by re-invoking existing pipeline functions. Returns `True` if the file was modified. Only corrects `critical` severity in v1. |
 | [`step_visual_quality_review()`](powerpoint_template_workflow.py) | Step 5 executor. Render → inspect → correct → warn → store report. Fully non-blocking. |
 
@@ -473,6 +571,15 @@ session_state = {
 
     # Set by Step 3
     "generated_images": dict,     # {slide_index: PNG bytes}
+
+    # Set by Step 4 (at the very start, before any slide construction)
+    "assembly_knowledge": dict,   # Comprehensive knowledge file — single source of truth
+                                  # for all design and content decisions during PPTX generation.
+                                  # Keys: input_1_user_intent, input_2_content_plan,
+                                  # input_3_template_design_language (per-layout font/color/
+                                  # shape/position analysis), input_4_image_assets (pixel
+                                  # dimensions, aspect ratios, target slides), assembly_directives
+                                  # (primary accent, fonts, target sizes, footer settings).
 
     # Set by Step 5 (if --visual-review is used)
     "quality_report": dict,       # PresentationQualityReport.model_dump()

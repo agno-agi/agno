@@ -9,7 +9,16 @@ Workflow steps:
   Step 1  Content Generation  - Claude + pptx skill -> raw .pptx
   Step 2  Image Planning      - Gemini decides which slides need images
   Step 3  Image Generation    - NanoBanana generates slide images
-  Step 4  Template Assembly   - Applies template, positions content, fixes styling
+  Step 4  Template Assembly   - The most critical step. Before constructing any slide,
+                                consolidates all context into a comprehensive knowledge
+                                file from four mandatory inputs: (1) original user prompt,
+                                (2) complete slide-by-slide content plan from Step 1,
+                                (3) deep per-layout analysis of the template's full design
+                                language (fonts, colors, placeholder positions, decorative
+                                shapes, accent palette, motifs), and (4) all AI-generated
+                                image assets with dimensions and target layouts. Only then
+                                does the actual PPTX construction begin, governed entirely
+                                by this knowledge file as the single source of truth.
   Step 5  Visual Quality Review (optional) - Gemini vision inspects rendered slides
 
 Prerequisites:
@@ -84,6 +93,7 @@ from io import BytesIO
 from typing import Dict, List
 
 from agno.agent import Agent
+from agno.media import Image as AgnoImage
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.run.agent import RunOutput
@@ -142,60 +152,120 @@ class ImagePlan(BaseModel):
 
 
 class ShapeIssue(BaseModel):
-    """A single visual defect detected on a rendered slide image."""
+    """A single design issue detected on a rendered slide image.
+
+    Covers both structural defects (text overflow, overlapping elements) and
+    design-quality improvements (typography hierarchy, color underutilization,
+    spacing improvements, visual enrichment opportunities).
+    """
 
     issue_type: str = Field(
-        description="Type of defect. One of: text_overflow, text_too_small, overlap, "
-        "ghost_text, low_contrast, element_clipped, empty_placeholder, footer_inconsistent"
+        description=(
+            "Category of issue. Structural: text_overflow, text_too_small, overlap, "
+            "ghost_text, low_contrast, element_clipped, empty_placeholder, footer_inconsistent. "
+            "Design quality: poor_spacing, alignment_off, typography_hierarchy, "
+            "color_underutilized, visual_enrichment_needed, font_inconsistency."
+        )
     )
-    severity: str = Field(description="Impact level. One of: critical, moderate, minor")
-    description: str = Field(description="Human-readable description of the issue")
+    severity: str = Field(
+        description=(
+            "Impact level. One of: critical (broken / unreadable), "
+            "moderate (clearly suboptimal), minor (subtle improvement opportunity)."
+        )
+    )
+    description: str = Field(
+        description="Specific, actionable description of the issue"
+    )
     programmatic_fix: str = Field(
-        description="Correction action. One of: reduce_font_size, increase_contrast, "
-        "remove_element, clear_placeholder, reposition_element, none"
+        description=(
+            "Action to apply. "
+            "Structural: reduce_font_size, increase_contrast, remove_element, clear_placeholder. "
+            "Spacing/alignment: fix_spacing, fix_alignment, fix_body_paragraph_alignment. "
+            "Typography: increase_title_font_size, enforce_typography_hierarchy. "
+            "Color: apply_accent_color_title, apply_accent_color_body. "
+            "Visual enrichment: apply_body_accent_border, "
+            "enrich_header_bar, enrich_title_card, enrich_divider, enrich_accent_strip. "
+            "Use 'none' only for issues requiring human judgment or AI-generated content."
+        )
     )
     shape_description: str = Field(
         default="",
-        description="Brief description of which shape is affected (e.g., 'title text box'). "
-        "Leave empty if not applicable.",
+        description=(
+            "Brief description of the affected element (e.g., 'title text box', "
+            "'bullet list', 'slide background'). Leave empty if slide-wide."
+        ),
     )
 
 
 class SlideQualityReport(BaseModel):
-    """Quality assessment for a single rendered slide image."""
+    """Design and quality assessment for a single rendered slide image.
+
+    Produced by a senior UI/UX designer persona who evaluates both structural
+    correctness AND visual design quality (typography hierarchy, whitespace balance,
+    color palette utilization, visual interest, and brand consistency).
+    """
 
     slide_index: int = Field(description="Zero-based index of the slide")
     overall_quality: str = Field(
-        description="Overall slide quality. One of: good, acceptable, poor"
+        description=(
+            "Overall slide design quality from a professional designer perspective. "
+            "One of: good (well-designed, minimal changes), "
+            "acceptable (functional but improvable), poor (broken or significantly underdesigned)."
+        )
+    )
+    design_score: int = Field(
+        description=(
+            "Designer score 1-10. 9-10: excellent layout and visual hierarchy. "
+            "7-8: good, minor improvements possible. 5-6: functional but generic. "
+            "3-4: noticeably bland or has design problems. 1-2: broken or unusable."
+        )
     )
     is_visually_bland: bool = Field(
-        description="True if the slide has no images, charts, or tables AND appears "
-        "bare with excessive whitespace despite the content being readable"
+        description=(
+            "True if the slide fails to use the template's visual vocabulary — "
+            "e.g. text-only with no accent colors applied, no visual hierarchy, "
+            "excessive unused whitespace, or content that looks like a bare draft."
+        )
     )
     blandness_reason: str = Field(
         default="",
-        description="Brief explanation of why the slide is bland. Leave empty if not bland.",
+        description=(
+            "Specific description of why the slide is bland and what visual elements "
+            "from the template palette could improve it. Leave empty if not bland."
+        ),
     )
     issues: List[ShapeIssue] = Field(
         default_factory=list,
-        description="List of detected visual defects. Empty list if slide looks good.",
+        description=(
+            "List of detected issues ordered by severity. Include both structural "
+            "defects and design quality improvements. Be specific and actionable."
+        ),
     )
 
 
 class PresentationQualityReport(BaseModel):
-    """Quality assessment for the entire presentation."""
+    """Design and quality assessment for the entire presentation."""
 
     slide_reports: List[SlideQualityReport] = Field(
         description="Per-slide quality reports, one per rendered slide"
     )
-    overall_pass: bool = Field(description="True if no slides are rated 'poor'")
+    overall_pass: bool = Field(
+        description="True if no slides are rated 'poor' AND average design_score >= 6"
+    )
     total_critical_issues: int = Field(
         description="Total count of critical-severity issues across all slides"
     )
+    average_design_score: float = Field(
+        default=0.0,
+        description="Mean design_score across all slides (1.0-10.0)",
+    )
     recommendations: List[str] = Field(
         default_factory=list,
-        description="Non-programmatic suggestions for improvement "
-        "(e.g. 'slide 3 is bland, add an image')",
+        description=(
+            "Specific actionable recommendations for human follow-up — things that "
+            "cannot be auto-corrected (e.g. 'Slide 3 would benefit from an AI-generated "
+            "image of a rocket launch to match the SpaceTech theme')."
+        ),
     )
 
 
@@ -383,7 +453,14 @@ def _extract_theme_from_prs(prs) -> TemplateTheme:
         if theme_part is None:
             return theme
 
-        theme_xml = theme_part.element
+        # theme_part.element may not be available in all python-pptx builds;
+        # fall back to parsing from the raw blob.
+        try:
+            theme_xml = theme_part.element
+        except AttributeError:
+            from lxml import etree as _etree
+
+            theme_xml = _etree.fromstring(theme_part.blob)
         ns = {
             "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
         }
@@ -1846,8 +1923,13 @@ def _best_visual_placeholder(
         overlap = 0
         for r in reserved:
             overlap += _rect_overlap(ph_bounds, r)
-        # Prefer zero overlap, then minimal overlap, then largest area
-        score = (overlap == 0, -overlap, area)
+        # Prefer area-sufficient placeholders first, then zero overlap, then
+        # minimal overlap, then largest area.
+        # Previously the tuple was (overlap==0, -overlap, area) which allowed
+        # a tiny zero-overlap footer placeholder to outrank a large content
+        # placeholder that had any layout overlap — causing images to be placed
+        # in a small footer-left slot instead of the main visual region.
+        score = (area >= min_area, overlap == 0, -overlap, area)
         if best_score is None or score > best_score:
             best_score = score
             best = ph
@@ -1988,9 +2070,10 @@ def _compute_max_font_size(
         return 28 if is_title else 18
 
     # Rough estimate: each point of font size ~ 1 * EMU_PER_PT in EMU height per line
-    # Plus ~50% for line spacing
+    # Use 1.8x factor to account for line spacing PLUS paragraph spacing above/below.
+    # The original 1.5 was too low and caused text overflow on dense body slides.
     EMU_PER_PT = 12700  # 1 point = 12700 EMU
-    LINE_SPACING_FACTOR = 1.5
+    LINE_SPACING_FACTOR = 1.8
 
     available_height = region.height
     lines_needed = max(num_paragraphs, 1)
@@ -2003,7 +2086,9 @@ def _compute_max_font_size(
     if is_title:
         return max(10, min(28, max_size_pt))
     else:
-        return max(10, min(18, max_size_pt))
+        # Body text cap lowered from 18pt to 16pt as a defensive measure against
+        # overflow on slides with many paragraphs or templates with larger line heights.
+        return max(10, min(16, max_size_pt))
 
 
 def _compute_region_map(
@@ -2708,6 +2793,50 @@ def _add_picture_within_bounds(slide, image_bytes: bytes, bounds: ContentArea):
         )
 
 
+def _apply_standard_line_spacing(para, spacing_pct: int = 115) -> None:
+    """Set standard line spacing on a paragraph using OOXML spcPct.
+
+    Applies <a:lnSpc><a:spcPct val="..."/> to the paragraph's pPr element.
+    spacing_pct=115 gives 115% line spacing (compact + readable).
+    Only sets spacing if the paragraph pPr does not already have an explicit
+    <a:lnSpc> element (respects template-inherited spacing).
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    try:
+        p_elem = para._p
+        pPr = p_elem.find(ns_a + "pPr")
+        if pPr is None:
+            pPr = etree.SubElement(p_elem, ns_a + "pPr")
+            p_elem.insert(0, pPr)
+        # Only set if not already present
+        existing_lnSpc = pPr.find(ns_a + "lnSpc")
+        if existing_lnSpc is None:
+            lnSpc = etree.SubElement(pPr, ns_a + "lnSpc")
+            spcPct = etree.SubElement(lnSpc, ns_a + "spcPct")
+            spcPct.set("val", str(spacing_pct * 1000))
+    except Exception:
+        pass
+
+
+def _set_paragraph_alignment(para, alignment: str) -> None:
+    """Set paragraph horizontal alignment via OOXML pPr algn attribute.
+
+    alignment: 'l' (left), 'ctr' (center), 'r' (right), 'just' (justify).
+    Only sets if pPr does not already have an explicit algn attribute.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    try:
+        p_elem = para._p
+        pPr = p_elem.find(ns_a + "pPr")
+        if pPr is None:
+            pPr = etree.SubElement(p_elem, ns_a + "pPr")
+            p_elem.insert(0, pPr)
+        if not pPr.get("algn"):
+            pPr.set("algn", alignment)
+    except Exception:
+        pass
+
+
 def _populate_placeholder_with_format(
     shape, texts, is_title=False, template_style: "TemplateStyle | None" = None
 ):
@@ -2715,6 +2844,11 @@ def _populate_placeholder_with_format(
 
     Enables word wrap and attempts to auto-fit text to the placeholder bounds.
     Uses template_style for font family when available.
+
+    Also applies:
+    - Standard 115% line spacing to each paragraph (if not already set by template)
+    - Explicit paragraph alignment (center for titles, left for body) when the
+      template's reference paragraph has no explicit alignment set
     """
     if not shape.has_text_frame:
         return
@@ -2747,6 +2881,10 @@ def _populate_placeholder_with_format(
         para = tf.paragraphs[0]
         if ref_para_xml is not None:
             para._p.insert(0, copy.deepcopy(ref_para_xml))
+        # Default title to left alignment (template usually handles this,
+        # but when ref_para_xml has no algn, set explicitly)
+        _set_paragraph_alignment(para, "l")
+        _apply_standard_line_spacing(para, spacing_pct=110)
         run = para.add_run()
         run.text = texts
         if ref_run_xml is not None:
@@ -2763,6 +2901,9 @@ def _populate_placeholder_with_format(
                     new_pPr.set("lvl", str(level))
                 para._p.insert(0, new_pPr)
             para.level = level
+            # Body text: left-aligned, 115% line spacing
+            _set_paragraph_alignment(para, "l")
+            _apply_standard_line_spacing(para, spacing_pct=115)
             run = para.add_run()
             run.text = text
             if ref_run_xml is not None:
@@ -2799,7 +2940,8 @@ def _populate_placeholder_with_format(
         line_count,
         is_title=is_title,
     )
-    hard_max = 28 if is_title else 18
+    # Body hard cap lowered to 16pt to match _compute_max_font_size defensive cap.
+    hard_max = 28 if is_title else 16
     max_size = min(hard_max, safe_max)
     fit_text_succeeded = False
     try:
@@ -2814,6 +2956,8 @@ def _populate_placeholder_with_format(
         if VERBOSE:
             print("[VERBOSE] Exception suppressed: %s" % str(e))
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        # Ensure word_wrap is True — fit_text machinery may have reset it.
+        tf.word_wrap = True
 
     # P1-5: Harden the MSO_AUTO_SIZE fallback — when fit_text() fails,
     # the OOXML font size is not updated. Apply a manual cap so viewers
@@ -3090,12 +3234,35 @@ def _rescale_shape_xml(
             pass
 
 
+def _apply_template_font_to_shape_xml(shape_elem, font_family: str) -> None:
+    """Apply a template font family to all text runs inside a raw shape XML element.
+
+    Updates <a:latin typeface="..."/> inside every <a:rPr> found in the element
+    subtree. This ensures free-floating shapes transferred from Claude's raw slide
+    use the template's body font instead of whatever Claude defaulted to.
+
+    Skips if font_family is empty.
+    """
+    if not font_family:
+        return
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    try:
+        for rPr in shape_elem.iter(ns_a + "rPr"):
+            latin = rPr.find(ns_a + "latin")
+            if latin is None:
+                latin = etree.SubElement(rPr, ns_a + "latin")
+            latin.set("typeface", font_family)
+    except Exception:
+        pass
+
+
 def _transfer_shapes(
     slide,
     shapes_xml,
     src_width: int = 0,
     src_height: int = 0,
     target_area: "ContentArea | None" = None,
+    template_style: "TemplateStyle | None" = None,
 ):
     """Transfer simple shapes by deep-copying their XML to the target slide.
 
@@ -3105,15 +3272,28 @@ def _transfer_shapes(
     default-dimension slide from landing at wrong coordinates or off-screen
     positions on the template.
 
+    When template_style is provided, applies the template's body font to all
+    text runs in the transferred shapes so free-floating text boxes use the
+    correct typeface instead of Claude's default.
+
     Args:
-        slide:       Target slide object.
-        shapes_xml:  Iterable of lxml shape elements to transfer.
-        src_width:   Source slide width in EMU (0 = skip rescaling).
-        src_height:  Source slide height in EMU (0 = skip rescaling).
-        target_area: Destination region on the template slide (None = skip).
+        slide:          Target slide object.
+        shapes_xml:     Iterable of lxml shape elements to transfer.
+        src_width:      Source slide width in EMU (0 = skip rescaling).
+        src_height:     Source slide height in EMU (0 = skip rescaling).
+        target_area:    Destination region on the template slide (None = skip).
+        template_style: Template styles for font family override (None = skip).
     """
     spTree = slide.shapes._spTree
     do_rescale = src_width > 0 and src_height > 0 and target_area is not None
+
+    # Resolve body font from template (used for all free-floating text shapes)
+    body_font = ""
+    if template_style:
+        body_font = (
+            template_style.body_font_family or template_style.theme.minor_font or ""
+        )
+
     for shape_elem in shapes_xml:
         cloned = copy.deepcopy(shape_elem)
         existing_ids = [
@@ -3130,6 +3310,13 @@ def _transfer_shapes(
             except Exception as e:
                 if VERBOSE:
                     print("[VERBOSE] Shape rescaling failed: %s" % str(e))
+        # Gap 3: Apply template body font to all text runs in the shape
+        if body_font:
+            try:
+                _apply_template_font_to_shape_xml(cloned, body_font)
+            except Exception as e:
+                if VERBOSE:
+                    print("[VERBOSE] Shape font override failed: %s" % str(e))
         spTree.append(cloned)
 
 
@@ -3166,7 +3353,13 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
             if hasattr(shape, "has_table") and shape.has_table:
                 continue
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                continue
+                # Only keep if this is an actual picture with image data, not an
+                # empty picture placeholder that was never filled with an image.
+                try:
+                    _ = shape.image  # raises if no image data present
+                    continue  # Has real image data — keep it
+                except Exception:
+                    pass  # No image data — fall through to removal
         except Exception as e:
             if VERBOSE:
                 print("[VERBOSE] Exception suppressed: %s" % str(e))
@@ -3179,7 +3372,12 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
 
 
 def _remove_empty_textboxes(slide) -> None:
-    """Remove non-placeholder text boxes with no visible text content."""
+    """Remove non-placeholder text boxes with no visible text content.
+
+    Also removes placeholder text frames that survived _clear_unused_placeholders()
+    because they were in populated_indices but had no actual text written to them
+    (e.g. silent fill failures that leave "Click to add text" ghosts).
+    """
     spTree = slide.shapes._spTree
     to_remove = []
     for shape in list(slide.shapes):
@@ -3194,6 +3392,26 @@ def _remove_empty_textboxes(slide) -> None:
         except Exception:
             continue
     for el in to_remove:
+        try:
+            spTree.remove(el)
+        except Exception:
+            pass
+
+    # Second pass: remove placeholder text frames with no actual text content.
+    # These are empty "Click to add text" placeholders that survived the first
+    # cleanup because their idx was in populated_indices (but content fill
+    # failed silently) or because no removal guard was triggered.
+    to_remove_ph = []
+    for shape in list(slide.placeholders):
+        try:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = shape.text
+            if text is None or text.strip() == "":
+                to_remove_ph.append(shape._element)
+        except Exception:
+            continue
+    for el in to_remove_ph:
         try:
             spTree.remove(el)
         except Exception:
@@ -3566,12 +3784,15 @@ def _populate_slide(
     # P1-1: Pass source slide dimensions and target area so shapes are rescaled
     # proportionally to the template's content region instead of being copied
     # at Claude's original absolute EMU coordinates.
+    # Gap 3: Also pass template_style so free-floating shape text uses the
+    # template's body font instead of Claude's default typeface.
     _transfer_shapes(
         new_slide,
         content.shapes_xml,
         src_width=src_slide_width,
         src_height=src_slide_height,
         target_area=region_map.visual_region,
+        template_style=template_style,
     )
     if content_mix == ContentMix.TEXT_ONLY:
         _transfer_shapes(
@@ -3580,6 +3801,7 @@ def _populate_slide(
             src_width=src_slide_width,
             src_height=src_slide_height,
             target_area=region_map.text_region,
+            template_style=template_style,
         )
 
     # ------------------------------------------------------------------
@@ -3682,6 +3904,35 @@ def _populate_slide(
         show_slide_number=show_slide_number,
         date_text=date_text,
     )
+
+    # Fallback: if footer_text was requested but no idx=11 placeholder exists
+    # on this slide layout (e.g. the title slide uses a decorative master shape
+    # rather than an editable placeholder), add a free-floating text box in the
+    # footer zone so the text still appears.
+    if footer_text and 11 not in populated_indices:
+        _footer_h = int(slide_height * 0.07)
+        _footer_top = slide_height - _footer_h
+        _ftb = new_slide.shapes.add_textbox(0, _footer_top, slide_width, _footer_h)
+        _ftf = _ftb.text_frame
+        _ftf.word_wrap = False
+        _fp = _ftf.paragraphs[0]
+        _fp.text = footer_text
+        _fp.font.size = Pt(9)
+        if template_style:
+            _fp.font.name = (
+                template_style.body_font_family
+                or template_style.theme.minor_font
+                or None
+            )
+            if template_style.body_font_color_rgb:
+                try:
+                    from pptx.dml.color import RGBColor
+
+                    _fp.font.color.rgb = RGBColor.from_string(
+                        template_style.body_font_color_rgb
+                    )
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Remove ALL unpopulated placeholder XML elements from the slide shape
@@ -4400,6 +4651,602 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
 
 
 # ---------------------------------------------------------------------------
+# Template Deep Analysis & Assembly Knowledge File (Step 4 prerequisite)
+# ---------------------------------------------------------------------------
+
+
+def _extract_shape_design_info(shape) -> dict:
+    """Extract design properties from a non-placeholder shape (decorative element).
+
+    Captures fill color, line color and width, position, and size for use in
+    the template design language analysis. Returns an empty dict on failure.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    ns_p = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+    info: dict = {}
+    try:
+        try:
+            info["shape_type"] = str(shape.shape_type)
+        except Exception:
+            info["shape_type"] = ""
+        try:
+            info["left_emu"] = int(shape.left)
+            info["top_emu"] = int(shape.top)
+            info["width_emu"] = int(shape.width)
+            info["height_emu"] = int(shape.height)
+        except Exception:
+            pass
+
+        # Fill and line color via XML (python-pptx fill API can raise for inherited fills)
+        elem = shape._element
+        spPr = None
+        for candidate in [
+            elem.find(ns_p + "spPr"),
+            elem.find(ns_a + "spPr"),
+            elem.find(".//" + ns_p + "spPr"),
+            elem.find(".//" + ns_a + "spPr"),
+        ]:
+            if candidate is not None:
+                spPr = candidate
+                break
+
+        if spPr is not None:
+            solidFill = spPr.find(ns_a + "solidFill")
+            if solidFill is not None:
+                srgb = solidFill.find(ns_a + "srgbClr")
+                if srgb is not None:
+                    info["fill_color_hex"] = srgb.get("val", "")
+            ln = spPr.find(ns_a + "ln")
+            if ln is not None:
+                w_str = ln.get("w")
+                if w_str:
+                    try:
+                        info["line_width_pt"] = round(int(w_str) / 12700, 1)
+                    except ValueError:
+                        pass
+                lnFill = ln.find(ns_a + "solidFill")
+                if lnFill is not None:
+                    srgb = lnFill.find(ns_a + "srgbClr")
+                    if srgb is not None:
+                        info["line_color_hex"] = srgb.get("val", "")
+
+        try:
+            info["has_text"] = (
+                getattr(shape, "has_text_frame", False)
+                and bool(getattr(shape, "text", "").strip())
+            )
+        except Exception:
+            info["has_text"] = False
+    except Exception:
+        return {}
+    return info
+
+
+def _analyze_template_in_depth(template_prs) -> dict:
+    """Perform a thorough per-layout analysis of the template's complete design language.
+
+    Opens and inspects every slide layout in the template, documenting:
+    - Slide dimensions and aspect ratio
+    - Theme colors: full accent palette (1-6), dark/light colors, hyperlink color
+    - Font scheme: major (heading) and minor (body) typefaces
+    - Slide master decorative shapes and background color
+    - Per-layout: name, background color, all placeholder positions/sizes/typography
+      (font family, size, weight, color), all non-placeholder (decorative) shapes
+      with their fill colors, line styles, and positions
+    - Design language summary: primary/secondary accents, fonts, typical font sizes,
+      typography ratio, recurring visual motifs from shape fill colors
+
+    This analysis is the authoritative design reference for Step 4. Every slide is
+    assembled with complete fidelity to the template's visual language — nothing is
+    approximated or guessed.
+
+    Args:
+        template_prs: A python-pptx Presentation object for the template file.
+
+    Returns:
+        dict with keys: slide_dimensions, theme, master_analysis,
+                        layouts, design_language_summary
+    """
+    EMU_PER_INCH = 914400
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    ns_p = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+
+    result: dict = {
+        "slide_dimensions": {},
+        "theme": {},
+        "master_analysis": {},
+        "layouts": [],
+        "design_language_summary": {},
+    }
+
+    # --- Slide dimensions ---
+    try:
+        w = int(template_prs.slide_width)
+        h = int(template_prs.slide_height)
+        result["slide_dimensions"] = {
+            "width_emu": w,
+            "height_emu": h,
+            "width_inches": round(w / EMU_PER_INCH, 2),
+            "height_inches": round(h / EMU_PER_INCH, 2),
+            "aspect_ratio": round(w / h, 3) if h else 0.0,
+        }
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Slide dimensions extraction failed: %s" % str(e))
+
+    # --- Theme colors and fonts ---
+    theme_obj = None
+    try:
+        theme_obj = _extract_theme_from_prs(template_prs)
+        result["theme"] = {
+            "accent_colors": theme_obj.accent_colors,
+            "dk1": theme_obj.dk1,
+            "dk2": theme_obj.dk2,
+            "lt1": theme_obj.lt1,
+            "lt2": theme_obj.lt2,
+            "hyperlink": theme_obj.hyperlink,
+            "major_font": theme_obj.major_font,
+            "minor_font": theme_obj.minor_font,
+        }
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Theme extraction failed in deep analysis: %s" % str(e))
+
+    # Helper: extract solid fill background color from a layout/master _element
+    def _layout_bg_color(element) -> str:
+        try:
+            bg = element.find(ns_p + "cSld/" + ns_p + "bg")
+            if bg is None:
+                return ""
+            bgPr = bg.find(ns_p + "bgPr") or bg.find(ns_p + "bgRef") or bg
+            solidFill = bgPr.find(ns_a + "solidFill")
+            if solidFill is not None:
+                srgb = solidFill.find(ns_a + "srgbClr")
+                if srgb is not None:
+                    return srgb.get("val", "")
+        except Exception:
+            pass
+        return ""
+
+    # --- Slide master analysis ---
+    try:
+        master = template_prs.slide_masters[0]
+        master_bg = _layout_bg_color(master._element)
+
+        master_shapes = []
+        for shape in master.shapes:
+            try:
+                if shape.is_placeholder:
+                    continue
+                info = _extract_shape_design_info(shape)
+                if info:
+                    master_shapes.append(info)
+            except Exception:
+                continue
+
+        result["master_analysis"] = {
+            "background_color": master_bg,
+            "decorative_shape_count": len(master_shapes),
+            "decorative_shapes": master_shapes[:12],  # cap to keep output manageable
+        }
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Master analysis failed: %s" % str(e))
+
+    # --- Per-layout analysis ---
+    slide_w = result["slide_dimensions"].get("width_emu", 1) or 1
+    slide_h = result["slide_dimensions"].get("height_emu", 1) or 1
+
+    for layout_idx, layout in enumerate(template_prs.slide_layouts):
+        layout_info: dict = {
+            "index": layout_idx,
+            "name": layout.name,
+            "background_color": "",
+            "placeholders": [],
+            "decorative_shapes": [],
+            "has_picture_placeholder": False,
+            "has_chart_placeholder": False,
+            "has_table_placeholder": False,
+            "non_placeholder_shape_count": 0,
+        }
+
+        # Background color: layout-level first, then master fallback
+        layout_bg = _layout_bg_color(layout._element)
+        if not layout_bg:
+            try:
+                layout_bg = _layout_bg_color(layout.slide_master._element)
+            except Exception:
+                pass
+        layout_info["background_color"] = layout_bg
+
+        # Placeholder analysis — position, size, type, and typography
+        for ph in layout.placeholders:
+            try:
+                ph_fmt = ph.placeholder_format
+                ph_entry: dict = {
+                    "idx": ph_fmt.idx,
+                    "type_str": str(ph_fmt.type),
+                    "left_emu": int(ph.left),
+                    "top_emu": int(ph.top),
+                    "width_emu": int(ph.width),
+                    "height_emu": int(ph.height),
+                    "left_pct": round(ph.left / slide_w * 100, 1),
+                    "top_pct": round(ph.top / slide_h * 100, 1),
+                    "width_pct": round(ph.width / slide_w * 100, 1),
+                    "height_pct": round(ph.height / slide_h * 100, 1),
+                    "font_family": "",
+                    "font_size_pt": 0,
+                    "font_bold": False,
+                    "font_color_hex": "",
+                }
+
+                # Extract typography: check defRPr on pPr first, then first run's rPr
+                if ph.has_text_frame:
+                    for para in ph.text_frame.paragraphs:
+                        rPr_source = None
+                        pPr = para._p.find(ns_a + "pPr")
+                        if pPr is not None:
+                            rPr_source = pPr.find(ns_a + "defRPr")
+                        if rPr_source is None and para.runs:
+                            rPr_source = para.runs[0]._r.find(ns_a + "rPr")
+                        if rPr_source is not None:
+                            sz = rPr_source.get("sz")
+                            if sz:
+                                try:
+                                    ph_entry["font_size_pt"] = int(sz) // 100
+                                except ValueError:
+                                    pass
+                            b = rPr_source.get("b")
+                            ph_entry["font_bold"] = b in ("1", "true") if b else False
+                            latin = rPr_source.find(ns_a + "latin")
+                            if latin is not None:
+                                typeface = latin.get("typeface", "")
+                                if typeface and not typeface.startswith("+"):
+                                    ph_entry["font_family"] = typeface
+                                elif typeface == "+mj-lt" and theme_obj:
+                                    ph_entry["font_family"] = theme_obj.major_font
+                                elif typeface == "+mn-lt" and theme_obj:
+                                    ph_entry["font_family"] = theme_obj.minor_font
+                            if theme_obj:
+                                ph_entry["font_color_hex"] = _extract_color_from_rPr(
+                                    rPr_source, theme_obj
+                                )
+                            break  # Only need first paragraph's style
+
+                # Flag placeholder capability types
+                if _is_picture_placeholder(ph):
+                    layout_info["has_picture_placeholder"] = True
+                elif ph_fmt.type == PP_PLACEHOLDER.CHART:
+                    layout_info["has_chart_placeholder"] = True
+                elif ph_fmt.type == PP_PLACEHOLDER.TABLE:
+                    layout_info["has_table_placeholder"] = True
+
+                layout_info["placeholders"].append(ph_entry)
+            except Exception:
+                continue
+
+        # Non-placeholder (decorative) shapes in this layout
+        for shape in layout.shapes:
+            try:
+                if shape.is_placeholder:
+                    continue
+                layout_info["non_placeholder_shape_count"] += 1
+                info = _extract_shape_design_info(shape)
+                if info:
+                    layout_info["decorative_shapes"].append(info)
+            except Exception:
+                continue
+
+        result["layouts"].append(layout_info)
+
+    # --- Design language summary ---
+    try:
+        theme_data = result.get("theme", {})
+        accent_colors = theme_data.get("accent_colors", [])
+
+        all_title_sizes: list = []
+        all_body_sizes: list = []
+        layouts_with_pics = 0
+        layouts_with_decoration = 0
+        fill_color_counts: dict = {}
+
+        for li in result["layouts"]:
+            if li.get("has_picture_placeholder"):
+                layouts_with_pics += 1
+            if li.get("non_placeholder_shape_count", 0) > 0:
+                layouts_with_decoration += 1
+            for ph in li.get("placeholders", []):
+                sz = ph.get("font_size_pt", 0)
+                if sz > 0:
+                    if ph.get("idx") == 0:
+                        all_title_sizes.append(sz)
+                    elif ph.get("idx") == 1:
+                        all_body_sizes.append(sz)
+            for shape_info in li.get("decorative_shapes", []):
+                fc = shape_info.get("fill_color_hex", "")
+                if fc:
+                    fill_color_counts[fc] = fill_color_counts.get(fc, 0) + 1
+
+        # Include master decorative shapes in motif color counts
+        for shape_info in result["master_analysis"].get("decorative_shapes", []):
+            fc = shape_info.get("fill_color_hex", "")
+            if fc:
+                fill_color_counts[fc] = fill_color_counts.get(fc, 0) + 1
+
+        # Recurring motif colors: fills appearing on 2+ layouts/master shapes
+        recurring_motifs = sorted(
+            [
+                {"color_hex": c, "occurrences": n}
+                for c, n in fill_color_counts.items()
+                if n >= 2
+            ],
+            key=lambda x: -x["occurrences"],
+        )[:5]
+
+        avg_title_size = (
+            int(sum(all_title_sizes) / len(all_title_sizes))
+            if all_title_sizes
+            else 28
+        )
+        avg_body_size = (
+            int(sum(all_body_sizes) / len(all_body_sizes))
+            if all_body_sizes
+            else 18
+        )
+
+        result["design_language_summary"] = {
+            "primary_accent_color": (
+                accent_colors[0] if accent_colors else theme_data.get("dk1", "")
+            ),
+            "secondary_accent_color": (
+                accent_colors[1] if len(accent_colors) > 1 else ""
+            ),
+            "full_accent_palette": [
+                {"hex": c, "label": "accent%d" % (i + 1)}
+                for i, c in enumerate(accent_colors)
+                if c
+            ],
+            "heading_font": theme_data.get("major_font", "Calibri"),
+            "body_font": theme_data.get("minor_font", "Calibri"),
+            "background_color": theme_data.get("lt1", "FFFFFF"),
+            "primary_text_color": theme_data.get("dk1", "000000"),
+            "typical_title_font_size_pt": avg_title_size,
+            "typical_body_font_size_pt": avg_body_size,
+            "typography_size_ratio": (
+                round(avg_title_size / avg_body_size, 2) if avg_body_size else 0.0
+            ),
+            "total_layouts": len(result["layouts"]),
+            "layouts_with_picture_placeholder": layouts_with_pics,
+            "layouts_with_decorative_shapes": layouts_with_decoration,
+            "recurring_motif_colors": recurring_motifs,
+        }
+
+        if VERBOSE:
+            print("[VERBOSE] Template deep analysis complete:")
+            print("[VERBOSE]   Total layouts analyzed: %d" % len(result["layouts"]))
+            print(
+                "[VERBOSE]   Accent palette: %s"
+                % ", ".join("#%s" % c for c in accent_colors[:3] if c)
+            )
+            print(
+                "[VERBOSE]   Heading font: %s  |  Body font: %s"
+                % (
+                    result["design_language_summary"]["heading_font"],
+                    result["design_language_summary"]["body_font"],
+                )
+            )
+            print(
+                "[VERBOSE]   Typical title: %dpt  |  Typical body: %dpt"
+                % (avg_title_size, avg_body_size)
+            )
+            print(
+                "[VERBOSE]   Layouts with picture placeholders: %d"
+                % layouts_with_pics
+            )
+            print(
+                "[VERBOSE]   Layouts with decorative shapes: %d"
+                % layouts_with_decoration
+            )
+            if recurring_motifs:
+                print(
+                    "[VERBOSE]   Recurring motif colors: %s"
+                    % ", ".join(
+                        "#%s (%dx)" % (m["color_hex"], m["occurrences"])
+                        for m in recurring_motifs[:3]
+                    )
+                )
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Design language summary failed: %s" % str(e))
+
+    return result
+
+
+def _knowledge_json_default(obj) -> str:
+    """JSON serialization fallback for non-JSON-serializable types in the knowledge file."""
+    if isinstance(obj, bytes):
+        return "<binary:%d bytes>" % len(obj)
+    return str(obj)
+
+
+def _build_assembly_knowledge_file(
+    session_state: Dict,
+    template_analysis: dict,
+) -> dict:
+    """Consolidate all four pipeline inputs into the comprehensive assembly knowledge file.
+
+    This knowledge file is the single source of truth that governs every design and
+    content decision made during PPTX file generation. It is built before any slide
+    construction begins so that nothing is guessed, approximated, or inconsistently applied.
+
+    The four mandatory inputs are:
+
+    1. Original user intent — the exact prompt that initiated the workflow, preserved
+       in full so the presentation's tone, goals, and specific requirements are never lost.
+
+    2. Complete slide-by-slide content plan — the full per-slide plan from Step 1,
+       including all titles, bullet points, table/chart flags, bullet counts, and
+       structural decisions made for every individual slide.
+
+    3. Deep template design language — the thorough analysis from _analyze_template_in_depth:
+       every layout's placeholder positions, font families, font sizes, font weights, text
+       colors, background colors, decorative shape fill/line styles, the complete color
+       palette, accent colors, and all recurring design motifs.
+
+    4. AI-generated image assets — full awareness of every image produced in Steps 2-3:
+       which slide each image targets, its pixel dimensions, content type, aspect ratio,
+       and how it is intended to be positioned within the slide layout.
+
+    Args:
+        session_state: The workflow session_state dict containing all pipeline data.
+        template_analysis: Output of _analyze_template_in_depth() for the template file.
+
+    Returns:
+        dict with keys:
+          metadata, input_1_user_intent, input_2_content_plan,
+          input_3_template_design_language, input_4_image_assets, assembly_directives
+    """
+    knowledge: dict = {
+        "metadata": {
+            "pipeline_step": "Step 4 - Template Assembly",
+            "purpose": (
+                "Single source of truth governing every design and content decision "
+                "during PPTX file generation. Nothing is guessed, approximated, or "
+                "inconsistently applied."
+            ),
+            "inputs_count": 4,
+        },
+        "input_1_user_intent": {},
+        "input_2_content_plan": {},
+        "input_3_template_design_language": {},
+        "input_4_image_assets": {},
+        "assembly_directives": {},
+    }
+
+    # --- Input 1: Original user intent (preserved exactly as provided) ---
+    user_prompt = session_state.get("user_prompt", "")
+    knowledge["input_1_user_intent"] = {
+        "original_prompt": user_prompt,
+        "prompt_length_chars": len(user_prompt),
+        "note": (
+            "Preserved exactly as provided. Intent, tone, and goals are never lost "
+            "during template assembly."
+        ),
+    }
+
+    # --- Input 2: Complete slide-by-slide content plan from Step 1 ---
+    slides_data = session_state.get("slides_data", [])
+    total_slides = session_state.get("total_slides", len(slides_data))
+    knowledge["input_2_content_plan"] = {
+        "total_slides": total_slides,
+        "generated_source_file": session_state.get("generated_file", ""),
+        "src_slide_width_emu": session_state.get("src_slide_width", 0),
+        "src_slide_height_emu": session_state.get("src_slide_height", 0),
+        "slides": slides_data,
+        "content_inventory": {
+            "slides_with_table": [
+                s["index"] for s in slides_data if s.get("has_table")
+            ],
+            "slides_with_chart": [
+                s["index"] for s in slides_data if s.get("has_chart")
+            ],
+            "slides_with_existing_image": [
+                s["index"] for s in slides_data if s.get("has_image")
+            ],
+            "slides_with_image_placeholder": [
+                s["index"] for s in slides_data if s.get("has_image_placeholder")
+            ],
+        },
+    }
+
+    # --- Input 3: Deep template design language analysis ---
+    # Provides complete fidelity to the template's visual language: fonts, colors,
+    # layout grids, placeholder positions, margin patterns, shape styles, and motifs.
+    knowledge["input_3_template_design_language"] = template_analysis
+
+    # --- Input 4: AI-generated image assets from Steps 2-3 ---
+    generated_images = session_state.get("generated_images", {})
+    image_assets = []
+    for slide_idx_key, img_bytes in generated_images.items():
+        slide_idx = (
+            int(slide_idx_key) if isinstance(slide_idx_key, str) else slide_idx_key
+        )
+        asset: dict = {
+            "slide_index": slide_idx,
+            "content_type": "image/png",
+            "size_bytes": len(img_bytes) if img_bytes else 0,
+            "has_image_data": bool(img_bytes),
+            "intended_position": "picture_placeholder_or_right_visual_region",
+            "slide_title": "",
+            "has_picture_placeholder": False,
+            "width_px": None,
+            "height_px": None,
+            "aspect_ratio": None,
+        }
+        # Cross-reference with content plan for slide title and placeholder info
+        matching_slide = next(
+            (s for s in slides_data if s.get("index") == slide_idx), None
+        )
+        if matching_slide:
+            asset["slide_title"] = matching_slide.get("title", "")
+            asset["has_picture_placeholder"] = matching_slide.get(
+                "has_image_placeholder", False
+            )
+        # Get actual pixel dimensions for precise aspect-correct positioning
+        try:
+            from PIL import Image as _PILImage
+
+            with _PILImage.open(BytesIO(img_bytes)) as im:
+                asset["width_px"] = im.width
+                asset["height_px"] = im.height
+                if im.height:
+                    asset["aspect_ratio"] = round(im.width / im.height, 3)
+        except Exception:
+            pass
+        image_assets.append(asset)
+
+    knowledge["input_4_image_assets"] = {
+        "total_generated_images": len(image_assets),
+        "slide_indices_with_images": sorted(a["slide_index"] for a in image_assets),
+        "assets": image_assets,
+    }
+
+    # --- Assembly directives: concrete guidance synthesized from all four inputs ---
+    design_summary = template_analysis.get("design_language_summary", {})
+    theme_data = template_analysis.get("theme", {})
+    slide_dims = template_analysis.get("slide_dimensions", {})
+
+    knowledge["assembly_directives"] = {
+        "primary_accent_color_hex": design_summary.get("primary_accent_color", ""),
+        "secondary_accent_color_hex": design_summary.get("secondary_accent_color", ""),
+        "full_color_palette": design_summary.get("full_accent_palette", []),
+        "heading_font": design_summary.get("heading_font", "Calibri"),
+        "body_font": design_summary.get("body_font", "Calibri"),
+        "background_color_hex": design_summary.get("background_color", "FFFFFF"),
+        "primary_text_color_hex": design_summary.get("primary_text_color", "000000"),
+        "target_title_font_size_pt": design_summary.get(
+            "typical_title_font_size_pt", 28
+        ),
+        "target_body_font_size_pt": design_summary.get(
+            "typical_body_font_size_pt", 18
+        ),
+        "target_slide_width_emu": slide_dims.get("width_emu", 0),
+        "target_slide_height_emu": slide_dims.get("height_emu", 0),
+        "template_has_picture_layouts": (
+            design_summary.get("layouts_with_picture_placeholder", 0) > 0
+        ),
+        "slides_receiving_generated_images": sorted(
+            a["slide_index"] for a in image_assets
+        ),
+        "footer_text": session_state.get("footer_text", ""),
+        "date_text": session_state.get("date_text", ""),
+        "show_slide_numbers": session_state.get("show_slide_numbers", False),
+    }
+
+    return knowledge
+
+
+# ---------------------------------------------------------------------------
 # Step 4: Template Assembly
 # ---------------------------------------------------------------------------
 
@@ -4407,15 +5254,39 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
 def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOutput:
     """Apply template styling and assemble the final presentation.
 
-    Handles image placeholder detection on each template layout so that
-    generated images are inserted into dedicated picture placeholders when
-    available, rather than being added as free-floating pictures.
+    This is the most critical and knowledge-intensive step in the entire pipeline.
+    Before constructing any slide, it first consolidates all necessary context into
+    a comprehensive knowledge file that acts as the single source of truth for every
+    design and content decision made during file generation.
+
+    The knowledge file is built from four mandatory inputs:
+
+    1. Original user intent — the exact prompt that initiated the workflow, preserved
+       in full so the presentation's tone, goals, and specific requirements are never lost.
+
+    2. Complete slide-by-slide content plan — the full per-slide plan from Step 1:
+       all titles, bullet points, table/chart/image flags, and structural decisions.
+
+    3. Deep template design language — a thorough analysis of every single slide layout
+       within the template file: font families, font sizes, font weights, text colors,
+       background colors, layout grids, placeholder positions, margin patterns, shape
+       styles, line styles, color palette, accent colors, icon usage, and all recurring
+       design motifs. Nothing is guessed or approximated.
+
+    4. AI-generated image assets — full awareness of every image produced in Steps 2-3:
+       which slide each targets, pixel dimensions, content type, aspect ratio, and the
+       intended position within each slide layout.
+
+    Only after the knowledge file is assembled does the actual PPTX construction begin.
+    Handles image placeholder detection on each template layout so that generated images
+    are inserted into dedicated picture placeholders when available.
 
     This step:
-    1. Opens the template and generated presentation
-    2. Creates slides from template layouts with extracted content
-    3. Inserts AI-generated images into picture placeholders (or as free-floating)
-    4. Saves the final output
+    1. Builds the comprehensive assembly knowledge file (single source of truth)
+    2. Opens the template and generated presentation
+    3. Creates slides from template layouts with extracted content
+    4. Inserts AI-generated images into picture placeholders (or as free-floating)
+    5. Saves the final output
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
@@ -4469,6 +5340,67 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     except Exception as e:
         if VERBOSE:
             print("[VERBOSE] Template style extraction failed: %s" % str(e))
+
+    # -----------------------------------------------------------------------
+    # Build the comprehensive assembly knowledge file BEFORE constructing
+    # any slide. This is the single source of truth that governs every
+    # design and content decision: fonts, colors, layout, placeholders,
+    # image placements, and all recurring design motifs from the template.
+    # -----------------------------------------------------------------------
+    print("  Building assembly knowledge file (template deep analysis)...")
+    template_analysis: dict = {}
+    try:
+        template_prs_for_analysis = Presentation(template_path)
+        template_analysis = _analyze_template_in_depth(template_prs_for_analysis)
+        print(
+            "  Knowledge file: %d layouts analyzed, %d accent color(s), "
+            "heading font '%s', body font '%s'."
+            % (
+                len(template_analysis.get("layouts", [])),
+                len(
+                    [
+                        c
+                        for c in template_analysis.get("theme", {}).get(
+                            "accent_colors", []
+                        )
+                        if c
+                    ]
+                ),
+                template_analysis.get("design_language_summary", {}).get(
+                    "heading_font", "?"
+                ),
+                template_analysis.get("design_language_summary", {}).get(
+                    "body_font", "?"
+                ),
+            )
+        )
+    except Exception as e:
+        print("[WARNING] Template deep analysis failed (will continue): %s" % str(e))
+        if VERBOSE:
+            traceback.print_exc()
+
+    try:
+        assembly_knowledge = _build_assembly_knowledge_file(
+            session_state, template_analysis
+        )
+        session_state["assembly_knowledge"] = assembly_knowledge
+        if VERBOSE:
+            print(
+                "[VERBOSE] Assembly knowledge file built — %d slides, %d AI image(s)"
+                % (
+                    assembly_knowledge["input_2_content_plan"].get("total_slides", 0),
+                    assembly_knowledge["input_4_image_assets"].get(
+                        "total_generated_images", 0
+                    ),
+                )
+            )
+    except Exception as e:
+        print(
+            "[WARNING] Knowledge file construction failed (will continue): %s" % str(e)
+        )
+        if VERBOSE:
+            traceback.print_exc()
+        session_state["assembly_knowledge"] = {}
 
     if VERBOSE:
         print(
@@ -4685,56 +5617,600 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
         if pngs:
             return pngs
 
-    return []
+    # Final fallback: collect ALL .png files in the output directory sorted by
+    # name.  This covers any LibreOffice naming variant not matched by the
+    # patterns above (e.g. zero-padded "<base>001.png" or locale-specific names).
+    all_pngs = sorted(glob.glob(os.path.join(output_dir, "*.png")))
+    return all_pngs
 
 
-# Slide quality review agent (only instantiated if --visual-review is enabled).
-# Uses Gemini 2.5 Flash vision capability to inspect rendered slide PNGs.
+# Slide quality review agent — acts as a senior UI/UX designer with deep knowledge
+# of presentation design, visual hierarchy, typography, and brand consistency.
+# Instantiated at module level; only invoked when --visual-review is enabled.
 slide_quality_reviewer = Agent(
-    name="Slide Quality Reviewer",
+    name="Senior UI/UX Presentation Designer",
     model=Gemini(id="gemini-2.5-flash"),
     instructions=[
-        "You are a PowerPoint visual quality inspector.",
-        "Analyze the provided slide screenshot for VISIBLE structural defects ONLY.",
+        "You are a world-class senior UI/UX designer and presentation design expert",
+        "with 15+ years of experience creating award-winning corporate presentations.",
+        "You combine the precision of a quality inspector with the creative eye of a",
+        "professional designer who understands visual hierarchy, typography, color theory,",
+        "whitespace, and the importance of brand consistency.",
         "",
-        "WHAT TO REPORT (report each as a separate ShapeIssue):",
-        "  text_overflow  - Text visibly extends beyond its shape or is cut off at edges.",
-        "  overlap        - Two or more distinct elements visibly overlap each other.",
-        "  ghost_text     - Placeholder prompt text visible ('Click to add text', etc.).",
-        "  low_contrast   - Text color is nearly indistinguishable from background.",
-        "  element_clipped - An element is cut off by the slide edge.",
-        "  empty_placeholder - Visible empty placeholder frame with no content.",
-        "  footer_inconsistent - Footer content appears missing or unexpectedly truncated.",
+        "Analyze the provided slide screenshot from BOTH a structural AND aesthetic",
+        "design quality perspective. Your goal is to elevate every slide to the",
+        "standard of a professionally designed McKinsey or Apple-quality presentation.",
         "",
-        "WHAT NOT TO REPORT:",
-        "  - Content quality, wording, or topic relevance.",
-        "  - Minor spacing or alignment preferences.",
-        "  - Aesthetic style choices (color palette, font weight, layout style).",
+        "=== STRUCTURAL DEFECTS (always report if present) ===",
+        "text_overflow      - Text extends beyond its container or is cut off.",
+        "overlap            - Two elements visibly overlap in a way that hurts readability.",
+        "ghost_text         - 'Click to add' placeholder text is still visible.",
+        "low_contrast       - Text is nearly indistinguishable from background.",
+        "element_clipped    - Content is cut off by the slide boundary.",
+        "empty_placeholder  - Visible empty frame with no content.",
+        "footer_inconsistent - Footer text missing, truncated, or misaligned.",
         "",
-        "VISUAL BLANDNESS:",
-        "  - Set is_visually_bland=True ONLY when the slide has zero images, charts,",
-        "    or tables AND the slide appears bare with large empty whitespace regions.",
-        "  - Do NOT flag slides with well-formatted text-only content as bland.",
+        "=== DESIGN QUALITY ISSUES (report when they significantly impact visual quality) ===",
+        "poor_spacing       - Insufficient whitespace, cramped layout, or unbalanced margins.",
+        "alignment_off      - Elements are visibly misaligned (not on a consistent grid).",
+        "typography_hierarchy - Title and body have similar weight/size, lacking visual hierarchy.",
+        "color_underutilized - Template accent colors are not used; everything looks monochrome.",
+        "visual_enrichment_needed - Slide uses only plain text when the template's design",
+        "                           vocabulary (colored shapes, accent bars, icons) could",
+        "                           dramatically improve visual interest.",
+        "font_inconsistency - Inconsistent font sizes or weights across similar content types.",
         "",
-        "SEVERITY GUIDE:",
-        "  critical  - Clearly broken: text cut off, major overlap, ghost text visible.",
-        "  moderate  - Noticeable but does not break readability.",
-        "  minor     - Subtle issue a casual viewer would not notice.",
+        "=== SEVERITY GUIDE ===",
+        "critical  - Broken or unreadable: text cut off, ghost text, major overlap.",
+        "moderate  - Clearly suboptimal: a professional would notice and want to fix it.",
+        "minor     - A refinement that would polish the slide.",
         "",
-        "PROGRAMMATIC_FIX SELECTION:",
-        "  reduce_font_size   -> text_overflow issues",
-        "  increase_contrast  -> low_contrast issues",
-        "  remove_element     -> overlap where one element should be removed",
-        "  clear_placeholder  -> ghost_text, empty_placeholder",
-        "  reposition_element -> overlap where repositioning would help",
-        "  none               -> issues not fixable by font/contrast/removal",
+        "=== PROGRAMMATIC FIX SELECTION ===",
+        "For structural issues:",
+        "  reduce_font_size      -> text_overflow",
+        "  increase_contrast     -> low_contrast",
+        "  remove_element        -> overlap (remove the offending element)",
+        "  clear_placeholder     -> ghost_text, empty_placeholder",
         "",
-        "Be conservative. Only report clearly and significantly visible issues.",
-        "If the slide looks good, return overall_quality='good' with an empty issues list.",
+        "For spacing/alignment (safe, failsafe implementations):",
+        "  fix_spacing                  -> poor_spacing: clamps shapes that overflow safe",
+        "                                  margins back within 5% edge boundary.",
+        "  fix_alignment                -> alignment_off: snaps outlier shapes to the",
+        "                                  majority left edge (max 2% slide width).",
+        "  fix_body_paragraph_alignment -> alignment_off / poor_spacing: sets all body",
+        "                                  text paragraphs to left alignment.",
+        "",
+        "For typography hierarchy (ensures title is visually dominant):",
+        "  enforce_typography_hierarchy -> typography_hierarchy: ensures title font is at",
+        "                                  least 6pt larger than body. Increases title if",
+        "                                  needed (cap: 36pt).",
+        "  increase_title_font_size     -> typography_hierarchy: forces title to 28pt.",
+        "",
+        "For color scheme (applies template accent colors):",
+        "  apply_accent_color_title -> color_underutilized / typography_hierarchy:",
+        "                              applies primary accent color to title text runs.",
+        "  apply_accent_color_body  -> color_underutilized: applies primary accent color",
+        "                              to the first (lead) paragraph of body text.",
+        "",
+        "For visual enrichment (native PPTX shapes, NO image generation):",
+        "  apply_body_accent_border  -> mild enrichment: thin vertical accent bar left of body.",
+        "  enrich_header_bar    -> prominent: full-width accent bar across top 8% of slide.",
+        "  enrich_title_card    -> structured: lightly tinted card behind title area.",
+        "  enrich_divider       -> separator: thin horizontal accent rule at 25% height.",
+        "  enrich_accent_strip  -> minimal: thin vertical accent strip on far left edge.",
+        "",
+        "SELECTION GUIDE:",
+        "  poor_spacing                   -> fix_spacing",
+        "  alignment_off (shapes)         -> fix_alignment",
+        "  alignment_off (text)           -> fix_body_paragraph_alignment",
+        "  typography_hierarchy (severe)  -> enforce_typography_hierarchy",
+        "  typography_hierarchy (mild)    -> increase_title_font_size",
+        "  color_underutilized (title)    -> apply_accent_color_title",
+        "  color_underutilized (overall)  -> apply_accent_color_body + enrich_*",
+        "  visual_enrichment_needed       -> choose the best enrich_* type",
+        "",
+        "Use 'none' ONLY when the issue requires AI-generated images, human content",
+        "editing, or a completely different slide layout.",
+        "",
+        "=== VISUAL BLANDNESS ===",
+        "A slide is visually bland (is_visually_bland=True) when it fails to use",
+        "the template's visual vocabulary — for example: all text in one plain color,",
+        "no accent colors applied anywhere, no visual hierarchy, large empty whitespace",
+        "regions, or it looks like an unformatted draft document.",
+        "Be generous with this flag: flag it if a professional designer would look at",
+        "the slide and immediately want to add some visual structure or color accent.",
+        "",
+        "=== DESIGN SCORE (design_score field, 1-10) ===",
+        "10: Stunning. Could appear in a top-tier consulting pitch deck.",
+        "8-9: Strong design with minor polish opportunities.",
+        "6-7: Functional and readable, could use visual enrichment.",
+        "4-5: Plain / generic; lacks visual identity or hierarchy.",
+        "2-3: Noticeably poorly designed or has significant issues.",
+        "1: Broken or completely unusable.",
+        "",
+        "=== IMPORTANT ===",
+        "- The template_context field in the prompt tells you the available accent",
+        "  colors and fonts from the template. Reference these when suggesting fixes.",
+        "- Be specific in descriptions: not 'title could be bigger' but 'title is 20pt,",
+        "  indistinguishable from body text at 18pt; increase to 28pt for hierarchy'.",
+        "- Always return design_score even if the slide looks perfect.",
     ],
     output_schema=SlideQualityReport,
     markdown=False,
 )
+
+
+def _apply_accent_color_to_title(slide, accent_color_hex: str) -> bool:
+    """Apply a template accent color to the slide title placeholder text.
+
+    Finds the title placeholder (idx=0) and sets all run colors to accent_color_hex.
+    Returns True if any runs were modified.
+    """
+    from pptx.dml.color import RGBColor
+
+    modified = False
+    try:
+        rgb = RGBColor.from_string(accent_color_hex)
+    except Exception:
+        return False
+
+    for shape in slide.placeholders:
+        if shape.placeholder_format.idx == 0 and shape.has_text_frame:
+            for para in shape.text_frame.paragraphs:
+                for run in para.runs:
+                    try:
+                        run.font.color.rgb = rgb
+                        modified = True
+                    except Exception:
+                        pass
+            break
+    return modified
+
+
+def _increase_title_font_size(slide, target_pt: int = 28) -> bool:
+    """Increase the title placeholder font size to at least target_pt.
+
+    Only increases — never reduces below the existing size.
+    Returns True if any runs were modified.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    target_sz = target_pt * 100  # OOXML hundredths of a point
+    modified = False
+
+    for shape in slide.placeholders:
+        if shape.placeholder_format.idx == 0 and shape.has_text_frame:
+            for para in shape.text_frame.paragraphs:
+                for run in para.runs:
+                    rPr = run._r.find(ns_a + "rPr")
+                    if rPr is not None:
+                        sz = rPr.get("sz")
+                        if sz and int(sz) < target_sz:
+                            rPr.set("sz", str(target_sz))
+                            modified = True
+                    else:
+                        # No explicit size — set it
+                        rPr = etree.SubElement(run._r, ns_a + "rPr")
+                        rPr.set("sz", str(target_sz))
+                        modified = True
+            break
+    return modified
+
+
+def _apply_body_accent_border(slide, accent_color_hex: str) -> bool:
+    """Add a colored left-border accent line to the body text placeholder.
+
+    Creates a thin vertical rectangle using the accent color on the left edge
+    of the body placeholder to add visual structure to bland text-only slides.
+    Returns True if the shape was added.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Emu
+
+    try:
+        rgb = RGBColor.from_string(accent_color_hex)
+    except Exception:
+        return False
+
+    # Find body placeholder to anchor the border to
+    body_ph = None
+    for shape in slide.placeholders:
+        ph_idx = shape.placeholder_format.idx
+        if ph_idx == 1 and shape.has_text_frame:
+            body_ph = shape
+            break
+    if body_ph is None:
+        return False
+
+    try:
+        # Add a 6pt-wide vertical rectangle on the left edge of the body placeholder
+        border_width = Emu(76200)  # 6pt in EMU
+        border_left = body_ph.left - border_width - Emu(38100)  # slight gap
+        border_top = body_ph.top
+        border_height = body_ph.height
+
+        # Clamp to slide left edge
+        if border_left < 0:
+            border_left = Emu(114300)  # 9pt from left edge
+
+        bar = slide.shapes.add_shape(
+            1,  # MSO_SHAPE_TYPE.RECTANGLE
+            border_left,
+            border_top,
+            border_width,
+            border_height,
+        )
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = rgb
+        bar.line.fill.background()  # no outline
+        return True
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Accent border add failed: %s" % str(e))
+        return False
+
+
+def _fix_spacing(slide, slide_width: int, slide_height: int) -> bool:
+    """Failsafe spacing fix: clamp non-placeholder shapes that leak outside safe margins.
+
+    The safe margin is 5% of slide width/height on each edge.  Any non-placeholder
+    shape whose bounding box extends beyond that margin is nudged back inside
+    by the minimum amount needed, capped at 5% of the slide dimension (to avoid
+    aggressive repositioning).
+
+    Only moves shapes — never resizes them, and never touches placeholders.
+    Returns True if any shapes were moved.
+    """
+    MARGIN = 0.05  # 5% safe margin on each edge
+    MAX_MOVE = 0.05  # maximum single-axis shift as fraction of slide dimension
+
+    safe_left = int(slide_width * MARGIN)
+    safe_top = int(slide_height * MARGIN)
+    safe_right = int(slide_width * (1 - MARGIN))
+    safe_bottom = int(slide_height * (1 - MARGIN))
+    max_move_x = int(slide_width * MAX_MOVE)
+    max_move_y = int(slide_height * MAX_MOVE)
+
+    modified = False
+    for shape in list(slide.shapes):
+        try:
+            if shape.is_placeholder:
+                continue
+            left, top = shape.left, shape.top
+            w, h = shape.width, shape.height
+            new_left, new_top = left, top
+
+            # Clamp left edge
+            if left < safe_left:
+                delta = safe_left - left
+                if delta <= max_move_x:
+                    new_left = safe_left
+
+            # Clamp right edge
+            if new_left + w > safe_right:
+                delta = (new_left + w) - safe_right
+                if delta <= max_move_x:
+                    new_left = max(safe_left, safe_right - w)
+
+            # Clamp top edge
+            if top < safe_top:
+                delta = safe_top - top
+                if delta <= max_move_y:
+                    new_top = safe_top
+
+            # Clamp bottom edge
+            if new_top + h > safe_bottom:
+                delta = (new_top + h) - safe_bottom
+                if delta <= max_move_y:
+                    new_top = max(safe_top, safe_bottom - h)
+
+            if new_left != left or new_top != top:
+                shape.left = new_left
+                shape.top = new_top
+                modified = True
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Spacing fix: shape moved from (%d,%d) to (%d,%d)"
+                        % (left, top, new_left, new_top)
+                    )
+        except Exception:
+            continue
+
+    return modified
+
+
+def _fix_alignment(slide, slide_width: int) -> bool:
+    """Failsafe alignment fix: snap minor left-edge outliers to the majority left edge.
+
+    Collects the left position of all non-placeholder content shapes.  Uses a
+    majority-vote: the most common left edge within a 3% slide-width tolerance
+    band becomes the 'anchor'.  Any outlier within 2% of slide width from the
+    anchor is snapped to it.
+
+    Only moves shapes horizontally — never vertically, never resizes, never
+    touches placeholders.  Returns True if any shapes were moved.
+    """
+    TOLERANCE = int(slide_width * 0.03)  # 3% band for majority-vote grouping
+    MAX_SNAP = int(slide_width * 0.02)  # max 2% snap
+
+    # Collect candidate left edges
+    left_edges = []
+    candidate_shapes = []
+    for shape in list(slide.shapes):
+        try:
+            if shape.is_placeholder:
+                continue
+            if not getattr(shape, "left", None):
+                continue
+            left_edges.append(shape.left)
+            candidate_shapes.append(shape)
+        except Exception:
+            continue
+
+    if len(left_edges) < 2:
+        return False
+
+    # Find the majority anchor: the left edge value with the most neighbors within tolerance
+    best_anchor = None
+    best_count = 0
+    for candidate in left_edges:
+        count = sum(1 for e in left_edges if abs(e - candidate) <= TOLERANCE)
+        if count > best_count:
+            best_count = count
+            best_anchor = candidate
+
+    if best_anchor is None or best_count < 2:
+        return False
+
+    # Snap outliers that are close enough
+    modified = False
+    for shape in candidate_shapes:
+        try:
+            if abs(shape.left - best_anchor) <= MAX_SNAP and shape.left != best_anchor:
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Alignment fix: shape left %d -> %d (anchor)"
+                        % (shape.left, best_anchor)
+                    )
+                shape.left = best_anchor
+                modified = True
+        except Exception:
+            continue
+
+    return modified
+
+
+def _enrich_slide_visually(
+    slide,
+    slide_width: int,
+    slide_height: int,
+    accent_color_hex: str,
+    enrich_type: str = "enrich_accent_strip",
+) -> bool:
+    """Add native PPTX visual enrichment elements using template colors.
+
+    No images are generated — enrichment is achieved purely through python-pptx
+    rectangle shapes, fills, and borders.  Each enrichment type uses the
+    template's primary accent color.
+
+    enrich_type options:
+      enrich_header_bar    - Full-width accent-color bar at slide top (8% height).
+                             Gives every slide a branded header band.
+      enrich_title_card    - Lightly-tinted card behind the title area with a left
+                             accent border.  Makes the title visually pop.
+      enrich_divider       - Thin horizontal accent rule between the title zone
+                             and the body zone (at 25% slide height).
+      enrich_accent_strip  - Thin vertical accent strip on the left edge
+                             (1.5% width, full height).  Minimal brand presence.
+
+    Returns True if any shapes were added.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Emu
+
+    try:
+        accent_rgb = RGBColor.from_string(accent_color_hex)
+    except Exception:
+        return False
+
+    def _hex_to_tinted(hex_color: str, tint: float = 0.85) -> RGBColor:
+        """Return a lightened (tinted) version of a hex color (0=white, 1=original)."""
+        r, g, b = _hex_to_rgb(hex_color)
+        r2 = int(r + (255 - r) * (1 - tint))
+        g2 = int(g + (255 - g) * (1 - tint))
+        b2 = int(b + (255 - b) * (1 - tint))
+        return RGBColor(r2, g2, b2)
+
+    try:
+        if enrich_type == "enrich_header_bar":
+            # Full-width accent-color bar at the very top of the slide
+            bar_height = int(slide_height * 0.08)
+            bar = slide.shapes.add_shape(1, Emu(0), Emu(0), slide_width, bar_height)
+            bar.fill.solid()
+            bar.fill.fore_color.rgb = accent_rgb
+            bar.line.fill.background()
+            return True
+
+        elif enrich_type == "enrich_title_card":
+            # Lightly tinted card behind the title area (top 22% of slide)
+            # with a 6pt left accent border
+            card_height = int(slide_height * 0.22)
+            card = slide.shapes.add_shape(
+                1,
+                Emu(int(slide_width * 0.02)),
+                Emu(int(slide_height * 0.02)),
+                slide_width - Emu(int(slide_width * 0.04)),
+                card_height,
+            )
+            tinted = _hex_to_tinted(accent_color_hex, tint=0.15)
+            card.fill.solid()
+            card.fill.fore_color.rgb = tinted
+            card.line.color.rgb = accent_rgb
+            card.line.width = Emu(76200)  # 6pt
+            return True
+
+        elif enrich_type == "enrich_divider":
+            # Thin horizontal rule at 25% slide height
+            divider_y = int(slide_height * 0.25)
+            divider_height = Emu(50800)  # 4pt thick
+            divider_x = int(slide_width * 0.05)
+            divider_w = int(slide_width * 0.90)
+            div = slide.shapes.add_shape(
+                1, divider_x, divider_y, divider_w, divider_height
+            )
+            div.fill.solid()
+            div.fill.fore_color.rgb = accent_rgb
+            div.line.fill.background()
+            return True
+
+        elif enrich_type == "enrich_accent_strip":
+            # Thin vertical strip on the far left edge
+            strip_width = int(slide_width * 0.015)
+            strip = slide.shapes.add_shape(1, Emu(0), Emu(0), strip_width, slide_height)
+            strip.fill.solid()
+            strip.fill.fore_color.rgb = accent_rgb
+            strip.line.fill.background()
+            return True
+
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Visual enrichment (%s) failed: %s" % (enrich_type, str(e)))
+
+    return False
+
+
+def _enforce_typography_hierarchy(slide) -> bool:
+    """Gap 4: Enforce font size hierarchy between title and body placeholders.
+
+    Reads the actual font sizes from title (idx=0) and body (idx=1) placeholders.
+    If the title is not at least 6pt larger than the body, increases the title
+    to max(body_size + 8, 24) points, capped at Pt(36).
+
+    Returns True if any sizes were changed.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    modified = False
+
+    title_shape = None
+    body_shape = None
+    for shape in slide.placeholders:
+        ph_idx = shape.placeholder_format.idx
+        if ph_idx == 0 and shape.has_text_frame:
+            title_shape = shape
+        elif ph_idx == 1 and shape.has_text_frame:
+            body_shape = shape
+
+    if title_shape is None or body_shape is None:
+        return False
+
+    # Collect body font size
+    body_sz = 0
+    for para in body_shape.text_frame.paragraphs:
+        for run in para.runs:
+            rPr = run._r.find(ns_a + "rPr")
+            if rPr is not None:
+                sz = rPr.get("sz")
+                if sz:
+                    body_sz = max(body_sz, int(sz))
+
+    if body_sz == 0:
+        return False  # Cannot determine body size — skip
+
+    # Collect title font size
+    title_sz = 0
+    for para in title_shape.text_frame.paragraphs:
+        for run in para.runs:
+            rPr = run._r.find(ns_a + "rPr")
+            if rPr is not None:
+                sz = rPr.get("sz")
+                if sz:
+                    title_sz = max(title_sz, int(sz))
+
+    if title_sz == 0:
+        return False
+
+    # Enforce: title must be at least body + 6pt
+    MIN_HIERARCHY_GAP = 600  # 6pt in OOXML hundredths
+    MAX_TITLE_SZ = 3600  # cap at 36pt
+
+    if title_sz < body_sz + MIN_HIERARCHY_GAP:
+        target_sz = min(MAX_TITLE_SZ, max(body_sz + 800, 2400))  # +8pt, min 24pt
+        for para in title_shape.text_frame.paragraphs:
+            for run in para.runs:
+                rPr = run._r.find(ns_a + "rPr")
+                if rPr is not None:
+                    rPr.set("sz", str(target_sz))
+                    modified = True
+        if VERBOSE:
+            print(
+                "[VERBOSE] Typography hierarchy: title %dpt -> %dpt (body was %dpt)"
+                % (title_sz // 100, target_sz // 100, body_sz // 100)
+            )
+
+    return modified
+
+
+def _apply_accent_color_to_body(slide, accent_color_hex: str) -> bool:
+    """Gap 5: Apply template accent color to first-level (level=0) body text runs.
+
+    Applies the primary accent color to the first paragraph of the body
+    placeholder only — making the lead sentence or subtitle visually distinct
+    without changing all body text (which should remain readable).
+
+    Returns True if any runs were modified.
+    """
+    from pptx.dml.color import RGBColor
+
+    modified = False
+    try:
+        rgb = RGBColor.from_string(accent_color_hex)
+    except Exception:
+        return False
+
+    for shape in slide.placeholders:
+        if shape.placeholder_format.idx == 1 and shape.has_text_frame:
+            # Apply accent only to the first paragraph at level 0
+            for para in shape.text_frame.paragraphs:
+                if para.level == 0:
+                    for run in para.runs:
+                        try:
+                            run.font.color.rgb = rgb
+                            modified = True
+                        except Exception:
+                            pass
+                    break  # Only first paragraph
+            break
+
+    return modified
+
+
+def _fix_paragraph_alignment_body(slide, alignment: str = "l") -> bool:
+    """Gap 1 (Step 5): Standardize paragraph alignment for body text placeholder.
+
+    Sets the <a:pPr algn="..."> attribute on all paragraphs in the body
+    placeholder (idx=1).  Default is left alignment ('l').
+
+    alignment options: 'l' (left), 'ctr' (center), 'r' (right), 'just' (justify)
+
+    Returns True if any paragraphs were updated.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    modified = False
+
+    for shape in slide.placeholders:
+        if shape.placeholder_format.idx == 1 and shape.has_text_frame:
+            for para in shape.text_frame.paragraphs:
+                p_elem = para._p
+                pPr = p_elem.find(ns_a + "pPr")
+                if pPr is None:
+                    pPr = etree.SubElement(p_elem, ns_a + "pPr")
+                    p_elem.insert(0, pPr)
+                existing = pPr.get("algn", "")
+                if existing != alignment:
+                    pPr.set("algn", alignment)
+                    modified = True
+            break
+
+    return modified
 
 
 def _apply_visual_corrections(
@@ -4742,45 +6218,62 @@ def _apply_visual_corrections(
     reports: list,
     template_style: "TemplateStyle | None" = None,
 ) -> bool:
-    """Apply programmatic corrections based on vision model quality reports.
+    """Apply programmatic corrections based on the UI/UX designer quality reports.
 
-    Only corrects 'critical' severity issues by re-invoking existing pipeline
-    functions.  No new correction logic is introduced — all actions call
-    battle-tested assembly helpers (_ensure_text_contrast, etc.) to maintain
-    consistency with the main pipeline.
+    Handles both structural fixes (critical severity) and design enrichment
+    (moderate severity) using the expanded programmatic_fix vocabulary.
 
-    Correction scope in v1:
-      - increase_contrast  : re-runs _ensure_text_contrast()
-      - clear_placeholder  : re-runs _clear_unused_placeholders() + _remove_empty_textboxes()
-      - remove_element     : same as clear_placeholder for ghost_text / empty_placeholder
-      - reduce_font_size   : conservative 15% reduction on all body runs above Pt(10)
+    Structural fixes (re-invoke existing pipeline functions):
+      - increase_contrast       : re-runs _ensure_text_contrast()
+      - clear_placeholder       : re-runs _clear_unused_placeholders() + _remove_empty_textboxes()
+      - remove_element          : same as clear_placeholder for ghost_text / empty_placeholder
+      - reduce_font_size        : conservative 15% rPr.sz reduction above Pt(10)
 
-    Intentionally NOT implemented in v1:
-      - reposition_element : reliable shape identification from a text description
-                             requires bounding-box matching that risks new overlaps.
+    Design enrichment fixes (new, applied to moderate issues):
+      - apply_accent_color_title : applies template primary accent color to title text
+      - increase_title_font_size : increases title font to Pt(28) if below that
+      - apply_body_accent_border : adds a colored vertical accent bar left of body text
+
+    Not implemented (require AI-generated content or layout redesign):
+      - reposition_element       : bounding-box matching risk
+      - any content changes      : semantic, not structural
 
     Args:
         pptx_path:      Path to the .pptx file to correct (overwritten in place).
-        reports:        List of SlideQualityReport from the vision agent.
-        template_style: Optional template styles for contrast correction.
+        reports:        List of SlideQualityReport from the UI/UX designer agent.
+        template_style: Optional template styles for contrast/color corrections.
 
     Returns:
         True if any corrections were applied and the file was re-saved, else False.
     """
     prs = Presentation(pptx_path)
     slides = list(prs.slides)
+    slide_width = int(prs.slide_width)
+    slide_height = int(prs.slide_height)
     modified = False
+
+    # Resolve primary accent color from template for enrichment fixes
+    accent_color = ""
+    if template_style and template_style.theme.accent_colors:
+        accent_color = template_style.theme.accent_colors[0]
+    elif template_style and template_style.theme.dk1:
+        accent_color = template_style.theme.dk1
 
     for report in reports:
         if report.slide_index >= len(slides):
             continue
         slide = slides[report.slide_index]
 
-        # In v1, only auto-correct CRITICAL issues to minimise regression risk.
-        for issue in [i for i in report.issues if i.severity == "critical"]:
+        # Apply critical fixes (structural defects — always correct)
+        # Apply moderate design enrichment fixes where programmatic_fix is set
+        actionable_issues = [
+            i
+            for i in report.issues
+            if i.severity in ("critical", "moderate") and i.programmatic_fix != "none"
+        ]
+
+        for issue in actionable_issues:
             fix = issue.programmatic_fix
-            if fix == "none":
-                continue
 
             try:
                 if fix == "increase_contrast" and template_style:
@@ -4823,9 +6316,93 @@ def _apply_visual_corrections(
                             % report.slide_index
                         )
 
-                # NOTE: 'reposition_element' is intentionally not implemented in v1.
-                # Reliable shape identification from a natural language description
-                # requires bounding-box matching that can introduce new overlaps.
+                elif fix == "apply_accent_color_title" and accent_color:
+                    if _apply_accent_color_to_title(slide, accent_color):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: applied accent color #%s to title"
+                                % (report.slide_index, accent_color)
+                            )
+
+                elif fix == "increase_title_font_size":
+                    if _increase_title_font_size(slide, target_pt=28):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: increased title font to 28pt"
+                                % report.slide_index
+                            )
+
+                elif fix == "apply_body_accent_border" and accent_color:
+                    if _apply_body_accent_border(slide, accent_color):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: added accent border bar #%s"
+                                % (report.slide_index, accent_color)
+                            )
+
+                elif fix == "fix_spacing" and slide_width > 0 and slide_height > 0:
+                    if _fix_spacing(slide, slide_width, slide_height):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: spacing clamped to safe margins"
+                                % report.slide_index
+                            )
+
+                elif fix == "fix_alignment" and slide_width > 0:
+                    if _fix_alignment(slide, slide_width):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: alignment snapped to majority left edge"
+                                % report.slide_index
+                            )
+
+                elif fix.startswith("enrich_") and accent_color:
+                    if slide_width > 0 and slide_height > 0:
+                        if _enrich_slide_visually(
+                            slide,
+                            slide_width,
+                            slide_height,
+                            accent_color,
+                            enrich_type=fix,
+                        ):
+                            modified = True
+                            if VERBOSE:
+                                print(
+                                    "[VERBOSE] Slide %d: visual enrichment applied (%s)"
+                                    % (report.slide_index, fix)
+                                )
+
+                elif fix == "enforce_typography_hierarchy":
+                    if _enforce_typography_hierarchy(slide):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: typography hierarchy enforced"
+                                % report.slide_index
+                            )
+
+                elif fix == "apply_accent_color_body" and accent_color:
+                    if _apply_accent_color_to_body(slide, accent_color):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: accent color applied to body lead"
+                                % report.slide_index
+                            )
+
+                elif fix == "fix_body_paragraph_alignment":
+                    if _fix_paragraph_alignment_body(slide, alignment="l"):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: body paragraph alignment set to left"
+                                % report.slide_index
+                            )
 
             except Exception as e:
                 if VERBOSE:
@@ -4845,28 +6422,34 @@ def _apply_visual_corrections(
 def step_visual_quality_review(
     step_input: StepInput, session_state: Dict
 ) -> StepOutput:
-    """Optional Step 5: Render slides, inspect with Gemini vision, apply safe corrections.
+    """Optional Step 5: Render slides, inspect with a senior UI/UX designer agent,
+    and apply programmatic corrections for both structural defects and design issues.
 
     This step is non-blocking: any failure (LibreOffice unavailable, API error,
     timeout) silently returns success=True without modifying the output file.
 
     Workflow:
     1. Render the final .pptx to PNGs using LibreOffice headless.
-    2. Send each slide image to Gemini 2.5 Flash for visual QA inspection.
-    3. Apply programmatic corrections for critical issues only.
-    4. Log blandness warnings (detected but not auto-fixed in v1).
-    5. Store a structured quality report in session_state['quality_report'].
+    2. Build template context (accent colors, fonts) and pass it to the agent.
+    3. Send each slide image to Gemini 2.5 Flash (UI/UX designer persona) for
+       both structural QA and design quality assessment.
+    4. Apply programmatic corrections for critical AND moderate design issues.
+    5. Apply design enrichment for bland slides (accent color, title sizing,
+       accent border) when programmatic fixes are available.
+    6. Log design scores and recommendations.
+    7. Store a structured quality report in session_state['quality_report'].
 
-    Correction scope (v1):
-    - CORRECTED:  font overflow, text contrast, ghost text, empty placeholders
-    - DETECT ONLY: visual blandness (warn; user should re-run with --min-images)
-    - NOT ATTEMPTED: shape repositioning, layout changes, content quality
+    Correction scope:
+    - CORRECTED (critical):  font overflow, text contrast, ghost text, empty placeholders
+    - CORRECTED (moderate):  accent color on title, title font sizing, body accent border
+    - DETECT + WARN ONLY:    blandness requiring AI-generated images, layout redesign
+    - NOT ATTEMPTED:         shape repositioning, content changes
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
 
     print("\n" + "=" * 60)
-    print("Step 5 (Optional): Visual Quality Review...")
+    print("Step 5 (Optional): UI/UX Design Review...")
     print("=" * 60)
 
     output_path = session_state.get("output_path", "")
@@ -4878,7 +6461,6 @@ def step_visual_quality_review(
             content="Visual review skipped: output file not found.", success=True
         )
 
-    import base64
     import tempfile
 
     render_dir = tempfile.mkdtemp(prefix="pptx_vqa_")
@@ -4902,32 +6484,70 @@ def step_visual_quality_review(
                 content="Visual review skipped: no images produced.", success=True
             )
 
-        # Re-extract template style for use in the correction pass.
+        # --- Phase 2: Extract template context for the agent ---
         template_style = None
+        template_context = ""
         try:
             t_prs = Presentation(template_path)
             template_style = _extract_template_styles(t_prs)
+
+            # Build a concise context string the agent can reference
+            ctx_parts = []
+            if template_style.theme.accent_colors:
+                ctx_parts.append(
+                    "Accent colors: %s"
+                    % ", ".join(
+                        "#%s" % c for c in template_style.theme.accent_colors[:3] if c
+                    )
+                )
+            if template_style.theme.dk1:
+                ctx_parts.append("Dark text color: #%s" % template_style.theme.dk1)
+            if template_style.theme.major_font:
+                ctx_parts.append("Heading font: %s" % template_style.theme.major_font)
+            if template_style.theme.minor_font:
+                ctx_parts.append("Body font: %s" % template_style.theme.minor_font)
+            if template_style.title_font_family:
+                ctx_parts.append("Title font: %s" % template_style.title_font_family)
+            if ctx_parts:
+                template_context = (
+                    "Template design palette — " + "; ".join(ctx_parts) + "."
+                )
         except Exception as e:
             if VERBOSE:
                 print("[VERBOSE] Template style re-extraction failed: %s" % str(e))
 
-        # --- Phase 2: Vision inspection ---
+        # --- Phase 3: Vision inspection with UI/UX designer agent ---
         reports = []
         for idx, img_path in enumerate(slide_images):
-            print("  Inspecting slide %d / %d..." % (idx + 1, len(slide_images)))
+            print("  Reviewing slide %d / %d..." % (idx + 1, len(slide_images)))
             try:
                 with open(img_path, "rb") as f:
                     img_bytes = f.read()
-                img_b64 = base64.b64encode(img_bytes).decode("utf-8")
 
+                # Include template context in the prompt so the agent can
+                # reference specific accent colors and fonts in its feedback
+                context_prefix = (
+                    ("[Template context: %s] " % template_context)
+                    if template_context
+                    else ""
+                )
                 prompt = (
-                    "Analyze this PowerPoint slide screenshot (slide index %d, "
-                    "slide number %d of %d) for visible visual quality issues."
-                ) % (idx, idx + 1, len(slide_images))
+                    "%sYou are reviewing slide %d of %d in a professional "
+                    "presentation. Assess both structural quality and design excellence. "
+                    "Provide a design_score (1-10), identify all issues, and flag "
+                    "whether the slide is visually bland."
+                ) % (context_prefix, idx + 1, len(slide_images))
 
+                # Use AgnoImage with raw bytes — Agno requires Image objects,
+                # not raw dicts, for multimodal agent.run() calls.
+                slide_image_obj = AgnoImage(
+                    content=img_bytes,
+                    mime_type="image/png",
+                    format="png",
+                )
                 response = slide_quality_reviewer.run(
                     prompt,
-                    images=[{"data": img_b64, "mime_type": "image/png"}],
+                    images=[slide_image_obj],
                     stream=False,
                 )
 
@@ -4946,35 +6566,53 @@ def step_visual_quality_review(
                     report.slide_index = idx
                     reports.append(report)
 
+                    # Log per-slide summary
+                    score = getattr(report, "design_score", 0)
                     critical = [i for i in report.issues if i.severity == "critical"]
                     moderate = [i for i in report.issues if i.severity == "moderate"]
+                    score_str = " [score: %d/10]" % score if score else ""
                     if critical:
                         print(
-                            "    %d critical: %s"
-                            % (len(critical), [i.issue_type for i in critical])
+                            "    CRITICAL%s: %s"
+                            % (score_str, [i.issue_type for i in critical])
                         )
                     elif moderate:
-                        print("    %d moderate issue(s)." % len(moderate))
+                        print(
+                            "    moderate%s: %s"
+                            % (score_str, [i.issue_type for i in moderate[:3]])
+                        )
                     elif report.is_visually_bland:
-                        print("    Flagged as visually bland.")
+                        print(
+                            "    Bland%s — %s"
+                            % (score_str, report.blandness_reason[:60])
+                        )
                     else:
-                        print("    OK.")
+                        print("    OK%s." % score_str)
 
             except Exception as e:
                 print(
-                    "  [WARNING] Vision inspection failed for slide %d: %s"
+                    "  [WARNING] Design review failed for slide %d: %s"
                     % (idx + 1, str(e))
                 )
                 if VERBOSE:
                     traceback.print_exc()
 
-        # --- Phase 3: Apply corrections for critical issues ---
+        # --- Phase 4: Apply corrections (critical + moderate design enrichment) ---
         total_critical = sum(
             1 for r in reports for i in r.issues if i.severity == "critical"
         )
+        total_moderate = sum(
+            1
+            for r in reports
+            for i in r.issues
+            if i.severity == "moderate" and i.programmatic_fix != "none"
+        )
         corrections_applied = False
-        if total_critical > 0:
-            print("  Applying corrections for %d critical issue(s)..." % total_critical)
+        if total_critical > 0 or total_moderate > 0:
+            print(
+                "  Applying corrections (%d critical, %d moderate design fixes)..."
+                % (total_critical, total_moderate)
+            )
             try:
                 corrections_applied = _apply_visual_corrections(
                     output_path, reports, template_style=template_style
@@ -4990,38 +6628,64 @@ def step_visual_quality_review(
                 if VERBOSE:
                     traceback.print_exc()
         else:
-            print("  No critical issues found. Output unchanged.")
+            print("  No corrections needed.")
 
-        # --- Phase 4: Blandness warnings (no auto-fix in v1) ---
+        # --- Phase 5: Log blandness + recommendations ---
         bland_slides = [r for r in reports if r.is_visually_bland]
         if bland_slides:
             print(
-                "\n  [NOTE] %d slide(s) appear visually bland. "
-                "Consider re-running with a higher --min-images value "
-                "or adding visual prompts to your presentation request."
-                % len(bland_slides)
+                "\n  [DESIGN NOTE] %d slide(s) are visually bland and could benefit "
+                "from AI-generated images or richer layout." % len(bland_slides)
             )
             for r in bland_slides:
                 if r.blandness_reason:
-                    print("    Slide %d: %s" % (r.slide_index + 1, r.blandness_reason))
+                    print(
+                        "    Slide %d: %s"
+                        % (r.slide_index + 1, r.blandness_reason[:80])
+                    )
 
-        # --- Phase 5: Store quality report in session_state ---
+        # --- Phase 6: Store quality report in session_state ---
+        scores = [
+            getattr(r, "design_score", 0)
+            for r in reports
+            if getattr(r, "design_score", 0) > 0
+        ]
+        avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+
+        all_recommendations = []
+        for r in reports:
+            for issue in r.issues:
+                if issue.programmatic_fix == "none" and issue.description:
+                    all_recommendations.append(
+                        "Slide %d (%s): %s"
+                        % (r.slide_index + 1, issue.issue_type, issue.description[:100])
+                    )
+        for r in bland_slides:
+            if r.blandness_reason:
+                all_recommendations.append(
+                    "Slide %d is bland: %s" % (r.slide_index + 1, r.blandness_reason)
+                )
+
         quality_report = PresentationQualityReport(
             slide_reports=reports,
-            overall_pass=all(r.overall_quality != "poor" for r in reports),
+            overall_pass=(
+                all(r.overall_quality != "poor" for r in reports) and avg_score >= 6.0
+            ),
             total_critical_issues=total_critical,
-            recommendations=[
-                "Slide %d is bland: %s" % (r.slide_index + 1, r.blandness_reason)
-                for r in bland_slides
-                if r.blandness_reason
-            ],
+            average_design_score=avg_score,
+            recommendations=all_recommendations[:10],  # cap at 10
         )
         session_state["quality_report"] = quality_report.model_dump()
 
-        summary = "Visual review: %d slides inspected, %d critical issues, %s." % (
+        summary = (
+            "UI/UX review: %d slides, avg design score %.1f/10, "
+            "%d critical + %d moderate fixes, %d recommendations."
+        ) % (
             len(reports),
+            avg_score,
             total_critical,
-            "corrections applied" if corrections_applied else "no corrections needed",
+            total_moderate,
+            len(all_recommendations),
         )
         print("\n  %s" % summary)
         return StepOutput(content=summary, success=True)
@@ -5230,6 +6894,12 @@ if __name__ == "__main__":
     #   footer_text        (str)  - Footer text for idx=11 placeholder (from --footer-text)
     #   date_text          (str)  - Date text for idx=10 placeholder (from --date-text)
     #   show_slide_numbers (bool) - Keep slide number placeholder idx=12
+    #   assembly_knowledge (dict) - Comprehensive knowledge file built at start of step 4.
+    #                               Contains: input_1_user_intent, input_2_content_plan,
+    #                               input_3_template_design_language (per-layout font/color/shape
+    #                               analysis), input_4_image_assets, assembly_directives.
+    #                               Acts as the single source of truth for all design and
+    #                               content decisions during PPTX file generation. (set by step 4)
     #   quality_report     (dict) - PresentationQualityReport.model_dump() (set by step 5)
     workflow = Workflow(
         name="PowerPoint Template Workflow",
@@ -5251,6 +6921,7 @@ if __name__ == "__main__":
             "footer_text": args.footer_text,
             "date_text": args.date_text,
             "show_slide_numbers": args.show_slide_numbers,
+            "assembly_knowledge": {},
             "quality_report": {},
         },
     )

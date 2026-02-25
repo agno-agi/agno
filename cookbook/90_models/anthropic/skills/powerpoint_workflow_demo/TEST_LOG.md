@@ -56,6 +56,37 @@
 
 ---
 
+### Live Test: dynamicv1.pptx — SpaceTech Startup (7-slide deck)
+
+**Date:** 2026-02-25
+**Command:**
+```bash
+python powerpoint_template_workflow.py -t dynamicv1.pptx -o report18.pptx \
+  -p "Create a 7-slide presentation on a SpaceTech Startup based out of India" \
+  --visual-review
+```
+
+**Bugs found and fixed:**
+
+| Bug | Root Cause | Fix Applied |
+|-----|-----------|-------------|
+| **Visual review reported 0 slides inspected** | `_render_pptx_to_images()` glob patterns (`<base>-slide-*.png`, `<base>*.png`) didn't match LibreOffice's actual output naming (e.g. `report18001.png`) | Added final fallback: collect ALL `*.png` files in the render directory sorted by name |
+| **Footer missing on title slide (slide 1)** | `dynamicv1.pptx` title slide layout has no idx=11 placeholder — footer is a decorative master shape, not an editable placeholder. `_populate_footer_placeholders()` found nothing. | When `footer_text` is set but no idx=11 placeholder exists, a fallback text box is added at the slide's bottom 7% zone using the template body font |
+| **Text overflow on slides 2 and 3** | `_compute_max_font_size()` used `LINE_SPACING_FACTOR=1.5` (too small — ignores paragraph spacing above/below). `hard_max=18` for body too generous for dense content slides. `word_wrap` not re-enabled after `MSO_AUTO_SIZE` fallback. | `LINE_SPACING_FACTOR` raised to `1.8`; body `hard_max` lowered to `16`; explicit `tf.word_wrap = True` added after `MSO_AUTO_SIZE` fallback path |
+| **Image placed in tiny footer-left slot on slides 4 and 6** | `_best_visual_placeholder()` scored by `(overlap==0, -overlap, area)` — tiny zero-overlap footer slot outranked large content placeholder with any layout overlap | Score tuple changed to `(area>=min_area, overlap==0, -overlap, area)` so area sufficiency is evaluated first |
+| **Empty "click to add" placeholders on slides 2, 3, 4, 5, 7** (found in deterministic reassembly review) | `_clear_unused_placeholders()` `PICTURE` type guard was dead code (picture placeholders always report as `PLACEHOLDER`, not `PICTURE` type in python-pptx). `_remove_empty_textboxes()` skipped all placeholders with `if shape.is_placeholder: continue`. | `PICTURE` guard now checks for actual image data (`shape.image`) before preserving; `_remove_empty_textboxes()` got a second pass that removes empty placeholder text frames |
+
+**Deterministic reassembly test (using existing `skill_output_9Nsopu7e.pptx` intermediate):**
+- All 7 slides assembled without errors
+- Footer text "SpaceTech India — Confidential" injected via fallback text box on all slides
+- No text overflow observed
+- Charts and tables placed correctly in main content region
+- Empty placeholder cleanup confirmed working
+
+**Output file:** `reassembly_candidate.pptx` (153,600 bytes, 7 slides) placed in this directory for review.
+
+---
+
 ## Live Test Instructions
 
 To perform a live end-to-end test once API keys are available:
