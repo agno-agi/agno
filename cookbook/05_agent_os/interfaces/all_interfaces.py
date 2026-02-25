@@ -1,100 +1,55 @@
 """
-AgentOS Demo
-
-Prerequisites:
-uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
+AgentOS Cookbook for generating OpenAPI documentation for docs
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
-from agno.knowledge.knowledge import Knowledge
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
-from agno.team import Team
-from agno.vectordb.pgvector import PgVector
-from agno.workflow import Workflow
-from agno.workflow.step import Step
+from agno.registry import Registry
+from agno.tools.mcp import MCPTools
+from agno import __version__ as agno_version
 
-# ---------------------------------------------------------------------------
-# Create Example
-# ---------------------------------------------------------------------------
+# --- Setup ---
 
-# Database connection
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = SqliteDb(id="docs-os-demo", db_file="tmp/docs.db")
 
-# Create Postgres-backed memory store
-db = PostgresDb(db_url=db_url)
-
-# Create Postgres-backed vector store
-vector_db = PgVector(
-    db_url=db_url,
-    table_name="agno_docs",
-)
-knowledge = Knowledge(
-    name="Agno Docs",
-    contents_db=db,
-    vector_db=vector_db,
-)
-
-# Create an agent
-simple_agent = Agent(
-    name="Simple Agent",
-    role="Simple agent",
-    id="simple-agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    instructions=["You are a simple agent"],
-    knowledge=knowledge,
-)
-
-
-# Create a team
-simple_team = Team(
-    name="Simple Team",
-    description="A team of agents",
-    members=[simple_agent],
-    model=OpenAIChat(id="gpt-5.2"),
-    id="simple-team",
-    instructions=[
-        "You are the team lead.",
-    ],
+agent = Agent(
+    name="Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    instructions=["You are an expert in the Agno framework."],
     db=db,
-    markdown=True,
 )
-
-# Create a workflow
-simple_workflow = Workflow(
-    name="Simple Workflow",
-    description="A simple workflow",
-    steps=[
-        Step(agent=simple_team),
+registry = Registry(
+    name="Agno Registry",
+    tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
+    models=[
+        OpenAIChat(id="gpt-4o-mini"),
     ],
+    dbs=[db],
 )
 
-# Create an interface
-slack_interface = Slack(agent=simple_team)
-whatsapp_interface = Whatsapp(agent=simple_agent)
-agui_interface = AGUI(agent=simple_agent)
-a2a_interface = A2A(agents=[simple_agent])
 
+# # Create an interface
+slack_interface = Slack(agent=agent)
+whatsapp_interface = Whatsapp(agent=agent)
+agui_interface = AGUI(agent=agent)
+a2a_interface = A2A(agents=[agent])
 
-# Create the AgentOS
 agent_os = AgentOS(
-    id="agentos-demo",
-    agents=[simple_agent],
-    teams=[simple_team],
-    workflows=[simple_workflow],
+    name="Agno API Reference",
+    description="The all-in-one, private, secure agent platform that runs in your cloud.",
+    version=agno_version, 
+    agents=[agent],
+    registry=registry,
+    db=db,
     interfaces=[slack_interface, whatsapp_interface, agui_interface, a2a_interface],
 )
 app = agent_os.get_app()
 
-
-# ---------------------------------------------------------------------------
-# Run Example
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    agent_os.serve(app="all_interfaces:app", port=7777)
+    agent_os.serve(app="all_interfaces:app", reload=True)
