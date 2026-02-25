@@ -7,6 +7,8 @@ from agno.utils.log import log_error
 
 
 def task_id(agent_name: Optional[str], base_id: str) -> str:
+    # Prefix card IDs per agent so concurrent tool calls from different
+    # team members don't collide in the Slack stream
     if agent_name:
         safe = agent_name.lower().replace(" ", "_")[:20]
         return f"{safe}_{base_id}"
@@ -14,6 +16,8 @@ def task_id(agent_name: Optional[str], base_id: str) -> str:
 
 
 def member_name(chunk: Any, entity_name: str) -> Optional[str]:
+    # Return name only for team members (not leader) to prefix task card
+    # labels like "Researcher: web_search" for disambiguation
     name = getattr(chunk, "agent_name", None)
     if name and isinstance(name, str) and name != entity_name:
         return name
@@ -41,6 +45,7 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
         "user": event.get("user", ""),
+        # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
     }
 
@@ -89,6 +94,7 @@ async def download_event_files_async(
                 elif mimetype.startswith("audio/"):
                     audio.append(Audio(content=file_content, mime_type=mimetype))
                 else:
+                    # Pass None for unsupported types to avoid File validation errors
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
             except Exception as e:
@@ -133,6 +139,7 @@ async def send_slack_message_async(
             return "\n".join([f"_{line}_" for line in text.split("\n")])
         return text
 
+    # Under Slack's 40K char limit with margin for batch prefix overhead
     max_len = 39900
     if len(message) <= max_len:
         await async_client.chat_postMessage(channel=channel, text=_format(message), thread_ts=thread_ts)

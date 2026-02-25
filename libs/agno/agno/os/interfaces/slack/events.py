@@ -13,19 +13,21 @@ if TYPE_CHECKING:
 
 
 def _normalize_event(event: str) -> str:
-    # Strip "Team" prefix so agent events ("ToolCallStarted") and team events
-    # ("TeamToolCallStarted") are handled by the same branches.
-    return event[4:] if event.startswith("Team") else event
+    # agno emits "TeamX" for teams and "X" for agents with identical semantics.
+    # Stripping "Team" lets one dispatch table and suppression set cover both
+    return event.removeprefix("Team")
 
 
-@dataclass(frozen=True)
+@dataclass
 class _ToolRef:
-    tid: str | None
-    label: str
+    tid: str | None  # Slack task card ID (None when tool_call_id is missing)
+    label: str  # Display title, e.g. "Researcher: web_search"
     errored: bool
 
 
 def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
+    # Build unique (tid, label) for each tool call's Slack task card.
+    # member_name/task_id prefix with agent name in team mode to avoid collisions
     tool = getattr(chunk, "tool", None)
     tool_name = (tool.tool_name if tool else None) or "tool"
     call_id = (tool.tool_call_id if tool else None) or fallback_id
@@ -38,13 +40,13 @@ def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback
 
 async def _emit_task(
     stream: AsyncChatStream,
-    task_id: str,
+    card_id: str,
     title: str,
     status: str,
     *,
     output: str | None = None,
 ) -> None:
-    chunk: dict = {"type": "task_update", "id": task_id, "title": title, "status": status}
+    chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
         chunk["output"] = output[:200]  # Slack truncates longer task output
     await stream.append(chunks=[chunk])
@@ -60,6 +62,8 @@ async def _wf_task(
     started: bool,
     name_attr: str = "step_name",
 ) -> None:
+    # Shared helper for paired workflow events (StepStarted/Completed,
+    # ParallelStarted/Completed, etc.) to avoid repeating the same pattern
     name = getattr(chunk, name_attr, None) or prefix
     sid = getattr(chunk, "step_id", None) or name
     key = f"wf_{prefix}_{sid}"
@@ -94,10 +98,7 @@ _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
 )
 
 
-# ---------------------------------------------------------------------------
-# Event handlers — each returns True on terminal events to break the loop.
-# ---------------------------------------------------------------------------
-
+# Event handlers — each returns True on terminal events to break the loop
 _EventHandler = Callable[
     ["BaseRunOutputEvent", StreamState, "AsyncChatStream"],
     Awaitable[bool],
@@ -120,6 +121,7 @@ async def _on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState,
 
 
 async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # Fallback when SDK chunks omit tool_call_id so cards still render
     ref = _extract_tool_ref(chunk, state, fallback_id=str(len(state.task_cards)))
     if ref.tid:
         state.track_task(ref.tid, ref.label)
@@ -130,6 +132,7 @@ async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, s
 async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     ref = _extract_tool_ref(chunk, state)
     if ref.tid:
+        # Backfill card when Completed arrives without a prior Started event
         if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
         if ref.errored:
@@ -145,11 +148,9 @@ async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, str
     error_msg = getattr(chunk, "error", None) or "Tool call failed"
     state.error_count += 1
     if ref.tid:
-        if ref.tid in state.task_cards:
-            state.error_task(ref.tid)
-        else:
+        if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
-            state.error_task(ref.tid)
+        state.error_task(ref.tid)
         await _emit_task(stream, ref.tid, ref.label, "error", output=str(error_msg))
     return False
 
@@ -197,15 +198,12 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
 
 
 async def _on_step_output(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # StepOutput is workflow-only (agents/teams never emit it).
+    # Capture but don't stream — WorkflowCompleted uses this as fallback
+    # if its own content is None.
     content = getattr(chunk, "content", None)
     if content is not None:
-        if state.entity_type == "workflow":
-            # Workflow steps may produce intermediate output before the final
-            # WorkflowCompleted event. We capture (not stream) it here so the
-            # completed handler can use it as a fallback if chunk.content is None.
-            state.workflow_final_content = str(content)
-        else:
-            state.append_content(content)
+        state.workflow_final_content = str(content)
     return False
 
 
@@ -352,8 +350,10 @@ async def _on_steps_completed(chunk: BaseRunOutputEvent, state: StreamState, str
     return False
 
 
-# Dispatch table for normalized agent/team events.
-DISPATCH: Dict[str, _EventHandler] = {
+# Single dispatch table — keys are normalized (no "Team" prefix).
+# Workflow event names never start with "Team" so normalization is a no-op for them.
+HANDLERS: Dict[str, _EventHandler] = {
+    # Agent/team events (normalized)
     "ReasoningStarted": _on_reasoning_started,
     "ReasoningCompleted": _on_reasoning_completed,
     "ToolCallStarted": _on_tool_call_started,
@@ -365,11 +365,9 @@ DISPATCH: Dict[str, _EventHandler] = {
     "MemoryUpdateCompleted": _on_memory_update_completed,
     "RunCompleted": _on_run_completed,
     "RunError": _on_run_error,
+    # Treat cancellation as terminal so open task cards don't stay spinning
     "RunCancelled": _on_run_error,
-}
-
-# Dispatch table for raw workflow events (looked up before normalization).
-WORKFLOW_DISPATCH: Dict[str, _EventHandler] = {
+    # Workflow events
     "StepOutput": _on_step_output,
     "WorkflowStarted": _on_workflow_started,
     "WorkflowCompleted": _on_workflow_completed,
@@ -396,21 +394,13 @@ WORKFLOW_DISPATCH: Dict[str, _EventHandler] = {
 
 
 async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    # Returns True on terminal events (error/cancel) to break the stream loop.
-
-    # 1) Try raw workflow-specific events first (they use un-normalized names).
-    handler = WORKFLOW_DISPATCH.get(ev_raw)
-    if handler:
-        return await handler(chunk, state, stream)
-
-    # 2) Normalize (strip "Team" prefix) then check agent/team dispatch table.
     ev = _normalize_event(ev_raw)
 
-    # Workflow mode: suppress nested agent internals
+    # Suppress nested agent internals in workflow mode
     if state.entity_type == "workflow" and ev in _SUPPRESSED_IN_WORKFLOW:
         return False
 
-    handler = DISPATCH.get(ev)
+    handler = HANDLERS.get(ev)
     if handler:
         return await handler(chunk, state, stream)
 

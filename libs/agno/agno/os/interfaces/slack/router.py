@@ -62,9 +62,12 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
 ) -> APIRouter:
+    # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
+    # entity_type drives event dispatch (agent vs team vs workflow events)
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
     raw_name = getattr(entity, "name", None)
+    # entity_name labels task cards; entity_id namespaces session IDs
     entity_name = raw_name if isinstance(raw_name, str) else entity_type
     # Multiple Slack instances can be mounted on one FastAPI app (e.g. /research
     # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
@@ -114,6 +117,7 @@ def attach_routes(
         if "event" in data:
             event = data["event"]
             event_type = event.get("type")
+            # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(_handle_thread_started, event)
             # Bot self-loop prevention: check bot_id at both the top-level event
@@ -139,6 +143,7 @@ def attach_routes(
         from slack_sdk.web.async_client import AsyncWebClient
 
         ctx = extract_event_context(event)
+        # Namespace with entity_id so threads don't collide across mounted interfaces
         session_id = f"{entity_id}:{ctx['thread_id']}"
         async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
 
@@ -162,21 +167,16 @@ def attach_routes(
                 message_text = f"{notice}\n{message_text}"
 
             run_kwargs: Dict[str, Any] = {
+                # Thread-scoped (not user-scoped) so all participants share context
                 "user_id": None,
                 "session_id": session_id,
-                "files": files if files else None,
-                "images": images if images else None,
-                "videos": videos if videos else None,
-                "audio": audio if audio else None,
+                "files": files or None,
+                "images": images or None,
+                "videos": videos or None,
+                "audio": audio or None,
             }
 
-            response = None
-            if agent:
-                response = await agent.arun(message_text, **run_kwargs)  # type: ignore[misc]
-            elif team:
-                response = await team.arun(message_text, **run_kwargs)  # type: ignore
-            elif workflow:
-                response = await workflow.arun(message_text, **run_kwargs)  # type: ignore
+            response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
 
             if response:
                 if response.status == "ERROR":
@@ -191,7 +191,7 @@ def attach_routes(
 
                 if hasattr(response, "reasoning_content") and response.reasoning_content:
                     rc = str(response.reasoning_content)
-                    formatted = f"*Reasoning:*\n> {rc.replace(chr(10), chr(10) + '> ')}"
+                    formatted = "*Reasoning:*\n> " + rc.replace("\n", "\n> ")
                     await send_slack_message_async(
                         async_client,
                         channel=ctx["channel_id"],
@@ -235,12 +235,13 @@ def attach_routes(
         ctx = extract_event_context(event)
         session_id = f"{entity_id}:{ctx['thread_id']}"
 
-        team_id = data.get("team_id") or event.get("team") or None
+        # Not consistently placed across Slack event envelope shapes
+        team_id = data.get("team_id") or event.get("team")
         # CRITICAL: recipient_user_id must be the HUMAN user, not the bot.
         # event["user"] = human who sent the message. data["authorizations"][0]["user_id"]
         # = the bot's own user ID. Using the bot ID causes Slack to stream content
         # to an invisible recipient, resulting in a blank bubble until stopStream.
-        user_id = ctx.get("user") or event.get("user")
+        user_id = ctx["user"]
 
         async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         state = StreamState(entity_type=entity_type, entity_name=entity_name)
@@ -270,22 +271,18 @@ def attach_routes(
 
             run_kwargs: Dict[str, Any] = {
                 "stream": True,
+                # Enables event-level chunks for task card and tool lifecycle rendering
                 "stream_events": True,
+                # Thread-scoped (not user-scoped) so all participants share context
                 "user_id": None,
                 "session_id": session_id,
-                "files": files if files else None,
-                "images": images if images else None,
-                "videos": videos if videos else None,
-                "audio": audio if audio else None,
+                "files": files or None,
+                "images": images or None,
+                "videos": videos or None,
+                "audio": audio or None,
             }
 
-            response_stream = None
-            if agent:
-                response_stream = agent.arun(message_text, **run_kwargs)
-            elif team:
-                response_stream = team.arun(message_text, **run_kwargs)  # type: ignore[assignment]
-            elif workflow:
-                response_stream = workflow.arun(message_text, **run_kwargs)  # type: ignore[assignment]
+            response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
 
             if response_stream is None:
                 try:
@@ -296,6 +293,8 @@ def attach_routes(
                     pass
                 return
 
+            # Deferred so "Thinking..." indicator stays visible during file
+            # download and agent startup (opening earlier shows a blank bubble)
             stream = await async_client.chat_stream(
                 channel=ctx["channel_id"],
                 thread_ts=ctx["thread_id"],
@@ -326,8 +325,9 @@ def attach_routes(
 
                     await stream.append(markdown_text=state.flush())
 
+            # Default to complete when no terminal error/cancel event arrived
             final_status = state.terminal_status or "complete"
-            completion_chunks = state.resolve_all_pending(final_status) if state.progress_started else []
+            completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
             stop_kwargs: Dict[str, Any] = {}
             if state.has_content():
                 stop_kwargs["markdown_text"] = state.flush()
@@ -345,10 +345,11 @@ def attach_routes(
                 )
             except Exception:
                 pass
+            # Clean up open stream so Slack doesn't show stuck progress indicators
             if stream is not None:
                 try:
                     stop_kwargs_err: Dict[str, Any] = {}
-                    if state.progress_started:
+                    if state.task_cards:
                         stop_kwargs_err["chunks"] = state.resolve_all_pending("error")
                     await stream.stop(**stop_kwargs_err)
                 except Exception:
