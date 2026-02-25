@@ -1,23 +1,21 @@
 [project]
 name = "agno-infra"
-version = "1.0.8"
-description = "A lightweight framework and CLI for managing Agentic Infrastructure"
+version = "1.1.1"
+description = "The programming language for agentic infrastructure"
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license-files = ["LICENSE"]
+license = { file = "LICENSE" }
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
 keywords = [
-  "infrastructure",
   "aws",
   "docker",
-  "framework",
+  "infrastructure",
 ]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
@@ -26,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
+    "License :: OSI Approved :: Apache Software License",
 ]
 
 dependencies = [
@@ -106,5 +105,6 @@ module = [
   "docker.*",
   "tomllib.*",
   "yaml.*",
+  "tomli.*",
 ]
 ignore_missing_imports = true

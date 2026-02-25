@@ -1,3 +1,10 @@
+"""
+Openai Audio Input And Output Multi Turn
+========================================
+
+Cookbook example for `openai/chat/audio_input_and_output_multi_turn.py`.
+"""
+
 from pathlib import Path
 
 import requests
@@ -5,6 +12,10 @@ from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Audio
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Fetch the audio file and convert it to a base64 encoded string
 url = "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
@@ -36,7 +47,6 @@ filename.parent.mkdir(parents=True, exist_ok=True)
 if run_output.response_audio is not None:
     write_audio_to_file(audio=run_output.response_audio.content, filename=str(filename))
 
-
 run_output: RunOutput = agent.run("Tell me something more about the audio")
 
 filename = Path(__file__).parent.joinpath("tmp/conversation_response_2.wav")
@@ -46,7 +56,6 @@ filename.unlink(missing_ok=True)
 if run_output.response_audio is not None:
     write_audio_to_file(audio=run_output.response_audio.content, filename=str(filename))
 
-
 run_output: RunOutput = agent.run("Now tell me a 5 second story")
 
 filename = Path(__file__).parent.joinpath("tmp/conversation_response_3.wav")
@@ -55,3 +64,10 @@ filename.unlink(missing_ok=True)
 # Save the response audio to a file
 if run_output.response_audio is not None:
     write_audio_to_file(audio=run_output.response_audio.content, filename=str(filename))
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

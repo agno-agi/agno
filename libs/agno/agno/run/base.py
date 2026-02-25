@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.filters import FilterExpr
 from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
 
@@ -26,6 +26,11 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+
+    # Runtime-resolved callable factory results
+    tools: Optional[List[Any]] = None
+    knowledge: Optional[Any] = None
+    members: Optional[List[Any]] = None
 
 
 @dataclass
@@ -175,6 +180,12 @@ class BaseRunOutputEvent:
 
             data["tool"] = ToolExecution.from_dict(tool)
 
+        tools = data.pop("tools", None)
+        if tools:
+            from agno.models.response import ToolExecution
+
+            data["tools"] = [ToolExecution.from_dict(t) for t in tools]
+
         images = data.pop("images", None)
         if images:
             data["images"] = [Image.model_validate(image) for image in images]
@@ -209,7 +220,7 @@ class BaseRunOutputEvent:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            data["metrics"] = Metrics(**metrics)
+            data["metrics"] = RunMetrics.from_dict(metrics)
 
         session_summary = data.pop("session_summary", None)
         if session_summary:
@@ -229,8 +240,6 @@ class BaseRunOutputEvent:
                 from agno.run.agent import RunInput
 
                 data["run_input"] = RunInput.from_dict(run_input)
-
-                # Handle requirements
 
         # Handle requirements
         requirements_data = data.pop("requirements", None)

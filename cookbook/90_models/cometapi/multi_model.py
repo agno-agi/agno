@@ -3,6 +3,10 @@
 from agno.agent import Agent
 from agno.models.cometapi import CometAPI
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 def test_model(
     model_id: str,
@@ -48,6 +52,10 @@ def main():
     print("\nMulti-model showcase complete!")
     print("Learn more about CometAPI at: https://www.cometapi.com/")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main()

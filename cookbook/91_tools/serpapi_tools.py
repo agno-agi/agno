@@ -1,5 +1,17 @@
+"""
+Serpapi Tools
+=============================
+
+Demonstrates serpapi tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.serpapi import SerpApiTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable specific SerpAPI functions
 agent = Agent(
@@ -15,5 +27,10 @@ youtube_agent = Agent(
 )
 
 # Test the agents
-agent.print_response("What's happening in the USA?", markdown=True)
-youtube_agent.print_response("Search YouTube for 'python tutorial'", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What's happening in the USA?", markdown=True)
+    youtube_agent.print_response("Search YouTube for 'python tutorial'", markdown=True)

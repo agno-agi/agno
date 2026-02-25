@@ -1,16 +1,30 @@
-"""Run `uv pip install agno openai` to install dependencies."""
+"""
+Agent Instantiation Performance Evaluation
+==========================================
+
+Demonstrates measuring agent instantiation performance.
+"""
 
 from agno.agent import Agent
 from agno.eval.performance import PerformanceEval
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def instantiate_agent():
     return Agent(system_message="Be concise, reply with one sentence.")
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 instantiation_perf = PerformanceEval(
     name="Instantiation Performance", func=instantiate_agent, num_iterations=1000
 )
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     instantiation_perf.run(print_results=True, print_summary=True)

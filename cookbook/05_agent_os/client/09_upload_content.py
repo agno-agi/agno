@@ -13,6 +13,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def upload_text_content():
     """Upload text content to the knowledge base."""
@@ -157,6 +161,10 @@ async def main():
     # Uncomment to test deletion:
     # await delete_content()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.knowledge.content import Content, ContentStatus
+from agno.knowledge.utils import RESERVED_AGNO_KEY, strip_agno_metadata
 from agno.utils.string import generate_id
 
 
@@ -32,6 +33,8 @@ class BaseLoader:
     Methods that call self._build_content_hash() assume they are mixed into
     a class that provides this method (e.g., Knowledge via RemoteKnowledge).
     """
+
+    RESERVED_METADATA_KEY = RESERVED_AGNO_KEY
 
     def _compute_content_name(
         self,
@@ -156,16 +159,22 @@ class BaseLoader:
     ) -> Dict[str, Any]:
         """Merge provider metadata with user-provided metadata.
 
-        User metadata takes precedence over provider metadata.
+        Provider metadata (source_type, bucket info, etc.) is stored under the
+        reserved ``_agno`` key so that user PATCH updates cannot overwrite it.
+        User metadata is stored at the top level.
 
         Args:
             provider_metadata: Metadata from the provider (e.g., GitHub, Azure)
             user_metadata: User-provided metadata
 
         Returns:
-            Merged metadata dictionary
+            Merged metadata dictionary with provider fields under ``_agno``
         """
-        return {**provider_metadata, **(user_metadata or {})}
+        # Strip any user-provided _agno — this key is reserved for the framework
+        merged: Dict[str, Any] = strip_agno_metadata(user_metadata) or {}
+        # Store provider metadata under reserved _agno key
+        merged[RESERVED_AGNO_KEY] = dict(provider_metadata)
+        return merged
 
     def _files_to_dict_list(self, files: List[FileToProcess]) -> List[Dict[str, Any]]:
         """Convert FileToProcess objects to dict list for compatibility.

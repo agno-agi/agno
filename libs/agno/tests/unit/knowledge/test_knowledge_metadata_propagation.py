@@ -141,7 +141,7 @@ def test_prepare_documents_for_insert_with_metadata():
     # Call _prepare_documents_for_insert with metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
-    # Verify metadata was merged (linked_to is always added for vector search isolation)
+    # Verify metadata was merged (linked_to is always added, empty string for unnamed knowledge)
     assert result[0].meta_data == {
         "existing": "value1",
         "document_id": "123",
@@ -181,7 +181,7 @@ def test_prepare_documents_for_insert_without_metadata():
     # Call _prepare_documents_for_insert without metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1")
 
-    # Verify existing metadata is preserved (linked_to is always added for vector search isolation)
+    # Verify existing metadata is preserved (linked_to is always added)
     assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
     assert result[1].meta_data == {"linked_to": ""}
 
@@ -203,7 +203,7 @@ def test_prepare_documents_for_insert_with_empty_metadata():
     # Call _prepare_documents_for_insert with empty metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata={})
 
-    # Verify existing metadata is preserved (linked_to is always added for vector search isolation)
+    # Verify existing metadata is preserved (linked_to is always added)
     assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
 
 

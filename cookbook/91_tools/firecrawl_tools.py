@@ -10,6 +10,11 @@ Prerequisites:
 from agno.agent import Agent
 from agno.tools.firecrawl import FirecrawlTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     tools=[
         FirecrawlTools(
@@ -20,10 +25,15 @@ agent = Agent(
 )
 
 # Should use search
-agent.print_response(
-    "Search for the web for the latest on 'web scraping technologies'",
-    formats=["markdown", "links"],
-)
 
-# Should use crawl
-agent.print_response("Summarize this https://docs.agno.com/introduction/")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Search for the web for the latest on 'web scraping technologies'",
+        formats=["markdown", "links"],
+    )
+
+    # Should use crawl
+    agent.print_response("Summarize this https://docs.agno.com/introduction/")

@@ -570,9 +570,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -630,9 +630,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -685,9 +685,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -727,9 +727,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -842,9 +842,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -902,9 +902,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1027,9 +1027,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1087,9 +1087,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1684,6 +1684,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Delete a specific session.
 
@@ -1697,6 +1698,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1711,6 +1713,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Delete multiple sessions.
 
@@ -1725,6 +1728,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1744,6 +1748,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Rename a session.
 
@@ -1763,6 +1768,7 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {
             "type": session_type.value,
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -2447,7 +2453,7 @@ class AgentOSClient:
         Returns available readers, chunkers, vector DBs, and filters.
 
         Args:
-            db_id: Optional database ID to use
+            db_id: Optional database ID to filter by
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2458,7 +2464,6 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {"db_id": db_id}
         params = {k: v for k, v in params.items() if v is not None}
-
         data = await self._aget("/knowledge/config", params=params, headers=headers)
         return KnowledgeConfigResponse.model_validate(data)
 

@@ -1,9 +1,20 @@
+"""
+Cohere Image Agent Local File
+=============================
+
+Cookbook example for `cohere/image_agent_local_file.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.cohere.chat import Cohere
 from agno.utils.media import download_image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Cohere(id="c4ai-aya-vision-8b"),
@@ -24,3 +35,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

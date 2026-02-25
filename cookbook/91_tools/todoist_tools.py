@@ -16,6 +16,11 @@ from agno.agent import Agent
 from agno.models.google.gemini import Gemini
 from agno.tools.todoist import TodoistTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions available (default behavior)
 todoist_agent_all = Agent(
     name="Todoist Agent - All Functions",
@@ -47,14 +52,18 @@ todoist_agent = Agent(
 
 
 # Example 1: Create a task
-print("\n=== Create a task ===")
-todoist_agent_all.print_response(
-    "Create a todoist task to buy groceries tomorrow at 10am"
-)
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("\n=== Create a task ===")
+    todoist_agent_all.print_response(
+        "Create a todoist task to buy groceries tomorrow at 10am"
+    )
 
-# Example 2: Delete a task
-print("\n=== Delete a task ===")
-todoist_agent.print_response(
-    "Delete the todoist task to buy groceries tomorrow at 10am"
-)
+    # Example 2: Delete a task
+    print("\n=== Delete a task ===")
+    todoist_agent.print_response(
+        "Delete the todoist task to buy groceries tomorrow at 10am"
+    )

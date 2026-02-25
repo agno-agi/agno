@@ -15,6 +15,11 @@ Prerequisites:
 from agno.agent import Agent
 from agno.tools.telegram import TelegramTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 telegram_token = "<enter-your-bot-token>"
 chat_id = "<enter-your-chat-id>"
 
@@ -34,4 +39,8 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("Send a message to the bot")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Send a message to the bot")
