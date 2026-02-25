@@ -247,8 +247,8 @@ class TestLinkedToMetadata:
 
         assert result[0].meta_data["linked_to"] == "My Knowledge Base"
 
-    def test_prepare_documents_adds_empty_linked_to_without_name(self):
-        """Test that linked_to is set to empty string when knowledge has no name."""
+    def test_prepare_documents_adds_linked_to_without_isolation(self):
+        """Test that linked_to is always added even when isolate_vector_search is False."""
         mock_db = MockVectorDb()
         knowledge = Knowledge(
             name="My Knowledge Base",
@@ -259,7 +259,7 @@ class TestLinkedToMetadata:
         documents = [Document(name="doc1", content="content")]
         result = knowledge._prepare_documents_for_insert(documents, "content-id")
 
-        assert "linked_to" not in result[0].meta_data
+        assert result[0].meta_data["linked_to"] == "My Knowledge Base"
 
     def test_prepare_documents_adds_empty_linked_to_no_name_with_isolation(self):
         """Test that linked_to is set to empty string when knowledge has no name but isolation enabled."""
