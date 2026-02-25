@@ -14,9 +14,8 @@ Team members:
   - Vision Analyst: Understands images and files via GPT-4o
   - Creative Agent: Generates images via DALL-E + web search
 
-Requirements:
-  - assistant:write, chat:write, files:read, files:write scopes
-  - Events: app_mention, message.im, assistant_thread_started
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             files:read, files:write
 """
 
 from agno.agent import Agent

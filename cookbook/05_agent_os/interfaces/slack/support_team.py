@@ -10,6 +10,9 @@ Key concepts:
   - ``Team`` with a coordinator model routes questions to the best member.
   - One member uses ``SlackTools`` to find past answers in Slack threads.
   - Both members use ``WebSearchTools`` for external documentation.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             search:read, channels:history
 """
 
 from agno.agent import Agent

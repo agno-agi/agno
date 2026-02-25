@@ -15,6 +15,8 @@ Setup:
        ACE_SLACK_TOKEN,  ACE_SLACK_SIGNING_SECRET
        DASH_SLACK_TOKEN, DASH_SLACK_SIGNING_SECRET
   4. ngrok: ngrok http --domain=<your-subdomain>.ngrok-free.dev 7777
+
+Slack scopes (per app): app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from os import getenv

@@ -42,9 +42,11 @@ Follow these steps to create and configure a Slack app for use with Agno.
 | `files:read` | Download files users send to the bot |
 | `files:write` | Upload response files (images, docs) |
 | `users:read` | Look up user info (for channel_summarizer, etc.) |
+| `search:read` | Search workspace messages (research_assistant, support_team, etc.) |
 
 Not all scopes are needed for every example — `app_mentions:read`, `assistant:write`,
-`chat:write`, and `im:history` are the minimum for streaming.
+`chat:write`, and `im:history` are the minimum for streaming. Each cookbook's docstring
+lists the exact scopes it requires.
 
 3. Scroll up and click **Install to Workspace** (or **Reinstall** if updating scopes).
 4. Copy the **Bot User OAuth Token** (`xoxb-...`).

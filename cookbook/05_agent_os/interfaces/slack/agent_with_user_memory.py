@@ -10,6 +10,8 @@ Key concepts:
   - ``MemoryManager`` extracts and stores user facts after each run.
   - ``update_memory_on_run=True`` triggers automatic memory capture.
   - ``memory_capture_instructions`` tell the manager what to look for.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from textwrap import dedent

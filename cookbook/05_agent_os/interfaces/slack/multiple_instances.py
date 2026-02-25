@@ -14,6 +14,8 @@ Setup:
   4. Set environment variables (or pass tokens directly):
        RESEARCH_SLACK_TOKEN, RESEARCH_SLACK_SIGNING_SECRET
        ANALYST_SLACK_TOKEN,  ANALYST_SLACK_SIGNING_SECRET
+
+Slack scopes (per app): app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from os import getenv

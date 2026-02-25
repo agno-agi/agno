@@ -9,11 +9,7 @@ Uses 7 toolkits across web search, finance, news, academic papers,
 and calculations — a single query can trigger 8-12+ tool calls,
 each rendering as a card in the plan block.
 
-Requirements:
-  - OPENAI_API_KEY
-  - Slack app with ``assistant:write`` scope
-  - Event Subscriptions for ``app_mention``, ``message.im``,
-    and ``assistant_thread_started``
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from agno.agent import Agent

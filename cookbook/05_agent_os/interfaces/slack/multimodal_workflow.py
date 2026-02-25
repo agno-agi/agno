@@ -17,9 +17,8 @@ Workflow structure:
   Sequential:
     - Creative Synthesis (generates a new image inspired by analysis + research)
 
-Requirements:
-  - assistant:write, chat:write, files:read, files:write scopes
-  - Events: app_mention, message.im, assistant_thread_started
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             files:read, files:write
 """
 
 from agno.agent import Agent

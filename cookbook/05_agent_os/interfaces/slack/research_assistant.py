@@ -11,6 +11,9 @@ Key concepts:
     (``from:@user``, ``in:#channel``, ``has:link``, ``before:/after:``).
   - ``WebSearchTools`` provides external web search.
   - The agent synthesizes internal and external findings into one summary.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             search:read, channels:history, users:read
 """
 
 from agno.agent import Agent

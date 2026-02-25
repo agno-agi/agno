@@ -9,6 +9,8 @@ Key concepts:
   - ``Workflow`` chains sequential ``Step`` objects.
   - Each step uses a dedicated agent with its own model and tools.
   - Uses SQLite for session persistence (no external database required).
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from agno.agent import Agent

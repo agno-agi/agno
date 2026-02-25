@@ -11,6 +11,9 @@ Key concepts:
   - ``add_history_to_context=True`` + ``db`` enables follow-up questions
     within the same Slack thread — the agent remembers previous exchanges.
   - ``num_history_runs=5`` includes the last 5 exchanges for context.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             channels:history, search:read, users:read
 """
 
 from agno.agent import Agent

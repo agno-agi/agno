@@ -9,6 +9,8 @@ Key concepts:
   - ``ReasoningTools(add_instructions=True)`` injects chain-of-thought
     prompting into the agent's system message.
   - The agent uses tables for data display and keeps thinking concise.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from agno.agent import Agent
