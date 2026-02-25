@@ -88,6 +88,7 @@ agent_os = AgentOS(
     teams=[simple_team],
     workflows=[simple_workflow],
     interfaces=[slack_interface, whatsapp_interface, agui_interface, a2a_interface],
+    db=db
 )
 app = agent_os.get_app()
 
