@@ -1,4 +1,6 @@
 import base64
+import io
+import wave
 from os import getenv
 from typing import Optional, Union
 
@@ -13,7 +15,14 @@ from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.whatsapp import get_media_async, send_image_message_async, typing_indicator_async, upload_media_async
+from agno.utils.whatsapp import (
+    get_media_async,
+    send_audio_message_async,
+    send_document_message_async,
+    send_image_message_async,
+    typing_indicator_async,
+    upload_media_async,
+)
 from agno.workflow import RemoteWorkflow, Workflow
 
 from .security import validate_webhook_signature
@@ -228,9 +237,20 @@ def attach_routes(
                     italics=True,
                 )
 
+            has_media = False
             if response.images:
                 await _upload_response_images(response, phone_number)
-            else:
+                has_media = True
+            if response.files:
+                await _upload_response_files(response, phone_number)
+                has_media = True
+            if response.audio:
+                await _upload_response_audio(response, phone_number)
+                has_media = True
+            if response.response_audio:
+                await _upload_response_audio_single(response.response_audio, phone_number)
+                has_media = True
+            if not has_media:
                 _send_whatsapp_message(whatsapp_tools, phone_number, response.content or "")
 
         except Exception as e:
@@ -246,25 +266,111 @@ def attach_routes(
 
     async def _upload_response_images(response, recipient: str):
         for img in response.images:
-            image_content = img.content
-            image_bytes = None
-            if isinstance(image_content, bytes):
-                try:
-                    decoded_string = image_content.decode("utf-8")
-                    image_bytes = base64.b64decode(decoded_string)
-                except UnicodeDecodeError:
-                    image_bytes = image_content
-            elif isinstance(image_content, str):
-                image_bytes = base64.b64decode(image_content)
-            else:
-                log_error(f"Unexpected image content type: {type(image_content)} for user {recipient}")
-
+            image_bytes = _extract_media_bytes(img)
             if image_bytes:
                 media_id = await upload_media_async(media_data=image_bytes, mime_type="image/png", filename="image.png")
                 await send_image_message_async(media_id=media_id, recipient=recipient, text=response.content)
             else:
-                log_warning(f"Could not process image content for user {recipient}. Type: {type(image_content)}")
+                log_warning(f"Could not process image content for user {recipient}. Type: {type(img.content)}")
                 _send_whatsapp_message(whatsapp_tools, recipient, response.content or "")
+
+    async def _upload_response_files(response, recipient: str):
+        MIME_MAP = {
+            ".pdf": "application/pdf",
+            ".doc": "application/msword",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xls": "application/vnd.ms-excel",
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".ppt": "application/vnd.ms-powerpoint",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".csv": "text/csv",
+            ".txt": "text/plain",
+            ".json": "application/json",
+            ".zip": "application/zip",
+        }
+
+        for file in response.files:
+            file_bytes = _extract_media_bytes(file)
+            if file_bytes:
+                filename = getattr(file, "name", None) or getattr(file, "filename", None) or "document"
+                ext = ""
+                if "." in filename:
+                    ext = "." + filename.rsplit(".", 1)[-1].lower()
+                mime_type = MIME_MAP.get(ext, "application/octet-stream")
+
+                media_id = await upload_media_async(media_data=file_bytes, mime_type=mime_type, filename=filename)
+                await send_document_message_async(
+                    media_id=media_id,
+                    recipient=recipient,
+                    filename=filename,
+                    caption=response.content,
+                )
+            else:
+                log_warning(f"Could not process file content for user {recipient}. Type: {type(file.content)}")
+                _send_whatsapp_message(whatsapp_tools, recipient, response.content or "")
+
+    async def _upload_response_audio(response, recipient: str):
+        for aud in response.audio:
+            audio_bytes = _extract_media_bytes(aud)
+            if audio_bytes:
+                mime_type = getattr(aud, "mime_type", None) or "audio/mpeg"
+                audio_bytes, mime_type, filename = _prepare_audio_for_whatsapp(audio_bytes, mime_type, aud)
+                media_id = await upload_media_async(media_data=audio_bytes, mime_type=mime_type, filename=filename)
+                await send_audio_message_async(media_id=media_id, recipient=recipient)
+            else:
+                log_warning(f"Could not process audio content for user {recipient}. Type: {type(aud.content)}")
+                _send_whatsapp_message(whatsapp_tools, recipient, response.content or "")
+
+    async def _upload_response_audio_single(audio_obj, recipient: str):
+        audio_bytes = _extract_media_bytes(audio_obj)
+        if audio_bytes:
+            mime_type = getattr(audio_obj, "mime_type", None) or "audio/mpeg"
+            audio_bytes, mime_type, filename = _prepare_audio_for_whatsapp(audio_bytes, mime_type, audio_obj)
+            media_id = await upload_media_async(media_data=audio_bytes, mime_type=mime_type, filename=filename)
+            await send_audio_message_async(media_id=media_id, recipient=recipient)
+        else:
+            log_warning(f"Could not process response_audio for user {recipient}.")
+
+    def _prepare_audio_for_whatsapp(audio_bytes: bytes, mime_type: str, audio_obj) -> tuple:
+        """Convert raw PCM audio to WAV for WhatsApp compatibility.
+
+        Gemini TTS returns raw PCM with mime_type like 'audio/L16;rate=24000'.
+        WhatsApp requires a proper container format (mp3, ogg, wav, aac, amr).
+        """
+        WHATSAPP_AUDIO_MIMES = {"audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg", "audio/wav"}
+
+        if mime_type in WHATSAPP_AUDIO_MIMES:
+            fmt = getattr(audio_obj, "format", None) or mime_type.split("/")[-1]
+            return audio_bytes, mime_type, f"audio.{fmt}"
+
+        # Raw PCM from Gemini (e.g. "audio/L16;rate=24000") — wrap as WAV
+        sample_rate = getattr(audio_obj, "sample_rate", None) or 24000
+        channels = getattr(audio_obj, "channels", None) or 1
+        if "rate=" in mime_type:
+            try:
+                sample_rate = int(mime_type.split("rate=")[1].split(";")[0])
+            except (ValueError, IndexError):
+                pass
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_bytes)
+        return buf.getvalue(), "audio/wav", "audio.wav"
+
+    def _extract_media_bytes(media_obj) -> Optional[bytes]:
+        content = media_obj.content
+        if isinstance(content, bytes):
+            try:
+                decoded_string = content.decode("utf-8")
+                return base64.b64decode(decoded_string)
+            except (UnicodeDecodeError, Exception):
+                return content
+        elif isinstance(content, str):
+            return base64.b64decode(content)
+        return None
 
     def _send_whatsapp_message(tools: WhatsAppTools, recipient: str, message: str, italics: bool = False):
         def _format(text: str) -> str:

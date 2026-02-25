@@ -205,6 +205,148 @@ def typing_indicator(message_id: Optional[str] = None):
         return {"error": str(e)}
 
 
+async def send_document_message_async(
+    media_id: str,
+    recipient: str,
+    filename: str = "document",
+    caption: Optional[str] = None,
+):
+    log_debug(f"Sending WhatsApp document to {recipient}: {filename}")
+    phone_number_id = get_phone_number_id()
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    access_token = get_access_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    document_payload: dict = {"id": media_id, "filename": filename}
+    if caption:
+        document_payload["caption"] = caption
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "document",
+        "document": document_payload,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            log_debug(f"Request data: {json.dumps(data, indent=2)}")
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+            log_debug(f"Response: {response.text}")
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp document message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp document message: {str(e)}")
+        raise
+
+
+def send_document_message(
+    media_id: str,
+    recipient: str,
+    filename: str = "document",
+    caption: Optional[str] = None,
+):
+    log_debug(f"Sending WhatsApp document to {recipient}: {filename}")
+    phone_number_id = get_phone_number_id()
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    access_token = get_access_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    document_payload: dict = {"id": media_id, "filename": filename}
+    if caption:
+        document_payload["caption"] = caption
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "document",
+        "document": document_payload,
+    }
+
+    try:
+        log_debug(f"Request data: {json.dumps(data, indent=2)}")
+        response = httpx.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        log_debug(f"Response: {response.text}")
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp document message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp document message: {str(e)}")
+        raise
+
+
+async def send_audio_message_async(
+    media_id: str,
+    recipient: str,
+):
+    log_debug(f"Sending WhatsApp audio to {recipient}")
+    phone_number_id = get_phone_number_id()
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    access_token = get_access_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "audio",
+        "audio": {"id": media_id},
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            log_debug(f"Request data: {json.dumps(data, indent=2)}")
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+            log_debug(f"Response: {response.text}")
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp audio message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp audio message: {str(e)}")
+        raise
+
+
+def send_audio_message(
+    media_id: str,
+    recipient: str,
+):
+    log_debug(f"Sending WhatsApp audio to {recipient}")
+    phone_number_id = get_phone_number_id()
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    access_token = get_access_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "audio",
+        "audio": {"id": media_id},
+    }
+
+    try:
+        log_debug(f"Request data: {json.dumps(data, indent=2)}")
+        response = httpx.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        log_debug(f"Response: {response.text}")
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp audio message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp audio message: {str(e)}")
+        raise
+
+
 async def typing_indicator_async(message_id: Optional[str] = None):
     if not message_id:
         return

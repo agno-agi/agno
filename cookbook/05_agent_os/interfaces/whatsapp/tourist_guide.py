@@ -54,6 +54,7 @@ tourist_agent = Agent(
     num_history_runs=5,
     add_datetime_to_context=True,
     markdown=True,
+    debug_mode=True
 )
 
 # ---------------------------------------------------------------------------
