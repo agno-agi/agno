@@ -677,7 +677,9 @@ class Model(ABC):
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
                 ):
-                    _compression_manager.compress(messages, run_response=run_response)
+                    _compression_manager.compress(
+                        messages, run_metrics=run_response.metrics if run_response is not None else None
+                    )
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -698,7 +700,7 @@ class Model(ABC):
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
 
-                    accumulate_model_metrics(model_response, self, self.model_type, run_response)
+                    accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
                 # Add assistant message to messages
                 messages.append(assistant_message)
@@ -897,7 +899,9 @@ class Model(ABC):
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format
                 ):
-                    await _compression_manager.acompress(messages, run_response=run_response)
+                    await _compression_manager.acompress(
+                        messages, run_metrics=run_response.metrics if run_response is not None else None
+                    )
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -918,7 +922,7 @@ class Model(ABC):
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
 
-                    accumulate_model_metrics(model_response, self, self.model_type, run_response)
+                    accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
                 # Add assistant message to messages
                 messages.append(assistant_message)
@@ -1368,7 +1372,9 @@ class Model(ABC):
                 ):
                     # Emit compression started event
                     yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                    _compression_manager.compress(messages, run_response=run_response)
+                    _compression_manager.compress(
+                        messages, run_metrics=run_response.metrics if run_response is not None else None
+                    )
                     # Emit compression completed event with stats
                     yield ModelResponse(
                         event=ModelResponseEvent.compression_completed.value,
@@ -1410,7 +1416,7 @@ class Model(ABC):
 
                         _stream_model_response = ModelResponse()
                         _stream_model_response.response_usage = assistant_message.metrics
-                        accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response)
+                        accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response.metrics)
 
                 else:
                     # Initialize message metrics and start timer before model call
@@ -1429,7 +1435,7 @@ class Model(ABC):
                     if run_response is not None and model_response.response_usage is not None:
                         from agno.metrics import accumulate_model_metrics
 
-                        accumulate_model_metrics(model_response, self, self.model_type, run_response)
+                        accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
                     if self.cache_response:
                         streaming_responses.append(model_response)
                     yield model_response
@@ -1642,7 +1648,9 @@ class Model(ABC):
                 ):
                     # Emit compression started event
                     yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                    await _compression_manager.acompress(messages, run_response=run_response)
+                    await _compression_manager.acompress(
+                        messages, run_metrics=run_response.metrics if run_response is not None else None
+                    )
                     # Emit compression completed event with stats
                     yield ModelResponse(
                         event=ModelResponseEvent.compression_completed.value,
@@ -1684,7 +1692,7 @@ class Model(ABC):
 
                         _stream_model_response = ModelResponse()
                         _stream_model_response.response_usage = assistant_message.metrics
-                        accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response)
+                        accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response.metrics)
 
                 else:
                     # Initialize message metrics and start timer before model call
@@ -1703,7 +1711,7 @@ class Model(ABC):
                     if run_response is not None and model_response.response_usage is not None:
                         from agno.metrics import accumulate_model_metrics
 
-                        accumulate_model_metrics(model_response, self, self.model_type, run_response)
+                        accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
                     if self.cache_response:
                         streaming_responses.append(model_response)
                     yield model_response

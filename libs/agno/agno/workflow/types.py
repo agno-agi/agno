@@ -16,6 +16,34 @@ from agno.utils.media import (
 from agno.utils.timer import Timer
 
 
+class OnReject(str, Enum):
+    """Action to take when a step requiring confirmation is rejected.
+
+    Attributes:
+        skip: Skip the rejected step and continue with the next step in the workflow.
+        cancel: Cancel the entire workflow when the step is rejected.
+        else_branch: For Condition only - execute the else_steps branch when rejected.
+    """
+
+    skip = "skip"
+    cancel = "cancel"
+    else_branch = "else"
+
+
+class OnError(str, Enum):
+    """Action to take when a step encounters an error during execution.
+
+    Attributes:
+        fail: Fail the workflow immediately when an error occurs (default).
+        skip: Skip the failed step and continue with the next step.
+        pause: Pause the workflow and allow the user to decide (retry or skip) via HITL.
+    """
+
+    fail = "fail"
+    skip = "skip"
+    pause = "pause"
+
+
 @dataclass
 class WorkflowExecutionInput:
     """Input data for a step execution"""
@@ -275,6 +303,33 @@ class StepInput:
             "files": [file for file in self.files] if self.files else None,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepInput":
+        """Create StepInput from dictionary"""
+        # Reconstruct media artifacts
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audio = reconstruct_audio_list(data.get("audio"))
+        files = reconstruct_files(data.get("files"))
+
+        # Reconstruct previous_step_outputs
+        previous_step_outputs = None
+        if data.get("previous_step_outputs"):
+            previous_step_outputs = {
+                name: StepOutput.from_dict(output_data) for name, output_data in data["previous_step_outputs"].items()
+            }
+
+        return cls(
+            input=data.get("input"),
+            previous_step_content=data.get("previous_step_content"),
+            previous_step_outputs=previous_step_outputs,
+            additional_data=data.get("additional_data"),
+            images=images,
+            videos=videos,
+            audio=audio,
+            files=files,
+        )
+
 
 @dataclass
 class StepOutput:
@@ -473,3 +528,379 @@ class StepType(str, Enum):
     PARALLEL = "Parallel"
     CONDITION = "Condition"
     ROUTER = "Router"
+
+
+@dataclass
+class UserInputField:
+    """A field that requires user input.
+
+    Attributes:
+        name: The field name (used as the key in user input).
+        field_type: The expected type ("str", "int", "float", "bool", "list", "dict").
+        description: Optional description shown to the user.
+        value: The value provided by the user (set after input).
+        required: Whether this field is required.
+        allowed_values: Optional list of allowed values for validation.
+    """
+
+    name: str
+    field_type: str  # "str", "int", "float", "bool", "list", "dict"
+    description: Optional[str] = None
+    value: Optional[Any] = None
+    required: bool = True
+    allowed_values: Optional[List[Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {
+            "name": self.name,
+            "field_type": self.field_type,
+            "description": self.description,
+            "value": self.value,
+            "required": self.required,
+        }
+        if self.allowed_values is not None:
+            result["allowed_values"] = self.allowed_values
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
+        return cls(
+            name=data["name"],
+            field_type=data.get("field_type", "str"),
+            description=data.get("description"),
+            value=data.get("value"),
+            required=data.get("required", True),
+            allowed_values=data.get("allowed_values"),
+        )
+
+
+@dataclass
+class StepRequirement:
+    """Unified requirement for all HITL (Human-in-the-Loop) workflow pauses.
+
+    This class handles three types of HITL scenarios:
+    1. **Confirmation**: User confirms or rejects execution (Step, Loop, Condition, Steps, Router)
+    2. **User Input**: User provides custom input values (Step with user_input_schema)
+    3. **Route Selection**: User selects which route(s) to take (Router with requires_user_input)
+
+    The `step_type` field indicates what kind of component created this requirement.
+    It accepts both StepType enum values and strings for flexibility.
+
+    The `on_reject` field determines behavior when a step is rejected:
+    - OnReject.skip / "skip": Skip the step and continue workflow
+    - OnReject.cancel / "cancel": Cancel the entire workflow
+    - OnReject.else_branch / "else": For Condition only, execute else_steps
+    """
+
+    step_id: str
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+
+    # Component type that created this requirement
+    # Accepts StepType enum or string for flexibility
+    step_type: Optional[Union[StepType, str]] = None
+
+    # Confirmation fields (for Step, Loop, Condition, Steps, Router confirmation mode)
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+    confirmed: Optional[bool] = None
+    # What to do when step is rejected
+    # Accepts OnReject enum or string for flexibility
+    on_reject: Union[OnReject, str] = OnReject.cancel
+
+    # User input fields (for Step with custom input)
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[UserInputField]] = None
+    user_input: Optional[Dict[str, Any]] = None  # The actual user input values
+
+    # Route selection fields (for Router user selection mode)
+    requires_route_selection: bool = False
+    available_choices: Optional[List[str]] = None  # Available route names
+    allow_multiple_selections: bool = False  # If True, user can select multiple routes
+    selected_choices: Optional[List[str]] = None  # User's selected route(s)
+
+    # The step input that was prepared before pausing
+    step_input: Optional["StepInput"] = None
+
+    def confirm(self) -> None:
+        """Confirm the step execution"""
+        self.confirmed = True
+
+    def reject(self) -> None:
+        """Reject the step execution"""
+        self.confirmed = False
+
+    def set_user_input(self, validate: bool = True, **kwargs) -> None:
+        """Set user input values.
+
+        Args:
+            validate: Whether to validate the input against the schema. Defaults to True.
+            **kwargs: The user input values as key-value pairs.
+
+        Raises:
+            ValueError: If validation is enabled and required fields are missing,
+                        or if field types don't match the schema.
+        """
+        if self.user_input is None:
+            self.user_input = {}
+        self.user_input.update(kwargs)
+
+        # Also update the schema values if present
+        if self.user_input_schema:
+            for field in self.user_input_schema:
+                if field.name in kwargs:
+                    field.value = kwargs[field.name]
+
+        # Validate if schema is present and validation is enabled
+        if validate and self.user_input_schema:
+            self._validate_user_input(kwargs)
+
+    def _validate_user_input(self, user_input: Dict[str, Any]) -> None:
+        """Validate user input against the schema.
+
+        Args:
+            user_input: The user input values to validate.
+
+        Raises:
+            ValueError: If required fields are missing or types don't match.
+        """
+        if not self.user_input_schema:
+            return
+
+        errors = []
+
+        for field in self.user_input_schema:
+            value = user_input.get(field.name)
+
+            # Check required fields
+            if field.required and (value is None or value == ""):
+                errors.append(f"Required field '{field.name}' is missing or empty")
+                continue
+
+            # Skip type validation if value is not provided (and not required)
+            if value is None:
+                continue
+
+            # Validate type
+            expected_type = field.field_type
+            if expected_type == "str" and not isinstance(value, str):
+                errors.append(f"Field '{field.name}' expected str, got {type(value).__name__}")
+            elif expected_type == "int":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    errors.append(f"Field '{field.name}' expected int, got {type(value).__name__}")
+            elif expected_type == "float":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    errors.append(f"Field '{field.name}' expected float, got {type(value).__name__}")
+            elif expected_type == "bool" and not isinstance(value, bool):
+                errors.append(f"Field '{field.name}' expected bool, got {type(value).__name__}")
+
+            # Validate allowed values if specified
+            if field.allowed_values and value not in field.allowed_values:
+                errors.append(f"Field '{field.name}' value '{value}' is not in allowed values: {field.allowed_values}")
+
+        if errors:
+            raise ValueError("User input validation failed:\n  - " + "\n  - ".join(errors))
+
+    def get_user_input(self, field_name: str) -> Optional[Any]:
+        """Get a specific user input value"""
+        if self.user_input:
+            return self.user_input.get(field_name)
+        return None
+
+    # Route selection methods (for Router)
+    def select(self, *choices: str) -> None:
+        """Select one or more route choices by name."""
+        if not self.allow_multiple_selections and len(choices) > 1:
+            raise ValueError("This router only allows single selection. Use select() with one choice.")
+        self.selected_choices = list(choices)
+
+    def select_single(self, choice: str) -> None:
+        """Select a single route choice by name."""
+        self.selected_choices = [choice]
+
+    def select_multiple(self, choices: List[str]) -> None:
+        """Select multiple route choices by name."""
+        if not self.allow_multiple_selections:
+            raise ValueError("This router does not allow multiple selections.")
+        self.selected_choices = choices
+
+    @property
+    def needs_confirmation(self) -> bool:
+        """Check if this requirement still needs confirmation"""
+        if self.confirmed is not None:
+            return False
+        return self.requires_confirmation
+
+    @property
+    def needs_user_input(self) -> bool:
+        """Check if this requirement still needs user input"""
+        if not self.requires_user_input:
+            return False
+        if self.user_input_schema:
+            # Check if all required fields have values
+            for field in self.user_input_schema:
+                if field.required and field.value is None:
+                    return True
+            return False
+        # If no schema, check if user_input dict has any values
+        return self.user_input is None or len(self.user_input) == 0
+
+    @property
+    def needs_route_selection(self) -> bool:
+        """Check if this requirement still needs route selection"""
+        if not self.requires_route_selection:
+            return False
+        return self.selected_choices is None or len(self.selected_choices) == 0
+
+    @property
+    def is_resolved(self) -> bool:
+        """Check if this requirement has been resolved"""
+        if self.requires_confirmation and self.confirmed is None:
+            return False
+        if self.requires_user_input and self.needs_user_input:
+            return False
+        if self.requires_route_selection and self.needs_route_selection:
+            return False
+        return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        # Convert enum values to strings for serialization
+        step_type_str = self.step_type.value if isinstance(self.step_type, StepType) else self.step_type
+        on_reject_str = self.on_reject.value if isinstance(self.on_reject, OnReject) else self.on_reject
+
+        result: Dict[str, Any] = {
+            "step_id": self.step_id,
+            "step_name": self.step_name,
+            "step_index": self.step_index,
+            "step_type": step_type_str,
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "confirmed": self.confirmed,
+            "on_reject": on_reject_str,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input": self.user_input,
+            "requires_route_selection": self.requires_route_selection,
+            "available_choices": self.available_choices,
+            "allow_multiple_selections": self.allow_multiple_selections,
+            "selected_choices": self.selected_choices,
+        }
+        if self.user_input_schema is not None:
+            result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
+        if self.step_input is not None:
+            result["step_input"] = self.step_input.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepRequirement":
+        """Create StepRequirement from dictionary"""
+        step_input = None
+        if data.get("step_input"):
+            step_input = StepInput.from_dict(data["step_input"])
+
+        user_input_schema = None
+        if data.get("user_input_schema"):
+            user_input_schema = [UserInputField.from_dict(f) for f in data["user_input_schema"]]
+
+        return cls(
+            step_id=data["step_id"],
+            step_name=data.get("step_name"),
+            step_index=data.get("step_index"),
+            step_type=data.get("step_type"),
+            requires_confirmation=data.get("requires_confirmation", False),
+            confirmation_message=data.get("confirmation_message"),
+            confirmed=data.get("confirmed"),
+            on_reject=data.get("on_reject", "cancel"),
+            requires_user_input=data.get("requires_user_input", False),
+            user_input_message=data.get("user_input_message"),
+            user_input_schema=user_input_schema,
+            user_input=data.get("user_input"),
+            requires_route_selection=data.get("requires_route_selection", False),
+            available_choices=data.get("available_choices"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
+            selected_choices=data.get("selected_choices"),
+            step_input=step_input,
+        )
+
+
+@dataclass
+class ErrorRequirement:
+    """Requirement to handle a step error (used for error-based HITL flows).
+
+    When a Step has `on_error="pause"` and encounters an exception,
+    the workflow pauses and creates this requirement. The user can
+    decide to retry the step or skip it and continue with the next step.
+    """
+
+    step_id: str
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+
+    # Error information
+    error_message: str = ""
+    error_type: Optional[str] = None  # e.g., "ValueError", "TimeoutError"
+    retry_count: int = 0  # How many times this step has been retried
+
+    # User's decision: "retry" or "skip"
+    decision: Optional[str] = None
+
+    # The step input that was used when the error occurred
+    step_input: Optional["StepInput"] = None
+
+    def retry(self) -> None:
+        """Retry the failed step."""
+        self.decision = "retry"
+
+    def skip(self) -> None:
+        """Skip the failed step and continue with the next step."""
+        self.decision = "skip"
+
+    @property
+    def needs_decision(self) -> bool:
+        """Check if this requirement still needs a user decision."""
+        return self.decision is None
+
+    @property
+    def is_resolved(self) -> bool:
+        """Check if this requirement has been resolved."""
+        return self.decision is not None
+
+    @property
+    def should_retry(self) -> bool:
+        """Check if the user decided to retry."""
+        return self.decision == "retry"
+
+    @property
+    def should_skip(self) -> bool:
+        """Check if the user decided to skip."""
+        return self.decision == "skip"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        # Note: We intentionally don't serialize step_input to avoid circular reference issues
+        # The step_input will be reconstructed when resuming the workflow
+        return {
+            "step_id": self.step_id,
+            "step_name": self.step_name,
+            "step_index": self.step_index,
+            "error_message": self.error_message,
+            "error_type": self.error_type,
+            "retry_count": self.retry_count,
+            "decision": self.decision,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ErrorRequirement":
+        """Create ErrorRequirement from dictionary."""
+        # Note: step_input is not serialized/deserialized to avoid circular reference issues
+        return cls(
+            step_id=data["step_id"],
+            step_name=data.get("step_name"),
+            step_index=data.get("step_index"),
+            error_message=data.get("error_message", ""),
+            error_type=data.get("error_type"),
+            retry_count=data.get("retry_count", 0),
+            decision=data.get("decision"),
+        )

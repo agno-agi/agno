@@ -537,7 +537,7 @@ def _run(
                         learning_future=learning_future,  # type: ignore
                     )
                     merge_background_metrics(
-                        run_response,
+                        run_response.metrics,
                         collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
                     )
 
@@ -585,7 +585,7 @@ def _run(
                     learning_future=learning_future,  # type: ignore
                 )
                 merge_background_metrics(
-                    run_response,
+                    run_response.metrics,
                     collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
                 )
 
@@ -595,7 +595,7 @@ def _run(
                     agent_session.upsert_run(run=run_response)
                     try:
                         agent.session_summary_manager.create_session_summary(
-                            session=agent_session, run_response=run_response
+                            session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -975,7 +975,7 @@ def _run_stream(
                         get_memories_callback=lambda: agent.get_user_memories(user_id=user_id),
                     )
                     merge_background_metrics(
-                        run_response,
+                        run_response.metrics,
                         collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
                     )
 
@@ -1026,7 +1026,7 @@ def _run_stream(
                     get_memories_callback=lambda: agent.get_user_memories(user_id=user_id),
                 )
                 merge_background_metrics(
-                    run_response,
+                    run_response.metrics,
                     collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
                 )
 
@@ -1044,7 +1044,7 @@ def _run_stream(
                         )
                     try:
                         agent.session_summary_manager.create_session_summary(
-                            session=agent_session, run_response=run_response
+                            session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -1618,7 +1618,7 @@ async def _arun(
                         learning_task=learning_task,
                     )
                     merge_background_metrics(
-                        run_response,
+                        run_response.metrics,
                         collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
                     )
                     return await ahandle_agent_run_paused(
@@ -1665,7 +1665,7 @@ async def _arun(
                     learning_task=learning_task,
                 )
                 merge_background_metrics(
-                    run_response,
+                    run_response.metrics,
                     collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
                 )
 
@@ -1675,7 +1675,7 @@ async def _arun(
                     agent_session.upsert_run(run=run_response)
                     try:
                         await agent.session_summary_manager.acreate_session_summary(
-                            session=agent_session, run_response=run_response
+                            session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -2172,7 +2172,7 @@ async def _arun_stream(
                     ):
                         yield item
                     merge_background_metrics(
-                        run_response,
+                        run_response.metrics,
                         collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
                     )
 
@@ -2216,7 +2216,7 @@ async def _arun_stream(
                 ):
                     yield item
                 merge_background_metrics(
-                    run_response,
+                    run_response.metrics,
                     collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
                 )
 
@@ -2234,7 +2234,7 @@ async def _arun_stream(
                         )
                     try:
                         await agent.session_summary_manager.acreate_session_summary(
-                            session=agent_session, run_response=run_response
+                            session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -2971,7 +2971,9 @@ def _continue_run(
                     session.upsert_run(run=run_response)
 
                     try:
-                        agent.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                        agent.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3192,7 +3194,9 @@ def _continue_run_stream(
                             store_events=agent.store_events,
                         )
                     try:
-                        agent.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                        agent.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3718,7 +3722,7 @@ async def _acontinue_run(
 
                     try:
                         await agent.session_summary_manager.acreate_session_summary(
-                            session=agent_session, run_response=run_response
+                            session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -4121,7 +4125,7 @@ async def _acontinue_run_stream(
                         )
                     try:
                         await agent.session_summary_manager.acreate_session_summary(
-                            session=agent_session, run_response=run_response
+                            session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")

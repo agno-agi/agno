@@ -105,97 +105,90 @@ def _make_model(model_id="gpt-4o-mini", provider="OpenAI", model_type=ModelType.
     return model
 
 
-def _make_run_response():
-    """Create a mock RunOutput with metrics=None."""
-    run_response = MagicMock()
-    run_response.metrics = None
-    return run_response
-
-
 class TestAccumulateModelMetrics:
     def test_enum_model_type_creates_correct_dict_key(self):
         """Using ModelType enum should store under the string value key."""
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model_response = _make_model_response()
         model = _make_model()
 
-        accumulate_model_metrics(model_response, model, ModelType.MODEL, run_response)
+        accumulate_model_metrics(model_response, model, ModelType.MODEL, run_metrics)
 
-        assert run_response.metrics is not None
-        assert "model" in run_response.metrics.details
-        assert len(run_response.metrics.details["model"]) == 1
+        assert "model" in run_metrics.details
+        assert len(run_metrics.details["model"]) == 1
 
     def test_output_model_type_key(self):
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model_response = _make_model_response()
         model = _make_model()
 
-        accumulate_model_metrics(model_response, model, ModelType.OUTPUT_MODEL, run_response)
+        accumulate_model_metrics(model_response, model, ModelType.OUTPUT_MODEL, run_metrics)
 
-        assert "output_model" in run_response.metrics.details
+        assert "output_model" in run_metrics.details
 
     def test_memory_model_type_key(self):
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model_response = _make_model_response()
         model = _make_model()
 
-        accumulate_model_metrics(model_response, model, ModelType.MEMORY_MODEL, run_response)
+        accumulate_model_metrics(model_response, model, ModelType.MEMORY_MODEL, run_metrics)
 
-        assert "memory_model" in run_response.metrics.details
+        assert "memory_model" in run_metrics.details
 
     def test_string_model_type_still_works(self):
         """Backward compatibility: raw strings should still work."""
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model_response = _make_model_response()
         model = _make_model()
 
-        accumulate_model_metrics(model_response, model, "model", run_response)
+        accumulate_model_metrics(model_response, model, "model", run_metrics)
 
-        assert "model" in run_response.metrics.details
+        assert "model" in run_metrics.details
 
     def test_tokens_accumulate_correctly(self):
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model = _make_model()
 
-        accumulate_model_metrics(_make_model_response(10, 5, 15), model, ModelType.MODEL, run_response)
-        accumulate_model_metrics(_make_model_response(20, 10, 30), model, ModelType.MODEL, run_response)
+        accumulate_model_metrics(_make_model_response(10, 5, 15), model, ModelType.MODEL, run_metrics)
+        accumulate_model_metrics(_make_model_response(20, 10, 30), model, ModelType.MODEL, run_metrics)
 
-        assert run_response.metrics.input_tokens == 30
-        assert run_response.metrics.output_tokens == 15
-        assert run_response.metrics.total_tokens == 45
+        assert run_metrics.input_tokens == 30
+        assert run_metrics.output_tokens == 15
+        assert run_metrics.total_tokens == 45
 
     def test_multiple_model_types_in_same_run(self):
         """Simulates an agent run using model + output_model."""
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         main_model = _make_model("gpt-4o", "OpenAI")
         output_model = _make_model("gpt-4o-mini", "OpenAI")
 
-        accumulate_model_metrics(_make_model_response(100, 50, 150), main_model, ModelType.MODEL, run_response)
-        accumulate_model_metrics(_make_model_response(20, 10, 30), output_model, ModelType.OUTPUT_MODEL, run_response)
+        accumulate_model_metrics(_make_model_response(100, 50, 150), main_model, ModelType.MODEL, run_metrics)
+        accumulate_model_metrics(_make_model_response(20, 10, 30), output_model, ModelType.OUTPUT_MODEL, run_metrics)
 
-        details = run_response.metrics.details
+        details = run_metrics.details
         assert "model" in details
         assert "output_model" in details
         assert details["model"][0].id == "gpt-4o"
         assert details["output_model"][0].id == "gpt-4o-mini"
-        assert run_response.metrics.total_tokens == 180
+        assert run_metrics.total_tokens == 180
 
     def test_accumulate_does_not_set_run_ttft(self):
         """Run TTFT is set by providers via set_time_to_first_token(), not by accumulate_model_metrics."""
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model = _make_model()
 
-        accumulate_model_metrics(_make_model_response(ttft=0.5), model, ModelType.MODEL, run_response)
-        assert run_response.metrics.time_to_first_token is None
+        accumulate_model_metrics(_make_model_response(ttft=0.5), model, ModelType.MODEL, run_metrics)
+        assert run_metrics.time_to_first_token is None
 
     def test_none_response_usage_is_no_op(self):
-        run_response = _make_run_response()
+        run_metrics = Metrics()
         model = _make_model()
         response = MagicMock()
         response.response_usage = None
 
-        accumulate_model_metrics(response, model, ModelType.MODEL, run_response)
-        assert run_response.metrics is None
+        accumulate_model_metrics(response, model, ModelType.MODEL, run_metrics)
+        # No details added when response_usage is None
+        assert run_metrics.details is None
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +199,6 @@ class TestAccumulateModelMetrics:
 class TestAccumulateEvalMetrics:
     def test_eval_prefixes_string_keys_correctly(self):
         """accumulate_eval_metrics should create 'eval_model' from 'model' key."""
-        # Build an eval_response with details keyed by ModelType enum values
         eval_metrics = Metrics(
             input_tokens=10,
             output_tokens=5,
@@ -217,16 +209,13 @@ class TestAccumulateEvalMetrics:
                 ]
             },
         )
-        eval_response = MagicMock()
-        eval_response.metrics = eval_metrics
 
-        run_response = MagicMock()
-        run_response.metrics = Metrics(details={})
+        run_metrics = Metrics(details={})
 
-        accumulate_eval_metrics(eval_response, run_response, prefix="eval")
+        accumulate_eval_metrics(eval_metrics, run_metrics, prefix="eval")
 
-        assert "eval_model" in run_response.metrics.details
-        assert run_response.metrics.input_tokens == 10
+        assert "eval_model" in run_metrics.details
+        assert run_metrics.input_tokens == 10
 
 
 # ---------------------------------------------------------------------------
