@@ -30,9 +30,10 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -1261,8 +1262,11 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        return _response.calculate_metrics(self, messages, current_run_metrics=current_run_metrics)
+    def _calculate_metrics(
+        self, messages: List[Message], current_run_metrics: Optional[RunMetrics] = None
+    ) -> RunMetrics:
+        # Metrics are now accumulated immediately during model calls
+        return current_run_metrics or RunMetrics()
 
     def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         _session.update_session_metrics(self, session, run_response)
@@ -1543,10 +1547,10 @@ class Team:
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None):
