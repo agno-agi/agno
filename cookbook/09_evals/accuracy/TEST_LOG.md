@@ -57,3 +57,13 @@
 **Description:** Uses a custom evaluator agent for accuracy scoring.
 
 ---
+
+### accuracy_eval_metrics.py
+
+**Status:** PASS
+
+**Description:** Eval model metrics accumulated into agent run_output under "eval_model" detail key.
+
+**Result:** Shows agent "model" tokens and "eval_model" tokens separately in metrics.details with full breakdown.
+
+---

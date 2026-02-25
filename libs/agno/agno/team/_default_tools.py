@@ -1311,7 +1311,6 @@ def create_knowledge_search_tool(
         return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
 
 
-
 def get_relevant_docs_from_knowledge(
     team: "Team",
     query: str,

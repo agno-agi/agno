@@ -2,7 +2,18 @@
 Channel Summarizer
 ==================
 
-Demonstrates channel summarizer.
+An agent that reads channel history and produces structured summaries.
+Supports follow-up questions in the same thread via session history.
+
+Key concepts:
+  - ``SlackTools`` with ``enable_get_thread`` and ``enable_search_messages``
+    lets the agent read Slack data as tool calls.
+  - ``add_history_to_context=True`` + ``db`` enables follow-up questions
+    within the same Slack thread — the agent remembers previous exchanges.
+  - ``num_history_runs=5`` includes the last 5 exchanges for context.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             channels:history, search:read, users:read
 """
 
 from agno.agent import Agent
@@ -43,8 +54,9 @@ summarizer = Agent(
         "- Questions/Blockers",
         "Use bullet points and keep summaries concise.",
     ],
+    # Session history — enables follow-up questions in the same Slack thread
     add_history_to_context=True,
-    num_history_runs=3,
+    num_history_runs=5,
     add_datetime_to_context=True,
     markdown=True,
 )
