@@ -827,6 +827,12 @@ class Gemini(Model):
                         if isinstance(file_content, Part):
                             message_parts.append(file_content)
 
+            # Skip messages with empty parts to avoid Gemini API error:
+            # "must include at least one parts field"
+            if not message_parts:
+                log_debug(f"Skipping message with role '{role}' that has no parts")
+                continue
+
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
 
