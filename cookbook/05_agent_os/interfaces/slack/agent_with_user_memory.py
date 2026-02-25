@@ -2,7 +2,16 @@
 Agent With User Memory
 ======================
 
-Demonstrates agent with user memory.
+A personal assistant that remembers users across conversations using
+``MemoryManager``. The agent captures names, hobbies, and preferences,
+then uses that context in future chats.
+
+Key concepts:
+  - ``MemoryManager`` extracts and stores user facts after each run.
+  - ``update_memory_on_run=True`` triggers automatic memory capture.
+  - ``memory_capture_instructions`` tell the manager what to look for.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from textwrap import dedent
@@ -28,7 +37,7 @@ memory_manager = MemoryManager(
                     Collect Information about the users likes and dislikes,
                     Collect information about what the user is doing with their life right now
                 """,
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 
@@ -44,12 +53,11 @@ personal_agent = Agent(
     memory_manager=memory_manager,
     update_memory_on_run=True,
     instructions=dedent("""
-        You are a personal AI friend in a slack chat, your purpose is to chat with the user about things and make them feel good.
-        First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.
-        Use DuckDuckGo search tool to find latest information about things in the conversations
-        You may sometimes recieve messages prepenned with group message when that is the message then reply to whole group instead of treating them as from a single user
+        You are a personal AI friend in a Slack chat. Your purpose is to chat with the user and make them feel good.
+        First introduce yourself and ask for their name, then ask about themselves, their hobbies, what they like to do and what they like to talk about.
+        Use the web search tool to find the latest information about things in the conversation.
+        You may sometimes receive messages prepended with "group message" — when that happens, reply to the whole group instead of treating them as from a single user.
                         """),
-    debug_mode=True,
 )
 
 

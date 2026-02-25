@@ -10,22 +10,28 @@ from agno.utils.pprint import pprint_run_response
 # Create Agent
 # ---------------------------------------------------------------------------
 
+# Create an image agent (PNG, using the Flux model)
+image_agent = Agent(
+    tools=[ModelsLabTools(file_type=FileType.PNG, model_id="flux", width=1024, height=1024)],
+    send_media_to_model=False,
+)
 
 # Create a video agent (set to make MP4)
-agent = Agent(tools=[ModelsLabTools(file_type=FileType.MP4)], send_media_to_model=False)
-
-# agent.print_response(
-#     "Generate a video of a beautiful sunset over the ocean", markdown=True
-# )
+video_agent = Agent(tools=[ModelsLabTools(file_type=FileType.MP4)], send_media_to_model=False)
 
 # Create audio agent (set to make WAV)
-agent = Agent(tools=[ModelsLabTools(file_type=FileType.WAV)], send_media_to_model=False)
+audio_agent = Agent(tools=[ModelsLabTools(file_type=FileType.WAV)], send_media_to_model=False)
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    response = agent.run("Generate a SFX of a ocean wave", markdown=True)
+    # Generate an image
+    image_response = image_agent.run("Generate an image of a beautiful sunset over the ocean")
+    pprint_run_response(image_response, markdown=True)
+
+    # Generate a sound effect
+    response = audio_agent.run("Generate a SFX of a ocean wave", markdown=True)
     pprint_run_response(response, markdown=True)
 
     if response.audio and response.audio[0].url:
