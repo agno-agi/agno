@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import json_serializer
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
@@ -127,6 +128,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 db_url,
                 pool_pre_ping=True,
                 pool_recycle=3600,
+                json_serializer=json_serializer,
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -3030,6 +3032,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 

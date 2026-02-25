@@ -19,8 +19,8 @@ from pydantic import BaseModel
 
 from agno.db.base import AsyncBaseDb
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
@@ -235,6 +235,27 @@ def wait_for_thread_tasks_stream(
             learning_future.result()
         except Exception as e:
             log_warning(f"Error in learning extraction: {str(e)}")
+
+
+def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
+    """Collect RunMetrics returned by completed background futures/tasks.
+
+    Call this after wait_for_open_threads / await_for_open_threads (or the
+    streaming variants) to gather the isolated metrics collectors produced by
+    background memory, culture, and learning tasks.  Each argument can be a
+    ``concurrent.futures.Future``, ``asyncio.Task``, or ``None``.
+    """
+    collected: List[RunMetrics] = []
+    for f in futures_or_tasks:
+        if f is None or not f.done():
+            continue
+        try:
+            result = f.result()
+            if isinstance(result, RunMetrics):
+                collected.append(result)
+        except BaseException:
+            pass
+    return collected
 
 
 def collect_joint_images(
@@ -830,7 +851,7 @@ async def aupdate_session_state_util(
     return session.session_data["session_state"]  # type: ignore
 
 
-def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
+def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID and user ID."""
     if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
@@ -840,24 +861,53 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) ->
         raise Exception("Session not found")
 
     if session.session_data is not None:
-        if isinstance(session.session_data.get("session_metrics"), dict):
-            return Metrics(**session.session_data.get("session_metrics", {}))
-        elif isinstance(session.session_data.get("session_metrics"), Metrics):
-            return session.session_data.get("session_metrics")
+        session_metrics_from_db = session.session_data.get("session_metrics")
+        if isinstance(session_metrics_from_db, dict):
+            return SessionMetrics.from_dict(session_metrics_from_db)
+        elif isinstance(session_metrics_from_db, SessionMetrics):
+            return session_metrics_from_db
+        elif isinstance(session_metrics_from_db, RunMetrics):
+            # Legacy: convert RunMetrics to SessionMetrics
+            return SessionMetrics(
+                input_tokens=session_metrics_from_db.input_tokens,
+                output_tokens=session_metrics_from_db.output_tokens,
+                total_tokens=session_metrics_from_db.total_tokens,
+                audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                cost=session_metrics_from_db.cost,
+            )
     return None
 
 
-async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
+async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID and user ID."""
     session = await entity.aget_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
 
     if session.session_data is not None:
-        if isinstance(session.session_data.get("session_metrics"), dict):
-            return Metrics(**session.session_data.get("session_metrics", {}))
-        elif isinstance(session.session_data.get("session_metrics"), Metrics):
-            return session.session_data.get("session_metrics")
+        session_metrics = session.session_data.get("session_metrics")
+        if isinstance(session_metrics, dict):
+            return SessionMetrics.from_dict(session_metrics)
+        elif isinstance(session_metrics, SessionMetrics):
+            return session_metrics
+        elif isinstance(session_metrics, RunMetrics):
+            return SessionMetrics(
+                input_tokens=session_metrics.input_tokens,
+                output_tokens=session_metrics.output_tokens,
+                total_tokens=session_metrics.total_tokens,
+                audio_input_tokens=session_metrics.audio_input_tokens,
+                audio_output_tokens=session_metrics.audio_output_tokens,
+                audio_total_tokens=session_metrics.audio_total_tokens,
+                cache_read_tokens=session_metrics.cache_read_tokens,
+                cache_write_tokens=session_metrics.cache_write_tokens,
+                reasoning_tokens=session_metrics.reasoning_tokens,
+                cost=session_metrics.cost,
+            )
     return None
 
 

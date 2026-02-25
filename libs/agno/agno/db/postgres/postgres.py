@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import json_serializer
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
@@ -121,6 +122,7 @@ class PostgresDb(BaseDb):
                 db_url,
                 pool_pre_ping=True,
                 pool_recycle=3600,
+                json_serializer=json_serializer,
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -3492,6 +3494,7 @@ class PostgresDb(BaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -3500,6 +3503,7 @@ class PostgresDb(BaseDb):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -3516,6 +3520,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.component_type == component_type.value)
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
+                if exclude_component_ids:
+                    where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)

@@ -6,7 +6,7 @@ Hundreds of examples. Copy, paste, run.
 
 **New to Agno?** Start with [00_quickstart](./00_quickstart) — it walks you through the fundamentals, with each cookbook building on the last.
 
-**Want to see something real?** Jump to [01_showcase](./01_showcase) — advanced use cases. Run the examples, break them, learn from them.
+**Want to see something real?** Jump to [01_demo](./01_demo) — advanced use cases. Run the examples, break them, learn from them.
 
 **Want to explore a particular topic?** Find your use case below.
 
@@ -49,7 +49,7 @@ Hundreds of examples. Copy, paste, run.
 - **Reasoning harness** — Set `reasoning=True` for chain-of-thought with tool use
 
 ### Memory
-[80_memory](./80_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
+[11_memory](./11_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
 
 ### Models
 [90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
@@ -67,17 +67,7 @@ For every cookbook folder that contains runnable Python examples, include:
 - `README.md` explaining intent, prerequisites, and run commands
 - `TEST_LOG.md` recording run status and observations
 
-Use templates:
-
-- `cookbook/templates/README.template.md`
-- `cookbook/templates/TEST_LOG.template.md`
-- `cookbook/STYLE_GUIDE.md`
-
-Run metadata audit:
-
-```bash
-python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct
-```
+Use `cookbook/STYLE_GUIDE.md`
 
 Enforce in checks (fails on missing metadata):
 
@@ -107,4 +97,4 @@ python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --jso
 
 ## Contributing
 
-We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](./CONTRIBUTING.md).
+We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](../CONTRIBUTING.md).
