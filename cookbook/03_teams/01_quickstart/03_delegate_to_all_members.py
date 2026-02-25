@@ -10,7 +10,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.team import Team
+from agno.team import Team, TeamMode
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 
@@ -20,7 +20,7 @@ from agno.tools.websearch import WebSearchTools
 reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
@@ -32,7 +32,7 @@ reddit_researcher = Agent(
 
 hackernews_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     role="Research a topic on HackerNews.",
     tools=[HackerNewsTools()],
     add_name_to_context=True,
@@ -48,7 +48,7 @@ hackernews_researcher = Agent(
 # ---------------------------------------------------------------------------
 agent_team = Team(
     name="Discussion Team",
-    model=OpenAIResponses(id="gpt-5.2-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[
         reddit_researcher,
         hackernews_researcher,
@@ -58,7 +58,7 @@ agent_team = Team(
         "You have to stop the discussion when you think the team has reached a consensus.",
     ],
     markdown=True,
-    delegate_to_all_members=True,
+    mode=TeamMode.broadcast,
     show_members_responses=True,
 )
 

@@ -89,7 +89,7 @@ agent_with_structured_output = Agent(
     name="Agent with Structured Output",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     output_schema=StockAnalysis,
     db=agent_db,
     add_datetime_to_context=True,
