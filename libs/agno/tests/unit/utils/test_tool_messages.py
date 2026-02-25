@@ -253,7 +253,7 @@ class TestEdgeCases:
             tool_calls=[{"tool_call_id": "c1", "tool_name": "fn", "content": "compressed"}],
         )
         result = normalize_tool_result_messages([msg], compress_tool_results=False)
-        assert result[0].content == "{'key': 'value'}"
+        assert result[0].content == '{"key": "value"}'
 
     def test_missing_tc_content_falls_back_to_original(self):
         msg = Message(
