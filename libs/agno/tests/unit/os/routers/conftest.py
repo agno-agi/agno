@@ -137,6 +137,26 @@ def make_streaming_body(
     }
 
 
+def make_streaming_agent(chunks=None):
+    agent = AsyncMock()
+    agent.name = "Test Agent"
+
+    async def _arun_stream(*args, **kwargs):
+        for c in chunks or []:
+            yield c
+
+    agent.arun = _arun_stream
+    return agent
+
+
+def content_chunk(text):
+    from agno.agent import RunEvent
+
+    return Mock(
+        event=RunEvent.run_content.value, content=text, tool=None, images=None, videos=None, audio=None, files=None
+    )
+
+
 async def wait_for_call(mock_method, timeout: float = 5.0):
     import asyncio
 
