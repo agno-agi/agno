@@ -43,15 +43,13 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-# Create Postgres-backed registry store
-rdb = PostgresDb(db_url=db_url)
 registry = Registry(
     name="Agno Registry",
     tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
     models=[
         OpenAIChat(id="gpt-5"),
     ],
-    dbs=[rdb],
+    dbs=[db],
 )
 
 # Create an agent
