@@ -210,7 +210,7 @@ class CodeMode(Toolkit):
             )
         self.add_instructions = True
 
-    def run_code(self, code: str) -> Union[str, ToolResult]:
+    def run_code(self, code: str, fc: Optional[Any] = None) -> Union[str, ToolResult]:
         """Execute Python code that calls tool functions directly.
 
         RULES:
@@ -225,8 +225,10 @@ class CodeMode(Toolkit):
             details = json.loads(get_details(product_id=data[0]["id"]))
             result = f"Found: {details['name']} at ${details['price']}"
         """
+        # fc.function is the deep-copied Function with _run_response injected
+        run_response = getattr(fc.function, "_run_response", None) if fc else None
         if self.code_model is not None:
-            return self._run_with_code_model(code, use_async=False)
+            return self._run_with_code_model(code, use_async=False, run_response=run_response)
         result = execute_code(self, code, use_async=False)
         if isinstance(result, ToolResult):
             return result
@@ -234,9 +236,11 @@ class CodeMode(Toolkit):
             return result[len(self.exec_error_prefix) :]
         return result
 
-    async def arun_code(self, code: str) -> Union[str, ToolResult]:
+    async def arun_code(self, code: str, fc: Optional[Any] = None) -> Union[str, ToolResult]:
+        # fc.function is the deep-copied Function with _run_response injected
+        run_response = getattr(fc.function, "_run_response", None) if fc else None
         if self.code_model is not None:
-            return await self._arun_with_code_model(code, use_async=True)
+            return await self._arun_with_code_model(code, use_async=True, run_response=run_response)
         import asyncio
 
         loop = asyncio.get_running_loop()
@@ -359,13 +363,7 @@ class CodeMode(Toolkit):
             return m.group(1).strip()
         return text.strip()
 
-    def _get_run_response(self) -> Any:
-        run_code_func = self.functions.get("run_code")
-        if run_code_func is not None:
-            return getattr(run_code_func, "_run_response", None)
-        return None
-
-    def _generate_code(self, task: str, error: Optional[str] = None) -> str:
+    def _generate_code(self, task: str, error: Optional[str] = None, run_response: Optional[Any] = None) -> str:
         from agno.models.message import Message
 
         system = self.code_model_system + self.stubs
@@ -377,10 +375,10 @@ class CodeMode(Toolkit):
             Message(role="system", content=system),
             Message(role="user", content=user_content),
         ]
-        response = self.code_model.response(messages=messages, run_response=self._get_run_response())  # type: ignore[union-attr]
+        response = self.code_model.response(messages=messages, run_response=run_response)  # type: ignore[union-attr]
         return self._extract_code_block(response.content or "")
 
-    async def _agenerate_code(self, task: str, error: Optional[str] = None) -> str:
+    async def _agenerate_code(self, task: str, error: Optional[str] = None, run_response: Optional[Any] = None) -> str:
         from agno.models.message import Message
 
         system = self.code_model_system + self.stubs
@@ -392,13 +390,15 @@ class CodeMode(Toolkit):
             Message(role="system", content=system),
             Message(role="user", content=user_content),
         ]
-        response = await self.code_model.aresponse(messages=messages, run_response=self._get_run_response())  # type: ignore[union-attr]
+        response = await self.code_model.aresponse(messages=messages, run_response=run_response)  # type: ignore[union-attr]
         return self._extract_code_block(response.content or "")
 
-    def _run_with_code_model(self, task: str, use_async: bool = False) -> Union[str, ToolResult]:
+    def _run_with_code_model(
+        self, task: str, use_async: bool = False, run_response: Optional[Any] = None
+    ) -> Union[str, ToolResult]:
         last_error: Optional[str] = None
         for attempt in range(self.max_code_retries):
-            code = self._generate_code(task, error=last_error)
+            code = self._generate_code(task, error=last_error, run_response=run_response)
             log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
             result = execute_code(self, code, use_async=use_async)
             if isinstance(result, ToolResult):
@@ -409,7 +409,9 @@ class CodeMode(Toolkit):
             log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
 
-    async def _arun_with_code_model(self, task: str, use_async: bool = True) -> Union[str, ToolResult]:
+    async def _arun_with_code_model(
+        self, task: str, use_async: bool = True, run_response: Optional[Any] = None
+    ) -> Union[str, ToolResult]:
         import asyncio
 
         loop = asyncio.get_running_loop()
@@ -417,7 +419,7 @@ class CodeMode(Toolkit):
         try:
             last_error: Optional[str] = None
             for attempt in range(self.max_code_retries):
-                code = await self._agenerate_code(task, error=last_error)
+                code = await self._agenerate_code(task, error=last_error, run_response=run_response)
                 log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
                 result = await loop.run_in_executor(None, execute_code, self, code, use_async)
                 if isinstance(result, ToolResult):

@@ -390,6 +390,7 @@ def _determine_tools_for_model(
         for func in _functions:  # type: ignore
             if isinstance(func, Function):
                 func._run_context = run_context
+                func._run_response = run_response
                 func._images = joint_images
                 func._files = joint_files
                 func._audios = joint_audios
