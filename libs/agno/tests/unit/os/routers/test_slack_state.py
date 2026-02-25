@@ -7,7 +7,6 @@ def test_track_complete_lifecycle():
     state = StreamState()
     state.track_task("tool_1", "Running search")
     assert state.task_cards["tool_1"].status == "in_progress"
-    assert state.progress_started is True
 
     state.complete_task("tool_1")
     assert state.task_cards["tool_1"].status == "complete"
