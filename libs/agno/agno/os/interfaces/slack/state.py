@@ -50,9 +50,7 @@ class StreamState:
     # Leader/workflow name; member_name() compares against it to detect team members
     entity_name: str = ""
 
-    # Last StepOutput content; used by WorkflowCompleted as fallback when its
-    # own content is None. Intentionally overwrites — last step is best fallback.
-    # Not appended to text_buffer to avoid premature streaming.
+    # Last StepOutput content; WorkflowCompleted uses as fallback when content is None
     workflow_final_content: str = ""
 
     # Set by handlers on terminal events; router reads this for the final flush
