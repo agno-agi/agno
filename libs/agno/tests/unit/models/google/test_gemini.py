@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from agno.media import File
 from agno.models.google.gemini import Gemini
+from agno.models.message import Message
 
 
 def test_gemini_get_client_with_credentials_vertexai():
@@ -132,3 +133,94 @@ class TestFormatFileForMessage:
             model._format_file_for_message(f)
             mock_part.from_bytes.assert_called_once_with(mime_type="application/pdf", data=b"binary data")
             Path(tmp.name).unlink()
+
+
+class TestFormatMessagesEmptyParts:
+    """Test that messages with empty parts are filtered out before sending to Gemini API."""
+
+    def _make_model(self):
+        model = Gemini(api_key="test-key")
+        return model
+
+    def test_filters_message_with_none_content(self):
+        """Messages with None content and no tool calls should be filtered out."""
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="You are helpful"),
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content=None),  # empty parts
+            Message(role="user", content="How are you?"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        # System message is extracted separately, not in formatted list.
+        # The assistant message with None content should be filtered out.
+        assert len(formatted) == 2
+        assert all(msg.parts for msg in formatted)
+
+    def test_filters_message_with_empty_list_content(self):
+        """Messages with list content but no tool calls produce empty parts and should be filtered."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content=["some list"]),  # list content, no tool calls -> empty parts
+            Message(role="user", content="Next question"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        # The assistant message with list content (no tool_calls) falls through
+        # the text content branch without adding parts, so it should be filtered.
+        assert len(formatted) == 2
+        for msg in formatted:
+            assert msg.parts is not None
+            assert len(msg.parts) > 0
+
+    def test_keeps_message_with_valid_content(self):
+        """Messages with valid string content should be kept."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content="Hi there!"),
+            Message(role="user", content="Thanks"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert len(formatted) == 3
+        for msg in formatted:
+            assert msg.parts is not None
+            assert len(msg.parts) > 0
+
+    def test_keeps_system_message_separate(self):
+        """System messages should be extracted as system_message, not in formatted list."""
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be helpful"),
+            Message(role="user", content="Hello"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert system_msg == "Be helpful"
+        assert len(formatted) == 1
+
+    def test_all_empty_parts_returns_empty_list(self):
+        """If all non-system messages have empty parts, return empty formatted list."""
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be helpful"),
+            Message(role="assistant", content=None),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert system_msg == "Be helpful"
+        assert len(formatted) == 0
+
+    def test_mixed_valid_and_empty_messages(self):
+        """Only empty-parts messages are filtered; valid ones are kept."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="First"),
+            Message(role="assistant", content=None),  # will be filtered
+            Message(role="user", content="Second"),
+            Message(role="assistant", content="Response"),
+            Message(role="assistant", content=None),  # will be filtered
+            Message(role="user", content="Third"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert len(formatted) == 4
+        roles = [msg.role for msg in formatted]
+        assert roles == ["user", "user", "model", "user"]
