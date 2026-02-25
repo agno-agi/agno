@@ -23,6 +23,7 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.prompts import get_json_output_prompt
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
@@ -230,6 +231,18 @@ class Gemini(Model):
             file_search_config["metadata_filter"] = self.file_search_metadata_filter
         builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
 
+    def _is_gemini_2_5(self) -> bool:
+        model_id = self.id.lower()
+        return "gemini-2.5" in model_id
+
+    @staticmethod
+    def _has_function_declarations(tools_config: list) -> bool:
+        """Check if tools list contains function declarations (not just built-in tools)."""
+        for tool in tools_config:
+            if isinstance(tool, Tool) and tool.function_declarations:
+                return True
+        return False
+
     def get_request_params(
         self,
         system_message: Optional[str] = None,
@@ -346,6 +359,29 @@ class Gemini(Model):
                 config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.ANY}}
             else:
                 config["tool_config"] = {"function_calling_config": {"mode": tool_choice}}
+
+        # Gemini 2.5 does not support function calling together with JSON response mode.
+        # When both are present, fall back to prompt-based JSON instructions.
+        config_tools = config.get("tools")
+        has_json_mode = config.get("response_mime_type") == "application/json"
+        has_func_decls = isinstance(config_tools, list) and self._has_function_declarations(config_tools)
+
+        if self._is_gemini_2_5() and has_json_mode and has_func_decls:
+            log_warning(
+                "Gemini 2.5 does not support function calling with response_mime_type='application/json'. "
+                "Falling back to prompt-based JSON output."
+            )
+            config.pop("response_mime_type", None)
+            saved_schema = config.pop("response_schema", None)
+
+            json_prompt = get_json_output_prompt(response_format if response_format is not None else saved_schema)  # type: ignore[arg-type]
+            existing_instruction = config.get("system_instruction", "")
+            if isinstance(existing_instruction, str):
+                config["system_instruction"] = (
+                    f"{existing_instruction}\n{json_prompt}" if existing_instruction else json_prompt
+                )
+            else:
+                config["system_instruction"] = json_prompt
 
         config = {k: v for k, v in config.items() if v is not None}
 

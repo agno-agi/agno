@@ -2,6 +2,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from pydantic import BaseModel, Field
+
 from agno.media import File
 from agno.models.google.gemini import Gemini
 
@@ -132,3 +134,113 @@ class TestFormatFileForMessage:
             model._format_file_for_message(f)
             mock_part.from_bytes.assert_called_once_with(mime_type="application/pdf", data=b"binary data")
             Path(tmp.name).unlink()
+
+
+class _SimpleSchema(BaseModel):
+    name: str = Field(description="A name")
+    value: int = Field(description="A value")
+
+
+_FUNCTION_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+        },
+    }
+]
+
+
+class TestGemini25JsonToolConflict:
+    def _extract_config(self, request_params: dict):
+        cfg = request_params.get("config")
+        if cfg is None:
+            return {}
+        return cfg.model_dump() if hasattr(cfg, "model_dump") else dict(cfg)
+
+    def test_guard_strips_json_mode_for_25_with_function_tools(self):
+        model = Gemini(id="gemini-2.5-flash", api_key="test-key")
+        params = model.get_request_params(
+            system_message="Be helpful.",
+            response_format=_SimpleSchema,
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") is None
+        assert cfg.get("response_schema") is None
+        assert cfg.get("tools") is not None
+        sys_inst = cfg.get("system_instruction")
+        assert sys_inst is not None
+        assert "json" in sys_inst.lower() or "JSON" in sys_inst
+
+    def test_guard_strips_json_mode_for_25_pro(self):
+        model = Gemini(id="gemini-2.5-pro-preview-05-06", api_key="test-key")
+        params = model.get_request_params(
+            response_format=_SimpleSchema,
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") is None
+        assert cfg.get("response_schema") is None
+
+    def test_no_guard_for_20_flash(self):
+        model = Gemini(id="gemini-2.0-flash", api_key="test-key")
+        params = model.get_request_params(
+            response_format=_SimpleSchema,
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") == "application/json"
+        assert cfg.get("response_schema") is not None
+
+    def test_no_guard_without_tools(self):
+        model = Gemini(id="gemini-2.5-flash", api_key="test-key")
+        params = model.get_request_params(
+            response_format=_SimpleSchema,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") == "application/json"
+        assert cfg.get("response_schema") is not None
+
+    def test_no_guard_without_json_mode(self):
+        model = Gemini(id="gemini-2.5-flash", api_key="test-key")
+        params = model.get_request_params(
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") is None
+
+    def test_no_guard_for_builtin_tools_only(self):
+        model = Gemini(id="gemini-2.5-flash", api_key="test-key", search=True)
+        params = model.get_request_params(
+            response_format=_SimpleSchema,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") == "application/json"
+        assert cfg.get("response_schema") is not None
+
+    def test_guard_preserves_existing_system_instruction(self):
+        model = Gemini(id="gemini-2.5-flash", api_key="test-key")
+        params = model.get_request_params(
+            system_message="You are a helpful assistant.",
+            response_format=_SimpleSchema,
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        sys_inst = cfg.get("system_instruction", "")
+        assert "You are a helpful assistant." in sys_inst
+        assert "json" in sys_inst.lower() or "JSON" in sys_inst
+
+    def test_guard_handles_manual_generation_config(self):
+        model = Gemini(
+            id="gemini-2.5-flash",
+            api_key="test-key",
+            generation_config={"response_mime_type": "application/json"},
+        )
+        params = model.get_request_params(
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") is None
