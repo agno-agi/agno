@@ -17,8 +17,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict
 
+from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
 from agno.os.interfaces.slack.state import StreamState
+from agno.run.workflow import WorkflowRunEvent
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_chat_stream import AsyncChatStream
@@ -118,18 +120,18 @@ async def _wf_task(
 # Values are NORMALIZED (no "Team" prefix) so one set covers agent + team events.
 _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
     {
-        "ReasoningStarted",
-        "ReasoningCompleted",
-        "ToolCallStarted",
-        "ToolCallCompleted",
-        "ToolCallError",
-        "MemoryUpdateStarted",
-        "MemoryUpdateCompleted",
-        "RunContent",
-        "RunIntermediateContent",
-        "RunCompleted",
-        "RunError",
-        "RunCancelled",
+        RunEvent.reasoning_started.value,
+        RunEvent.reasoning_completed.value,
+        RunEvent.tool_call_started.value,
+        RunEvent.tool_call_completed.value,
+        RunEvent.tool_call_error.value,
+        RunEvent.memory_update_started.value,
+        RunEvent.memory_update_completed.value,
+        RunEvent.run_content.value,
+        RunEvent.run_intermediate_content.value,
+        RunEvent.run_completed.value,
+        RunEvent.run_error.value,
+        RunEvent.run_cancelled.value,
     }
 )
 
@@ -408,54 +410,54 @@ async def _on_loop_execution_completed(
 # Workflow event names never start with "Team" so normalization is a no-op for them.
 HANDLERS: Dict[str, _EventHandler] = {
     # -------------------------------------------------------------------------
-    # Agent/Team Events (normalized)
+    # Agent/Team Events (normalized - use RunEvent values)
     # -------------------------------------------------------------------------
-    "ReasoningStarted": _on_reasoning_started,
-    "ReasoningCompleted": _on_reasoning_completed,
-    "ToolCallStarted": _on_tool_call_started,
-    "ToolCallCompleted": _on_tool_call_completed,
-    "ToolCallError": _on_tool_call_error,
-    "RunContent": _on_run_content,
-    "RunIntermediateContent": _on_run_intermediate_content,
-    "MemoryUpdateStarted": _on_memory_update_started,
-    "MemoryUpdateCompleted": _on_memory_update_completed,
-    "RunCompleted": _on_run_completed,
-    "RunError": _on_run_error,
-    "RunCancelled": _on_run_error,  # Treat cancellation as terminal error
+    RunEvent.reasoning_started.value: _on_reasoning_started,
+    RunEvent.reasoning_completed.value: _on_reasoning_completed,
+    RunEvent.tool_call_started.value: _on_tool_call_started,
+    RunEvent.tool_call_completed.value: _on_tool_call_completed,
+    RunEvent.tool_call_error.value: _on_tool_call_error,
+    RunEvent.run_content.value: _on_run_content,
+    RunEvent.run_intermediate_content.value: _on_run_intermediate_content,
+    RunEvent.memory_update_started.value: _on_memory_update_started,
+    RunEvent.memory_update_completed.value: _on_memory_update_completed,
+    RunEvent.run_completed.value: _on_run_completed,
+    RunEvent.run_error.value: _on_run_error,
+    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
     # -------------------------------------------------------------------------
     # Workflow Lifecycle Events
     # -------------------------------------------------------------------------
-    "StepOutput": _on_step_output,
-    "WorkflowStarted": _on_workflow_started,
-    "WorkflowCompleted": _on_workflow_completed,
-    "WorkflowError": _on_workflow_error,
-    "WorkflowCancelled": _on_workflow_error,
+    WorkflowRunEvent.step_output.value: _on_step_output,
+    WorkflowRunEvent.workflow_started.value: _on_workflow_started,
+    WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
+    WorkflowRunEvent.workflow_error.value: _on_workflow_error,
+    WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
     # -------------------------------------------------------------------------
     # Workflow Step Events
     # -------------------------------------------------------------------------
-    "StepStarted": _make_wf_handler("step", "", started=True),
-    "StepCompleted": _make_wf_handler("step", "", started=False),
-    "StepError": _on_step_error,
+    WorkflowRunEvent.step_started.value: _make_wf_handler("step", "", started=True),
+    WorkflowRunEvent.step_completed.value: _make_wf_handler("step", "", started=False),
+    WorkflowRunEvent.step_error.value: _on_step_error,
     # -------------------------------------------------------------------------
     # Workflow Loop Events
     # -------------------------------------------------------------------------
-    "LoopExecutionStarted": _on_loop_execution_started,
-    "LoopIterationStarted": _on_loop_iteration_started,
-    "LoopIterationCompleted": _on_loop_iteration_completed,
-    "LoopExecutionCompleted": _on_loop_execution_completed,
+    WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
+    WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
+    WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
+    WorkflowRunEvent.loop_execution_completed.value: _on_loop_execution_completed,
     # -------------------------------------------------------------------------
     # Workflow Structural Events (factory-generated)
     # -------------------------------------------------------------------------
-    "ParallelExecutionStarted": _make_wf_handler("parallel", "Parallel", started=True),
-    "ParallelExecutionCompleted": _make_wf_handler("parallel", "Parallel", started=False),
-    "ConditionExecutionStarted": _make_wf_handler("cond", "Condition", started=True),
-    "ConditionExecutionCompleted": _make_wf_handler("cond", "Condition", started=False),
-    "RouterExecutionStarted": _make_wf_handler("router", "Router", started=True),
-    "RouterExecutionCompleted": _make_wf_handler("router", "Router", started=False),
-    "WorkflowAgentStarted": _make_wf_handler("agent", "Running", started=True, name_attr="agent_name"),
-    "WorkflowAgentCompleted": _make_wf_handler("agent", "Running", started=False, name_attr="agent_name"),
-    "StepsExecutionStarted": _make_wf_handler("steps", "Steps", started=True),
-    "StepsExecutionCompleted": _make_wf_handler("steps", "Steps", started=False),
+    WorkflowRunEvent.parallel_execution_started.value: _make_wf_handler("parallel", "Parallel", started=True),
+    WorkflowRunEvent.parallel_execution_completed.value: _make_wf_handler("parallel", "Parallel", started=False),
+    WorkflowRunEvent.condition_execution_started.value: _make_wf_handler("cond", "Condition", started=True),
+    WorkflowRunEvent.condition_execution_completed.value: _make_wf_handler("cond", "Condition", started=False),
+    WorkflowRunEvent.router_execution_started.value: _make_wf_handler("router", "Router", started=True),
+    WorkflowRunEvent.router_execution_completed.value: _make_wf_handler("router", "Router", started=False),
+    WorkflowRunEvent.workflow_agent_started.value: _make_wf_handler("agent", "Running", started=True, name_attr="agent_name"),
+    WorkflowRunEvent.workflow_agent_completed.value: _make_wf_handler("agent", "Running", started=False, name_attr="agent_name"),
+    WorkflowRunEvent.steps_execution_started.value: _make_wf_handler("steps", "Steps", started=True),
+    WorkflowRunEvent.steps_execution_completed.value: _make_wf_handler("steps", "Steps", started=False),
 }
 
 
