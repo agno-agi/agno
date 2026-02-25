@@ -72,6 +72,7 @@ from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryComp
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
 from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationCompletedEvent
 from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
+from agno.run.team import TaskData as TeamTaskData
 from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
@@ -988,6 +989,8 @@ def create_team_task_state_updated_event(
     from_run_response: TeamRunOutput,
     task_summary: Optional[str] = None,
     goal_complete: bool = False,
+    tasks: Optional[List[TeamTaskData]] = None,
+    completion_summary: Optional[str] = None,
 ) -> TeamTaskStateUpdatedEvent:
     return TeamTaskStateUpdatedEvent(
         session_id=from_run_response.session_id,
@@ -996,6 +999,8 @@ def create_team_task_state_updated_event(
         run_id=from_run_response.run_id,
         task_summary=task_summary,
         goal_complete=goal_complete,
+        tasks=tasks or [],
+        completion_summary=completion_summary,
     )
 
 

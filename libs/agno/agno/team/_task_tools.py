@@ -102,6 +102,13 @@ def _get_task_management_tools(
         Returns:
             str: Confirmation with the new task ID.
         """
+        # Check for duplicate tasks with the same title (case-insensitive)
+        title_lower = title.lower().strip()
+        for existing_task in task_list.tasks:
+            if existing_task.title.lower().strip() == title_lower:
+                log_debug(f"Task with title '{title}' already exists: [{existing_task.id}]")
+                return f"Task already exists: [{existing_task.id}] {existing_task.title} (status: {existing_task.status.value}). Use this task instead of creating a duplicate."
+
         task = task_list.create_task(
             title=title,
             description=description,
@@ -179,7 +186,7 @@ def _get_task_management_tools(
     # ------------------------------------------------------------------
     # Tool: mark_all_complete
     # ------------------------------------------------------------------
-    def mark_all_complete(summary: str) -> str:
+    def mark_all_complete(summary: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         """Signal that the overall goal has been achieved. Call this when all tasks are done.
 
         Args:
@@ -187,6 +194,8 @@ def _get_task_management_tools(
         Returns:
             str: Confirmation.
         """
+        # Note: **kwargs is used to gracefully handle any extra arguments
+        # that the model might hallucinate (e.g., 'post', 'outcome', etc.)
         task_list.goal_complete = True
         task_list.completion_summary = summary
         save_task_list(run_context.session_state, task_list)

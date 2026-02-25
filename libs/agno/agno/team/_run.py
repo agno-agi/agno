@@ -51,6 +51,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -722,6 +723,20 @@ def _run_tasks_stream(
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
 
+            # Convert task list to TaskData for frontend
+            task_data_list = [
+                TaskData(
+                    id=t.id,
+                    title=t.title,
+                    description=t.description,
+                    status=t.status.value,
+                    assignee=t.assignee,
+                    dependencies=t.dependencies,
+                    result=t.result,
+                )
+                for t in task_list.tasks
+            ]
+
             # Yield task state updated event
             if stream_events:
                 yield handle_event(  # type: ignore
@@ -729,6 +744,8 @@ def _run_tasks_stream(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -2503,6 +2520,20 @@ async def _arun_tasks_stream(
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
 
+            # Convert task list to TaskData for frontend
+            task_data_list = [
+                TaskData(
+                    id=t.id,
+                    title=t.title,
+                    description=t.description,
+                    status=t.status.value,
+                    assignee=t.assignee,
+                    dependencies=t.dependencies,
+                    result=t.result,
+                )
+                for t in task_list.tasks
+            ]
+
             # Yield task state updated event
             if stream_events:
                 yield handle_event(  # type: ignore
@@ -2510,6 +2541,8 @@ async def _arun_tasks_stream(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
