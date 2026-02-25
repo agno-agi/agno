@@ -1,36 +1,10 @@
 import json
-import sys
-import types
 from unittest.mock import Mock, patch
 
 import pytest
+from slack_sdk.errors import SlackApiError
 
-
-def _install_fake_slack_sdk():
-    # Stub slack_sdk so tests run without the dependency
-    slack_sdk = types.ModuleType("slack_sdk")
-    slack_sdk_errors = types.ModuleType("slack_sdk.errors")
-
-    class SlackApiError(Exception):
-        def __init__(self, message="error", response=None):
-            super().__init__(message)
-            self.response = response
-
-    class WebClient:
-        def __init__(self, token=None):
-            self.token = token
-
-    slack_sdk.WebClient = WebClient
-    slack_sdk_errors.SlackApiError = SlackApiError
-    sys.modules.setdefault("slack_sdk", slack_sdk)
-    sys.modules.setdefault("slack_sdk.errors", slack_sdk_errors)
-
-
-_install_fake_slack_sdk()
-
-from slack_sdk.errors import SlackApiError  # noqa: E402
-
-from agno.tools.slack import SlackTools  # noqa: E402
+from agno.tools.slack import SlackTools
 
 
 @pytest.fixture
@@ -80,7 +54,7 @@ def test_send_message(slack_tools):
 
 
 def test_send_message_error(slack_tools):
-    slack_tools.client.chat_postMessage.side_effect = SlackApiError("error")
+    slack_tools.client.chat_postMessage.side_effect = SlackApiError("error", response=Mock())
     result = slack_tools.send_message("#general", "Hello")
     assert "error" in json.loads(result)
 
