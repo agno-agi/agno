@@ -3,10 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional
 
+from typing_extensions import TypedDict
+
 if TYPE_CHECKING:
+    from agno.media import Audio, File, Image, Video
     from agno.run.base import BaseRunOutputEvent
 
+# Literal not Enum — values flow directly into Slack API dicts as plain strings
 TaskStatus = Literal["in_progress", "complete", "error"]
+
+
+class TaskUpdateDict(TypedDict):
+    type: str
+    id: str
+    title: str
+    status: TaskStatus
 
 
 @dataclass
@@ -29,10 +40,10 @@ class StreamState:
 
     task_cards: Dict[str, TaskCard] = field(default_factory=dict)
 
-    images: list = field(default_factory=list)
-    videos: list = field(default_factory=list)
-    audio: list = field(default_factory=list)
-    files: list = field(default_factory=list)
+    images: List["Image"] = field(default_factory=list)
+    videos: List["Video"] = field(default_factory=list)
+    audio: List["Audio"] = field(default_factory=list)
+    files: List["File"] = field(default_factory=list)
 
     # Used by process_event to suppress nested agent events in workflow mode
     entity_type: Literal["agent", "team", "workflow"] = "agent"
@@ -40,7 +51,8 @@ class StreamState:
     entity_name: str = ""
 
     # Last StepOutput content; used by WorkflowCompleted as fallback when its
-    # own content is None. Not appended to text_buffer to avoid premature streaming.
+    # own content is None. Intentionally overwrites — last step is best fallback.
+    # Not appended to text_buffer to avoid premature streaming.
     workflow_final_content: str = ""
 
     # Set by handlers on terminal events; router reads this for the final flush
@@ -59,14 +71,14 @@ class StreamState:
         if card:
             card.status = "error"
 
-    def resolve_all_pending(self, status: TaskStatus = "complete") -> List[dict]:
+    def resolve_all_pending(self, status: TaskStatus = "complete") -> List[TaskUpdateDict]:
         # Called at stream end to close any cards left in_progress (e.g. if the
         # model finished without emitting a ToolCallCompleted for every start).
-        chunks: List[dict] = []
+        chunks: List[TaskUpdateDict] = []
         for key, card in self.task_cards.items():
             if card.status == "in_progress":
                 card.status = status  # type: ignore[assignment]
-                chunks.append({"type": "task_update", "id": key, "title": card.title, "status": status})
+                chunks.append(TaskUpdateDict(type="task_update", id=key, title=card.title, status=status))
         return chunks
 
     def append_content(self, text: str) -> None:

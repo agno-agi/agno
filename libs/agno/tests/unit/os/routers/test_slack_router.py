@@ -23,7 +23,6 @@ from .conftest import (
     wait_for_call,
 )
 
-
 # -- Non-streaming path --
 
 

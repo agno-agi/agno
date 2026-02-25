@@ -58,9 +58,7 @@ class _ToolRef:
     errored: bool
 
 
-def _extract_tool_ref(
-    chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None
-) -> _ToolRef:
+def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
     """Build unique (tid, label) for each tool call's Slack task card."""
     tool = getattr(chunk, "tool", None)
     tool_name = (tool.tool_name if tool else None) or "tool"
@@ -155,9 +153,7 @@ def _make_wf_handler(
     different parameters (e.g., ParallelStarted, ConditionCompleted, etc.).
     """
 
-    async def handler(
-        chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-    ) -> bool:
+    async def handler(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
         await _wf_task(chunk, state, stream, prefix, label, started=started, name_attr=name_attr)
         return False
 
@@ -169,18 +165,14 @@ def _make_wf_handler(
 # =============================================================================
 
 
-async def _on_reasoning_started(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     key = f"reasoning_{state.reasoning_round}"
     state.track_task(key, "Reasoning")
     await _emit_task(stream, key, "Reasoning", "in_progress")
     return False
 
 
-async def _on_reasoning_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     key = f"reasoning_{state.reasoning_round}"
     state.complete_task(key)
     state.reasoning_round += 1
@@ -188,9 +180,8 @@ async def _on_reasoning_completed(
     return False
 
 
-async def _on_tool_call_started(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # Fallback when SDK chunks omit tool_call_id so cards still render
     ref = _extract_tool_ref(chunk, state, fallback_id=str(len(state.task_cards)))
     if ref.tid:
         state.track_task(ref.tid, ref.label)
@@ -198,9 +189,7 @@ async def _on_tool_call_started(
     return False
 
 
-async def _on_tool_call_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     ref = _extract_tool_ref(chunk, state)
     if ref.tid:
         # Backfill card when Completed arrives without a prior Started event
@@ -214,9 +203,7 @@ async def _on_tool_call_completed(
     return False
 
 
-async def _on_tool_call_error(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     ref = _extract_tool_ref(chunk, state, fallback_id=f"tool_error_{state.error_count}")
     error_msg = getattr(chunk, "error", None) or "Tool call failed"
     state.error_count += 1
@@ -228,18 +215,14 @@ async def _on_tool_call_error(
     return False
 
 
-async def _on_run_content(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_run_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     content = getattr(chunk, "content", None)
     if content is not None:
         state.append_content(content)
     return False
 
 
-async def _on_run_intermediate_content(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_run_intermediate_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     # Teams emit intermediate content from each member as they finish. Showing
     # these would interleave partial outputs in the stream. The team leader
     # emits a single consolidated RunContent at the end — that's what we show.
@@ -250,31 +233,23 @@ async def _on_run_intermediate_content(
     return False
 
 
-async def _on_memory_update_started(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_memory_update_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     state.track_task("memory_update", "Updating memory")
     await _emit_task(stream, "memory_update", "Updating memory", "in_progress")
     return False
 
 
-async def _on_memory_update_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_memory_update_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     state.complete_task("memory_update")
     await _emit_task(stream, "memory_update", "Updating memory", "complete")
     return False
 
 
-async def _on_run_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     return False  # Finalization handled by caller after stream ends
 
 
-async def _on_run_error(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     state.error_count += 1
     error_msg = getattr(chunk, "content", None) or "An error occurred"
     state.append_error(error_msg)
@@ -287,9 +262,7 @@ async def _on_run_error(
 # =============================================================================
 
 
-async def _on_step_output(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_step_output(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     # StepOutput is workflow-only (agents/teams never emit it).
     # Capture but don't stream — WorkflowCompleted uses this as fallback.
     content = getattr(chunk, "content", None)
@@ -298,9 +271,7 @@ async def _on_step_output(
     return False
 
 
-async def _on_workflow_started(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_workflow_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     wf_name = getattr(chunk, "workflow_name", None) or state.entity_name or "Workflow"
     run_id = getattr(chunk, "run_id", None) or "run"
     key = f"wf_run_{run_id}"
@@ -309,9 +280,7 @@ async def _on_workflow_started(
     return False
 
 
-async def _on_workflow_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_workflow_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     run_id = getattr(chunk, "run_id", None) or "run"
     wf_name = getattr(chunk, "workflow_name", None) or state.entity_name or "Workflow"
     key = f"wf_run_{run_id}"
@@ -325,9 +294,7 @@ async def _on_workflow_completed(
     return False
 
 
-async def _on_workflow_error(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_workflow_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     state.error_count += 1
     error_msg = getattr(chunk, "error", None) or getattr(chunk, "content", None) or "Workflow failed"
     state.append_error(error_msg)
@@ -335,9 +302,7 @@ async def _on_workflow_error(
     return True
 
 
-async def _on_step_error(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_step_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "step"
     sid = getattr(chunk, "step_id", None) or step_name
     key = f"wf_step_{sid}"
@@ -354,9 +319,7 @@ async def _on_step_error(
 # =============================================================================
 
 
-async def _on_loop_execution_started(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_loop_execution_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "loop"
     loop_key = getattr(chunk, "step_id", None) or step_name
     max_iter = getattr(chunk, "max_iterations", None)
@@ -367,9 +330,7 @@ async def _on_loop_execution_started(
     return False
 
 
-async def _on_loop_iteration_started(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_loop_iteration_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     loop_key = getattr(chunk, "step_id", None) or getattr(chunk, "step_name", None) or "loop"
     iteration = getattr(chunk, "iteration", 0)
     max_iter = getattr(chunk, "max_iterations", None)
@@ -380,9 +341,7 @@ async def _on_loop_iteration_started(
     return False
 
 
-async def _on_loop_iteration_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_loop_iteration_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     loop_key = getattr(chunk, "step_id", None) or getattr(chunk, "step_name", None) or "loop"
     iteration = getattr(chunk, "iteration", 0)
     key = f"wf_loop_{loop_key}_iter_{iteration}"
@@ -391,9 +350,7 @@ async def _on_loop_iteration_completed(
     return False
 
 
-async def _on_loop_execution_completed(
-    chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def _on_loop_execution_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "loop"
     loop_key = getattr(chunk, "step_id", None) or step_name
     key = f"wf_loop_{loop_key}"
@@ -461,9 +418,7 @@ HANDLERS: Dict[str, _EventHandler] = {
 }
 
 
-async def process_event(
-    ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream
-) -> bool:
+async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     """
     Process a streaming event and update Slack accordingly.
 

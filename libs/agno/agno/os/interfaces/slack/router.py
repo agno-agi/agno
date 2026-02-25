@@ -341,7 +341,9 @@ def attach_routes(
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 
         except Exception as e:
-            log_error(f"Error streaming slack response: {e}")
+            log_error(
+                f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
+            )
             try:
                 await async_client.assistant_threads_setStatus(
                     channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""

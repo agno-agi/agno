@@ -105,4 +105,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="streaming_deep_research:app", port=8000, reload=True)
+    agent_os.serve(app="streaming_deep_research:app", reload=True)

@@ -4,6 +4,9 @@ Examples for connecting Agno agents, teams, and workflows to Slack using the
 `Slack` interface in AgentOS. Supports both standard request/response and
 real-time streaming via Slack's `chat_stream` API.
 
+**Requirements:** `slack_sdk >= 3.40.0` (streaming with plan-mode task cards).
+Install or upgrade with `pip install "slack_sdk>=3.40.0"`.
+
 ## Slack App Setup
 
 Follow these steps to create and configure a Slack app for use with Agno.
@@ -20,6 +23,8 @@ Follow these steps to create and configure a Slack app for use with Agno.
 2. Toggle **Agent or Assistant** to **On**.
 3. Under **Suggested Prompts**, select **Dynamic** (lets the server set prompts via API).
 4. Click **Save**.
+
+> Enabling this automatically adds the `assistant:write` scope.
 
 ### 3. Add OAuth Scopes
 
@@ -65,6 +70,7 @@ Not all scopes are needed for every example — `app_mentions:read`, `assistant:
 | `assistant_thread_context_changed` | Update context when thread is moved |
 
 5. Click **Save Changes**.
+6. Go to **Install App** and click **Reinstall to Workspace** to apply the new events.
 
 ### 5. Set Environment Variables
 
@@ -76,12 +82,17 @@ export OPENAI_API_KEY="sk-..."              # Or whichever model provider you us
 
 ### 6. Start a Tunnel
 
+Slack needs a public URL to deliver events. Use [ngrok](https://ngrok.com/)
+or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
+
 ```bash
 ngrok http 7777
 # or: cloudflared tunnel --url http://localhost:7777
 ```
 
-Copy the public URL and paste it into the Event Subscriptions Request URL (step 4.3).
+Copy the public HTTPS URL and paste it into the Event Subscriptions Request URL
+(step 4.3). The free ngrok tier gives you a random subdomain that changes on
+restart — update the Request URL each time.
 
 ### 7. Run an Example
 
@@ -118,6 +129,7 @@ render as progress cards in Slack's plan display.
 - `channel_summarizer.py` — Agent that reads channel history and summarizes threads.
 - `file_analyst.py` — Agent that downloads, analyzes, and uploads files.
 - `research_assistant.py` — Agent combining Slack search with web search.
+- `multi_bot.py` — Multiple bots with different models in one server.
 - `multiple_instances.py` — Two bots on one server with separate credentials.
 
 ## Troubleshooting
@@ -125,9 +137,11 @@ render as progress cards in Slack's plan display.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Bot doesn't respond | Event URL not set or server not running | Check Event Subscriptions shows "Verified" |
-| `internal_error` on `chat.appendStream` | "Agents & AI Apps" not enabled | Enable it in the sidebar (step 2) |
+| `internal_error` on `chat.appendStream` | "Agents & AI Apps" not enabled, or missing `assistant:write` scope, or app not reinstalled after config changes | 1. Enable "Agents & AI Apps" (step 2). 2. Add `assistant:write` scope (step 3). 3. Reinstall the app to the workspace. |
 | Blank streaming bubble | Wrong `recipient_user_id` | Ensure you're using the human user's ID, not the bot's |
+| No plan-mode task cards | `slack_sdk` older than 3.40.0 | Run `pip install "slack_sdk>=3.40.0"` |
 | No suggested prompts | `assistant_thread_started` event missing | Add it in Event Subscriptions (step 4) |
 | Bot only responds to DMs, not channels | Missing `message.channels` event | Add channel events in Event Subscriptions |
 | `SLACK_SIGNING_SECRET is not set` | Missing env var | Export `SLACK_SIGNING_SECRET` before running |
 | 403 on event webhook | Invalid signing secret | Check the secret matches Basic Information page |
+| URL verification fails | Server not running or wrong signing secret | Start the server (step 7) before setting the Request URL |
