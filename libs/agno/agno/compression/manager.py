@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -9,6 +9,9 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.utils.log import log_error, log_info, log_warning
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
     You are compressing tool call results to save context space while preserving critical information.
@@ -99,7 +102,11 @@ class CompressionManager:
 
         return False
 
-    def _compress_tool_result(self, tool_result: Message) -> Optional[str]:
+    def _compress_tool_result(
+        self,
+        tool_result: Message,
+        run_metrics: Optional["RunMetrics"] = None,
+    ) -> Optional[str]:
         if not tool_result:
             return None
 
@@ -120,12 +127,23 @@ class CompressionManager:
                     Message(role="user", content=compression_message),
                 ]
             )
+
+            # Accumulate compression model metrics
+            if run_metrics is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
+
             return response.content
         except Exception as e:
             log_error(f"Error compressing tool result: {e}")
             return tool_content
 
-    def compress(self, messages: List[Message]) -> None:
+    def compress(
+        self,
+        messages: List[Message],
+        run_metrics: Optional["RunMetrics"] = None,
+    ) -> None:
         """Compress uncompressed tool results"""
         if not self.compress_tool_results:
             return
@@ -138,7 +156,7 @@ class CompressionManager:
         # Compress uncompressed tool results
         for tool_msg in uncompressed_tools:
             original_len = len(str(tool_msg.content)) if tool_msg.content else 0
-            compressed = self._compress_tool_result(tool_msg)
+            compressed = self._compress_tool_result(tool_msg, run_metrics=run_metrics)
             if compressed:
                 tool_msg.compressed_content = compressed
                 # Count actual tool results (Gemini combines multiple in one message)
@@ -188,7 +206,11 @@ class CompressionManager:
 
         return False
 
-    async def _acompress_tool_result(self, tool_result: Message) -> Optional[str]:
+    async def _acompress_tool_result(
+        self,
+        tool_result: Message,
+        run_metrics: Optional["RunMetrics"] = None,
+    ) -> Optional[str]:
         """Async compress a single tool result"""
         if not tool_result:
             return None
@@ -210,12 +232,23 @@ class CompressionManager:
                     Message(role="user", content=compression_message),
                 ]
             )
+
+            # Accumulate compression model metrics
+            if run_metrics is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
+
             return response.content
         except Exception as e:
             log_error(f"Error compressing tool result: {e}")
             return tool_content
 
-    async def acompress(self, messages: List[Message]) -> None:
+    async def acompress(
+        self,
+        messages: List[Message],
+        run_metrics: Optional["RunMetrics"] = None,
+    ) -> None:
         """Async compress uncompressed tool results"""
         if not self.compress_tool_results:
             return
@@ -229,7 +262,7 @@ class CompressionManager:
         original_sizes = [len(str(msg.content)) if msg.content else 0 for msg in uncompressed_tools]
 
         # Parallel compression using asyncio.gather
-        tasks = [self._acompress_tool_result(msg) for msg in uncompressed_tools]
+        tasks = [self._acompress_tool_result(msg, run_metrics=run_metrics) for msg in uncompressed_tools]
         results = await asyncio.gather(*tasks)
 
         # Apply results and track stats
