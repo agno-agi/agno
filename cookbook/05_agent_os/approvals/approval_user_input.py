@@ -6,7 +6,6 @@ Approval + user input HITL: @approval + @tool(requires_user_input=True).
 """
 
 import os
-import time
 
 from agno.agent import Agent
 from agno.approval import approval
