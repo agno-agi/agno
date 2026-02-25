@@ -710,6 +710,36 @@ def test_tool_decorator_with_agent_team_params():
     assert agent_team_func.parameters["properties"]["param1"]["type"] == "string"
 
 
+def test_tool_decorator_with_agent_team_type_annotations():
+    """Test @tool decorator skips validation when parameter types are Agent/Team,
+    even when parameter names differ from 'agent'/'team' (issue #6344)."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    @tool
+    def func_with_agent_type(my_agent: Agent, query: str) -> str:
+        """Function with Agent type but non-standard parameter name."""
+        return query
+
+    assert isinstance(func_with_agent_type, Function)
+    func_with_agent_type.process_entrypoint()
+    # Should not have _wrapped_for_validation since validation was skipped
+    assert not getattr(func_with_agent_type.entrypoint, "_wrapped_for_validation", False)
+    assert "query" in func_with_agent_type.parameters["properties"]
+    assert "my_agent" not in func_with_agent_type.parameters["properties"]
+
+    @tool
+    def func_with_team_type(my_team: Team, query: str) -> str:
+        """Function with Team type but non-standard parameter name."""
+        return query
+
+    assert isinstance(func_with_team_type, Function)
+    func_with_team_type.process_entrypoint()
+    assert not getattr(func_with_team_type.entrypoint, "_wrapped_for_validation", False)
+    assert "query" in func_with_team_type.parameters["properties"]
+    assert "my_team" not in func_with_team_type.parameters["properties"]
+
+
 def test_tool_decorator_with_complex_types():
     """Test @tool decorator with complex parameter types."""
     from typing import Dict, List, Optional

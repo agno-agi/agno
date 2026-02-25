@@ -436,7 +436,6 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
             excluded_params = [
@@ -450,6 +449,20 @@ class Function(BaseModel):
                 "audios",
                 "files",
             ]
+
+            # Also exclude parameters whose types are Agent or Team,
+            # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
+            try:
+                from agno.agent.agent import Agent
+                from agno.team.team import Team
+
+                framework_types = (Agent, Team)
+                for param_name, hint in list(type_hints.items()):
+                    if isinstance(hint, type) and issubclass(hint, framework_types):
+                        del type_hints[param_name]
+                        excluded_params.append(param_name)
+            except Exception:
+                pass
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -565,11 +578,26 @@ class Function(BaseModel):
         if framework_params & set(sig.parameters.keys()):
             return func
 
+        # Also skip validation when parameter types include Agent or Team,
+        # even if the parameter name differs (e.g. my_agent: Agent).
+        # validate_call uses get_type_hints() which fails to resolve types
+        # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
+        try:
+            hints = get_type_hints(func)
+            from agno.agent.agent import Agent
+            from agno.team.team import Team
+
+            framework_types = (Agent, Team)
+            for hint in hints.values():
+                if isinstance(hint, type) and issubclass(hint, framework_types):
+                    return func
+        except Exception:
+            pass
+
         # Wrap the callable with validate_call
-        else:
-            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
-            return wrapped
+        wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+        return wrapped
 
     def process_schema_for_strict(self):
         """Process the schema to make it strict mode compliant."""
@@ -820,29 +848,51 @@ class FunctionCall(BaseModel):
         """Builds the arguments for the entrypoint."""
         from inspect import signature
 
+        sig = signature(self.function.entrypoint)  # type: ignore
         entrypoint_args = {}
-        # Check if the entrypoint has an agent argument
-        if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
+
+        # Check if the entrypoint has an agent argument (by name)
+        if "agent" in sig.parameters:
             entrypoint_args["agent"] = self.function._agent
-        # Check if the entrypoint has a team argument
-        if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
+        # Check if the entrypoint has a team argument (by name)
+        if "team" in sig.parameters:
             entrypoint_args["team"] = self.function._team
         # Check if the entrypoint has a run_context argument
-        if "run_context" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "run_context" in sig.parameters:
             entrypoint_args["run_context"] = self.function._run_context
         # Check if the entrypoint has an fc argument
-        if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
 
         # Check if the entrypoint has media arguments
-        if "images" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "images" in sig.parameters:
             entrypoint_args["images"] = self.function._images
-        if "videos" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "videos" in sig.parameters:
             entrypoint_args["videos"] = self.function._videos
-        if "audios" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "audios" in sig.parameters:
             entrypoint_args["audios"] = self.function._audios
-        if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "files" in sig.parameters:
             entrypoint_args["files"] = self.function._files
+
+        # Also inject Agent/Team instances based on TYPE, not just name.
+        # This handles cases like `my_agent: Agent` or `custom_team: Team`.
+        # See issue #6344.
+        try:
+            from agno.agent.agent import Agent
+            from agno.team.team import Team
+
+            hints = get_type_hints(self.function.entrypoint)  # type: ignore
+            for param_name, hint in hints.items():
+                if param_name in entrypoint_args:
+                    continue  # Already handled by name-based injection
+                if isinstance(hint, type):
+                    if issubclass(hint, Agent) and self.function._agent is not None:
+                        entrypoint_args[param_name] = self.function._agent
+                    elif issubclass(hint, Team) and self.function._team is not None:
+                        entrypoint_args[param_name] = self.function._team
+        except Exception:
+            pass
+
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
