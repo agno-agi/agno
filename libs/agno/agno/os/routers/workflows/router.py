@@ -548,21 +548,18 @@ def get_workflow_router(
         workflows: List[WorkflowSummaryResponse] = []
         if accessible_workflows:
             for workflow in accessible_workflows:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            db_workflows = get_workflows(db=os.db, registry=os.registry)
-            if db_workflows:
-                for db_workflow in db_workflows:
-                    try:
-                        workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
-                    except Exception as e:
-                        workflow_id = getattr(db_workflow, "id", "unknown")
-                        logger.error(f"Error converting workflow {workflow_id} to response: {e}")
-                        # Continue processing other workflows even if this one fails
-                        continue
+            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+                try:
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
+                except Exception as e:
+                    workflow_id = getattr(db_workflow, "id", "unknown")
+                    logger.error(f"Error converting workflow {workflow_id} to response: {e}")
+                    continue
 
         return workflows
 

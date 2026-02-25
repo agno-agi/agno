@@ -33,7 +33,7 @@ def finance_agent(shared_model):
         name="Finance Agent",
         model=shared_model,
         role="Get financial data",
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(all=True)],
     )
 
 

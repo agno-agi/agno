@@ -6,8 +6,9 @@ get_relevant_docs_from_knowledge(), which checks knowledge_retriever
 first and falls back to knowledge.search().
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from agno.agent import Agent
 from agno.agent._tools import aget_tools, get_tools

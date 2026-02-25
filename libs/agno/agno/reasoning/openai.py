@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
@@ -27,19 +30,27 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
-def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.agent import RunOutput
-
+def get_openai_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
+        reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     # We use the normal content as no reasoning content is returned
@@ -58,19 +69,27 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
     )
 
 
-async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.agent import RunOutput
-
+async def aget_openai_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
+        reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
