@@ -1,17 +1,17 @@
 """
 Code Mode — Portfolio Analyzer (10-Stock Stress Test)
 ======================================================
-Head-to-head comparison: tool_execute_mode vs traditional tool_call mode
+Head-to-head comparison: code_mode vs traditional tool_call mode
 on a task requiring 40+ sequential tool calls.
 
-Without tool_execute_mode: the model makes ~40 individual tool calls across ~40 turns.
+Without code_mode: the model makes ~40 individual tool calls across ~40 turns.
 Each turn re-reads all previous tool results -> O(N^2) token growth.
 
-With tool_execute_mode: the model writes ONE program with a loop -> 1-2 turns total.
+With code_mode: the model writes ONE program with a loop -> 1-2 turns total.
 
 No API keys needed (YFinance is free).
 
-Run: .venvs/demo/bin/python cookbook/02_agents/17_tool_execute_mode/portfolio_analyzer.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/portfolio_analyzer.py
 """
 
 import time
@@ -62,11 +62,11 @@ def build_yfinance():
     )
 
 
-def run_tool_execute_mode():
+def run_code_mode():
     agent = Agent(
         model=Claude(id=MODEL),
         tools=[build_yfinance()],
-        tool_execute_mode=True,
+        code_mode=True,
         markdown=True,
         tool_call_limit=5,
     )
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     # Code mode
     print("\n[1/2] Running CODE MODE...")
     t0 = time.time()
-    code_resp = run_tool_execute_mode()
+    code_resp = run_code_mode()
     code_time = time.time() - t0
     cm = print_metrics("CODE MODE", code_resp, code_time)
 
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     code_stocks_found = sum(1 for s in STOCKS if s.lower() in code_content)
     trad_stocks_found = sum(1 for s in STOCKS if s.lower() in trad_content)
     print(
-        f"\nStocks in output: tool_execute_mode={code_stocks_found}/{len(STOCKS)}, traditional={trad_stocks_found}/{len(STOCKS)}"
+        f"\nStocks in output: code_mode={code_stocks_found}/{len(STOCKS)}, traditional={trad_stocks_found}/{len(STOCKS)}"
     )
 
     print(

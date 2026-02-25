@@ -6,8 +6,8 @@ import math
 import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
 
-from agno.tool_execute_mode.sandbox import execute_code
-from agno.tool_execute_mode.stubs import collect_functions, generate_catalog, generate_stub_map, resolve_discovery
+from agno.code_mode.sandbox import execute_code
+from agno.code_mode.stubs import collect_functions, generate_catalog, generate_stub_map, resolve_discovery
 from agno.tools import Toolkit
 from agno.tools.function import Function, ToolResult
 from agno.utils.log import log_debug
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from agno.models.base import Model
 
 
-class ToolExecuteMode(Toolkit):
+class CodeMode(Toolkit):
     def __init__(
         self,
         tools: List[Union["Toolkit", Callable, Function]],
@@ -33,6 +33,10 @@ class ToolExecuteMode(Toolkit):
     ):
         self.source_tools = tools
         self.code_model = code_model
+        if self.code_model is not None:
+            from agno.metrics import ModelType
+
+            self.code_model.model_type = ModelType.CODE_MODEL
         self.max_code_retries = max_code_retries
         self.return_variable = return_variable
         self.max_code_length = max_code_length
@@ -144,7 +148,16 @@ class ToolExecuteMode(Toolkit):
             "TypeError",
             "KeyError",
             "IndexError",
+            "AttributeError",
+            "RuntimeError",
+            "ZeroDivisionError",
+            "StopIteration",
+            "ArithmeticError",
+            "LookupError",
+            "OverflowError",
+            "NotImplementedError",
             "Exception",
+            "__build_class__",
             "True",
             "False",
             "None",
@@ -175,7 +188,7 @@ class ToolExecuteMode(Toolkit):
             sync_tools.insert(0, self.search_tools)
             async_tools.insert(0, (self.asearch_tools, "search_tools"))
 
-        super().__init__(name="tool_execute_mode", tools=sync_tools, async_tools=async_tools, **kwargs)
+        super().__init__(name="code_mode", tools=sync_tools, async_tools=async_tools, **kwargs)
 
         if self.code_model is not None:
             self.instructions = (
@@ -346,6 +359,12 @@ class ToolExecuteMode(Toolkit):
             return m.group(1).strip()
         return text.strip()
 
+    def _get_run_response(self) -> Any:
+        run_code_func = self.functions.get("run_code")
+        if run_code_func is not None:
+            return getattr(run_code_func, "_run_response", None)
+        return None
+
     def _generate_code(self, task: str, error: Optional[str] = None) -> str:
         from agno.models.message import Message
 
@@ -358,7 +377,7 @@ class ToolExecuteMode(Toolkit):
             Message(role="system", content=system),
             Message(role="user", content=user_content),
         ]
-        response = self.code_model.response(messages=messages)  # type: ignore[union-attr]
+        response = self.code_model.response(messages=messages, run_response=self._get_run_response())  # type: ignore[union-attr]
         return self._extract_code_block(response.content or "")
 
     async def _agenerate_code(self, task: str, error: Optional[str] = None) -> str:
@@ -373,21 +392,21 @@ class ToolExecuteMode(Toolkit):
             Message(role="system", content=system),
             Message(role="user", content=user_content),
         ]
-        response = await self.code_model.aresponse(messages=messages)  # type: ignore[union-attr]
+        response = await self.code_model.aresponse(messages=messages, run_response=self._get_run_response())  # type: ignore[union-attr]
         return self._extract_code_block(response.content or "")
 
     def _run_with_code_model(self, task: str, use_async: bool = False) -> Union[str, ToolResult]:
         last_error: Optional[str] = None
         for attempt in range(self.max_code_retries):
             code = self._generate_code(task, error=last_error)
-            log_debug(f"ToolExecuteMode code_model attempt {attempt + 1}:\n{code}")
+            log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
             result = execute_code(self, code, use_async=use_async)
             if isinstance(result, ToolResult):
                 return result
             if not result.startswith(self.exec_error_prefix):
                 return result
             last_error = result[len(self.exec_error_prefix) :]
-            log_debug(f"ToolExecuteMode code_model attempt {attempt + 1} failed: {last_error}")
+            log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
 
     async def _arun_with_code_model(self, task: str, use_async: bool = True) -> Union[str, ToolResult]:
@@ -399,14 +418,14 @@ class ToolExecuteMode(Toolkit):
             last_error: Optional[str] = None
             for attempt in range(self.max_code_retries):
                 code = await self._agenerate_code(task, error=last_error)
-                log_debug(f"ToolExecuteMode code_model attempt {attempt + 1}:\n{code}")
+                log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
                 result = await loop.run_in_executor(None, execute_code, self, code, use_async)
                 if isinstance(result, ToolResult):
                     return result
                 if not result.startswith(self.exec_error_prefix):
                     return result
                 last_error = result[len(self.exec_error_prefix) :]
-                log_debug(f"ToolExecuteMode code_model attempt {attempt + 1} failed: {last_error}")
+                log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
             return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
         finally:
             self.caller_loop = None

@@ -10,7 +10,7 @@ from agno.utils.log import log_warning
 def should_include(func: Function) -> bool:
     for attr in ("requires_confirmation", "requires_user_input", "external_execution"):
         if getattr(func, attr, None):
-            log_warning(f"ToolExecuteMode: Excluding '{func.name}' ({attr})")
+            log_warning(f"CodeMode: Excluding '{func.name}' ({attr})")
             return False
     return True
 

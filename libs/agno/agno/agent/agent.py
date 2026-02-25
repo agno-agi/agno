@@ -187,13 +187,13 @@ class Agent:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
-    # --- Tool Execute Mode ---
-    # Enable tool execute mode: the agent writes Python code to orchestrate tool calls.
-    tool_execute_mode: bool = False
+    # --- Code Mode ---
+    # Enable code mode: the agent writes Python code to orchestrate tool calls in a single exec() pass.
+    code_mode: bool = False
     # A dedicated model for generating code (optional; main model writes code if not set).
     code_model: Optional[Model] = None
-    # Tools to wrap in tool execute mode. If None and tool_execute_mode=True, ALL user tools are wrapped.
-    tool_execute_mode_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
+    # Tools to wrap in code mode. If None and code_mode=True, ALL user tools are wrapped.
+    code_mode_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
 
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
@@ -417,9 +417,9 @@ class Agent:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
-        tool_execute_mode: bool = False,
+        code_mode: bool = False,
         code_model: Optional[Union[Model, str]] = None,
-        tool_execute_mode_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
+        code_mode_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -572,9 +572,9 @@ class Agent:
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
 
-        self.tool_execute_mode = tool_execute_mode
+        self.code_mode = code_mode
         self.code_model = code_model  # type: ignore[assignment]
-        self.tool_execute_mode_tools = tool_execute_mode_tools
+        self.code_mode_tools = code_mode_tools
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
@@ -650,7 +650,7 @@ class Agent:
         self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._tool_execute_mode: Optional[Any] = None
+        self._code_mode: Optional[Any] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -669,8 +669,8 @@ class Agent:
         self._callable_tools_cache: Dict[str, List[Any]] = {}
         self._callable_knowledge_cache: Dict[str, Any] = {}
 
-        if self.tool_execute_mode_tools and not self.tool_execute_mode:
-            log_warning("tool_execute_mode_tools provided but tool_execute_mode=False — tools will be ignored")
+        if self.code_mode_tools and not self.code_mode:
+            log_warning("code_mode_tools provided but code_mode=False — tools will be ignored")
 
         _init.get_models(self)
 

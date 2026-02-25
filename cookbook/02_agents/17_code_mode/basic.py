@@ -1,9 +1,9 @@
 """
-Code Mode — Real-World Example with YFinanceTools
-==================================================
-Demonstrates ToolExecuteMode wrapping a real Agno toolkit.
-The LLM writes Python code that calls multiple YFinance tools
-in a single exec() pass — loops, filters, and formatting included.
+Code Mode — Basic Example with YFinanceTools
+==============================================
+Demonstrates code_mode=True on an Agent. The LLM writes Python code
+that calls multiple YFinance tools in a single exec() pass — loops,
+filters, and formatting included.
 
 Compares token usage: Code Mode vs Traditional tool_call mode.
 
@@ -13,27 +13,11 @@ Run:
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tool_execute_mode import ToolExecuteMode
 from agno.tools.yfinance import YFinanceTools
 
 TASK = (
     "Compare AAPL, MSFT, and GOOGL: get each stock's current price and analyst recommendations. "
     "Summarize in a markdown table with columns: Symbol, Price, Recommendation, # of Analysts."
-)
-
-CODE_MODE_INSTRUCTIONS = (
-    "You solve tasks by writing Python code using the run_code tool.\n\n"
-    "CRITICAL RULES:\n"
-    "1. Write ONE COMPLETE Python program per run_code call. NEVER make multiple small calls.\n"
-    "2. Your code should handle the ENTIRE task: fetch data, loop, filter, format.\n"
-    "3. Call functions DIRECTLY: get_current_stock_price(symbol='AAPL'). No prefix.\n"
-    "4. json and math are pre-loaded. Do NOT write import statements.\n"
-    "5. All functions return JSON strings. Always use json.loads() to parse results.\n"
-    "6. Store your final answer in `result` as a formatted markdown string.\n\n"
-    "PATTERN:\n"
-    "  price_data = json.loads(get_current_stock_price(symbol='AAPL'))\n"
-    "  recs = json.loads(get_analyst_recommendations(symbol='AAPL'))\n"
-    "  result = '| Symbol | Price |\\n' + rows"
 )
 
 if __name__ == "__main__":
@@ -43,15 +27,15 @@ if __name__ == "__main__":
     )
 
     print("=" * 70)
-    print("CODE MODE")
+    print("CODE MODE (code_mode=True)")
     print("=" * 70)
 
     code_agent = Agent(
         name="Code Mode Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[ToolExecuteMode(tools=[yf])],
+        tools=[yf],
+        code_mode=True,
         tool_call_limit=3,
-        instructions=CODE_MODE_INSTRUCTIONS,
         markdown=True,
     )
 
@@ -67,7 +51,6 @@ if __name__ == "__main__":
         name="Traditional Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
         tools=[yf],
-        instructions="You are a financial analyst. Use the available tools to answer questions.",
         markdown=True,
     )
 

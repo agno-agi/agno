@@ -9,7 +9,7 @@ from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tool_execute_mode.tool import ToolExecuteMode
+    from agno.code_mode.tool import CodeMode
 
 
 class SafeCallable:
@@ -28,7 +28,7 @@ class SafeCallable:
 
 
 def make_wrapper(
-    tool: "ToolExecuteMode",
+    tool: "CodeMode",
     name: str,
     func: Function,
     media_collector: Optional[Dict[str, List[Any]]] = None,
@@ -67,7 +67,7 @@ def make_wrapper(
     return wrapper
 
 
-def get_framework_args(tool: "ToolExecuteMode", entrypoint: Callable) -> Dict[str, Any]:
+def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]:
     args: Dict[str, Any] = {}
     run_code_func = tool.functions.get("run_code")
     if run_code_func is None:
@@ -124,7 +124,7 @@ def bridge_async(
 
 
 def build_namespace(
-    tool: "ToolExecuteMode",
+    tool: "CodeMode",
     use_async: bool = False,
     media_collector: Optional[Dict[str, List[Any]]] = None,
 ) -> Tuple[Dict[str, Any], Set[str]]:
@@ -146,7 +146,7 @@ def build_namespace(
     builtins_dict = dict(tool.safe_builtins)
     builtins_dict["__import__"] = _restricted_import
 
-    namespace: Dict[str, Any] = {"__builtins__": builtins_dict}
+    namespace: Dict[str, Any] = {"__builtins__": builtins_dict, "__name__": "__sandbox__"}
     namespace.update(preapproved)
 
     functions = tool.sandbox_async_functions if use_async else tool.sandbox_functions
@@ -191,7 +191,7 @@ def extract_result(
 
 
 def execute_code(
-    tool: "ToolExecuteMode",
+    tool: "CodeMode",
     code: str,
     use_async: bool = False,
 ) -> Union[str, ToolResult]:
@@ -200,7 +200,7 @@ def execute_code(
             return f"{tool.exec_error_prefix}Code exceeds maximum length of {tool.max_code_length} characters."
 
         code = prepare_python_code(code)
-        log_debug(f"ToolExecuteMode executing:\n{code}")
+        log_debug(f"CodeMode executing:\n{code}")
 
         media_collector: Dict[str, List[Any]] = {"images": [], "videos": [], "audios": [], "files": []}
         namespace, base_keys = build_namespace(tool, use_async=use_async, media_collector=media_collector)

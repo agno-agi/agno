@@ -199,6 +199,8 @@ class Function(BaseModel):
     _team: Optional[Any] = None
     # The run context that the function is associated with
     _run_context: Optional[RunContext] = None
+    # The current run response (for metrics accumulation)
+    _run_response: Optional[Any] = None
 
     # Media context that the function is associated with
     _images: Optional[Sequence[Image]] = None

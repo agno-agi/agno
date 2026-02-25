@@ -18,8 +18,8 @@ Run:
 import time
 
 from agno.agent import Agent
+from agno.code_mode import CodeMode
 from agno.models.anthropic import Claude
-from agno.tool_execute_mode import ToolExecuteMode
 from agno.tools.calculator import CalculatorTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     calc = CalculatorTools()
 
     # code_model: Claude writes the Python code internally
-    cm = ToolExecuteMode(
+    cm = CodeMode(
         tools=[yf, calc],
         code_model=Claude(id="claude-sonnet-4-20250514"),
     )

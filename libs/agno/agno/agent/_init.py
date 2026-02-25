@@ -227,30 +227,32 @@ def get_models(agent: Agent) -> None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
     if agent.code_model is not None:
         agent.code_model = get_model(agent.code_model)
+        if agent.code_model is not None:
+            agent.code_model.model_type = ModelType.CODE_MODEL
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
 
-def _set_tool_execute_mode(agent: Agent) -> None:
-    from agno.tool_execute_mode import ToolExecuteMode
+def _set_code_mode(agent: Agent) -> None:
+    from agno.code_mode import CodeMode
 
-    if agent.tool_execute_mode_tools is not None:
-        tools_to_wrap = list(agent.tool_execute_mode_tools)
+    if agent.code_mode_tools is not None:
+        tools_to_wrap = list(agent.code_mode_tools)
     else:
         if not isinstance(agent.tools, list):
             raise ValueError(
-                "tool_execute_mode=True requires tools to be a list (not a callable factory). "
-                "Use tool_execute_mode_tools to specify which tools to wrap."
+                "code_mode=True requires tools to be a list (not a callable factory). "
+                "Use code_mode_tools to specify which tools to wrap."
             )
         tools_to_wrap = [t for t in agent.tools if not isinstance(t, dict)]
         agent.tools = []
 
     if not tools_to_wrap:
-        log_warning("tool_execute_mode=True but no tools to wrap")
+        log_warning("code_mode=True but no tools to wrap")
         return
 
-    agent._tool_execute_mode = ToolExecuteMode(
+    agent._code_mode = CodeMode(
         tools=tools_to_wrap,
         code_model=agent.code_model,
     )
@@ -276,8 +278,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_compression_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
-    if agent.tool_execute_mode:
-        _set_tool_execute_mode(agent)
+    if agent.code_mode:
+        _set_code_mode(agent)
 
     log_debug(f"Agent ID: {agent.id}", center=True)
 
