@@ -7,7 +7,6 @@ Approval-backed HITL: @approval + @tool(requires_confirmation=True) with persist
 
 import json
 import os
-import time
 
 import httpx
 from agno.agent import Agent
