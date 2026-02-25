@@ -186,6 +186,9 @@ agui = ["ag-ui-protocol"]
 # Dependencies for A2A integration
 a2a = ["a2a-sdk"]
 
+# Dependencies for Slack integration
+slack = ["slack_sdk>=3.40.0"]
+
 # Dependencies for Embedders
 huggingface = [
     "huggingface-hub",
@@ -322,6 +325,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "agno[a2a]",
+    "agno[slack]",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",
