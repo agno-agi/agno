@@ -26,6 +26,8 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import (
+    TaskCreatedEvent,
+    TaskUpdatedEvent,
     TeamRunOutput,
     TeamRunOutputEvent,
 )
@@ -91,7 +93,7 @@ def _get_task_management_tools(
         description: str = "",
         assignee: str = "",
         depends_on: Optional[List[str]] = None,
-    ) -> str:
+    ) -> Iterator[Union[TeamRunOutputEvent, str]]:
         """Create a new task for the team to work on.
 
         Args:
@@ -107,7 +109,8 @@ def _get_task_management_tools(
         for existing_task in task_list.tasks:
             if existing_task.title.lower().strip() == title_lower:
                 log_debug(f"Task with title '{title}' already exists: [{existing_task.id}]")
-                return f"Task already exists: [{existing_task.id}] {existing_task.title} (status: {existing_task.status.value}). Use this task instead of creating a duplicate."
+                yield f"Task already exists: [{existing_task.id}] {existing_task.title} (status: {existing_task.status.value}). Use this task instead of creating a duplicate."
+                return
 
         task = task_list.create_task(
             title=title,
@@ -117,7 +120,23 @@ def _get_task_management_tools(
         )
         save_task_list(run_context.session_state, task_list)
         log_debug(f"Task created: [{task.id}] {task.title}")
-        return f"Task created: [{task.id}] {task.title} (status: {task.status.value})"
+
+        # Emit TaskCreatedEvent for frontend
+        if stream_events:
+            yield TaskCreatedEvent(
+                team_id=team.id or "",
+                team_name=team.name or "",
+                run_id=run_response.run_id,
+                session_id=run_response.session_id,
+                task_id=task.id,
+                title=task.title,
+                description=task.description,
+                assignee=task.assignee,
+                status=task.status.value,
+                dependencies=task.dependencies,
+            )
+
+        yield f"Task created: [{task.id}] {task.title} (status: {task.status.value})"
 
     # ------------------------------------------------------------------
     # Tool: update_task_status
@@ -126,7 +145,7 @@ def _get_task_management_tools(
         task_id: str,
         status: str,
         result: Optional[str] = None,
-    ) -> str:
+    ) -> Iterator[Union[TeamRunOutputEvent, str]]:
         """Update the status of a task. Use this to mark tasks you handle yourself as completed.
 
         Args:
@@ -139,19 +158,43 @@ def _get_task_management_tools(
         try:
             new_status = TaskStatus(status)
         except ValueError:
-            return f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
+            yield f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
+            return
         if new_status == TaskStatus.blocked:
-            return "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
+            yield "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
+            return
+
+        # Get the task to capture previous status
+        task = task_list.get_task(task_id)
+        if task is None:
+            yield f"Task with ID '{task_id}' not found."
+            return
+
+        previous_status = task.status.value
 
         updates: Dict[str, Any] = {"status": new_status}
         if result is not None:
             updates["result"] = result
 
         task = task_list.update_task(task_id, **updates)
-        if task is None:
-            return f"Task with ID '{task_id}' not found."
         save_task_list(run_context.session_state, task_list)
-        return f"Task [{task.id}] '{task.title}' updated to {task.status.value}."
+
+        # Emit TaskUpdatedEvent for frontend
+        if stream_events and task:
+            yield TaskUpdatedEvent(
+                team_id=team.id or "",
+                team_name=team.name or "",
+                run_id=run_response.run_id,
+                session_id=run_response.session_id,
+                task_id=task.id,
+                title=task.title,
+                status=task.status.value,
+                previous_status=previous_status,
+                result=task.result,
+                assignee=task.assignee,
+            )
+
+        yield f"Task [{task.id}] '{task.title}' updated to {task.status.value}."
 
     # ------------------------------------------------------------------
     # Tool: list_tasks
@@ -316,9 +359,25 @@ def _get_task_management_tools(
 
         _, member_agent = result
 
+        previous_status = task.status.value
         task.status = TaskStatus.in_progress
         task.assignee = member_id
         save_task_list(run_context.session_state, task_list)
+
+        # Emit TaskUpdatedEvent for task starting (in_progress)
+        if stream_events:
+            yield TaskUpdatedEvent(
+                team_id=team.id or "",
+                team_name=team.name or "",
+                run_id=run_response.run_id,
+                session_id=run_response.session_id,
+                task_id=task.id,
+                title=task.title,
+                status=task.status.value,
+                previous_status=previous_status,
+                result=None,
+                assignee=task.assignee,
+            )
 
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
@@ -406,17 +465,59 @@ def _get_task_management_tools(
             task.status = TaskStatus.failed
             task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
             save_task_list(run_context.session_state, task_list)
+            # Emit TaskUpdatedEvent for task failure
+            if stream_events:
+                yield TaskUpdatedEvent(
+                    team_id=team.id or "",
+                    team_name=team.name or "",
+                    run_id=run_response.run_id,
+                    session_id=run_response.session_id,
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    previous_status="in_progress",
+                    result=task.result,
+                    assignee=task.assignee,
+                )
             yield f"Task [{task.id}] failed: {task.result}"
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
+            # Emit TaskUpdatedEvent for task completion
+            if stream_events:
+                yield TaskUpdatedEvent(
+                    team_id=team.id or "",
+                    team_name=team.name or "",
+                    run_id=run_response.run_id,
+                    session_id=run_response.session_id,
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    previous_status="in_progress",
+                    result=task.result,
+                    assignee=task.assignee,
+                )
             yield f"Task [{task.id}] completed. Result: {content}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
             save_task_list(run_context.session_state, task_list)
+            # Emit TaskUpdatedEvent for task completion (no content)
+            if stream_events:
+                yield TaskUpdatedEvent(
+                    team_id=team.id or "",
+                    team_name=team.name or "",
+                    run_id=run_response.run_id,
+                    session_id=run_response.session_id,
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    previous_status="in_progress",
+                    result=task.result,
+                    assignee=task.assignee,
+                )
             yield f"Task [{task.id}] completed with no content."
 
     # ------------------------------------------------------------------
@@ -450,9 +551,25 @@ def _get_task_management_tools(
 
         _, member_agent = result
 
+        previous_status = task.status.value
         task.status = TaskStatus.in_progress
         task.assignee = member_id
         save_task_list(run_context.session_state, task_list)
+
+        # Emit TaskUpdatedEvent for task starting (in_progress)
+        if stream_events:
+            yield TaskUpdatedEvent(
+                team_id=team.id or "",
+                team_name=team.name or "",
+                run_id=run_response.run_id,
+                session_id=run_response.session_id,
+                task_id=task.id,
+                title=task.title,
+                status=task.status.value,
+                previous_status=previous_status,
+                result=None,
+                assignee=task.assignee,
+            )
 
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
@@ -538,17 +655,59 @@ def _get_task_management_tools(
             task.status = TaskStatus.failed
             task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
             save_task_list(run_context.session_state, task_list)
+            # Emit TaskUpdatedEvent for task failure (async)
+            if stream_events:
+                yield TaskUpdatedEvent(
+                    team_id=team.id or "",
+                    team_name=team.name or "",
+                    run_id=run_response.run_id,
+                    session_id=run_response.session_id,
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    previous_status="in_progress",
+                    result=task.result,
+                    assignee=task.assignee,
+                )
             yield f"Task [{task.id}] failed: {task.result}"
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
+            # Emit TaskUpdatedEvent for task completion (async)
+            if stream_events:
+                yield TaskUpdatedEvent(
+                    team_id=team.id or "",
+                    team_name=team.name or "",
+                    run_id=run_response.run_id,
+                    session_id=run_response.session_id,
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    previous_status="in_progress",
+                    result=task.result,
+                    assignee=task.assignee,
+                )
             yield f"Task [{task.id}] completed. Result: {content}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
             save_task_list(run_context.session_state, task_list)
+            # Emit TaskUpdatedEvent for task completion (async, no content)
+            if stream_events:
+                yield TaskUpdatedEvent(
+                    team_id=team.id or "",
+                    team_name=team.name or "",
+                    run_id=run_response.run_id,
+                    session_id=run_response.session_id,
+                    task_id=task.id,
+                    title=task.title,
+                    status=task.status.value,
+                    previous_status="in_progress",
+                    result=task.result,
+                    assignee=task.assignee,
+                )
             yield f"Task [{task.id}] completed with no content."
 
     # ------------------------------------------------------------------
