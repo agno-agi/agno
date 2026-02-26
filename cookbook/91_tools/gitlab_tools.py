@@ -23,13 +23,11 @@ agent = Agent(
     ],
     tools=[
         GitlabTools(
-            include_tools=[
-                "list_projects",
-                "get_project",
-                "list_merge_requests",
-                "get_merge_request",
-                "list_issues",
-            ]
+            enable_list_projects=True,
+            enable_get_projects=True,
+            enable_list_merge_requests=True,
+            enable_get_merge_request=True,
+            enable_list_issues=True,
         )
     ],
 )

@@ -88,6 +88,28 @@ class TestGitlabTools:
         assert "list_issues" in tools.async_functions
         assert "alist_projects" not in tools.async_functions
 
+    def test_enable_flags_register_selected_tools_only(self):
+        with patch("agno.tools.gitlab.gitlab.Gitlab") as mock_gitlab:
+            mock_gitlab.return_value = MagicMock()
+            tools = GitlabTools(
+                enable_list_projects=True,
+                enable_get_projects=False,
+                enable_list_merge_requests=False,
+                enable_get_merge_request=True,
+                enable_list_issues=False,
+            )
+
+        assert set(tools.functions.keys()) == {"list_projects", "get_merge_request"}
+        assert set(tools.async_functions.keys()) == {"list_projects", "get_merge_request"}
+
+    def test_enable_get_project_alias_still_supported(self):
+        with patch("agno.tools.gitlab.gitlab.Gitlab") as mock_gitlab:
+            mock_gitlab.return_value = MagicMock()
+            tools = GitlabTools(enable_get_projects=False, enable_get_project=True)
+
+        assert "get_project" in tools.functions
+        assert "get_project" in tools.async_functions
+
     def test_list_projects_success(self, gitlab_tools):
         tools, mock_client = gitlab_tools
 

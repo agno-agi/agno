@@ -22,31 +22,43 @@ class GitlabTools(Toolkit):
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: float = 30,
+        enable_list_projects: bool = True,
+        enable_get_projects: bool = True,
+        enable_list_merge_requests: bool = True,
+        enable_get_merge_request: bool = True,
+        enable_list_issues: bool = True,
+        enable_get_project: Optional[bool] = None,
         gitlab_client: Optional[Gitlab] = None,
         httpx_client: Optional[httpx.AsyncClient] = None,
         **kwargs,
     ):
+        if enable_get_project is not None:
+            enable_get_projects = enable_get_project
+
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout
         self.client: Gitlab = gitlab_client or self._create_client()
         self.httpx_client = httpx_client
 
-        tools: List[Any] = [
-            self.list_projects,
-            self.get_project,
-            self.list_merge_requests,
-            self.get_merge_request,
-            self.list_issues,
-        ]
+        tools: List[Any] = []
+        async_tools: List[tuple[Any, str]] = []
 
-        async_tools: List[tuple[Any, str]] = [
-            (self.alist_projects, "list_projects"),
-            (self.aget_project, "get_project"),
-            (self.alist_merge_requests, "list_merge_requests"),
-            (self.aget_merge_request, "get_merge_request"),
-            (self.alist_issues, "list_issues"),
-        ]
+        if enable_list_projects:
+            tools.append(self.list_projects)
+            async_tools.append((self.alist_projects, "list_projects"))
+        if enable_get_projects:
+            tools.append(self.get_project)
+            async_tools.append((self.aget_project, "get_project"))
+        if enable_list_merge_requests:
+            tools.append(self.list_merge_requests)
+            async_tools.append((self.alist_merge_requests, "list_merge_requests"))
+        if enable_get_merge_request:
+            tools.append(self.get_merge_request)
+            async_tools.append((self.aget_merge_request, "get_merge_request"))
+        if enable_list_issues:
+            tools.append(self.list_issues)
+            async_tools.append((self.alist_issues, "list_issues"))
 
         super().__init__(name="gitlab", tools=tools, async_tools=async_tools, **kwargs)
 
