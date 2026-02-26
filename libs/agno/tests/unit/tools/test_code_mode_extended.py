@@ -4,7 +4,7 @@ from typing import Optional
 import pytest
 
 from agno.code_mode import CodeMode
-from agno.tools.function import ToolResult
+from agno.tools.function import Function, ToolResult
 from agno.utils.code_execution import prepare_python_code
 
 
@@ -464,3 +464,357 @@ class TestDiscoveryBoundary:
     def test_threshold_very_high(self):
         cm = CodeMode(tools=_make_many_callables(50), discovery_threshold=1000)
         assert cm.discovery_enabled is False
+
+
+# ── Async direct execution (no code_model) ────────────────────────
+
+
+class TestAsyncDirectExecution:
+    @pytest.mark.asyncio
+    async def test_arun_code_result_variable(self):
+        cm = CodeMode(tools=[search_items])
+        output = await cm.arun_code('result = "async direct"')
+        assert output == "async direct"
+
+    @pytest.mark.asyncio
+    async def test_arun_code_calls_tools(self):
+        cm = CodeMode(tools=[search_items])
+        output = await cm.arun_code('data = json.loads(search_items(query="async"))\nresult = data[0]["name"]')
+        assert "result for async" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_chains_tools(self):
+        cm = CodeMode(tools=[search_items, get_item_details])
+        code = (
+            'items = json.loads(search_items(query="chain"))\n'
+            'details = json.loads(get_item_details(item_id=items[0]["id"]))\n'
+            "result = f\"{details['name']} ${details['price']}\""
+        )
+        output = await cm.arun_code(code)
+        assert "Widget" in output
+        assert "9.99" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_syntax_error(self):
+        cm = CodeMode(tools=[search_items])
+        output = await cm.arun_code("def broken(")
+        assert "SyntaxError" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_runtime_error(self):
+        cm = CodeMode(tools=[search_items])
+        output = await cm.arun_code("x = 1 / 0")
+        assert "ZeroDivisionError" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_print_captured(self):
+        cm = CodeMode(tools=[search_items])
+        output = await cm.arun_code('print("async print")')
+        assert "async print" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_loop_execution(self):
+        cm = CodeMode(tools=[get_item_details])
+        code = (
+            "names = []\n"
+            "for i in range(3):\n"
+            "    data = json.loads(get_item_details(item_id=i))\n"
+            '    names.append(data["name"])\n'
+            'result = ", ".join(names)'
+        )
+        output = await cm.arun_code(code)
+        assert "Widget" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_with_async_tool(self):
+        async def async_search(query: str) -> str:
+            """Async search tool."""
+            return json.dumps([{"id": 1, "name": f"async result for {query}"}])
+
+        cm = CodeMode(tools=[async_search])
+        output = await cm.arun_code('data = json.loads(async_search(query="test"))\nresult = data[0]["name"]')
+        assert "async result for test" in output
+
+    @pytest.mark.asyncio
+    async def test_arun_code_media_returned(self):
+        from agno.media import Image
+
+        def image_tool(prompt: str) -> ToolResult:
+            """Returns an image."""
+            return ToolResult(
+                content=f"Image for: {prompt}",
+                images=[Image(url="https://example.com/img.png")],
+            )
+
+        cm = CodeMode(tools=[image_tool])
+        output = await cm.arun_code('result = image_tool(prompt="sunset")')
+        assert isinstance(output, ToolResult)
+        assert "Image for: sunset" in output.content
+        assert len(output.images) == 1
+
+    @pytest.mark.asyncio
+    async def test_arun_code_max_length_enforced(self):
+        cm = CodeMode(tools=[search_items], max_code_length=10)
+        output = await cm.arun_code("x = 1\n" * 100)
+        assert "exceeds maximum length" in output
+
+
+# ── Framework arg mapping completeness ────────────────────────────
+
+
+def _tool_needing_team(query: str, team: Optional[object] = None) -> str:
+    """Tool needing team reference."""
+    return json.dumps({"query": query, "has_team": team is not None})
+
+
+def _tool_needing_images(query: str, images: Optional[object] = None) -> str:
+    """Tool needing images."""
+    return json.dumps({"query": query, "has_images": images is not None})
+
+
+def _tool_needing_videos(query: str, videos: Optional[object] = None) -> str:
+    """Tool needing videos."""
+    return json.dumps({"query": query, "has_videos": videos is not None})
+
+
+def _tool_needing_audios(query: str, audios: Optional[object] = None) -> str:
+    """Tool needing audios."""
+    return json.dumps({"query": query, "has_audios": audios is not None})
+
+
+def _tool_needing_files(query: str, files: Optional[object] = None) -> str:
+    """Tool needing files."""
+    return json.dumps({"query": query, "has_files": files is not None})
+
+
+def _tool_needing_agent_and_team(query: str, agent: Optional[object] = None, team: Optional[object] = None) -> str:
+    """Tool needing both agent and team."""
+    return json.dumps({"query": query, "has_agent": agent is not None, "has_team": team is not None})
+
+
+class TestFrameworkArgMappingComplete:
+    """Verify all 7 FRAMEWORK_ARG_ATTRS entries are injected correctly."""
+
+    def _inject_and_run(self, tool_fn, attr_name, code):
+        from unittest.mock import Mock
+
+        cm = CodeMode(tools=[tool_fn])
+        run_code_func = cm.functions.get("run_code")
+        if run_code_func:
+            setattr(run_code_func, attr_name, Mock())
+        return cm.run_code(code)
+
+    def test_team_injected(self):
+        output = self._inject_and_run(_tool_needing_team, "_team", 'result = _tool_needing_team(query="test")')
+        data = json.loads(output)
+        assert data["has_team"] is True
+
+    def test_images_injected(self):
+        output = self._inject_and_run(_tool_needing_images, "_images", 'result = _tool_needing_images(query="test")')
+        data = json.loads(output)
+        assert data["has_images"] is True
+
+    def test_videos_injected(self):
+        output = self._inject_and_run(_tool_needing_videos, "_videos", 'result = _tool_needing_videos(query="test")')
+        data = json.loads(output)
+        assert data["has_videos"] is True
+
+    def test_audios_injected(self):
+        output = self._inject_and_run(_tool_needing_audios, "_audios", 'result = _tool_needing_audios(query="test")')
+        data = json.loads(output)
+        assert data["has_audios"] is True
+
+    def test_files_injected(self):
+        output = self._inject_and_run(_tool_needing_files, "_files", 'result = _tool_needing_files(query="test")')
+        data = json.loads(output)
+        assert data["has_files"] is True
+
+    def test_multiple_framework_args_simultaneously(self):
+        from unittest.mock import Mock
+
+        cm = CodeMode(tools=[_tool_needing_agent_and_team])
+        run_code_func = cm.functions.get("run_code")
+        if run_code_func:
+            run_code_func._agent = Mock()
+            run_code_func._team = Mock()
+        output = cm.run_code('result = _tool_needing_agent_and_team(query="test")')
+        data = json.loads(output)
+        assert data["has_agent"] is True
+        assert data["has_team"] is True
+
+    def test_framework_params_excluded_from_stubs(self):
+        cm = CodeMode(tools=[_tool_needing_agent_and_team])
+        stub = cm.stub_map.get("_tool_needing_agent_and_team", "")
+        sig_part = stub.split("(")[1].split(")")[0] if "(" in stub else ""
+        assert "agent" not in sig_part
+        assert "team" not in sig_part
+        assert "query" in sig_part
+
+    def test_no_injection_when_attr_not_set(self):
+        cm = CodeMode(tools=[_tool_needing_team])
+        # Don't set _team on run_code_func
+        output = cm.run_code('result = _tool_needing_team(query="test")')
+        data = json.loads(output)
+        assert data["has_team"] is False
+
+
+# ── Extracted helpers ─────────────────────────────────────────────
+
+
+class TestBuildCodegenMessages:
+    def test_basic_task(self):
+        from unittest.mock import Mock
+
+        mock_model = Mock()
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+        messages = cm._build_codegen_messages("Find laptops")
+        assert len(messages) == 2
+        assert messages[0].role == "system"
+        assert messages[1].role == "user"
+        assert "Find laptops" in messages[1].content
+        assert "def search_items(" in messages[0].content
+
+    def test_with_error_context(self):
+        from unittest.mock import Mock
+
+        mock_model = Mock()
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+        messages = cm._build_codegen_messages("Find laptops", error="NameError: x not defined")
+        user_content = messages[1].content
+        assert "Find laptops" in user_content
+        assert "Previous attempt failed" in user_content
+        assert "NameError: x not defined" in user_content
+
+    def test_system_includes_code_model_system_prefix(self):
+        from unittest.mock import Mock
+
+        mock_model = Mock()
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+        messages = cm._build_codegen_messages("task")
+        assert messages[0].content.startswith("You are a Python code generator")
+
+    def test_no_error_no_previous_attempt(self):
+        from unittest.mock import Mock
+
+        mock_model = Mock()
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+        messages = cm._build_codegen_messages("task")
+        assert "Previous attempt failed" not in messages[1].content
+
+
+class TestUnwrapToolResult:
+    def test_unwraps_tool_result(self):
+        from agno.code_mode.sandbox import _unwrap_tool_result
+
+        tr = ToolResult(content="hello")
+        assert _unwrap_tool_result(tr, None) == "hello"
+
+    def test_returns_none_for_non_tool_result(self):
+        from agno.code_mode.sandbox import _unwrap_tool_result
+
+        assert _unwrap_tool_result("just a string", None) is None
+        assert _unwrap_tool_result(42, None) is None
+        assert _unwrap_tool_result(None, None) is None
+
+    def test_collects_media_when_collector_provided(self):
+        from agno.code_mode.sandbox import _unwrap_tool_result
+        from agno.media import Image
+
+        collector = {"images": [], "videos": [], "audios": [], "files": []}
+        tr = ToolResult(content="img", images=[Image(url="https://example.com/a.png")])
+        result = _unwrap_tool_result(tr, collector)
+        assert result == "img"
+        assert len(collector["images"]) == 1
+
+    def test_no_media_collection_without_collector(self):
+        from agno.code_mode.sandbox import _unwrap_tool_result
+
+        tr = ToolResult(content="no collector")
+        result = _unwrap_tool_result(tr, None)
+        assert result == "no collector"
+
+
+class TestPrepareFunction:
+    def test_returns_deep_copy(self):
+        from agno.code_mode.stubs import _prepare_function
+
+        original = Function.from_callable(search_items)
+        prepared = _prepare_function(original)
+        assert prepared is not original
+        assert prepared.name == original.name
+
+    def test_processes_entrypoint(self):
+        from agno.code_mode.stubs import _prepare_function
+
+        func = Function.from_callable(search_items)
+        func.skip_entrypoint_processing = False
+        prepared = _prepare_function(func)
+        assert prepared.parameters is not None
+
+    def test_skips_processing_when_flagged(self):
+        from agno.code_mode.stubs import _prepare_function
+
+        func = Function.from_callable(search_items)
+        func.skip_entrypoint_processing = True
+        # Should not raise even if entrypoint is already processed
+        prepared = _prepare_function(func)
+        assert prepared.name == "search_items"
+
+
+class TestToolResultFallbackPath:
+    """Verify extract_result handles ToolResult in the fallback (last user var) path."""
+
+    def test_tool_result_in_last_var(self):
+        from agno.media import Image
+
+        def img_tool(prompt: str) -> ToolResult:
+            """Returns image."""
+            return ToolResult(
+                content=f"Generated: {prompt}",
+                images=[Image(url="https://example.com/img.png")],
+            )
+
+        cm = CodeMode(tools=[img_tool])
+        # Store ToolResult in non-result variable — hits fallback path
+        output = cm.run_code('x = img_tool(prompt="cat")')
+        assert "Generated: cat" in (output.content if isinstance(output, ToolResult) else output)
+
+
+class TestClassConstants:
+    """Verify class-level constants are accessible and correct."""
+
+    def test_framework_params_includes_all(self):
+        expected = {"self", "fc", "agent", "team", "run_context", "images", "videos", "audios", "files"}
+        assert CodeMode.FRAMEWORK_PARAMS == frozenset(expected)
+
+    def test_framework_arg_attrs_keys_subset_of_params(self):
+        for key in CodeMode.FRAMEWORK_ARG_ATTRS:
+            assert key in CodeMode.FRAMEWORK_PARAMS
+
+    def test_blocked_modules_is_frozenset(self):
+        assert isinstance(CodeMode.BLOCKED_MODULES, frozenset)
+        assert "os" in CodeMode.BLOCKED_MODULES
+        assert "json" not in CodeMode.BLOCKED_MODULES
+
+    def test_preapproved_modules_are_real_modules(self):
+        import collections as col_mod
+        import datetime as dt_mod
+        import json as json_mod
+        import math as math_mod
+        import re as re_mod
+
+        assert CodeMode.PREAPPROVED_MODULES["json"] is json_mod
+        assert CodeMode.PREAPPROVED_MODULES["math"] is math_mod
+        assert CodeMode.PREAPPROVED_MODULES["datetime"] is dt_mod
+        assert CodeMode.PREAPPROVED_MODULES["re"] is re_mod
+        assert CodeMode.PREAPPROVED_MODULES["collections"] is col_mod
+
+    def test_exec_error_prefix_format(self):
+        assert CodeMode.EXEC_ERROR_PREFIX.startswith("[[")
+        assert CodeMode.EXEC_ERROR_PREFIX.endswith(" ")
+
+    def test_constants_accessible_from_instance(self):
+        cm = CodeMode(tools=[search_items])
+        assert cm.BLOCKED_MODULES is CodeMode.BLOCKED_MODULES
+        assert cm.FRAMEWORK_PARAMS is CodeMode.FRAMEWORK_PARAMS
+        assert cm.JSON_TYPE_MAP is CodeMode.JSON_TYPE_MAP

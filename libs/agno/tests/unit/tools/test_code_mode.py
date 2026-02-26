@@ -792,3 +792,113 @@ class TestCodeModelAsync:
         output = await cm.arun_code("Calculate")
         assert "async fixed" in output
         assert mock_model.aresponse.call_count == 2
+
+
+class _FakeFunctionCall:
+    """Mimics FunctionCall for fc injection tests."""
+
+    def __init__(self, function):
+        self.function = function
+
+
+class TestCodeModelMetrics:
+    def test_run_response_identity_bug(self):
+        """Original Function and deep copy are different objects."""
+        cm = CodeMode(tools=[search_items], code_model=Mock())
+        original = cm.functions["run_code"]
+        copy = original.model_copy(deep=True)
+        copy._run_response = "INJECTED"
+        assert original._run_response is None
+        assert copy._run_response == "INJECTED"
+        assert original is not copy
+
+    def test_fc_none_passes_none_run_response(self):
+        """Direct call without fc gracefully passes run_response=None."""
+        mock_model = Mock()
+        mock_model.response.return_value = _mock_model_response('result = "ok"')
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+        cm.run_code("task")
+        assert mock_model.response.call_args.kwargs.get("run_response") is None
+
+    def test_fc_injects_run_response_to_code_model(self):
+        """fc.function._run_response flows through to code_model.response()."""
+        mock_model = Mock()
+        mock_model.response.return_value = _mock_model_response('result = "ok"')
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+
+        # Simulate agent's deep-copy + injection
+        func_copy = cm.functions["run_code"].model_copy(deep=True)
+        fake_run_response = Mock()
+        fake_run_response.metrics = Mock()
+        func_copy._run_response = fake_run_response
+
+        fc = _FakeFunctionCall(func_copy)
+        cm.run_code("task", fc=fc)
+
+        called_run_response = mock_model.response.call_args.kwargs.get("run_response")
+        assert called_run_response is fake_run_response
+
+    def test_fc_run_response_survives_retries(self):
+        """Same run_response is passed on each retry attempt."""
+        mock_model = Mock()
+        mock_model.response.side_effect = [
+            _mock_model_response("x = 1 / 0"),
+            _mock_model_response("y = undefined_var"),
+            _mock_model_response('result = "ok"'),
+        ]
+        cm = CodeMode(tools=[search_items], code_model=mock_model, max_code_retries=3)
+
+        func_copy = cm.functions["run_code"].model_copy(deep=True)
+        fake_run_response = Mock()
+        fake_run_response.metrics = Mock()
+        func_copy._run_response = fake_run_response
+
+        fc = _FakeFunctionCall(func_copy)
+        cm.run_code("task", fc=fc)
+
+        assert mock_model.response.call_count == 3
+        for call in mock_model.response.call_args_list:
+            assert call.kwargs.get("run_response") is fake_run_response
+
+    @pytest.mark.asyncio
+    async def test_async_fc_injects_run_response(self):
+        """Async path also threads run_response through fc."""
+        mock_model = Mock()
+        mock_model.aresponse = AsyncMock(return_value=_mock_model_response('result = "ok"'))
+        cm = CodeMode(tools=[search_items], code_model=mock_model)
+
+        func_copy = cm.functions["run_code"].model_copy(deep=True)
+        fake_run_response = Mock()
+        fake_run_response.metrics = Mock()
+        func_copy._run_response = fake_run_response
+
+        fc = _FakeFunctionCall(func_copy)
+        await cm.arun_code("task", fc=fc)
+
+        called_run_response = mock_model.aresponse.call_args.kwargs.get("run_response")
+        assert called_run_response is fake_run_response
+
+    def test_fc_schema_excludes_fc_param(self):
+        """fc parameter must not appear in the tool's JSON schema."""
+        cm = CodeMode(tools=[search_items], code_model=Mock())
+        funcs = cm.get_functions()
+        run_code_func = funcs["run_code"]
+        params = run_code_func.parameters or {}
+        properties = params.get("properties", {})
+        assert "fc" not in properties
+        required = params.get("required", [])
+        assert "fc" not in required
+
+    def test_model_type_set_to_code_model(self):
+        """code_model gets ModelType.CODE_MODEL set in __init__."""
+        from agno.metrics import ModelType
+
+        mock_model = Mock()
+        CodeMode(tools=[search_items], code_model=mock_model)
+        assert mock_model.model_type == ModelType.CODE_MODEL
+
+    def test_no_code_model_skips_metrics(self):
+        """Without code_model, run_code doesn't touch metrics at all."""
+        cm = CodeMode(tools=[search_items])
+        output = cm.run_code('result = "direct exec"')
+        assert "direct exec" in output
