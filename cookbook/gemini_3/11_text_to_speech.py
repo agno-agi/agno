@@ -1,13 +1,23 @@
 """
-11. Text-to-Speech
-==================
+Text-to-Speech - Generate Spoken Audio
+========================================
 Gemini can generate spoken audio from text using the TTS model.
 Set response_modalities=["AUDIO"] and configure a voice.
 
-Run:
-    python cookbook/gemini_3/11_text_to_speech.py
+The output is raw audio data you can save as WAV and play back.
 
-Output: workspace/greeting.wav
+Key concepts:
+- response_modalities=["AUDIO"]: Tells Gemini to output audio instead of text
+- speech_config: Configure voice name and other TTS settings
+- Dedicated TTS model: Uses gemini-2.5-flash-preview-tts (not the standard model)
+- response_audio: Access the audio bytes from RunOutput
+
+Available voices: Kore, Charon, Fenrir, Aoede, Puck, and more.
+
+Example prompts to try:
+- "Say cheerfully: Have a wonderful day!"
+- "Read this like a news anchor: Breaking news..."
+- "Narrate this in a dramatic tone: The castle stood silent..."
 """
 
 from pathlib import Path
@@ -28,6 +38,7 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 tts_agent = Agent(
     name="TTS Agent",
     model=Gemini(
+        # Dedicated TTS model -- different from the standard Gemini model
         id="gemini-2.5-flash-preview-tts",
         response_modalities=["AUDIO"],
         speech_config={
@@ -51,3 +62,28 @@ if __name__ == "__main__":
         print(f"Audio saved to {output_file}")
     else:
         print("No audio in response")
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Voice options for speech_config:
+- "Kore": Clear, professional female voice
+- "Charon": Deep, authoritative male voice
+- "Fenrir": Warm, conversational male voice
+- "Aoede": Expressive, melodic female voice
+- "Puck": Energetic, youthful voice
+
+Changing voices:
+    speech_config={
+        "voice_config": {
+            "prebuilt_voice_config": {"voice_name": "Charon"}
+        }
+    }
+
+Use cases for music/film/gaming:
+- Generate voiceover for game cutscenes
+- Create narration for film trailers
+- Produce podcast intros and outros
+- Generate audio descriptions for accessibility
+"""

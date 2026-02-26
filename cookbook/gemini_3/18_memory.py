@@ -1,21 +1,25 @@
 """
-18. Memory + Learning
-=====================
+Memory + Learning - Agent That Improves Over Time
+===================================================
 The agent learns from interactions and improves over time.
 Interaction 1,000 should be better than interaction 1.
 
 This builds on step 17 by adding:
-- LearningMachine: Captures insights and user preferences
+- LearningMachine: Captures insights and user preferences automatically
 - LearnedKnowledge (AGENTIC mode): Agent decides what to save and retrieve
 - Agentic memory: Builds user profiles over time
 - ReasoningTools: The think tool for structured reasoning
 
-Run:
-    python cookbook/gemini_3/18_memory.py
+Key concepts:
+- LearningMachine: Manages knowledge the agent discovers during conversations
+- LearningMode.AGENTIC: Agent decides when to save insights (vs ALWAYS or NEVER)
+- enable_agentic_memory: Builds user profiles from conversation patterns
+- ReasoningTools: Lets the agent "think" before responding (separate from model thinking)
+- Two knowledge stores: Static (docs) + dynamic (learned), searched together
 
-Example:
-    Session 1: User teaches a preference
-    Session 2: Agent applies it without being reminded
+Example prompts to try:
+- Session 1: "I'm learning Spanish. I prefer conversations over grammar drills."
+- Session 2: "Help me practice asking for directions." (agent remembers preferences)
 """
 
 from pathlib import Path
@@ -56,7 +60,7 @@ docs_knowledge = Knowledge(
 )
 
 # ---------------------------------------------------------------------------
-# Knowledge: Dynamic learnings (agent learns over time)
+# Knowledge: Dynamic learnings (agent discovers over time)
 # ---------------------------------------------------------------------------
 learned_knowledge = Knowledge(
     vector_db=ChromaDb(
@@ -70,12 +74,9 @@ learned_knowledge = Knowledge(
 )
 
 # ---------------------------------------------------------------------------
-# Create Agent
+# Agent Instructions
 # ---------------------------------------------------------------------------
-tutor_agent = Agent(
-    name="Personal Tutor",
-    model=Gemini(id="gemini-3-flash-preview"),
-    instructions="""\
+instructions = """\
 You are a personal language tutor that adapts to each student.
 
 ## Workflow
@@ -90,16 +91,27 @@ You are a personal language tutor that adapts to each student.
 - Follow the student's preferred learning style
 - Track progress and build on previous lessons
 - Provide corrections gently with explanations\
-""",
+"""
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+tutor_agent = Agent(
+    name="Personal Tutor",
+    model=Gemini(id="gemini-3-flash-preview"),
+    instructions=instructions,
+    # ReasoningTools gives the agent a "think" tool for structured reasoning
     tools=[ReasoningTools()],
     knowledge=docs_knowledge,
     search_knowledge=True,
     learning=LearningMachine(
         knowledge=learned_knowledge,
         learned_knowledge=LearnedKnowledgeConfig(
+            # AGENTIC: Agent decides what to save (vs ALWAYS saving everything)
             mode=LearningMode.AGENTIC,
         ),
     ),
+    # Builds user profiles from conversation patterns
     enable_agentic_memory=True,
     db=db,
     add_history_to_context=True,
@@ -137,7 +149,7 @@ if __name__ == "__main__":
 
     # Session 2: New task -- agent should apply learned preferences
     print("\n" + "=" * 60)
-    print("SESSION 2: New task -- agent should apply learned preferences")
+    print("SESSION 2: New task -- agent applies learned preferences")
     print("=" * 60 + "\n")
 
     tutor_agent.print_response(
@@ -146,3 +158,27 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Learning modes:
+
+1. LearningMode.AGENTIC (this example)
+   Agent decides what to save -- best for production.
+   The agent saves genuinely useful insights, not noise.
+
+2. LearningMode.ALWAYS
+   Save everything -- useful for debugging and development.
+   Can get noisy in production.
+
+3. LearningMode.NEVER
+   Disable learning -- useful for stateless agents.
+
+The learning architecture:
+- Static knowledge: Documents you load (recipes, manuals, docs)
+- Dynamic knowledge: Insights the agent discovers during conversations
+- Memory: User profiles built from interaction patterns
+- All three are searched together when the agent needs context.
+"""

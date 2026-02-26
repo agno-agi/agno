@@ -1,14 +1,23 @@
 """
-15. File Search (Server-side RAG)
-=================================
+File Search - Server-Side RAG with Citations
+==============================================
 Gemini's File Search lets you upload documents to a managed store
 and query them with automatic chunking, embedding, and retrieval.
 No vector database setup needed -- it's all server-side.
 
-Run:
-    python cookbook/gemini_3/15_file_search.py
+This is different from the Knowledge approach (step 17) which uses
+a local vector database. File Search is fully managed by Google.
 
-Note: This creates a temporary store, queries it, and cleans up.
+Key concepts:
+- create_file_search_store: Creates a managed document store on Google's servers
+- upload_to_file_search_store: Uploads documents for automatic chunking and indexing
+- file_search_store_names: Links the store to your Gemini model
+- Citations: Responses include source references you can verify
+- Managed RAG: No ChromaDB, no embeddings config -- Google handles it all
+
+Example prompts to try:
+- "What are the main safety guidelines?"
+- "What should I do if I see a hazard?"
 """
 
 from pathlib import Path
@@ -57,12 +66,12 @@ file_search_agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Step 1: Create a File Search store
+    # Step 1: Create a File Search store (managed by Google)
     print("Creating File Search store...")
     store = model.create_file_search_store(display_name="Guidelines Store")
     print(f"Created store: {store.name}")
 
-    # Step 2: Upload the document
+    # Step 2: Upload the document (auto-chunked and indexed)
     print("\nUploading document...")
     operation = model.upload_to_file_search_store(
         file_path=SAMPLE_DOC,
@@ -93,5 +102,30 @@ if __name__ == "__main__":
 
     # Cleanup
     print("\nCleaning up store...")
-    model.delete_file_search_store(store.name)
+    model.delete_file_search_store(store.name, force=True)
     print("Done.")
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+File Search vs local Knowledge (step 17):
+
+File Search (this example):
+- Fully managed by Google -- no local vector DB
+- Automatic chunking and embedding
+- Built-in citation support
+- Best for: quick prototyping, small document sets, when you don't want infra
+
+Local Knowledge (step 17):
+- Uses ChromaDb (or PgVector) locally
+- You control chunking, embedding model, and search strategy
+- Hybrid search (semantic + keyword)
+- Best for: production apps, large document sets, custom search logic
+
+Upload multiple files:
+    for doc in ["report.pdf", "faq.txt", "manual.pdf"]:
+        model.upload_to_file_search_store(
+            file_path=doc, store_name=store.name, display_name=doc
+        )
+"""

@@ -1,14 +1,24 @@
 """
-16. Prompt Caching
-==================
+Prompt Caching - Save Tokens on Repeated Queries
+==================================================
 Cache large documents or system prompts to save tokens on repeated queries.
 Upload a file, create a cache with a TTL, then query without re-sending
 the full context each time.
 
-Run:
-    python cookbook/gemini_3/16_prompt_caching.py
+This is essential for production agents that repeatedly query the same
+large document (transcripts, codebases, manuals). The first query pays
+full token cost; subsequent queries only pay for the new prompt.
 
-Note: Requires google-genai package.
+Key concepts:
+- genai.Client().caches.create: Creates a server-side cache with TTL
+- cached_content: Links the cache to your Gemini model
+- TTL: Time-to-live for the cache (e.g., "300s" = 5 minutes)
+- Token savings: Subsequent queries skip the cached content's token cost
+
+Example prompts to try:
+- "Find a lighthearted moment from this transcript"
+- "What was the most tense moment during the mission?"
+- "Summarize the key decisions made"
 """
 
 from pathlib import Path
@@ -32,7 +42,7 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------------------------
 client = genai.Client()
 
-# Download a large text file (Apollo 11 transcript)
+# Download a large text file (Apollo 11 transcript -- ~100K tokens)
 txt_url = "https://storage.googleapis.com/generativeai-downloads/data/a11.txt"
 txt_path = WORKSPACE / "a11.txt"
 
@@ -73,6 +83,7 @@ cache = client.caches.create(
     config={
         "system_instruction": "You are an expert at analyzing transcripts.",
         "contents": [txt_file],
+        # Cache expires after 5 minutes -- set higher for production
         "ttl": "300s",
     },
 )
@@ -83,6 +94,7 @@ print(f"Cache created: {cache.name}")
 # ---------------------------------------------------------------------------
 cache_agent = Agent(
     name="Transcript Analyst",
+    # cached_content links the agent to the pre-loaded cache
     model=Gemini(id="gemini-3-flash-preview", cached_content=cache.name),
 )
 
@@ -103,3 +115,26 @@ if __name__ == "__main__":
     )
     print(f"\nResponse:\n{run_output.content}")
     print(f"\nMetrics: {run_output.metrics}")
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Prompt caching economics:
+
+- First query: Full token cost (upload + prompt + response)
+- Subsequent queries: Only prompt + response tokens (cached content is free)
+- For a 100K-token document queried 10 times:
+  Without caching: 10 * 100K = 1M input tokens
+  With caching: 100K + 10 * (prompt only) = ~110K input tokens
+
+TTL guidelines:
+- "300s" (5 min): Development and testing
+- "3600s" (1 hour): Interactive sessions
+- "86400s" (24 hours): Production batch jobs
+
+Cache limitations:
+- Minimum cached content: ~32K tokens
+- Maximum TTL varies by model
+- Cache is per-model -- switching models requires a new cache
+"""

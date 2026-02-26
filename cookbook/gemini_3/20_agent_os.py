@@ -1,22 +1,25 @@
 """
-20. Agent OS -- Deploy on Agent OS
-===================================
+Agent OS - Deploy All Agents as a Web Service
+===============================================
 All agents and teams from steps 1-19 deployed as a web service.
-Agent OS provides a web interface for interacting with your agents.
+Agent OS provides a web interface for interacting with your agents --
+chat with them, explore sessions, monitor traces, and manage knowledge.
 
-How to Use
-----------
-1. Start the server:
-   python cookbook/gemini_3/20_agent_os.py
+This is the capstone of the guide: everything you built, served on one endpoint.
 
+How to use:
+1. Start the server: python cookbook/gemini_3/20_agent_os.py
 2. Visit https://os.agno.com in your browser
-
 3. Add your local endpoint: http://localhost:7777
-
 4. Select any agent or team and start chatting
 
-Prerequisites
--------------
+Key concepts:
+- AgentOS: Wraps agents and teams into a FastAPI web service
+- get_app(): Returns a FastAPI app you can customize
+- serve(): Starts the server with uvicorn (hot-reload enabled)
+- tracing=True: Enables request tracing in the Agent OS UI
+
+Prerequisites:
 - GOOGLE_API_KEY environment variable set
 """
 
@@ -27,8 +30,8 @@ from pathlib import Path
 from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
-# Import agents from numbered files (Python can't import modules starting
-# with digits directly, so we use importlib)
+# Import agents from numbered files
+# Python can't import modules starting with digits directly, so we use importlib
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -37,6 +40,7 @@ def _import(module_name: str, attr: str):
     return getattr(importlib.import_module(module_name), attr)
 
 
+# Import agents from earlier steps
 chat_agent = _import("1_basic", "chat_agent")
 finance_agent = _import("2_tools", "finance_agent")
 critic_agent = _import("3_structured_output", "critic_agent")
@@ -67,6 +71,7 @@ agent_os = AgentOS(
         tutor_agent,
     ],
     teams=[content_team],
+    # Enable request tracing in the Agent OS UI
     tracing=True,
 )
 app = agent_os.get_app()
@@ -75,4 +80,35 @@ app = agent_os.get_app()
 # Run AgentOS
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # reload=True enables hot-reload during development
     agent_os.serve(app="20_agent_os:app", reload=True)
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Agent OS features:
+
+1. Chat interface
+   Talk to any agent through a web UI at os.agno.com
+
+2. Session management
+   Browse conversation history, switch between sessions
+
+3. Tracing
+   See every LLM call, tool invocation, and knowledge search
+
+4. Knowledge management
+   View and manage documents in your knowledge bases
+
+5. Custom endpoints
+   app = agent_os.get_app()
+   @app.get("/custom")
+   def custom_endpoint():
+       return {"status": "ok"}
+
+For production deployment:
+- Use PostgreSQL instead of SQLite (see cookbook/06_storage/)
+- Add authentication (see cookbook/05_agent_os/)
+- Use a proper WSGI server (gunicorn, uvicorn workers)
+"""
