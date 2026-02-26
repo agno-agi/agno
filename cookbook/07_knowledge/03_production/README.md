@@ -14,6 +14,7 @@ Real-world patterns for deploying knowledge systems.
 | [01_multi_source_rag.py](./01_multi_source_rag.py) | Loading from files, URLs, and text in one batch |
 | [02_knowledge_lifecycle.py](./02_knowledge_lifecycle.py) | Insert, skip-if-exists, remove, and status tracking |
 | [03_multi_tenant.py](./03_multi_tenant.py) | Knowledge isolation per tenant with isolate_vector_search |
+| [04_agent_os.py](./04_agent_os.py) | Serving multiple knowledge instances via AgentOS API |
 
 ## Running
 
