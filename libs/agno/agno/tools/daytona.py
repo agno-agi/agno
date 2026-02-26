@@ -17,6 +17,7 @@ try:
         Daytona,
         DaytonaConfig,
         Sandbox,
+        VolumeMount,
     )
 except ImportError:
     raise ImportError("`daytona` not installed. Please install using `pip install daytona`")
@@ -56,14 +57,22 @@ class DaytonaTools(Toolkit):
         api_key: Optional[str] = None,
         api_url: Optional[str] = None,
         sandbox_id: Optional[str] = None,
+        sandbox_name: Optional[str] = None,
+        snapshot: Optional[str] = None,
         sandbox_language: Optional[CodeLanguage] = None,
         sandbox_target: Optional[str] = None,
         sandbox_os: Optional[str] = None,
         auto_stop_interval: Optional[int] = 60,  # Stop after 1 hour
+        auto_archive_interval: Optional[int] = None,
+        auto_delete_interval: Optional[int] = None,
+        ephemeral: Optional[bool] = None,
         sandbox_os_user: Optional[str] = None,
         sandbox_env_vars: Optional[Dict[str, str]] = None,
         sandbox_labels: Optional[Dict[str, str]] = None,
         sandbox_public: Optional[bool] = None,
+        network_block_all: Optional[bool] = None,
+        network_allow_list: Optional[str] = None,
+        sandbox_volumes: Optional[List[VolumeMount]] = None,
         organization_id: Optional[str] = None,
         timeout: int = 300,
         auto_create_sandbox: bool = True,
@@ -79,15 +88,23 @@ class DaytonaTools(Toolkit):
 
         self.api_url = api_url or getenv("DAYTONA_API_URL")
         self.sandbox_id = sandbox_id
+        self.sandbox_name = sandbox_name
+        self.snapshot = snapshot
         self.sandbox_target = sandbox_target
         self.organization_id = organization_id
         self.sandbox_language = sandbox_language or CodeLanguage.PYTHON
         self.sandbox_os = sandbox_os
         self.auto_stop_interval = auto_stop_interval
+        self.auto_archive_interval = auto_archive_interval
+        self.auto_delete_interval = auto_delete_interval
+        self.ephemeral = ephemeral
         self.sandbox_os_user = sandbox_os_user
         self.sandbox_env_vars = sandbox_env_vars
         self.sandbox_labels = sandbox_labels or {}
         self.sandbox_public = sandbox_public
+        self.network_block_all = network_block_all
+        self.network_allow_list = network_allow_list
+        self.sandbox_volumes = sandbox_volumes
         self.timeout = timeout
         self.auto_create_sandbox = auto_create_sandbox
         self.persistent = persistent
@@ -222,12 +239,20 @@ class DaytonaTools(Toolkit):
                 labels.setdefault("persistent", "true")
 
             params = CreateSandboxFromSnapshotParams(
+                name=self.sandbox_name,
+                snapshot=self.snapshot,
                 language=self.sandbox_language,
                 os_user=self.sandbox_os_user,
                 env_vars=self.sandbox_env_vars,
                 auto_stop_interval=self.auto_stop_interval,
+                auto_archive_interval=self.auto_archive_interval,
+                auto_delete_interval=self.auto_delete_interval,
+                ephemeral=self.ephemeral,
                 labels=labels,
                 public=self.sandbox_public,
+                network_block_all=self.network_block_all,
+                network_allow_list=self.network_allow_list,
+                volumes=self.sandbox_volumes,
             )
             sandbox = self.daytona.create(params, timeout=self.timeout)
 
