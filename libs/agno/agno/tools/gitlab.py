@@ -149,7 +149,7 @@ class GitlabTools(Toolkit):
             logger.error(f"GitLab API error while listing projects: {e}")
             return self._json_error(str(e))
         except Exception as e:
-            logger.error(f"Unexpected error while listing projects: {e}")
+            logger.exception("Unexpected error while listing projects")
             return self._json_error(str(e))
 
     def get_project(self, project_id_or_path: str) -> str:
@@ -170,7 +170,7 @@ class GitlabTools(Toolkit):
             logger.error(f"GitLab API error while getting project {project_id_or_path}: {e}")
             return self._json_error(str(e))
         except Exception as e:
-            logger.error(f"Unexpected error while getting project {project_id_or_path}: {e}")
+            logger.exception(f"Unexpected error while getting project {project_id_or_path}")
             return self._json_error(str(e))
 
     def list_merge_requests(
@@ -217,7 +217,7 @@ class GitlabTools(Toolkit):
             logger.error(f"GitLab API error while listing merge requests for project {project_id_or_path}: {e}")
             return self._json_error(str(e))
         except Exception as e:
-            logger.error(f"Unexpected error while listing merge requests for project {project_id_or_path}: {e}")
+            logger.exception(f"Unexpected error while listing merge requests for project {project_id_or_path}")
             return self._json_error(str(e))
 
     def get_merge_request(self, project_id_or_path: str, merge_request_iid: int) -> str:
@@ -240,7 +240,7 @@ class GitlabTools(Toolkit):
             logger.error(f"GitLab API error while getting merge request {merge_request_iid}: {e}")
             return self._json_error(str(e))
         except Exception as e:
-            logger.error(f"Unexpected error while getting merge request {merge_request_iid}: {e}")
+            logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
 
     def list_issues(
@@ -291,5 +291,5 @@ class GitlabTools(Toolkit):
             logger.error(f"GitLab API error while listing issues for project {project_id_or_path}: {e}")
             return self._json_error(str(e))
         except Exception as e:
-            logger.error(f"Unexpected error while listing issues for project {project_id_or_path}: {e}")
+            logger.exception(f"Unexpected error while listing issues for project {project_id_or_path}")
             return self._json_error(str(e))
