@@ -1,14 +1,24 @@
 """
-2. Agent with Tools
-===================
+Agent with Tools - Finance Research Agent
+==========================================
 Add external tools so the agent can take actions beyond text generation.
-This agent uses web search to find current information.
+This agent uses web search to find current financial information.
 
-Run:
-    python cookbook/gemini_3/2_tools.py
+Tools let agents interact with the outside world -- search the web, call APIs,
+read databases, run code. Without tools, an agent can only generate text from
+its training data.
 
-Example prompt:
-    "Compare the latest funding rounds in AI startups this month"
+Key concepts:
+- tools: A list of Toolkit instances the agent can call
+- instructions: System-level guidance that shapes the agent's behavior
+- add_datetime_to_context: Injects the current date/time so the agent knows "today"
+- WebSearchTools: Built-in toolkit for web search via DuckDuckGo (no API key needed)
+
+Example prompts to try:
+- "Compare the latest funding rounds in AI startups this month"
+- "What's happening with interest rates this week?"
+- "Find the latest news about Nvidia's earnings"
+- "What are the top tech IPOs planned for this quarter?"
 """
 
 from agno.agent import Agent
@@ -16,12 +26,9 @@ from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
-# Create Agent
+# Agent Instructions
 # ---------------------------------------------------------------------------
-finance_agent = Agent(
-    name="Finance Agent",
-    model=Gemini(id="gemini-3-flash-preview"),
-    instructions="""\
+instructions = """\
 You are a finance research agent. You find and analyze current financial news.
 
 ## Workflow
@@ -35,8 +42,17 @@ You are a finance research agent. You find and analyze current financial news.
 - Always cite your sources
 - Use tables for comparisons
 - Include dates for all data points\
-""",
+"""
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+finance_agent = Agent(
+    name="Finance Agent",
+    model=Gemini(id="gemini-3-flash-preview"),
+    instructions=instructions,
     tools=[WebSearchTools()],
+    # Adds current date/time to the system message so the agent knows "today"
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -49,3 +65,32 @@ if __name__ == "__main__":
         "Compare the latest funding rounds in AI startups this month",
         stream=True,
     )
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Tools are Python classes that inherit from Toolkit. Agno includes many built-in:
+
+1. Web search (no API key needed)
+   from agno.tools.websearch import WebSearchTools
+   tools=[WebSearchTools()]
+
+2. Yahoo Finance (real market data)
+   from agno.tools.yfinance import YFinanceTools
+   tools=[YFinanceTools(all=True)]
+
+3. Exa search (semantic search, needs EXA_API_KEY)
+   from agno.tools.exa import ExaTools
+   tools=[ExaTools()]
+
+4. Custom tools (write your own -- see step 8)
+   @tool
+   def my_tool(query: str) -> str:
+       return "result"
+
+You can combine multiple toolkits:
+   tools=[WebSearchTools(), YFinanceTools(all=True)]
+
+The agent decides which tool to call based on the prompt.
+"""

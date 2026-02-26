@@ -1,14 +1,22 @@
 """
-13. PDF Understanding
-=====================
+PDF Understanding - Read and Analyze Documents
+================================================
 Gemini can read and understand PDF documents.
 Pass PDFs via URL -- Gemini fetches and processes them directly.
 
-Run:
-    python cookbook/gemini_3/13_pdf_input.py
+No PDF parsing libraries needed. The model reads text, tables,
+images, and layout from the PDF natively.
 
-Example prompt:
-    "Summarize this document and suggest a recipe."
+Key concepts:
+- File(url=..., mime_type="application/pdf"): Pass a PDF from a URL
+- File(filepath=..., mime_type="application/pdf"): Pass a local PDF
+- Native capability: No PyPDF, pdfplumber, or other parsing libraries needed
+- Layout-aware: The model understands tables, columns, and formatting
+
+Example prompts to try:
+- "Summarize the contents of this document"
+- "What are the main recipes in this cookbook?"
+- "Extract all the key findings from this research paper"
 """
 
 from agno.agent import Agent
@@ -16,12 +24,26 @@ from agno.media import File
 from agno.models.google import Gemini
 
 # ---------------------------------------------------------------------------
+# Agent Instructions
+# ---------------------------------------------------------------------------
+instructions = """\
+You are a document analysis expert. Read documents thoroughly
+and provide clear summaries.
+
+## Rules
+
+- Summarize the main points first
+- Note any tables or structured data
+- Highlight actionable information\
+"""
+
+# ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 doc_reader = Agent(
     name="Document Reader",
     model=Gemini(id="gemini-3-flash-preview"),
-    instructions="You are a document analysis expert. Read documents thoroughly and provide clear summaries.",
+    instructions=instructions,
     markdown=True,
 )
 
@@ -39,3 +61,36 @@ if __name__ == "__main__":
         ],
         stream=True,
     )
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+PDF input methods:
+
+1. From URL
+   files=[File(url="https://example.com/report.pdf", mime_type="application/pdf")]
+
+2. From local file
+   files=[File(filepath="path/to/report.pdf", mime_type="application/pdf")]
+
+3. Multiple PDFs
+   files=[
+       File(url="...", mime_type="application/pdf"),
+       File(filepath="...", mime_type="application/pdf"),
+   ]
+
+4. With structured output (extract data from PDFs)
+   class Report(BaseModel):
+       title: str
+       key_findings: List[str]
+       recommendations: List[str]
+
+   agent = Agent(model=Gemini(...), output_schema=Report)
+   result = agent.run("Extract findings", files=[...])
+
+Use cases for music/film/gaming:
+- Parse music licensing contracts
+- Extract requirements from game design documents
+- Analyze film scripts for scene breakdowns
+"""

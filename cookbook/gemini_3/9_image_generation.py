@@ -1,13 +1,22 @@
 """
-9. Image Generation and Editing
-================================
+Image Generation and Editing - Create and Modify Images
+=========================================================
 Gemini can generate and edit images using response_modalities=["Text", "Image"].
-No external tools needed -- this is a native model capability.
+No external tools or APIs needed -- this is a native model capability.
 
-Note: Do not provide a system message when using image generation.
+Generate images from text descriptions, or edit existing images by passing
+them alongside instructions.
 
-Run:
-    python cookbook/gemini_3/9_image_generation.py
+Key concepts:
+- response_modalities=["Text", "Image"]: Tells Gemini to output both text and images
+- RunOutput.images: Access generated images from the response
+- Image editing: Pass an existing image + instructions to modify it
+- No system message: Image generation does not support system instructions
+
+Example prompts to try:
+- "Make me an image of a cat sitting in a tree"
+- "Create a minimalist logo for a coffee shop called 'Bean Scene'"
+- "Generate a fantasy landscape with mountains and a castle"
 """
 
 from io import BytesIO
@@ -24,12 +33,13 @@ WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Create Agent (no system message for image generation)
+# Create Agent (no system message -- required for image generation)
 # ---------------------------------------------------------------------------
 image_gen_agent = Agent(
     name="Image Generator",
     model=Gemini(
         id="gemini-3-flash-preview",
+        # Enable both text and image output
         response_modalities=["Text", "Image"],
     ),
 )
@@ -78,3 +88,32 @@ if __name__ == "__main__":
                     print(f"Saved edited image to {output_path}")
         else:
             print("No edited images found in response")
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Image generation tips:
+
+1. Be specific in prompts
+   "A watercolor painting of a sunset over the ocean with warm orange tones"
+   is better than "sunset painting"
+
+2. Image editing workflow
+   # Generate
+   result = agent.run("Create a logo for a tech startup")
+   # Edit
+   result = agent.run("Make the colors more vibrant", images=[...])
+   # Iterate
+   result = agent.run("Add the text 'ACME' below the logo", images=[...])
+
+3. No system message allowed
+   Image generation models don't support instructions=... on the agent.
+   Put guidance directly in the prompt instead.
+
+Use cases for music/film/gaming:
+- Generate album cover concepts from descriptions
+- Create character concept art for games
+- Produce storyboard frames from scene descriptions
+- Design promotional materials and posters
+"""

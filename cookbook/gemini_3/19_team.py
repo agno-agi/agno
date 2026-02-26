@@ -1,6 +1,6 @@
 """
-19. Multi-Agent Team
-====================
+Multi-Agent Team - Writer, Editor, and Fact-Checker
+=====================================================
 Split responsibilities across specialized agents coordinated by a team leader.
 Writer drafts, Editor refines, Fact-Checker verifies.
 
@@ -8,11 +8,17 @@ Multi-agent teams are powerful but less predictable than single agents.
 The team leader is an LLM making delegation decisions -- sometimes brilliantly,
 sometimes not. Teams shine in human-supervised settings.
 
-Run:
-    python cookbook/gemini_3/19_team.py
+Key concepts:
+- Team: Coordinates multiple agents, each with a specific role
+- Team leader: An LLM (typically a stronger model) that delegates to members
+- members: List of Agent instances the team can delegate to
+- show_members_responses: If True, shows each member's response in the output
+- role: A short description of what each member agent does (helps the leader delegate)
 
-Example prompt:
-    "Write a blog post about the health benefits of Mediterranean diet"
+Example prompts to try:
+- "Write a blog post about the health benefits of Mediterranean diet"
+- "Create an article about the future of AI in healthcare"
+- "Write a travel guide for visiting Tokyo in cherry blossom season"
 """
 
 from pathlib import Path
@@ -37,11 +43,7 @@ db = SqliteDb(db_file=str(WORKSPACE / "gemini_agents.db"))
 # ---------------------------------------------------------------------------
 # Writer Agent -- drafts content
 # ---------------------------------------------------------------------------
-writer = Agent(
-    name="Writer",
-    role="Write engaging blog post drafts",
-    model=Gemini(id="gemini-3-flash-preview"),
-    instructions="""\
+writer_instructions = """\
 You are a professional content writer. Write engaging, well-structured blog posts.
 
 ## Workflow
@@ -56,7 +58,14 @@ You are a professional content writer. Write engaging, well-structured blog post
 - Include relevant facts and statistics
 - Structure with headers and bullet points where appropriate
 - No emojis\
-""",
+"""
+
+writer = Agent(
+    name="Writer",
+    # role helps the team leader understand what this agent does
+    role="Write engaging blog post drafts",
+    model=Gemini(id="gemini-3-flash-preview"),
+    instructions=writer_instructions,
     tools=[WebSearchTools()],
     db=db,
     add_datetime_to_context=True,
@@ -65,11 +74,7 @@ You are a professional content writer. Write engaging, well-structured blog post
 # ---------------------------------------------------------------------------
 # Editor Agent -- reviews and improves (no tools, text-only)
 # ---------------------------------------------------------------------------
-editor = Agent(
-    name="Editor",
-    role="Review and improve content for clarity and quality",
-    model=Gemini(id="gemini-3-flash-preview"),
-    instructions="""\
+editor_instructions = """\
 You are a senior editor. Review content for quality and suggest improvements.
 
 ## Review Checklist
@@ -86,7 +91,13 @@ You are a senior editor. Review content for quality and suggest improvements.
 - Suggest concrete rewrites, not vague feedback
 - Acknowledge what works well
 - No emojis\
-""",
+"""
+
+editor = Agent(
+    name="Editor",
+    role="Review and improve content for clarity and quality",
+    model=Gemini(id="gemini-3-flash-preview"),
+    instructions=editor_instructions,
     db=db,
     add_datetime_to_context=True,
 )
@@ -94,11 +105,7 @@ You are a senior editor. Review content for quality and suggest improvements.
 # ---------------------------------------------------------------------------
 # Fact-Checker Agent -- verifies claims
 # ---------------------------------------------------------------------------
-fact_checker_member = Agent(
-    name="Fact Checker",
-    role="Verify factual claims using web search",
-    model=Gemini(id="gemini-3-flash-preview", search=True),
-    instructions="""\
+fact_checker_instructions = """\
 You are a fact-checker. Verify claims made in the content.
 
 ## Workflow
@@ -114,7 +121,14 @@ You are a fact-checker. Verify claims made in the content.
 - Provide sources for corrections
 - Rate confidence: Verified / Unverified / Incorrect
 - No emojis\
-""",
+"""
+
+fact_checker_member = Agent(
+    name="Fact Checker",
+    role="Verify factual claims using web search",
+    # Uses Gemini's native search for fact-checking
+    model=Gemini(id="gemini-3-flash-preview", search=True),
+    instructions=fact_checker_instructions,
     db=db,
     add_datetime_to_context=True,
 )
@@ -124,6 +138,7 @@ You are a fact-checker. Verify claims made in the content.
 # ---------------------------------------------------------------------------
 content_team = Team(
     name="Content Team",
+    # Team leader uses a stronger model for better delegation decisions
     model=Gemini(id="gemini-3.1-pro-preview"),
     members=[writer, editor, fact_checker_member],
     instructions="""\
@@ -144,6 +159,7 @@ Provide the final blog post followed by:
 - **Fact-Check Summary**: Verification status of key claims\
 """,
     db=db,
+    # Show each member's response in the output
     show_members_responses=True,
     add_datetime_to_context=True,
     markdown=True,
@@ -157,3 +173,29 @@ if __name__ == "__main__":
         "Write a blog post about the health benefits of Mediterranean diet",
         stream=True,
     )
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Team patterns:
+
+1. Research team (search + analysis)
+   members=[researcher, analyst, summarizer]
+
+2. Code review team (write + review + test)
+   members=[coder, reviewer, tester]
+
+3. Creative team (ideate + create + critique)
+   members=[brainstormer, creator, critic]
+
+When to use teams vs single agents:
+- Single agent: Task is well-defined, one perspective is enough
+- Team: Task benefits from multiple specialist perspectives
+- Workflow (step 20): Steps must happen in a specific order
+
+Use cases for music/film/gaming:
+- Music: Lyricist + Composer + Producer agents
+- Film: Scriptwriter + Director + Continuity Checker agents
+- Gaming: Designer + Artist + QA Tester agents
+"""

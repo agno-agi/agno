@@ -1,14 +1,19 @@
 """
-1. Basic Agent
-==============
+Basic Agent - Your First Gemini Agent
+=======================================
 The simplest Agno agent. A Gemini model and a prompt -- nothing else.
 No tools, no memory, no persistence. This is your starting point.
 
-Run:
-    python cookbook/gemini_3/1_basic.py
+Key concepts:
+- Agent: The core building block in Agno -- wraps a model with instructions
+- print_response: Runs the agent and prints formatted output
+- stream=True: Streams tokens as they arrive instead of waiting for the full response
+- Sync vs async: Every Agno method has an async variant (aprint_response, arun, etc.)
 
-Example prompt:
-    "What are the top 3 things to see in Paris?"
+Example prompts to try:
+- "What are the top 3 things to see in Paris?"
+- "Explain quantum computing in simple terms"
+- "Write a haiku about programming"
 """
 
 import asyncio
@@ -22,6 +27,7 @@ from agno.models.google import Gemini
 chat_agent = Agent(
     name="Chat Assistant",
     model=Gemini(id="gemini-3-flash-preview"),
+    # markdown=True renders rich formatting in the terminal
     markdown=True,
 )
 
@@ -48,3 +54,31 @@ if __name__ == "__main__":
             "What are the top 3 things to see in Paris?", stream=True
         )
     )
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Agno supports four execution modes for every agent:
+
+1. Sync (blocking)
+   agent.print_response("prompt")
+   response = agent.run("prompt")
+
+2. Sync + Streaming (tokens arrive as they're generated)
+   agent.print_response("prompt", stream=True)
+   for chunk in agent.run("prompt", stream=True):
+       print(chunk.content, end="")
+
+3. Async (non-blocking)
+   await agent.aprint_response("prompt")
+   response = await agent.arun("prompt")
+
+4. Async + Streaming
+   await agent.aprint_response("prompt", stream=True)
+   async for chunk in await agent.arun("prompt", stream=True):
+       print(chunk.content, end="")
+
+All examples in this guide use sync for simplicity.
+For production apps, use async (see cookbook/02_agents/ for patterns).
+"""

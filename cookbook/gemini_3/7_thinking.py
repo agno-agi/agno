@@ -1,19 +1,23 @@
 """
-7. Extended Thinking
-====================
+Extended Thinking - Complex Reasoning with Budget Control
+==========================================================
 Enable Gemini's extended thinking for complex reasoning tasks.
 The model "thinks" before responding, producing better answers for
-logic puzzles, math, and multi-step problems.
+logic puzzles, math, coding, and multi-step problems.
 
-Parameters:
-    thinking_budget: Token budget for thinking (0=disable, -1=dynamic, or a number)
-    include_thoughts: Include the model's reasoning in the response
+You control the thinking budget -- how many tokens the model can use
+for internal reasoning before producing the final answer.
 
-Run:
-    python cookbook/gemini_3/7_thinking.py
+Key concepts:
+- thinking_budget: Token budget for thinking (0=disable, -1=dynamic, or a number)
+- include_thoughts: If True, the model's reasoning is included in the response
+- Best with Pro: Thinking is most effective with Gemini Pro models
+- Trade-off: More thinking = better answers but higher latency and cost
 
-Example prompt:
-    Classic missionaries and cannibals river-crossing puzzle
+Example prompts to try:
+- "Solve the missionaries and cannibals river-crossing puzzle"
+- "What is 127 * 389 + 256 * 741? Show your work."
+- "Write a Python function to find all prime factors of a number. Think through edge cases."
 """
 
 from agno.agent import Agent
@@ -26,7 +30,9 @@ thinking_agent = Agent(
     name="Thinking Agent",
     model=Gemini(
         id="gemini-3.1-pro-preview",
+        # Token budget for internal reasoning (higher = deeper thinking)
         thinking_budget=1280,
+        # Show the model's chain of thought in the response
         include_thoughts=True,
     ),
     markdown=True,
@@ -46,3 +52,27 @@ if __name__ == "__main__":
     )
 
     thinking_agent.print_response(task, stream=True)
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Thinking budget guidelines:
+
+- thinking_budget=0: Disable thinking (fastest, cheapest)
+- thinking_budget=256: Light reasoning (simple math, basic logic)
+- thinking_budget=1024: Moderate reasoning (multi-step problems)
+- thinking_budget=2048: Deep reasoning (complex puzzles, proofs)
+- thinking_budget=-1: Dynamic (model decides how much to think)
+
+When to use thinking:
+- Math and logic puzzles
+- Code generation with edge cases
+- Multi-step planning
+- Analysis requiring chain-of-thought
+
+When NOT to use thinking:
+- Simple Q&A (adds unnecessary latency)
+- Creative writing (thinking doesn't help much)
+- Summarization (straightforward task)
+"""

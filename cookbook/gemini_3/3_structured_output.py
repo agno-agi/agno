@@ -1,14 +1,22 @@
 """
-3. Structured Output
-====================
+Structured Output - Movie Critic with Typed Responses
+=======================================================
 Get structured, typed responses using Pydantic models.
 Instead of free-form text, the agent returns data you can use in code.
 
-Run:
-    python cookbook/gemini_3/3_structured_output.py
+Perfect for building pipelines, UIs, or integrations where you need
+predictable data shapes. Parse it, store it, display it -- no regex required.
 
-Example prompt:
-    "Review the movie Inception"
+Key concepts:
+- output_schema: A Pydantic BaseModel defining the response structure
+- response.content: The parsed Pydantic object (not a string)
+- agent.run(): Returns a RunOutput with .content as your typed object
+- Field(..., description=...): Descriptions guide the model on what to put in each field
+
+Example prompts to try:
+- "Review the movie Inception"
+- "Review The Shawshank Redemption"
+- "Review a recent sci-fi film"
 """
 
 from typing import List
@@ -39,6 +47,7 @@ critic_agent = Agent(
     name="Movie Critic",
     model=Gemini(id="gemini-3.1-pro-preview"),
     instructions="You are a professional movie critic. Provide balanced, thoughtful reviews.",
+    # output_schema forces the agent to return a MovieReview, not free text
     output_schema=MovieReview,
 )
 
@@ -46,15 +55,44 @@ critic_agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # agent.run() returns RunOutput; .content is the parsed Pydantic object
     run = critic_agent.run("Review the movie Inception")
     review: MovieReview = run.content
+
     print(f"Title: {review.title} ({review.year})")
     print(f"Rating: {review.rating}/10")
     print(f"Genre: {review.genre}")
-    print(f"\nPros:")
+    print("\nPros:")
     for pro in review.pros:
         print(f"  - {pro}")
-    print(f"\nCons:")
+    print("\nCons:")
     for con in review.cons:
         print(f"  - {con}")
     print(f"\nVerdict: {review.verdict}")
+
+# ---------------------------------------------------------------------------
+# More Examples
+# ---------------------------------------------------------------------------
+"""
+Structured output is perfect for:
+
+1. Building UIs
+   review = agent.run("Review Inception").content
+   render_movie_card(review)
+
+2. Storing in databases
+   db.insert("reviews", review.model_dump())
+
+3. Comparing items
+   inception = agent.run("Review Inception").content
+   tenet = agent.run("Review Tenet").content
+   if inception.rating > tenet.rating:
+       print(f"{inception.title} wins")
+
+4. Building pipelines
+   movies = ["Inception", "Tenet", "Interstellar"]
+   reviews = [agent.run(f"Review {m}").content for m in movies]
+
+The schema guarantees you always get the fields you expect.
+No parsing, no surprises.
+"""
