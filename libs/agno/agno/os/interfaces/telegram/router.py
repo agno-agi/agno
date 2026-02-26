@@ -144,6 +144,7 @@ def attach_routes(
 
         bot = bot_state.bot
         forum_thread_id: Optional[int] = None
+        base_key: Optional[str] = None
 
         try:
             if message.get("from", {}).get("is_bot"):
@@ -237,6 +238,29 @@ def attach_routes(
             if file_warning:
                 await send_html(bot, chat_id, file_warning, message_thread_id=forum_thread_id)
 
+            # Text-based files (CSV, TXT, JSON, etc.) are inlined into the
+            # message so every model provider can process them.  Only true
+            # binary formats (PDF, DOCX) stay as File attachments.
+            _BINARY_MIME_TYPES = {
+                "application/pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+            if files:
+                kept_files = []
+                for f in files:
+                    if f.mime_type and f.mime_type in _BINARY_MIME_TYPES:
+                        kept_files.append(f)
+                    elif f.content:
+                        try:
+                            text = f.content.decode("utf-8", errors="replace") if isinstance(f.content, bytes) else str(f.content)
+                            label = f.filename or "file"
+                            message_text += f"\n\n--- {label} ---\n{text}"
+                        except Exception:
+                            kept_files.append(f)
+                    else:
+                        kept_files.append(f)
+                files = kept_files or None
+
             run_kwargs: dict = dict(
                 user_id=user_id,
                 session_id=session_id,
@@ -288,7 +312,15 @@ def attach_routes(
                             reply_to_message_id=reply_to,
                             message_thread_id=forum_thread_id,
                         )
+                        if base_key:
+                            bot_state.bump_session_generation(base_key)
                         return
+                else:
+                    # Stream returned no RunOutput — error was handled inside
+                    # stream_to_telegram. Bump session so next message gets a
+                    # clean session instead of replaying the failed context.
+                    if base_key:
+                        bot_state.bump_session_generation(base_key)
 
                     if show_reasoning:
                         reasoning = getattr(response, "reasoning_content", None)
@@ -312,6 +344,11 @@ def attach_routes(
                     response = await workflow.arun(message_text, **run_kwargs)  # type: ignore
 
                 if not response:
+                    await send_chunked(
+                        bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
+                    )
+                    if base_key:
+                        bot_state.bump_session_generation(base_key)
                     return
 
                 if response.status == "ERROR":
@@ -323,6 +360,8 @@ def attach_routes(
                         message_thread_id=forum_thread_id,
                     )
                     log_error(response.content)
+                    if base_key:
+                        bot_state.bump_session_generation(base_key)
                     return
 
                 if show_reasoning:
@@ -356,6 +395,8 @@ def attach_routes(
 
         except Exception as e:
             log_error(f"Error processing message: {e}")
+            if base_key:
+                bot_state.bump_session_generation(base_key)
             try:
                 await send_chunked(bot, chat_id, error_message, message_thread_id=forum_thread_id)
             except Exception as send_error:

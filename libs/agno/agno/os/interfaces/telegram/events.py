@@ -75,8 +75,8 @@ async def stream_to_telegram(
     async def _flush_display() -> None:
         try:
             await _send_or_edit(_build_display_text())
-        except Exception:
-            pass
+        except Exception as e:
+            log_warning(f"Stream display update failed: {e}")
 
     async for event in event_stream:
         # Agent/Team final output
@@ -132,8 +132,7 @@ async def stream_to_telegram(
         if isinstance(event, (AgentRunErrorEvent, TeamRunErrorEvent)):
             log_error(f"Run error during stream: {event.content or 'Unknown error'}")
             accumulated_content = error_message
-            await _flush_display()
-            return final_run_output
+            break
 
         # Tool call started
         if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
