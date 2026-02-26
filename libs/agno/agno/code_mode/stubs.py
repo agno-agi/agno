@@ -15,28 +15,30 @@ def should_include(func: Function) -> bool:
     return True
 
 
+def _prepare_function(func: Function) -> Function:
+    func = func.model_copy(deep=True)
+    if not func.skip_entrypoint_processing:
+        func.process_entrypoint()
+    return func
+
+
 def collect_functions(
     tools: List[Union[Toolkit, Callable, Function]],
     async_mode: bool = False,
 ) -> Dict[str, Function]:
     collected: Dict[str, Function] = OrderedDict()
-    for tool in tools:
-        if isinstance(tool, Toolkit):
-            toolkit_funcs = tool.get_async_functions() if async_mode else tool.get_functions()
+    for item in tools:
+        if isinstance(item, Toolkit):
+            toolkit_funcs = item.get_async_functions() if async_mode else item.get_functions()
             for name, func in toolkit_funcs.items():
                 if should_include(func):
-                    func = func.model_copy(deep=True)
-                    if not func.skip_entrypoint_processing:
-                        func.process_entrypoint()
-                    collected[name] = func
-        elif isinstance(tool, Function):
-            if should_include(tool):
-                tool = tool.model_copy(deep=True)
-                if not tool.skip_entrypoint_processing:
-                    tool.process_entrypoint()
-                collected[tool.name] = tool
-        elif callable(tool):
-            func = Function.from_callable(tool)
+                    collected[name] = _prepare_function(func)
+        elif isinstance(item, Function):
+            if should_include(item):
+                prepared = _prepare_function(item)
+                collected[prepared.name] = prepared
+        elif callable(item):
+            func = Function.from_callable(item)
             if should_include(func):
                 collected[func.name] = func
     return collected

@@ -17,35 +17,10 @@ if TYPE_CHECKING:
 
 
 class CodeMode(Toolkit):
-    def __init__(
-        self,
-        tools: List[Union["Toolkit", Callable, Function]],
-        *,
-        code_model: Optional["Model"] = None,
-        max_code_retries: int = 3,
-        discovery: Union[bool, str] = "auto",
-        discovery_threshold: int = 15,
-        additional_modules: Optional[Dict[str, Any]] = None,
-        return_variable: str = "result",
-        max_code_length: int = 10_000,
-        allowed_builtins: Optional[Set[str]] = None,
-        **kwargs,
-    ):
-        self.source_tools = tools
-        self.code_model = code_model
-        if self.code_model is not None:
-            from agno.metrics import ModelType
+    EXEC_ERROR_PREFIX = "[[EXEC_ERROR]] "
 
-            self.code_model.model_type = ModelType.CODE_MODEL
-        self.max_code_retries = max_code_retries
-        self.return_variable = return_variable
-        self.max_code_length = max_code_length
-        self.discovery_threshold = discovery_threshold
-        self.additional_modules: Dict[str, Any] = additional_modules or {}
-        self.caller_loop: Any = None
-
-        self.exec_error_prefix = "[[EXEC_ERROR]] "
-        self.blocked_modules: Set[str] = {
+    BLOCKED_MODULES: frozenset = frozenset(
+        {
             "os",
             "sys",
             "subprocess",
@@ -70,46 +45,41 @@ class CodeMode(Toolkit):
             "gc",
             "traceback",
         }
-        self.framework_params: Set[str] = {
-            "self",
-            "agent",
-            "team",
-            "run_context",
-            "fc",
-            "images",
-            "videos",
-            "audios",
-            "files",
-        }
-        self.json_type_map: Dict[str, str] = {
-            "string": "str",
-            "number": "float",
-            "integer": "int",
-            "boolean": "bool",
-            "array": "list",
-            "object": "dict",
-        }
-        self.preapproved_modules: Dict[str, Any] = {
-            "json": json,
-            "math": math,
-            "datetime": datetime,
-            "re": re,
-            "collections": collections,
-        }
-        self.code_model_system = (
-            "You are a Python code generator. Write a SINGLE complete Python program "
-            "that accomplishes the user's task by calling the provided tool functions.\n\n"
-            "RULES:\n"
-            "- Call functions DIRECTLY: get_stock_price(symbol='AAPL'), NOT module.func().\n"
-            "- `json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
-            "- All tool functions return JSON strings. Use json.loads() to parse them.\n"
-            "- Store your final answer in a variable called `result` (as a formatted string).\n"
-            "- Handle errors with try/except where appropriate.\n"
-            "- Output ONLY the Python code inside a ```python code fence. No explanation.\n\n"
-            "AVAILABLE FUNCTIONS:\n\n"
-        )
+    )
 
-        _default_builtins: Set[str] = {
+    # Maps framework param names to the private attribute on Function that holds the injected value
+    FRAMEWORK_ARG_ATTRS: Dict[str, str] = {
+        "agent": "_agent",
+        "team": "_team",
+        "run_context": "_run_context",
+        "images": "_images",
+        "videos": "_videos",
+        "audios": "_audios",
+        "files": "_files",
+    }
+
+    # "self" and "fc" are framework params but injected differently (not via FRAMEWORK_ARG_ATTRS)
+    FRAMEWORK_PARAMS: frozenset = frozenset({"self", "fc"} | FRAMEWORK_ARG_ATTRS.keys())
+
+    JSON_TYPE_MAP: Dict[str, str] = {
+        "string": "str",
+        "number": "float",
+        "integer": "int",
+        "boolean": "bool",
+        "array": "list",
+        "object": "dict",
+    }
+
+    PREAPPROVED_MODULES: Dict[str, Any] = {
+        "json": json,
+        "math": math,
+        "datetime": datetime,
+        "re": re,
+        "collections": collections,
+    }
+
+    DEFAULT_BUILTINS: frozenset = frozenset(
+        {
             "len",
             "min",
             "max",
@@ -162,14 +132,55 @@ class CodeMode(Toolkit):
             "False",
             "None",
         }
-        allowed = allowed_builtins or _default_builtins
+    )
+
+    CODE_MODEL_SYSTEM = (
+        "You are a Python code generator. Write a SINGLE complete Python program "
+        "that accomplishes the user's task by calling the provided tool functions.\n\n"
+        "RULES:\n"
+        "- Call functions DIRECTLY: get_stock_price(symbol='AAPL'), NOT module.func().\n"
+        "- `json`, `math`, `datetime`, `re`, and `collections` are pre-imported. Do NOT write import statements.\n"
+        "- All tool functions return JSON strings. Use json.loads() to parse them.\n"
+        "- Store your final answer in a variable called `result` (as a formatted string).\n"
+        "- Handle errors with try/except where appropriate.\n"
+        "- Output ONLY the Python code inside a ```python code fence. No explanation.\n\n"
+        "AVAILABLE FUNCTIONS:\n\n"
+    )
+
+    def __init__(
+        self,
+        tools: List[Union["Toolkit", Callable, Function]],
+        *,
+        code_model: Optional["Model"] = None,
+        max_code_retries: int = 3,
+        discovery: Union[bool, str] = "auto",
+        discovery_threshold: int = 15,
+        additional_modules: Optional[Dict[str, Any]] = None,
+        return_variable: str = "result",
+        max_code_length: int = 10_000,
+        allowed_builtins: Optional[Set[str]] = None,
+        **kwargs,
+    ):
+        self.source_tools = tools
+        self.code_model = code_model
+        if self.code_model is not None:
+            from agno.metrics import ModelType
+
+            self.code_model.model_type = ModelType.CODE_MODEL
+        self.max_code_retries = max_code_retries
+        self.return_variable = return_variable
+        self.max_code_length = max_code_length
+        self.discovery_threshold = discovery_threshold
+        self.additional_modules: Dict[str, Any] = additional_modules or {}
+
+        allowed = allowed_builtins or self.DEFAULT_BUILTINS
         self.safe_builtins: Dict[str, Any] = {k: getattr(builtins, k) for k in allowed if hasattr(builtins, k)}
 
         self.sandbox_functions: Dict[str, Function] = collect_functions(tools, async_mode=False)
         self.sandbox_async_functions: Dict[str, Function] = collect_functions(tools, async_mode=True)
 
         self.stub_map: Dict[str, str] = generate_stub_map(
-            self.sandbox_functions, self.framework_params, self.json_type_map
+            self.sandbox_functions, self.FRAMEWORK_PARAMS, self.JSON_TYPE_MAP
         )
         self.stubs = "\n\n".join(self.stub_map.values())
 
@@ -232,8 +243,8 @@ class CodeMode(Toolkit):
         result = execute_code(self, code, use_async=False)
         if isinstance(result, ToolResult):
             return result
-        if result.startswith(self.exec_error_prefix):
-            return result[len(self.exec_error_prefix) :]
+        if result.startswith(self.EXEC_ERROR_PREFIX):
+            return result.removeprefix(self.EXEC_ERROR_PREFIX)
         return result
 
     async def arun_code(self, code: str, fc: Optional[Any] = None) -> Union[str, ToolResult]:
@@ -242,17 +253,14 @@ class CodeMode(Toolkit):
         if self.code_model is not None:
             return await self._arun_with_code_model(code, use_async=True, run_response=run_response)
         import asyncio
+        from functools import partial
 
         loop = asyncio.get_running_loop()
-        self.caller_loop = loop
-        try:
-            result = await loop.run_in_executor(None, execute_code, self, code, True)
-        finally:
-            self.caller_loop = None
+        result = await loop.run_in_executor(None, partial(execute_code, self, code, True, caller_loop=loop))
         if isinstance(result, ToolResult):
             return result
-        if result.startswith(self.exec_error_prefix):
-            return result[len(self.exec_error_prefix) :]
+        if result.startswith(self.EXEC_ERROR_PREFIX):
+            return result.removeprefix(self.EXEC_ERROR_PREFIX)
         return result
 
     def search_tools(self, query: str) -> str:
@@ -300,7 +308,7 @@ class CodeMode(Toolkit):
         self.sandbox_functions = collect_functions(self.source_tools, async_mode=False)
         self.sandbox_async_functions = collect_functions(self.source_tools, async_mode=True)
 
-        self.stub_map = generate_stub_map(self.sandbox_functions, self.framework_params, self.json_type_map)
+        self.stub_map = generate_stub_map(self.sandbox_functions, self.FRAMEWORK_PARAMS, self.JSON_TYPE_MAP)
         self.stubs = "\n\n".join(self.stub_map.values())
 
         if self.discovery_enabled or self.code_model is not None:
@@ -363,33 +371,25 @@ class CodeMode(Toolkit):
             return m.group(1).strip()
         return text.strip()
 
-    def _generate_code(self, task: str, error: Optional[str] = None, run_response: Optional[Any] = None) -> str:
+    def _build_codegen_messages(self, task: str, error: Optional[str] = None) -> "List":
         from agno.models.message import Message
 
-        system = self.code_model_system + self.stubs
+        system = self.CODE_MODEL_SYSTEM + self.stubs
         user_content = task
         if error:
             user_content += f"\n\nPrevious attempt failed with:\n{error}\n\nFix the code and try again."
-
-        messages = [
+        return [
             Message(role="system", content=system),
             Message(role="user", content=user_content),
         ]
+
+    def _generate_code(self, task: str, error: Optional[str] = None, run_response: Optional[Any] = None) -> str:
+        messages = self._build_codegen_messages(task, error)
         response = self.code_model.response(messages=messages, run_response=run_response)  # type: ignore[union-attr]
         return self._extract_code_block(response.content or "")
 
     async def _agenerate_code(self, task: str, error: Optional[str] = None, run_response: Optional[Any] = None) -> str:
-        from agno.models.message import Message
-
-        system = self.code_model_system + self.stubs
-        user_content = task
-        if error:
-            user_content += f"\n\nPrevious attempt failed with:\n{error}\n\nFix the code and try again."
-
-        messages = [
-            Message(role="system", content=system),
-            Message(role="user", content=user_content),
-        ]
+        messages = self._build_codegen_messages(task, error)
         response = await self.code_model.aresponse(messages=messages, run_response=run_response)  # type: ignore[union-attr]
         return self._extract_code_block(response.content or "")
 
@@ -403,9 +403,9 @@ class CodeMode(Toolkit):
             result = execute_code(self, code, use_async=use_async)
             if isinstance(result, ToolResult):
                 return result
-            if not result.startswith(self.exec_error_prefix):
+            if not result.startswith(self.EXEC_ERROR_PREFIX):
                 return result
-            last_error = result[len(self.exec_error_prefix) :]
+            last_error = result.removeprefix(self.EXEC_ERROR_PREFIX)
             log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
 
@@ -413,21 +413,18 @@ class CodeMode(Toolkit):
         self, task: str, use_async: bool = True, run_response: Optional[Any] = None
     ) -> Union[str, ToolResult]:
         import asyncio
+        from functools import partial
 
         loop = asyncio.get_running_loop()
-        self.caller_loop = loop
-        try:
-            last_error: Optional[str] = None
-            for attempt in range(self.max_code_retries):
-                code = await self._agenerate_code(task, error=last_error, run_response=run_response)
-                log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
-                result = await loop.run_in_executor(None, execute_code, self, code, use_async)
-                if isinstance(result, ToolResult):
-                    return result
-                if not result.startswith(self.exec_error_prefix):
-                    return result
-                last_error = result[len(self.exec_error_prefix) :]
-                log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
-            return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
-        finally:
-            self.caller_loop = None
+        last_error: Optional[str] = None
+        for attempt in range(self.max_code_retries):
+            code = await self._agenerate_code(task, error=last_error, run_response=run_response)
+            log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
+            result = await loop.run_in_executor(None, partial(execute_code, self, code, use_async, caller_loop=loop))
+            if isinstance(result, ToolResult):
+                return result
+            if not result.startswith(self.EXEC_ERROR_PREFIX):
+                return result
+            last_error = result.removeprefix(self.EXEC_ERROR_PREFIX)
+            log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
+        return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"

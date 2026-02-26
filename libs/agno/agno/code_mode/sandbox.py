@@ -32,8 +32,11 @@ def make_wrapper(
     name: str,
     func: Function,
     media_collector: Optional[Dict[str, List[Any]]] = None,
+    caller_loop: Any = None,
 ) -> Callable:
-    param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in tool.framework_params]
+    from agno.code_mode.tool import CodeMode
+
+    param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in CodeMode.FRAMEWORK_PARAMS]
 
     def wrapper(*args: Any, **kwargs: Any) -> str:
         entrypoint = func.entrypoint
@@ -47,7 +50,7 @@ def make_wrapper(
         framework_args = get_framework_args(tool, entrypoint)
 
         if iscoroutinefunction(entrypoint):
-            result = bridge_async(entrypoint, framework_args, kwargs, caller_loop=tool.caller_loop)
+            result = bridge_async(entrypoint, framework_args, kwargs, caller_loop=caller_loop)
         else:
             result = entrypoint(**framework_args, **kwargs)
 
@@ -68,6 +71,8 @@ def make_wrapper(
 
 
 def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]:
+    from agno.code_mode.tool import CodeMode
+
     args: Dict[str, Any] = {}
     run_code_func = tool.functions.get("run_code")
     if run_code_func is None:
@@ -79,20 +84,9 @@ def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]
         return args
 
     param_names = set(sig.parameters.keys())
-    if "agent" in param_names:
-        args["agent"] = run_code_func._agent
-    if "team" in param_names:
-        args["team"] = run_code_func._team
-    if "run_context" in param_names:
-        args["run_context"] = run_code_func._run_context
-    if "images" in param_names:
-        args["images"] = run_code_func._images
-    if "videos" in param_names:
-        args["videos"] = run_code_func._videos
-    if "audios" in param_names:
-        args["audios"] = run_code_func._audios
-    if "files" in param_names:
-        args["files"] = run_code_func._files
+    for param, attr in CodeMode.FRAMEWORK_ARG_ATTRS.items():
+        if param in param_names:
+            args[param] = getattr(run_code_func, attr)
     return args
 
 
@@ -127,13 +121,16 @@ def build_namespace(
     tool: "CodeMode",
     use_async: bool = False,
     media_collector: Optional[Dict[str, List[Any]]] = None,
+    caller_loop: Any = None,
 ) -> Tuple[Dict[str, Any], Set[str]]:
-    preapproved = dict(tool.preapproved_modules)
+    from agno.code_mode.tool import CodeMode
+
+    preapproved = dict(CodeMode.PREAPPROVED_MODULES)
     preapproved.update(tool.additional_modules)
 
     _real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
 
-    blocked_modules = tool.blocked_modules
+    blocked_modules = CodeMode.BLOCKED_MODULES
 
     def _restricted_import(name: str, *args: Any, **kwargs: Any) -> Any:
         if name in preapproved:
@@ -151,11 +148,19 @@ def build_namespace(
 
     functions = tool.sandbox_async_functions if use_async else tool.sandbox_functions
     for name, func in functions.items():
-        wrapper = make_wrapper(tool, name, func, media_collector=media_collector)
+        wrapper = make_wrapper(tool, name, func, media_collector=media_collector, caller_loop=caller_loop)
         namespace[name] = SafeCallable(wrapper, name, func.description)
 
     base_keys = set(namespace.keys())
     return namespace, base_keys
+
+
+def _unwrap_tool_result(value: Any, media_collector: Optional[Dict[str, List[Any]]]) -> Optional[str]:
+    if isinstance(value, ToolResult):
+        if media_collector is not None:
+            collect_media(media_collector, value)
+        return value.content
+    return None
 
 
 def extract_result(
@@ -167,10 +172,9 @@ def extract_result(
 ) -> str:
     result = namespace.get(return_variable)
     output_parts: List[str] = []
-    if isinstance(result, ToolResult):
-        if media_collector is not None:
-            collect_media(media_collector, result)
-        output_parts.append(result.content)
+    unwrapped = _unwrap_tool_result(result, media_collector)
+    if unwrapped is not None:
+        output_parts.append(unwrapped)
     elif result is not None:
         output_parts.append(str(result))
     if stdout:
@@ -181,10 +185,9 @@ def extract_result(
     user_vars = {k: v for k, v in namespace.items() if k not in base_keys and not k.startswith("_")}
     if user_vars:
         last_value = list(user_vars.values())[-1]
-        if isinstance(last_value, ToolResult):
-            if media_collector is not None:
-                collect_media(media_collector, last_value)
-            return last_value.content
+        unwrapped = _unwrap_tool_result(last_value, media_collector)
+        if unwrapped is not None:
+            return unwrapped
         return str(last_value)
 
     return f"Code executed successfully but produced no output. Set a `{return_variable}` variable or use print()."
@@ -194,16 +197,19 @@ def execute_code(
     tool: "CodeMode",
     code: str,
     use_async: bool = False,
+    caller_loop: Any = None,
 ) -> Union[str, ToolResult]:
     try:
         if len(code) > tool.max_code_length:
-            return f"{tool.exec_error_prefix}Code exceeds maximum length of {tool.max_code_length} characters."
+            return f"{tool.EXEC_ERROR_PREFIX}Code exceeds maximum length of {tool.max_code_length} characters."
 
         code = prepare_python_code(code)
         log_debug(f"CodeMode executing:\n{code}")
 
         media_collector: Dict[str, List[Any]] = {"images": [], "videos": [], "audios": [], "files": []}
-        namespace, base_keys = build_namespace(tool, use_async=use_async, media_collector=media_collector)
+        namespace, base_keys = build_namespace(
+            tool, use_async=use_async, media_collector=media_collector, caller_loop=caller_loop
+        )
 
         stdout_buf = io.StringIO()
         with redirect_stdout(stdout_buf):
@@ -222,9 +228,9 @@ def execute_code(
             )
         return output
     except SyntaxError as e:
-        return f"{tool.exec_error_prefix}SyntaxError: {e}"
+        return f"{tool.EXEC_ERROR_PREFIX}SyntaxError: {e}"
     except Exception as e:
-        return f"{tool.exec_error_prefix}{type(e).__name__}: {e}"
+        return f"{tool.EXEC_ERROR_PREFIX}{type(e).__name__}: {e}"
 
 
 def collect_media(collector: Dict[str, List[Any]], tool_result: ToolResult) -> None:
