@@ -23,6 +23,21 @@ from agno.team.team import Team
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
+TASK_LIST_KEY = "_team_tasks"
+
+
+def _extract_tasks(session_state: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """Extract tasks from session_state._team_tasks.tasks if present."""
+    if not session_state:
+        return None
+    team_tasks = session_state.get(TASK_LIST_KEY)
+    if not team_tasks or not isinstance(team_tasks, dict):
+        return None
+    tasks = team_tasks.get("tasks")
+    if not tasks:
+        return None
+    return tasks
+
 
 class BadRequestResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
@@ -193,6 +208,7 @@ class SessionSchema(BaseModel):
     session_id: str = Field(..., description="Unique identifier for the session")
     session_name: str = Field(..., description="Human-readable name for the session")
     session_state: Optional[dict] = Field(None, description="Current state data of the session")
+    tasks: Optional[List[dict]] = Field(None, description="Task list for task-mode team sessions")
     created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
 
@@ -202,13 +218,15 @@ class SessionSchema(BaseModel):
         if not session_name:
             session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
+        session_state = session_data.get("session_state", None)
 
         created_at = to_utc_datetime(session.get("created_at", 0))
         updated_at = to_utc_datetime(session.get("updated_at", created_at))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
-            session_state=session_data.get("session_state", None),
+            session_state=session_state,
+            tasks=_extract_tasks(session_state),
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -285,6 +303,7 @@ class TeamSessionDetailSchema(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID used in this session")
     session_summary: Optional[dict] = Field(None, description="Summary of team interactions")
     session_state: Optional[dict] = Field(None, description="Current state of the session")
+    tasks: Optional[List[dict]] = Field(None, description="Task list for task-mode team sessions")
     metrics: Optional[dict] = Field(None, description="Session metrics")
     team_data: Optional[dict] = Field(None, description="Team-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
@@ -299,6 +318,7 @@ class TeamSessionDetailSchema(BaseModel):
         session_name = get_session_name({**session_dict, "session_type": "team"})
         created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
         updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
+        session_state = session.session_data.get("session_state", None) if session.session_data else None
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,
@@ -306,7 +326,8 @@ class TeamSessionDetailSchema(BaseModel):
             session_summary=session_dict.get("summary") if session_dict.get("summary") else None,
             user_id=session.user_id,
             team_data=session.team_data,
-            session_state=session.session_data.get("session_state", None) if session.session_data else None,
+            session_state=session_state,
+            tasks=_extract_tasks(session_state),
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data
             else None,
@@ -438,6 +459,7 @@ class TeamRunSchema(BaseModel):
     )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
+    tasks: Optional[List[dict]] = Field(None, description="Task list for task-mode team runs")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
@@ -449,6 +471,7 @@ class TeamRunSchema(BaseModel):
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
         run_input = get_run_input(run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
+        session_state = run_dict.get("session_state")
         return cls(
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
@@ -467,7 +490,8 @@ class TeamRunSchema(BaseModel):
             references=run_dict.get("references", []),
             citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
-            session_state=run_dict.get("session_state"),
+            session_state=session_state,
+            tasks=_extract_tasks(session_state),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
