@@ -18,6 +18,7 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
+from agno.utils.openai import _format_file_for_message
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -473,6 +474,18 @@ class OpenAIResponses(Model):
                         message_dict["content"] = [{"type": "input_text", "text": message.content}]
                         if message.images is not None:
                             message_dict["content"].extend(images_to_message(images=message.images))
+
+                if message.files is not None and len(message.files) > 0:
+                    if isinstance(message.content, str):
+                        if "content" not in message_dict or isinstance(message_dict.get("content"), str):
+                            message_dict["content"] = [{"type": "input_text", "text": message.content or ""}]
+                    for file in message.files:
+                        file_part = _format_file_for_message(file)
+                        if file_part:
+                            if isinstance(message_dict.get("content"), list):
+                                message_dict["content"].insert(0, file_part)
+                            else:
+                                message_dict["content"] = [file_part]
 
                 if message.audio is not None and len(message.audio) > 0:
                     log_warning("Audio input is currently unsupported.")
