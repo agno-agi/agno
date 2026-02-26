@@ -45,7 +45,7 @@ def print_response(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[TeamRunOutput]:
     import textwrap
 
     from rich.console import Group
@@ -355,6 +355,8 @@ def print_response(
         panels = [p for p in panels if not isinstance(p, Status)]
         live_console.update(Group(*panels))
 
+    return run_response
+
 
 def print_response_stream(
     team: "Team",
@@ -383,7 +385,7 @@ def print_response_stream(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[TeamRunOutput]:
     import textwrap
 
     from rich.console import Group
@@ -953,6 +955,8 @@ def print_response_stream(
         # Final update with correctly ordered panels
         live_console.update(Group(*final_panels))
 
+    return None
+
 
 async def aprint_response(
     team: "Team",
@@ -980,7 +984,7 @@ async def aprint_response(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[TeamRunOutput]:
     import textwrap
 
     from rich.console import Group
@@ -1288,6 +1292,8 @@ async def aprint_response(
         panels = [p for p in panels if not isinstance(p, Status)]
         live_console.update(Group(*panels))
 
+    return run_response
+
 
 async def aprint_response_stream(
     team: "Team",
@@ -1316,7 +1322,7 @@ async def aprint_response_stream(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[TeamRunOutput]:
     import textwrap
 
     from rich.console import Group
@@ -1901,6 +1907,8 @@ async def aprint_response_stream(
 
         # Final update with correctly ordered panels
         live_console.update(Group(*final_panels))
+
+    return None
 
 
 def _parse_response_content(

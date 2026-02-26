@@ -1122,7 +1122,7 @@ class Team:
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Optional[TeamRunOutput]:
         return _cli.team_print_response(
             self,
             input=input,
@@ -1180,7 +1180,7 @@ class Team:
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Optional[TeamRunOutput]:
         return await _cli.team_aprint_response(
             self,
             input=input,
