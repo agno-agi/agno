@@ -4451,13 +4451,13 @@ def _route_requirements_to_members(
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
             member_response = member.continue_run(
-                run_response=member_run_output,
+                run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
             member_run_id = reqs[0].member_run_id if reqs else None
-            member_response = member.continue_run(
+            member_response = member.continue_run(  # type: ignore[arg-type]
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
@@ -4538,7 +4538,7 @@ async def _aroute_requirements_to_members(
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
             member_response = await member.acontinue_run(  # type: ignore[misc]
-                run_response=member_run_output,
+                run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
             )
         else:
