@@ -28,7 +28,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Union
 
 from agno.learn.config import LearningMode, UserMemoryConfig
 from agno.learn.schemas import Memories
@@ -40,6 +40,9 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -141,6 +144,7 @@ class UserMemoryStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -163,6 +167,7 @@ class UserMemoryStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -744,6 +749,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Extract memories from messages and save.
 
@@ -794,6 +800,11 @@ class UserMemoryStore(LearningStore):
             tools=functions,
         )
 
+        if run_metrics is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+
         if response.tool_executions:
             self.memories_updated = True
 
@@ -807,6 +818,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
@@ -846,6 +858,11 @@ class UserMemoryStore(LearningStore):
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_metrics is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.memories_updated = True

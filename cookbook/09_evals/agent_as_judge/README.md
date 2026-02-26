@@ -13,3 +13,4 @@ Agent-as-judge examples evaluate output quality with model-based scoring.
 - `agent_as_judge_team_post_hook.py` - Team post-hook quality checking.
 - `agent_as_judge_with_guidelines.py` - Numeric scoring with additional guidelines.
 - `agent_as_judge_with_tools.py` - Evaluates responses from a tool-using agent.
+- `agent_as_judge_eval_metrics.py` - Eval model metrics tracked under "eval_model" detail key via post-hook.

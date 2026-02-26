@@ -112,11 +112,13 @@ class TeamSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the team")
     description: Optional[str] = Field(None, description="Description of the team")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
         db_id = team.db.id if team.db else None
-        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
+        mode = team.mode.value if hasattr(team, "mode") and team.mode else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -632,6 +634,8 @@ class RegistryResourceType(str, Enum):
     VECTOR_DB = "vector_db"
     SCHEMA = "schema"
     FUNCTION = "function"
+    AGENT = "agent"
+    TEAM = "team"
 
 
 class CallableMetadata(BaseModel):
@@ -722,5 +726,6 @@ RegistryMetadata = Union[
 class RegistryContentResponse(BaseModel):
     name: str
     type: RegistryResourceType
+    id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
