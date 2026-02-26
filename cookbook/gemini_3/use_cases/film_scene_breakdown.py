@@ -141,7 +141,7 @@ Provide a scene breakdown with:
 if __name__ == "__main__":
     # Sample: analyze a video clip against a script PDF
     # Replace these with your own video and script URLs
-    video_url = "https://agno-public.s3.amazonaws.com/demo/sample-video.mp4"
+    video_url = "https://agno-public.s3.amazonaws.com/demo/sample_seaview.mp4"
     script_url = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 
     print("Downloading video sample...")
