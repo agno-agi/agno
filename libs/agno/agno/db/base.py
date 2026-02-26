@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -636,6 +636,7 @@ class BaseDb(ABC):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -644,6 +645,7 @@ class BaseDb(ABC):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
