@@ -740,7 +740,7 @@ class TestGetAgents:
 
         get_agents(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.AGENT)
+        mock_db.list_components.assert_called_once_with(component_type=ComponentType.AGENT, exclude_component_ids=None)
 
     def test_get_agents_with_registry(self, mock_db):
         """Test get_agents passes registry to from_dict."""

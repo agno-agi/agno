@@ -33,9 +33,7 @@ finance_agent = Agent(
     role="Handle financial data requests",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="finance_agent_sessions"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[YFinanceTools()],
     instructions=["Use tables to display data"],
 )
 
