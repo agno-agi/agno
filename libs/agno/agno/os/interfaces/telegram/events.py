@@ -40,6 +40,24 @@ def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_DELEGATION_TOOLS = {"delegate_task_to_member", "delegate_task_to_members"}
+
+
+def _delegation_label(tool_name: str, tool_args: Optional[dict], *, started: bool) -> Optional[str]:
+    """Return a human-friendly status label for team delegation tool calls.
+
+    Returns None for non-delegation tools so callers fall through to the
+    generic 'Using {tool_name}...' / 'Used {tool_name}' labels.
+    """
+    if tool_name not in _DELEGATION_TOOLS:
+        return None
+    if tool_name == "delegate_task_to_members":
+        return "Delegating to all members..." if started else "Delegated to all members"
+    # delegate_task_to_member — extract the member id from args
+    member = (tool_args or {}).get("member_id", "member")
+    return f"Delegating to {member}..." if started else f"Delegated to {member}"
+
+
 async def stream_to_telegram(
     bot: "AsyncTeleBot",
     event_stream: AsyncIterator[Any],
@@ -168,10 +186,14 @@ async def stream_to_telegram(
         if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
             tool_name = event.tool.tool_name if event.tool else None
             if tool_name:
-                agent_label = ""
-                if is_team and isinstance(event, AgentToolCallStartedEvent) and event.agent_name:
-                    agent_label = f"[{event.agent_name}] "
-                status_lines.append(f"{agent_label}Using {tool_name}...")
+                tool_args = event.tool.tool_args if event.tool else None
+                status_label = _delegation_label(tool_name, tool_args, started=True)
+                if status_label is None:
+                    agent_label = ""
+                    if is_team and isinstance(event, AgentToolCallStartedEvent) and event.agent_name:
+                        agent_label = f"[{event.agent_name}] "
+                    status_label = f"{agent_label}Using {tool_name}..."
+                status_lines.append(status_label)
                 await _flush_display()
             else:
                 try:
@@ -189,10 +211,20 @@ async def stream_to_telegram(
         if isinstance(event, (AgentToolCallCompletedEvent, TeamToolCallCompletedEvent)):
             tool_name = event.tool.tool_name if event.tool else None
             if tool_name:
-                for i, line in enumerate(status_lines):
-                    if f"Using {tool_name}..." in line:
-                        status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
-                        break
+                tool_args = event.tool.tool_args if event.tool else None
+                completed_label = _delegation_label(tool_name, tool_args, started=False)
+                if completed_label:
+                    # Find and replace the matching started label
+                    started_label = _delegation_label(tool_name, tool_args, started=True)
+                    for i, line in enumerate(status_lines):
+                        if line == started_label:
+                            status_lines[i] = completed_label
+                            break
+                else:
+                    for i, line in enumerate(status_lines):
+                        if f"Using {tool_name}..." in line:
+                            status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
+                            break
                 await _flush_display()
             continue
 
