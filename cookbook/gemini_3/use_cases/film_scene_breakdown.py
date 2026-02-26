@@ -153,6 +153,6 @@ if __name__ == "__main__":
         "Produce a scene breakdown with visual analysis, script notes, "
         "and a continuity report.",
         videos=[Video(content=video_response.content, format="mp4")],
-        files=[File(url=script_url, mime_type="application/pdf")],
+        files=[File(url=script_url)],
         stream=True,
     )
