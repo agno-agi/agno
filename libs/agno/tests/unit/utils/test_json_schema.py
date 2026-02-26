@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -123,6 +123,24 @@ def test_get_json_schema_for_arg_union():
     assert len(union_schema["anyOf"]) == 2
 
 
+def test_get_json_schema_for_arg_literal():
+    # Test string Literal type
+    string_literal_schema = get_json_schema_for_arg(Literal["create", "update", "delete"])
+    assert string_literal_schema == {"type": "string", "enum": ["create", "update", "delete"]}
+
+    # Test integer Literal type
+    int_literal_schema = get_json_schema_for_arg(Literal[1, 2, 3])
+    assert int_literal_schema == {"type": "integer", "enum": [1, 2, 3]}
+
+    # Test boolean Literal type
+    bool_literal_schema = get_json_schema_for_arg(Literal[True, False])
+    assert bool_literal_schema == {"type": "boolean", "enum": [True, False]}
+
+    # Test single value Literal
+    single_literal_schema = get_json_schema_for_arg(Literal["only_option"])
+    assert single_literal_schema == {"type": "string", "enum": ["only_option"]}
+
+
 # Test cases for get_json_schema
 def test_get_json_schema_basic():
     type_hints = {
@@ -192,6 +210,35 @@ def test_get_json_schema_with_complex_types():
     assert schema["properties"]["names"]["items"]["type"] == "string"
     assert schema["properties"]["scores"]["type"] == "object"
     assert schema["properties"]["optional_field"]["type"] == "number"
+
+
+def test_get_json_schema_with_literal_types():
+    """Test that Literal types are correctly converted to JSON schema with enum."""
+    type_hints = {
+        "operation": Literal["create", "update", "delete"],
+        "priority": Literal[1, 2, 3],
+        "enabled": Literal[True, False],
+    }
+    param_descriptions = {
+        "operation": "The operation to perform",
+        "priority": "Priority level",
+        "enabled": "Whether feature is enabled",
+    }
+
+    schema = get_json_schema(type_hints, param_descriptions)
+
+    # Check operation (string literal)
+    assert schema["properties"]["operation"]["type"] == "string"
+    assert schema["properties"]["operation"]["enum"] == ["create", "update", "delete"]
+    assert schema["properties"]["operation"]["description"] == "The operation to perform"
+
+    # Check priority (integer literal)
+    assert schema["properties"]["priority"]["type"] == "integer"
+    assert schema["properties"]["priority"]["enum"] == [1, 2, 3]
+
+    # Check enabled (boolean literal)
+    assert schema["properties"]["enabled"]["type"] == "boolean"
+    assert schema["properties"]["enabled"]["enum"] == [True, False]
 
 
 # Test cases for nested structures

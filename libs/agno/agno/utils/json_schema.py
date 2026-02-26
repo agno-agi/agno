@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -122,7 +122,23 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     type_origin = get_origin(type_hint)
     # log_info(f"Type origin: {type_origin}")
     if type_origin is not None:
-        if type_origin in (list, tuple, set, frozenset):
+        if type_origin is Literal:
+            # Handle Literal types - get the literal values and infer type from the first value
+            if type_args:
+                first_arg = type_args[0]
+                if isinstance(first_arg, str):
+                    return {"type": "string", "enum": list(type_args)}
+                elif isinstance(first_arg, int) and not isinstance(first_arg, bool):
+                    return {"type": "integer", "enum": list(type_args)}
+                elif isinstance(first_arg, float):
+                    return {"type": "number", "enum": list(type_args)}
+                elif isinstance(first_arg, bool):
+                    return {"type": "boolean", "enum": list(type_args)}
+                else:
+                    # Fallback for mixed or other types
+                    return {"enum": list(type_args)}
+            return {"type": "string"}
+        elif type_origin in (list, tuple, set, frozenset):
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
