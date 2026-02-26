@@ -252,7 +252,11 @@ def attach_routes(
                         kept_files.append(f)
                     elif f.content:
                         try:
-                            text = f.content.decode("utf-8", errors="replace") if isinstance(f.content, bytes) else str(f.content)
+                            text = (
+                                f.content.decode("utf-8", errors="replace")
+                                if isinstance(f.content, bytes)
+                                else str(f.content)
+                            )
                             label = f.filename or "file"
                             message_text += f"\n\n--- {label} ---\n{text}"
                         except Exception:

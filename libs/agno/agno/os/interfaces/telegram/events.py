@@ -3,9 +3,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Union
 
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
-    edit_html,
+    markdown_to_telegram_html,
     send_chunked,
-    send_html,
 )
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import RunCompletedEvent as AgentRunCompletedEvent
@@ -37,6 +36,10 @@ if TYPE_CHECKING:
 TG_STREAM_EDIT_INTERVAL = 1.0  # Minimum seconds between message edits to avoid rate limits
 
 
+def _escape_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 async def stream_to_telegram(
     bot: "AsyncTeleBot",
     event_stream: AsyncIterator[Any],
@@ -52,29 +55,56 @@ async def stream_to_telegram(
     last_edit_time = 0.0
     final_run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
 
-    def _build_display_text() -> str:
+    def _build_display_html() -> str:
+        """Build ready-to-send HTML with status in an expandable blockquote."""
         parts: list[str] = []
         if status_lines:
-            parts.append("\n".join(status_lines))
+            escaped_status = _escape_html("\n".join(status_lines))
+            parts.append(f"<blockquote expandable>{escaped_status}</blockquote>")
         if accumulated_content:
-            parts.append(accumulated_content)
-        return "\n\n".join(parts)
+            parts.append(markdown_to_telegram_html(accumulated_content))
+        return "\n".join(parts)
 
-    async def _send_or_edit(text: str) -> None:
+    def _is_not_modified(exc: Exception) -> bool:
+        return "message is not modified" in str(exc)
+
+    async def _send_or_edit(html: str) -> None:
         nonlocal sent_message_id, last_edit_time
-        display = text[:TG_MAX_MESSAGE_LENGTH]
+        display = html[:TG_MAX_MESSAGE_LENGTH]
         if sent_message_id is None:
-            msg = await send_html(
-                bot, chat_id, display, reply_to_message_id=reply_to, message_thread_id=message_thread_id
-            )
+            try:
+                msg = await bot.send_message(
+                    chat_id,
+                    display,
+                    parse_mode="HTML",
+                    reply_to_message_id=reply_to,
+                    message_thread_id=message_thread_id,
+                )
+            except Exception:
+                # Fallback: send without HTML parsing
+                msg = await bot.send_message(
+                    chat_id,
+                    display,
+                    reply_to_message_id=reply_to,
+                    message_thread_id=message_thread_id,
+                )
             sent_message_id = msg.message_id
         else:
-            await edit_html(bot, display, chat_id, sent_message_id)
+            try:
+                await bot.edit_message_text(display, chat_id, sent_message_id, parse_mode="HTML")
+            except Exception as e:
+                if _is_not_modified(e):
+                    pass  # Content unchanged — safe to skip
+                else:
+                    try:
+                        await bot.edit_message_text(display, chat_id, sent_message_id)
+                    except Exception:
+                        pass
         last_edit_time = time.monotonic()
 
     async def _flush_display() -> None:
         try:
-            await _send_or_edit(_build_display_text())
+            await _send_or_edit(_build_display_html())
         except Exception as e:
             log_warning(f"Stream display update failed: {e}")
 
@@ -87,7 +117,7 @@ async def stream_to_telegram(
         # Workflow step events
         if isinstance(event, StepStartedEvent):
             step_name = event.step_name or "unknown"
-            status_lines.append(f"> Running step: {step_name}...")
+            status_lines.append(f"Running step: {step_name}...")
             await _flush_display()
             continue
 
@@ -95,7 +125,7 @@ async def stream_to_telegram(
             step_name = event.step_name or "unknown"
             for i, line in enumerate(status_lines):
                 if f"Running step: {step_name}..." in line:
-                    status_lines[i] = f"> Completed step: {step_name}"
+                    status_lines[i] = f"Completed step: {step_name}"
                     break
             if event.content:
                 accumulated_content = str(event.content)
@@ -104,7 +134,7 @@ async def stream_to_telegram(
 
         if isinstance(event, ParallelExecutionStartedEvent):
             count = event.parallel_step_count or 0
-            status_lines.append(f"> Running {count} steps in parallel...")
+            status_lines.append(f"Running {count} steps in parallel...")
             await _flush_display()
             continue
 
@@ -113,9 +143,9 @@ async def stream_to_telegram(
             iteration = event.iteration
             max_iter = event.max_iterations
             if max_iter:
-                status_lines.append(f"> {step_name}: iteration {iteration}/{max_iter}...")
+                status_lines.append(f"{step_name}: iteration {iteration}/{max_iter}...")
             else:
-                status_lines.append(f"> {step_name}: iteration {iteration}...")
+                status_lines.append(f"{step_name}: iteration {iteration}...")
             await _flush_display()
             continue
 
@@ -141,7 +171,7 @@ async def stream_to_telegram(
                 agent_label = ""
                 if is_team and isinstance(event, AgentToolCallStartedEvent) and event.agent_name:
                     agent_label = f"[{event.agent_name}] "
-                status_lines.append(f"> {agent_label}Using {tool_name}...")
+                status_lines.append(f"{agent_label}Using {tool_name}...")
                 await _flush_display()
             else:
                 try:
@@ -151,7 +181,7 @@ async def stream_to_telegram(
             continue
 
         if isinstance(event, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
-            status_lines.append("> Reasoning...")
+            status_lines.append("Reasoning...")
             await _flush_display()
             continue
 
@@ -175,7 +205,7 @@ async def stream_to_telegram(
                 continue
 
             try:
-                await _send_or_edit(_build_display_text())
+                await _send_or_edit(_build_display_html())
             except Exception as e:
                 log_warning(f"Stream edit failed (will retry on next chunk): {e}")
 
@@ -184,10 +214,16 @@ async def stream_to_telegram(
             if event.content:
                 accumulated_content = str(event.content)
 
-    if accumulated_content and sent_message_id:
+    # Final edit: send the complete display (blockquote status + content)
+    final_html = _build_display_html()
+    if final_html and sent_message_id:
         try:
-            if len(accumulated_content) <= TG_MAX_MESSAGE_LENGTH:
-                await edit_html(bot, accumulated_content, chat_id, sent_message_id)
+            if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
+                try:
+                    await bot.edit_message_text(final_html, chat_id, sent_message_id, parse_mode="HTML")
+                except Exception as e:
+                    if not _is_not_modified(e):
+                        await bot.edit_message_text(final_html, chat_id, sent_message_id)
             else:
                 try:
                     await bot.delete_message(chat_id, sent_message_id)
@@ -198,9 +234,13 @@ async def stream_to_telegram(
                 )
         except Exception as e:
             log_warning(f"Final stream edit failed: {e}")
-    elif accumulated_content and not sent_message_id:
+    elif final_html and not sent_message_id:
         await send_chunked(
-            bot, chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
+            bot,
+            chat_id,
+            accumulated_content or final_html,
+            reply_to_message_id=reply_to,
+            message_thread_id=message_thread_id,
         )
 
     return final_run_output
