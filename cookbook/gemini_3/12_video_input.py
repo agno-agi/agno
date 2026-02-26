@@ -56,7 +56,7 @@ video_agent = Agent(
 if __name__ == "__main__":
     # --- From bytes content ---
     print("--- Analyzing video from bytes ---\n")
-    url = "https://agno-public.s3.amazonaws.com/demo/sample-video.mp4"
+    url = "https://videos.pexels.com/video-files/5752729/5752729-uhd_2560_1440_30fps.mp4"
     response = httpx.get(url)
 
     video_agent.print_response(

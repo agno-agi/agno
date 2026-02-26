@@ -56,7 +56,7 @@ if __name__ == "__main__":
         "Tell me about this image and give me the latest news about it.",
         images=[
             Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/b/bf/Krakow_-_Kosciol_Mariacki.jpg"
+                url="https://images.pexels.com/photos/532826/pexels-photo-532826.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750"
             ),
         ],
         stream=True,

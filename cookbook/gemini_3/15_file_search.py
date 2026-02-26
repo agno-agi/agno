@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     # Cleanup
     print("\nCleaning up store...")
-    model.delete_file_search_store(store.name)
+    model.delete_file_search_store(store.name, force=True)
     print("Done.")
 
 # ---------------------------------------------------------------------------

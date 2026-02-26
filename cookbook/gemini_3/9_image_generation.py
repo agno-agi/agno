@@ -38,7 +38,7 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 image_gen_agent = Agent(
     name="Image Generator",
     model=Gemini(
-        id="gemini-3-flash-preview",
+        id="gemini-3.1-flash-image-preview",
         # Enable both text and image output
         response_modalities=["Text", "Image"],
     ),
@@ -77,9 +77,8 @@ if __name__ == "__main__":
             images=[Image(filepath=str(generated_path))],
         )
 
-        run_output = image_gen_agent.get_last_run_output()
-        if run_output and isinstance(run_output, RunOutput) and run_output.images:
-            for i, image_response in enumerate(run_output.images):
+        if edit_response and isinstance(edit_response, RunOutput) and edit_response.images:
+            for i, image_response in enumerate(edit_response.images):
                 image_bytes = image_response.content
                 if image_bytes:
                     image = PILImage.open(BytesIO(image_bytes))
