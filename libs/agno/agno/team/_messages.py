@@ -125,26 +125,49 @@ def _get_mode_instructions(team: "Team") -> str:
     content = "\n<how_to_respond>\n"
 
     if team.mode == TeamMode.tasks:
-        content += (
-            "You operate in autonomous task mode. Decompose the user's goal into discrete tasks, "
-            "execute them by delegating to team members, and deliver the final result.\n\n"
-            "Planning:\n"
-            "- Break the goal into tasks with clear, actionable titles and self-contained descriptions. "
-            "Each task should be a single unit of work for one member.\n"
-            "- Assign each task to the member whose role and tools are best suited.\n"
-            "- Set `depends_on` when a task requires another task's output. "
-            "Leave tasks independent when they can run in any order.\n\n"
-            "Execution:\n"
-            "- Use `execute_task` for sequential or dependent tasks.\n"
-            "- Use `execute_tasks_parallel` for groups of independent tasks to maximize throughput.\n"
-            "- Review each result before proceeding. If a task fails, decide whether to retry with the same member, "
-            "reassign to a different member, or adjust the plan.\n\n"
-            "Completion:\n"
-            "- When all tasks are done and results are satisfactory, call `mark_all_complete` with a summary of the outcome.\n"
-            "- Use `list_tasks` to check progress at any point, and `add_task_note` to record observations.\n\n"
-            "Write task descriptions that give the member everything they need: "
-            "the objective, relevant context from the conversation or prior task results, and what a good result looks like.\n"
-        )
+        print(f"plan_first: {team.plan_first}")
+        if team.plan_first:
+            content += (
+                "You operate in autonomous task mode with plan-first execution.\n\n"
+                "Phase 1 - Planning (MUST complete before any execution):\n"
+                "- Analyze the user's goal and create ALL tasks needed using `create_task`.\n"
+                "- Each task should have a clear, actionable title and a self-contained description.\n"
+                "- Assign each task to the member whose role and tools are best suited.\n"
+                "- Set `depends_on` when a task requires another task's output.\n"
+                "- IMPORTANT: Do NOT call `execute_task` or `execute_tasks_parallel` during this phase. "
+                "Create every task first.\n\n"
+                "Phase 2 - Execution (only after all tasks are created):\n"
+                "- Use `execute_task` for sequential or dependent tasks.\n"
+                "- Use `execute_tasks_parallel` for groups of independent tasks to maximize throughput.\n"
+                "- Review each result before proceeding. If a task fails, decide whether to retry, "
+                "reassign, or create a new follow-up task.\n\n"
+                "Completion:\n"
+                "- When all tasks are done and results are satisfactory, call `mark_all_complete` with a summary of the outcome.\n"
+                "- Use `list_tasks` to check progress at any point, and `add_task_note` to record observations.\n\n"
+                "Write task descriptions that give the member everything they need: "
+                "the objective, relevant context from the conversation or prior task results, and what a good result looks like.\n"
+            )
+        else:
+            content += (
+                "You operate in autonomous task mode. Decompose the user's goal into discrete tasks, "
+                "execute them by delegating to team members, and deliver the final result.\n\n"
+                "Planning:\n"
+                "- Break the goal into tasks with clear, actionable titles and self-contained descriptions. "
+                "Each task should be a single unit of work for one member.\n"
+                "- Assign each task to the member whose role and tools are best suited.\n"
+                "- Set `depends_on` when a task requires another task's output. "
+                "Leave tasks independent when they can run in any order.\n\n"
+                "Execution:\n"
+                "- Use `execute_task` for sequential or dependent tasks.\n"
+                "- Use `execute_tasks_parallel` for groups of independent tasks to maximize throughput.\n"
+                "- Review each result before proceeding. If a task fails, decide whether to retry with the same member, "
+                "reassign to a different member, or adjust the plan.\n\n"
+                "Completion:\n"
+                "- When all tasks are done and results are satisfactory, call `mark_all_complete` with a summary of the outcome.\n"
+                "- Use `list_tasks` to check progress at any point, and `add_task_note` to record observations.\n\n"
+                "Write task descriptions that give the member everything they need: "
+                "the objective, relevant context from the conversation or prior task results, and what a good result looks like.\n"
+            )
     elif team.mode == TeamMode.route:
         content += (
             "You operate in route mode. For requests that need member expertise, "
