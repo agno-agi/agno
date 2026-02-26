@@ -43,6 +43,7 @@ class IngestionPipeline:
     knowledge_name: Optional[str] = None
     isolate_vector_search: bool = False
     managed_backend: Optional[Any] = None
+    backup_store: Optional[Any] = None
 
     # ==========================================
     # MAIN ENTRY POINTS
@@ -902,6 +903,7 @@ class IngestionPipeline:
 
         content.status = ContentStatus.COMPLETED
         self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+        self._backup_documents(content, read_documents)
 
     async def ahandle_vector_db_insert(self, content: Content, read_documents: List[Document], upsert: bool) -> None:
         from agno.vectordb import VectorDb
@@ -940,6 +942,7 @@ class IngestionPipeline:
 
         content.status = ContentStatus.COMPLETED
         await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+        await self._abackup_documents(content, read_documents)
 
     # ==========================================
     # HASHING
@@ -1086,6 +1089,44 @@ class IngestionPipeline:
         for doc in documents:
             chunked_documents.extend(reader.chunk_document(doc))
         return chunked_documents
+
+    # ==========================================
+    # BACKUP STORE
+    # ==========================================
+
+    def _backup_documents(self, content: Content, read_documents: List[Document]) -> None:
+        """Store parsed text to the backup store after successful ingestion."""
+        if self.backup_store is None or not content.id:
+            return
+        try:
+            parsed_text = "\n\n".join(doc.content for doc in read_documents if doc.content)
+            if parsed_text:
+                metadata = {"name": content.name, "path": content.path, "url": content.url}
+                self.backup_store.store(
+                    content_id=content.id,
+                    parsed_text=parsed_text,
+                    file_extension=content.file_type,
+                    metadata={k: v for k, v in metadata.items() if v is not None},
+                )
+        except Exception as e:
+            log_warning(f"Could not backup content {content.id}: {e}")
+
+    async def _abackup_documents(self, content: Content, read_documents: List[Document]) -> None:
+        """Async variant of _backup_documents."""
+        if self.backup_store is None or not content.id:
+            return
+        try:
+            parsed_text = "\n\n".join(doc.content for doc in read_documents if doc.content)
+            if parsed_text:
+                metadata = {"name": content.name, "path": content.path, "url": content.url}
+                await self.backup_store.astore(
+                    content_id=content.id,
+                    parsed_text=parsed_text,
+                    file_extension=content.file_type,
+                    metadata={k: v for k, v in metadata.items() if v is not None},
+                )
+        except Exception as e:
+            log_warning(f"Could not backup content {content.id}: {e}")
 
     # ==========================================
     # MANAGED BACKEND INGESTION

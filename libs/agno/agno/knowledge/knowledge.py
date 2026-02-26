@@ -33,6 +33,9 @@ class Knowledge:
     readers: Optional[Dict[str, Reader]] = None
     content_sources: Optional[List[BaseStorageConfig]] = None
     isolate_vector_search: bool = False
+    enable_catalog: bool = False
+    enable_backup_tools: bool = False
+    backup_dir: Optional[str] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -68,6 +71,25 @@ class Knowledge:
             pipeline=self._pipeline,
             content_sources=self.content_sources,
         )
+
+        # Initialize catalog (document-level index for system prompt)
+        self._catalog = None
+        if self.enable_catalog and self.contents_db is not None:
+            from agno.knowledge.store.catalog import KnowledgeCatalog
+
+            self._catalog = KnowledgeCatalog(
+                content_store=self._content_store,
+                knowledge_name=self.name,
+            )
+
+        # Initialize backup store (local filesystem for direct document access)
+        self._backup_store = None
+        if self.backup_dir is not None or self.enable_backup_tools:
+            from agno.knowledge.store.backup_store import BackupStore
+
+            backup_path = self.backup_dir or f"tmp/knowledge_backup/{self.name or 'default'}"
+            self._backup_store = BackupStore(base_dir=backup_path)
+            self._pipeline.backup_store = self._backup_store
 
     def _detect_managed_backend(self):
         """Check if vector_db satisfies the ManagedKnowledgeBackend protocol."""
@@ -919,6 +941,10 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             valid_filters = self.get_valid_filters()
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
+        if self._catalog is not None:
+            catalog_context = self._catalog.build_catalog_context()
+            if catalog_context:
+                context_parts.append(catalog_context)
         return "<knowledge_base>\n" + "\n".join(context_parts) + "\n</knowledge_base>"
 
     async def abuild_context(self, enable_agentic_filters: bool = False, **kwargs) -> str:
@@ -927,6 +953,10 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             valid_filters = await self.aget_valid_filters()
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
+        if self._catalog is not None:
+            catalog_context = await self._catalog.abuild_catalog_context()
+            if catalog_context:
+                context_parts.append(catalog_context)
         return "<knowledge_base>\n" + "\n".join(context_parts) + "\n</knowledge_base>"
 
     def get_tools(
@@ -955,7 +985,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 async_mode=async_mode,
                 agent=agent,
             )
-        return [tool]
+        tools: List[Any] = [tool]
+        if self._catalog is not None and self.enable_catalog:
+            tools.extend(self._catalog.get_tools())
+        if self._backup_store is not None and self.enable_backup_tools:
+            tools.extend(self._backup_store.get_tools())
+        return tools
 
     async def aget_tools(
         self,
