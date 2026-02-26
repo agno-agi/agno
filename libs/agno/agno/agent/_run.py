@@ -2642,6 +2642,7 @@ def continue_run_dispatch(
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     **kwargs,
@@ -2660,6 +2661,7 @@ def continue_run_dispatch(
         knowledge_filters: The knowledge filters to use for the run.
         dependencies: The dependencies to use for the run.
         metadata: The metadata to use for the run.
+        add_history_to_context: Whether to load session history and add it to the context.
         debug_mode: Whether to enable debug mode.
     """
     from agno.agent._init import has_async_db, set_default_model
@@ -2707,6 +2709,7 @@ def continue_run_dispatch(
         stream=stream,
         stream_events=stream_events,
         yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
@@ -2800,6 +2803,8 @@ def continue_run_dispatch(
     run_messages = get_continue_run_messages(
         agent,
         input=input,
+        session=agent_session,
+        add_history_to_context=opts.add_history_to_context,
     )
 
     # Reset the run state
@@ -3338,6 +3343,7 @@ def acontinue_run_dispatch(  # type: ignore
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     **kwargs,
@@ -3357,6 +3363,7 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters: The knowledge filters to use for the run.
         dependencies: The dependencies to use for continuing the run.
         metadata: The metadata to use for continuing the run.
+        add_history_to_context: Whether to load session history and add it to the context.
         debug_mode: Whether to enable debug mode.
         yield_run_output: Whether to yield the run response.
         (deprecated) updated_tools: Use 'requirements' instead.
@@ -3411,6 +3418,7 @@ def acontinue_run_dispatch(  # type: ignore
         stream=stream,
         stream_events=stream_events,
         yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
@@ -3452,6 +3460,7 @@ def acontinue_run_dispatch(  # type: ignore
             response_format=response_format,
             stream_events=opts.stream_events,
             yield_run_output=opts.yield_run_output,
+            add_history_to_context=opts.add_history_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -3467,6 +3476,7 @@ def acontinue_run_dispatch(  # type: ignore
             run_id=run_id,
             user_id=user_id,
             response_format=response_format,
+            add_history_to_context=opts.add_history_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -3483,6 +3493,7 @@ async def _acontinue_run(
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     **kwargs,
@@ -3615,6 +3626,8 @@ async def _acontinue_run(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=add_history_to_context,
                 )
 
                 # Register run for cancellation tracking
@@ -3838,6 +3851,7 @@ async def _acontinue_run_stream(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     stream_events: bool = False,
     yield_run_output: bool = False,
+    add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     **kwargs,
@@ -3965,6 +3979,8 @@ async def _acontinue_run_stream(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=add_history_to_context,
                 )
 
                 # Register run for cancellation tracking
