@@ -1663,6 +1663,7 @@ def get_agent_by_id(
 def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
@@ -1673,7 +1674,9 @@ def get_agents(
 
     agents: List[Agent] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        components, _ = db.list_components(
+            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
+        )
         for component in components:
             config = db.get_config(component_id=component["component_id"])
             if config is not None:
