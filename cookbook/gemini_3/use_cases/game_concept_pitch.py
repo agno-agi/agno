@@ -16,7 +16,6 @@ from typing import List
 from agno.agent import Agent, RunOutput
 from agno.models.google import Gemini
 from agno.team.team import Team
-from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
