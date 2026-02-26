@@ -41,6 +41,9 @@ class Knowledge:
         if self.vector_db and not self.vector_db.exists():
             self.vector_db.create()
 
+        # Detect managed backend (e.g. LightRAG)
+        self._managed_backend = self._detect_managed_backend()
+
         # Initialize components
         self._content_store = ContentStore(
             contents_db=self.contents_db,
@@ -59,11 +62,21 @@ class Knowledge:
             reader_registry=self._reader_registry,
             knowledge_name=self.name,
             isolate_vector_search=self.isolate_vector_search,
+            managed_backend=self._managed_backend,
         )
         self._remote_loader = RemoteLoader(
             pipeline=self._pipeline,
             content_sources=self.content_sources,
         )
+
+    def _detect_managed_backend(self):
+        """Check if vector_db satisfies the ManagedKnowledgeBackend protocol."""
+        from agno.knowledge.backend import ManagedKnowledgeBackend
+
+        if self.vector_db is not None and isinstance(self.vector_db, ManagedKnowledgeBackend):
+            log_debug(f"Detected managed backend: {self.vector_db.__class__.__name__}")
+            return self.vector_db
+        return None
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -470,6 +483,17 @@ class Knowledge:
         search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
+        _max_results = max_results or self.max_results
+
+        # Route through managed backend if detected
+        if self._managed_backend is not None:
+            try:
+                log_debug(f"Getting {_max_results} relevant documents via managed backend for query: {query}")
+                return self._managed_backend.query(query=query, limit=_max_results)
+            except Exception as e:
+                log_warning(f"Error searching managed backend: {e}")
+                return []
+
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -495,7 +519,6 @@ class Knowledge:
                 elif isinstance(search_filters, list):
                     search_filters = [EQ("linked_to", self.name), *search_filters]
 
-            _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
@@ -512,6 +535,17 @@ class Knowledge:
         search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
+        _max_results = max_results or self.max_results
+
+        # Route through managed backend if detected
+        if self._managed_backend is not None:
+            try:
+                log_debug(f"Getting {_max_results} relevant documents via managed backend for query: {query}")
+                return await self._managed_backend.aquery(query=query, limit=_max_results)
+            except Exception as e:
+                log_warning(f"Error searching managed backend: {e}")
+                return []
+
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -536,7 +570,6 @@ class Knowledge:
                 elif isinstance(search_filters, list):
                     search_filters = [EQ("linked_to", self.name), *search_filters]
 
-            _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
                 return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
@@ -594,12 +627,12 @@ class Knowledge:
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is not None:
-            if self.vector_db.__class__.__name__ == "LightRag":
+            if self._managed_backend is not None:
                 content = self.get_content_by_id(content_id)
                 if content and content.external_id:
-                    self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    self._managed_backend.delete_content(content.external_id)
                 else:
-                    log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
+                    log_warning(f"No external_id found for content {content_id}, cannot delete from managed backend")
             else:
                 self.vector_db.delete_by_content_id(content_id)
 
@@ -608,12 +641,12 @@ class Knowledge:
 
     async def aremove_content_by_id(self, content_id: str):
         if self.vector_db is not None:
-            if self.vector_db.__class__.__name__ == "LightRag":
+            if self._managed_backend is not None:
                 content = await self.aget_content_by_id(content_id)
                 if content and content.external_id:
-                    self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    await self._managed_backend.adelete_content(content.external_id)
                 else:
-                    log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
+                    log_warning(f"No external_id found for content {content_id}, cannot delete from managed backend")
             else:
                 self.vector_db.delete_by_content_id(content_id)
 

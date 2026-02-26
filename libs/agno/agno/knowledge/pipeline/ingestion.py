@@ -42,6 +42,7 @@ class IngestionPipeline:
     reader_registry: Optional[ReaderRegistry] = None
     knowledge_name: Optional[str] = None
     isolate_vector_search: bool = False
+    managed_backend: Optional[Any] = None
 
     # ==========================================
     # MAIN ENTRY POINTS
@@ -120,8 +121,8 @@ class IngestionPipeline:
                     self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                     return
 
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    self.process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                if self.managed_backend is not None:
+                    self._ingest_managed(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -204,8 +205,8 @@ class IngestionPipeline:
                     await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                     return
 
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                if self.managed_backend is not None:
+                    await self._aingest_managed(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -294,8 +295,8 @@ class IngestionPipeline:
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if self.vector_db.__class__.__name__ == "LightRag":
-            self.process_lightrag_content(content, KnowledgeContentOrigin.URL)
+        if self.managed_backend is not None:
+            self._ingest_managed(content, KnowledgeContentOrigin.URL)
             return
 
         try:
@@ -421,8 +422,8 @@ class IngestionPipeline:
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if self.vector_db.__class__.__name__ == "LightRag":
-            await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.URL)
+        if self.managed_backend is not None:
+            await self._aingest_managed(content, KnowledgeContentOrigin.URL)
             return
 
         try:
@@ -563,8 +564,8 @@ class IngestionPipeline:
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            self.process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.managed_backend is not None:
+            self._ingest_managed(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -665,8 +666,8 @@ class IngestionPipeline:
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.managed_backend is not None:
+            await self._aingest_managed(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -771,8 +772,8 @@ class IngestionPipeline:
                 self.content_store.update(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            if self.vector_db.__class__.__name__ == "LightRag":
-                self.process_lightrag_content(topic_content, KnowledgeContentOrigin.TOPIC)
+            if self.managed_backend is not None:
+                self._ingest_managed(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
             if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
@@ -835,8 +836,8 @@ class IngestionPipeline:
                 await self.content_store.aupdate(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            if self.vector_db.__class__.__name__ == "LightRag":
-                await self.aprocess_lightrag_content(topic_content, KnowledgeContentOrigin.TOPIC)
+            if self.managed_backend is not None:
+                await self._aingest_managed(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
             if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
@@ -1087,321 +1088,149 @@ class IngestionPipeline:
         return chunked_documents
 
     # ==========================================
-    # LIGHTRAG PROCESSING
+    # MANAGED BACKEND INGESTION
     # ==========================================
 
-    async def aprocess_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        from agno.vectordb import VectorDb
-
-        self.vector_db = cast(VectorDb, self.vector_db)
-
-        await self.content_store.ainsert(content)  # type: ignore[union-attr]
-        if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
-            if content.path is None:
-                log_error("No path provided for content")
-                return
-
-            path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
-            try:
-                with open(path, "rb") as f:
-                    file_content = f.read()
-
-                file_type = content.file_type or path.suffix
-
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = await self.vector_db.insert_file_bytes(
-                        file_content=file_content,
-                        filename=path.name,
-                        content_type=file_type,
-                        send_metadata=True,
-                    )
-
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-        elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
-            try:
-                reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
-                if reader is None:
-                    log_error("No URL reader available")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self.prepare_documents_for_insert(read_documents, content.id)
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.url,
-                        text=read_documents[0].content,
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-        elif content_type == KnowledgeContentOrigin.CONTENT:
-            filename = (
-                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
-            )
-            log_info(f"Uploading file to LightRAG: {filename}")
-
-            if content.file_data and content.file_data.content:
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = await self.vector_db.insert_file_bytes(
-                        file_content=content.file_data.content,
-                        filename=filename,
-                        content_type=content.file_data.type,
-                        send_metadata=True,
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-            else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
-
-        elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
-            if content.reader is None:
-                log_error("No reader available for topic content")
-                content.status = ContentStatus.FAILED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            read_documents = content.reader.read(content.topics)
-            if len(read_documents) > 0:
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.topics[0],
-                        text=read_documents[0].content,
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-            else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
-                return
-
-    def process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Synchronously process LightRAG content. Uses asyncio.run() only for LightRAG-specific async methods."""
-        from agno.vectordb import VectorDb
-
-        self.vector_db = cast(VectorDb, self.vector_db)
-
+    def _ingest_managed(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        """Route content to the managed backend (sync). Handles PATH, URL, CONTENT, and TOPIC origins."""
         self.content_store.insert(content)  # type: ignore[union-attr]
+        try:
+            result = self._do_managed_ingest(content, content_type)
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+        except Exception as e:
+            log_error(f"Error ingesting via managed backend: {e}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Managed backend ingestion failed: {str(e)}"
+        self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+
+    async def _aingest_managed(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        """Route content to the managed backend (async). Handles PATH, URL, CONTENT, and TOPIC origins."""
+        await self.content_store.ainsert(content)  # type: ignore[union-attr]
+        try:
+            result = await self._ado_managed_ingest(content, content_type)
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+        except Exception as e:
+            log_error(f"Error ingesting via managed backend: {e}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Managed backend ingestion failed: {str(e)}"
+        await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+
+    def _do_managed_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
+        """Dispatch to the appropriate managed backend ingestion method (sync)."""
+        backend = self.managed_backend
+        assert backend is not None
+
         if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
             if content.path is None:
-                log_error("No path provided for content")
-                return
-
+                raise ValueError("No path provided for content")
             path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
-            try:
-                with open(path, "rb") as f:
-                    file_content = f.read()
-
-                file_type = content.file_type or path.suffix
-
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=file_content,
-                            filename=path.name,
-                            content_type=file_type,
-                            send_metadata=True,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+            log_info(f"Ingesting file via managed backend from path: {path}")
+            with open(path, "rb") as f:
+                file_content = f.read()
+            file_type = content.file_type or path.suffix
+            return backend.ingest_file(file_content=file_content, filename=path.name, content_type=file_type)
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
-            try:
-                reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
-                if reader is None:
-                    log_error("No URL reader available")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self.prepare_documents_for_insert(read_documents, content.id)
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.url,
-                            text=read_documents[0].content,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+            log_info(f"Ingesting content via managed backend from URL: {content.url}")
+            reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
+            if reader is None:
+                raise ValueError("No URL reader available")
+            reader.chunk = False
+            read_documents = reader.read(content.url, name=content.name)
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self.prepare_documents_for_insert(read_documents, content.id)
+            if not read_documents:
+                raise ValueError("No documents read from URL")
+            return backend.ingest_text(text=read_documents[0].content, source_name=content.url)
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
             filename = (
                 content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
             )
-            log_info(f"Uploading file to LightRAG: {filename}")
-
+            log_info(f"Ingesting file via managed backend: {filename}")
             if content.file_data and content.file_data.content:
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=content.file_data.content,
-                            filename=filename,
-                            content_type=content.file_data.type,
-                            send_metadata=True,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                return backend.ingest_file(
+                    file_content=content.file_data.content,
+                    filename=filename,
+                    content_type=content.file_data.type,
+                )
             else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
+                log_warning(f"No file data available for managed backend upload: {content.name}")
+                return None
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
+            log_info(f"Ingesting topic via managed backend: {content.name}")
             if content.reader is None:
-                log_error("No reader available for topic content")
-                content.status = ContentStatus.FAILED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
+                raise ValueError("No reader available for topic content")
             if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
+                raise ValueError("No topics available for content")
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.topics[0],
-                            text=read_documents[0].content,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+                return backend.ingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
-                return
+                log_warning(f"No documents found for managed backend upload: {content.name}")
+                return None
+
+        return None
+
+    async def _ado_managed_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
+        """Dispatch to the appropriate managed backend ingestion method (async)."""
+        backend = self.managed_backend
+        assert backend is not None
+
+        if content_type == KnowledgeContentOrigin.PATH:
+            if content.path is None:
+                raise ValueError("No path provided for content")
+            path = Path(content.path)
+            log_info(f"Ingesting file via managed backend from path: {path}")
+            with open(path, "rb") as f:
+                file_content = f.read()
+            file_type = content.file_type or path.suffix
+            return await backend.aingest_file(file_content=file_content, filename=path.name, content_type=file_type)
+
+        elif content_type == KnowledgeContentOrigin.URL:
+            log_info(f"Ingesting content via managed backend from URL: {content.url}")
+            reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
+            if reader is None:
+                raise ValueError("No URL reader available")
+            reader.chunk = False
+            read_documents = reader.read(content.url, name=content.name)
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self.prepare_documents_for_insert(read_documents, content.id)
+            if not read_documents:
+                raise ValueError("No documents read from URL")
+            return await backend.aingest_text(text=read_documents[0].content, source_name=content.url)
+
+        elif content_type == KnowledgeContentOrigin.CONTENT:
+            filename = (
+                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
+            )
+            log_info(f"Ingesting file via managed backend: {filename}")
+            if content.file_data and content.file_data.content:
+                return await backend.aingest_file(
+                    file_content=content.file_data.content,
+                    filename=filename,
+                    content_type=content.file_data.type,
+                )
+            else:
+                log_warning(f"No file data available for managed backend upload: {content.name}")
+                return None
+
+        elif content_type == KnowledgeContentOrigin.TOPIC:
+            log_info(f"Ingesting topic via managed backend: {content.name}")
+            if content.reader is None:
+                raise ValueError("No reader available for topic content")
+            if not content.topics:
+                raise ValueError("No topics available for content")
+            read_documents = content.reader.read(content.topics)
+            if len(read_documents) > 0:
+                return await backend.aingest_text(text=read_documents[0].content, source_name=content.topics[0])
+            else:
+                log_warning(f"No documents found for managed backend upload: {content.name}")
+                return None
+
+        return None

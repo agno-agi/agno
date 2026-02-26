@@ -206,15 +206,16 @@ def test_load_from_topics_all_skipped():
     assert pipeline.content_store.update.call_count == 3
 
 
-def test_load_from_topics_lightrag_continues():
+def test_load_from_topics_managed_backend_continues():
     knowledge = Knowledge(vector_db=MockVectorDb())
-    knowledge.vector_db.__class__.__name__ = "LightRag"
 
     processed_topics = []
+    mock_backend = MagicMock()
+    mock_backend.ingest_text = MagicMock(return_value="ext-123")
+
     pipeline = knowledge._pipeline
-    pipeline.process_lightrag_content = MagicMock(
-        side_effect=lambda content, origin: processed_topics.append(content.name)
-    )
+    pipeline.managed_backend = mock_backend
+    pipeline._ingest_managed = MagicMock(side_effect=lambda content, origin: processed_topics.append(content.name))
     pipeline.build_content_hash = MagicMock(return_value="hash")
     pipeline.content_store.insert = MagicMock()
 
@@ -229,17 +230,19 @@ def test_load_from_topics_lightrag_continues():
 
 
 @pytest.mark.asyncio
-async def test_aload_from_topics_lightrag_continues():
+async def test_aload_from_topics_managed_backend_continues():
     knowledge = Knowledge(vector_db=MockVectorDb())
-    knowledge.vector_db.__class__.__name__ = "LightRag"
 
     processed_topics = []
 
-    async def mock_process_lightrag(content, origin):
+    async def mock_aingest_managed(content, origin):
         processed_topics.append(content.name)
 
+    mock_backend = MagicMock()
+
     pipeline = knowledge._pipeline
-    pipeline.aprocess_lightrag_content = mock_process_lightrag
+    pipeline.managed_backend = mock_backend
+    pipeline._aingest_managed = mock_aingest_managed
     pipeline.build_content_hash = MagicMock(return_value="hash")
     pipeline.content_store.ainsert = AsyncMock()
 
