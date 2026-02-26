@@ -62,9 +62,9 @@ team = Team(
     db=db,
     instructions=[
         "You are a research team leader. Follow these steps exactly:",
-        "1. Create a task for the Researcher to gather information.",
-        "2. Execute the Researcher's task.",
-        "3. Create a task for the Summarizer to summarize the research.",
+        "1. Create ALL tasks for the Researcher to gather information.",
+        "2. Create ALL tasks for the Summarizer to summarize the research.",
+        "3. Execute the Researcher's task.",
         "4. Execute the Summarizer's task.",
         "5. Call mark_all_complete with a final summary when all tasks are done.",
     ],
