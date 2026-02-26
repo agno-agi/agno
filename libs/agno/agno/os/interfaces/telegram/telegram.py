@@ -39,7 +39,7 @@ class Telegram(BaseInterface):
         start_message: str = DEFAULT_START_MESSAGE,
         help_message: str = DEFAULT_HELP_MESSAGE,
         error_message: str = DEFAULT_ERROR_MESSAGE,
-        stream: bool = False,
+        stream: bool = True,
         show_reasoning: bool = False,
         commands: Optional[List[Dict[str, str]]] = None,
         register_commands: bool = True,
