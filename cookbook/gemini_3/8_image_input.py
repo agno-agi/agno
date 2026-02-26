@@ -56,7 +56,7 @@ if __name__ == "__main__":
         "Tell me about this image and give me the latest news about it.",
         images=[
             Image(
-                url="https://agno-public.s3.amazonaws.com/images/agno-intro.png"
+                url="https://agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg"
             ),
         ],
         stream=True,
