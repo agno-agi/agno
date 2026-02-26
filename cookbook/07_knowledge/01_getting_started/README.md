@@ -14,7 +14,6 @@ Start here to learn the basics of RAG (Retrieval-Augmented Generation) with Agno
 | [01_basic_rag.py](./01_basic_rag.py) | Traditional RAG with automatic context injection |
 | [02_agentic_rag.py](./02_agentic_rag.py) | Agentic RAG where the agent decides when to search |
 | [03_loading_content.py](./03_loading_content.py) | Loading from files, URLs, text, topics, and batches |
-| [04_choosing_components.md](./04_choosing_components.md) | Decision guide for vector DBs, embedders, and chunking |
 
 ## Start Here
 

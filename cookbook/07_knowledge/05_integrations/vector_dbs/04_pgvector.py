@@ -1,19 +1,20 @@
 """
-Qdrant: Recommended Vector Database
-=====================================
-Qdrant is the recommended vector database for production use.
-It provides fast, scalable vector search with rich filtering
-capabilities, hybrid search, and reranking support.
+PgVector: PostgreSQL Vector Search
+====================================
+PgVector adds vector similarity search to PostgreSQL, giving you
+vectors alongside your existing relational data in one database.
 
 Features:
 - Vector, keyword, and hybrid search
+- Full SQL capabilities for complex queries
+- HNSW and IVFFlat indexing
 - Reranking support
-- Rich metadata filtering
-- Cloud or self-hosted deployment options
+- Battle-tested PostgreSQL reliability
 
-Setup: ./cookbook/scripts/run_qdrant.sh
+Setup: ./cookbook/scripts/run_pgvector.sh
+Requires: pip install pgvector psycopg[binary]
 
-See also: 02_local.py for local dev, 03_managed.py for Pinecone, 04_pgvector.py for PostgreSQL.
+See also: 01_qdrant.py for recommended default, 02_local.py for local dev.
 """
 
 from agno.agent import Agent
@@ -21,26 +22,29 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.qdrant import Qdrant, SearchType
+from agno.vectordb.pgvector import PgVector
+from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-# --- Basic Qdrant setup ---
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+# --- Basic PgVector setup ---
 knowledge_basic = Knowledge(
-    vector_db=Qdrant(
-        collection="qdrant_basic",
-        url="http://localhost:6333",
+    vector_db=PgVector(
+        table_name="pgvector_basic",
+        db_url=db_url,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
 
 # --- Hybrid search with reranking ---
-knowledge_advanced = Knowledge(
-    vector_db=Qdrant(
-        collection="qdrant_advanced",
-        url="http://localhost:6333",
+knowledge_hybrid = Knowledge(
+    vector_db=PgVector(
+        table_name="pgvector_hybrid",
+        db_url=db_url,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         reranker=CohereReranker(model="rerank-multilingual-v3.0"),
@@ -52,14 +56,14 @@ knowledge_advanced = Knowledge(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    pdf_url = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+
     # --- Basic vector search ---
     print("\n" + "=" * 60)
-    print("Qdrant: Basic vector search")
+    print("PgVector: Basic vector search")
     print("=" * 60 + "\n")
 
-    knowledge_basic.insert(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
+    knowledge_basic.insert(url=pdf_url)
     agent = Agent(
         model=OpenAIResponses(id="gpt-5.2"),
         knowledge=knowledge_basic,
@@ -70,16 +74,14 @@ if __name__ == "__main__":
 
     # --- Hybrid search with reranking ---
     print("\n" + "=" * 60)
-    print("Qdrant: Hybrid search + Cohere reranking")
+    print("PgVector: Hybrid search + Cohere reranking")
     print("=" * 60 + "\n")
 
-    knowledge_advanced.insert(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
-    agent_advanced = Agent(
+    knowledge_hybrid.insert(url=pdf_url)
+    agent_hybrid = Agent(
         model=OpenAIResponses(id="gpt-5.2"),
-        knowledge=knowledge_advanced,
+        knowledge=knowledge_hybrid,
         search_knowledge=True,
         markdown=True,
     )
-    agent_advanced.print_response("What Thai desserts are available?", stream=True)
+    agent_hybrid.print_response("What Thai desserts are available?", stream=True)

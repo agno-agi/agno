@@ -18,6 +18,7 @@ See also: ../02_building_blocks/04_filtering.py for metadata-based filtering.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -38,10 +39,14 @@ vector_db = Qdrant(
     embedder=OpenAIEmbedder(id="text-embedding-3-small"),
 )
 
+# Shared contents database tracks what each tenant has ingested
+contents_db = SqliteDb(db_file="tmp/multi_tenant.db")
+
 # Tenant A: only sees its own data
 tenant_a_knowledge = Knowledge(
     name="Tenant A",
     vector_db=vector_db,
+    contents_db=contents_db,
     isolate_vector_search=True,
 )
 
@@ -49,6 +54,7 @@ tenant_a_knowledge = Knowledge(
 tenant_b_knowledge = Knowledge(
     name="Tenant B",
     vector_db=vector_db,
+    contents_db=contents_db,
     isolate_vector_search=True,
 )
 
