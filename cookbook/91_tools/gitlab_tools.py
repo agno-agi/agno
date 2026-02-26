@@ -42,3 +42,14 @@ if __name__ == "__main__":
         "List open merge requests for project 'gitlab-org/gitlab' and summarize the top 5 by recency.",
         markdown=True,
     )
+
+    # Async variant:
+    # import asyncio
+    #
+    # async def run_async():
+    #     await agent.aprint_response(
+    #         "List open issues for project 'gitlab-org/gitlab' with labels and assignees.",
+    #         markdown=True,
+    #     )
+    #
+    # asyncio.run(run_async())

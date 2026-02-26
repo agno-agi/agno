@@ -1,6 +1,9 @@
 import json
 from os import getenv
 from typing import Any, Dict, List, Optional, cast
+from urllib.parse import quote_plus
+
+import httpx
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -18,13 +21,16 @@ class GitlabTools(Toolkit):
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
-        timeout: int = 30,
+        timeout: float = 30,
+        gitlab_client: Optional[Gitlab] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
         **kwargs,
     ):
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
-        self.base_url = base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com"
+        self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout
-        self.client: Gitlab = self._create_client()
+        self.client: Gitlab = gitlab_client or self._create_client()
+        self.httpx_client = httpx_client
 
         tools: List[Any] = [
             self.list_projects,
@@ -34,7 +40,15 @@ class GitlabTools(Toolkit):
             self.list_issues,
         ]
 
-        super().__init__(name="gitlab", tools=tools, **kwargs)
+        async_tools: List[tuple[Any, str]] = [
+            (self.alist_projects, "list_projects"),
+            (self.aget_project, "get_project"),
+            (self.alist_merge_requests, "list_merge_requests"),
+            (self.aget_merge_request, "get_merge_request"),
+            (self.alist_issues, "list_issues"),
+        ]
+
+        super().__init__(name="gitlab", tools=tools, async_tools=async_tools, **kwargs)
 
     def _create_client(self) -> Gitlab:
         """Create and return a GitLab API client."""
@@ -49,6 +63,8 @@ class GitlabTools(Toolkit):
     @staticmethod
     def _safe_get(obj: Any, field: str, default: Any = None) -> Any:
         """Return attribute value from object if present."""
+        if isinstance(obj, dict):
+            return obj.get(field, default)
         return getattr(obj, field, default)
 
     @staticmethod
@@ -60,6 +76,52 @@ class GitlabTools(Toolkit):
 
     def _json_error(self, message: str) -> str:
         return json.dumps({"error": message})
+
+    def _build_headers(self) -> Dict[str, str]:
+        if self.access_token:
+            return {"PRIVATE-TOKEN": self.access_token}
+        return {}
+
+    def _build_api_url(self, endpoint: str) -> str:
+        path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+        return f"{self.base_url}/api/v4{path}"
+
+    @staticmethod
+    def _encode_project_ref(project_id_or_path: str) -> str:
+        return quote_plus(str(project_id_or_path), safe="")
+
+    def _http_error_message(self, response: httpx.Response) -> str:
+        detail: Optional[str] = None
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                message = payload.get("message") or payload.get("error")
+                if message is not None:
+                    if isinstance(message, (dict, list)):
+                        detail = json.dumps(message)
+                    else:
+                        detail = str(message)
+            elif isinstance(payload, list):
+                detail = json.dumps(payload)
+        except Exception:
+            detail = None
+
+        if not detail:
+            raw_text = response.text.strip()
+            detail = raw_text or response.reason_phrase or "HTTP error"
+
+        return f"{response.status_code}: {detail}"
+
+    async def _aget(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        url = self._build_api_url(endpoint)
+        headers = self._build_headers()
+        if self.httpx_client is not None:
+            response = await self.httpx_client.get(url, params=params, headers=headers)
+        else:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        return response.json()
 
     def _get_project(self, project_id_or_path: str):
         return self.client.projects.get(project_id_or_path)
@@ -152,6 +214,35 @@ class GitlabTools(Toolkit):
             logger.exception("Unexpected error while listing projects")
             return self._json_error(str(e))
 
+    async def alist_projects(
+        self,
+        search: Optional[str] = None,
+        owned: bool = False,
+        membership: bool = False,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> str:
+        try:
+            per_page = self._bound_page_size(per_page)
+            params: Dict[str, Any] = {"page": page, "per_page": per_page, "owned": owned, "membership": membership}
+            if search:
+                params["search"] = search
+
+            log_debug(f"Listing GitLab projects with params: {params}")
+            projects = await self._aget("/projects", params=params)
+            data = [self._serialize_project(project) for project in projects]
+            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            logger.error(f"GitLab API error while listing projects: {message}")
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.error(f"GitLab request error while listing projects: {e}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception("Unexpected error while listing projects")
+            return self._json_error(str(e))
+
     def get_project(self, project_id_or_path: str) -> str:
         """
         Get details for a single project.
@@ -168,6 +259,23 @@ class GitlabTools(Toolkit):
             return json.dumps(self._serialize_project(project), indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.error(f"GitLab API error while getting project {project_id_or_path}: {e}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while getting project {project_id_or_path}")
+            return self._json_error(str(e))
+
+    async def aget_project(self, project_id_or_path: str) -> str:
+        try:
+            project_ref = self._encode_project_ref(project_id_or_path)
+            log_debug(f"Getting GitLab project: {project_id_or_path}")
+            project = await self._aget(f"/projects/{project_ref}")
+            return json.dumps(self._serialize_project(project), indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            logger.error(f"GitLab API error while getting project {project_id_or_path}: {message}")
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.error(f"GitLab request error while getting project {project_id_or_path}: {e}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while getting project {project_id_or_path}")
@@ -220,6 +328,42 @@ class GitlabTools(Toolkit):
             logger.exception(f"Unexpected error while listing merge requests for project {project_id_or_path}")
             return self._json_error(str(e))
 
+    async def alist_merge_requests(
+        self,
+        project_id_or_path: str,
+        state: str = "opened",
+        source_branch: Optional[str] = None,
+        target_branch: Optional[str] = None,
+        author_username: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> str:
+        try:
+            per_page = self._bound_page_size(per_page)
+            project_ref = self._encode_project_ref(project_id_or_path)
+            params: Dict[str, Any] = {"state": state, "page": page, "per_page": per_page}
+            if source_branch:
+                params["source_branch"] = source_branch
+            if target_branch:
+                params["target_branch"] = target_branch
+            if author_username:
+                params["author_username"] = author_username
+
+            log_debug(f"Listing merge requests for project {project_id_or_path} with params: {params}")
+            merge_requests = await self._aget(f"/projects/{project_ref}/merge_requests", params=params)
+            data = [self._serialize_merge_request(mr) for mr in merge_requests]
+            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            logger.error(f"GitLab API error while listing merge requests for project {project_id_or_path}: {message}")
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.error(f"GitLab request error while listing merge requests for project {project_id_or_path}: {e}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while listing merge requests for project {project_id_or_path}")
+            return self._json_error(str(e))
+
     def get_merge_request(self, project_id_or_path: str, merge_request_iid: int) -> str:
         """
         Get details for a single merge request in a project.
@@ -238,6 +382,23 @@ class GitlabTools(Toolkit):
             return json.dumps(self._serialize_merge_request(merge_request), indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.error(f"GitLab API error while getting merge request {merge_request_iid}: {e}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
+            return self._json_error(str(e))
+
+    async def aget_merge_request(self, project_id_or_path: str, merge_request_iid: int) -> str:
+        try:
+            project_ref = self._encode_project_ref(project_id_or_path)
+            log_debug(f"Getting merge request {merge_request_iid} from project {project_id_or_path}")
+            merge_request = await self._aget(f"/projects/{project_ref}/merge_requests/{merge_request_iid}")
+            return json.dumps(self._serialize_merge_request(merge_request), indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            logger.error(f"GitLab API error while getting merge request {merge_request_iid}: {message}")
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.error(f"GitLab request error while getting merge request {merge_request_iid}: {e}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
@@ -289,6 +450,45 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.error(f"GitLab API error while listing issues for project {project_id_or_path}: {e}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while listing issues for project {project_id_or_path}")
+            return self._json_error(str(e))
+
+    async def alist_issues(
+        self,
+        project_id_or_path: str,
+        state: str = "opened",
+        labels: Optional[str] = None,
+        author_username: Optional[str] = None,
+        assignee_username: Optional[str] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> str:
+        try:
+            per_page = self._bound_page_size(per_page)
+            project_ref = self._encode_project_ref(project_id_or_path)
+            params: Dict[str, Any] = {"state": state, "page": page, "per_page": per_page}
+            if labels:
+                params["labels"] = labels
+            if author_username:
+                params["author_username"] = author_username
+            if assignee_username:
+                params["assignee_username"] = assignee_username
+            if search:
+                params["search"] = search
+
+            log_debug(f"Listing issues for project {project_id_or_path} with params: {params}")
+            issues = await self._aget(f"/projects/{project_ref}/issues", params=params)
+            data = [self._serialize_issue(issue) for issue in issues]
+            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            logger.error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}")
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.error(f"GitLab request error while listing issues for project {project_id_or_path}: {e}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while listing issues for project {project_id_or_path}")
