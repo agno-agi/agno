@@ -1,9 +1,17 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 from agno.os.utils import format_duration_ms
+
+
+class TraceSearchGroupBy(str, Enum):
+    """Grouping options for trace search results."""
+
+    RUN = "run"  # Returns individual traces (TraceDetail)
+    SESSION = "session"  # Returns aggregated session stats (TraceSessionStats)
 
 
 def _derive_span_type(span: Any) -> str:
@@ -420,7 +428,7 @@ class TraceSearchRequest(BaseModel):
     The filter field accepts a FilterExpr DSL dict supporting composable queries
     with AND/OR/NOT logic and operators like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
 
-    Example:
+    Example for run grouping (default):
         {
             "filter": {
                 "op": "AND",
@@ -429,6 +437,15 @@ class TraceSearchRequest(BaseModel):
                     {"op": "CONTAINS", "key": "user_id", "value": "admin"}
                 ]
             },
+            "group_by": "run",
+            "page": 1,
+            "limit": 20
+        }
+
+    Example for session grouping:
+        {
+            "filter": {"op": "EQ", "key": "agent_id", "value": "my-agent"},
+            "group_by": "session",
             "page": 1,
             "limit": 20
         }
@@ -437,6 +454,10 @@ class TraceSearchRequest(BaseModel):
     filter: Optional[Dict[str, Any]] = Field(
         None,
         description="FilterExpr DSL as JSON dict. Supports operators: EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH, AND, OR, NOT.",
+    )
+    group_by: TraceSearchGroupBy = Field(
+        default=TraceSearchGroupBy.RUN,
+        description="Grouping mode: 'run' returns individual TraceDetail, 'session' returns aggregated TraceSessionStats.",
     )
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
     limit: int = Field(default=20, ge=1, description="Number of traces per page")

@@ -11,6 +11,7 @@ from agno.os.routers.traces.schemas import (
     FilterSchemaResponse,
     TraceDetail,
     TraceNode,
+    TraceSearchGroupBy,
     TraceSearchRequest,
     TraceSessionStats,
     TraceSummary,
@@ -570,14 +571,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.post(
         "/traces/search",
-        response_model=PaginatedResponse[TraceDetail],
         response_model_exclude_none=True,
         tags=["Traces"],
         operation_id="search_traces",
         summary="Search Traces with Advanced Filters",
         description=(
             "Search traces using the FilterExpr DSL for complex, composable queries.\n\n"
-            "Returns full trace details including hierarchical span tree for each match.\n\n"
+            "**Group By Mode:**\n"
+            "- `run` (default): Returns `PaginatedResponse[TraceDetail]` with full span trees\n"
+            "- `session`: Returns `PaginatedResponse[TraceSessionStats]` with aggregated session stats\n\n"
             "**Supported Operators:**\n"
             "- Comparison: `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`\n"
             "- Inclusion: `IN`\n"
@@ -586,16 +588,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "**Filterable Fields:**\n"
             "trace_id, name, status, start_time, end_time, duration_ms, "
             "run_id, session_id, user_id, agent_id, team_id, workflow_id, created_at\n\n"
-            "**Example Request Body:**\n"
+            "**Example Request Body (runs):**\n"
             "```json\n"
             "{\n"
-            '  "filter": {\n'
-            '    "op": "AND",\n'
-            '    "conditions": [\n'
-            '      {"op": "EQ", "key": "status", "value": "OK"},\n'
-            '      {"op": "CONTAINS", "key": "user_id", "value": "admin"}\n'
-            "    ]\n"
-            "  },\n"
+            '  "filter": {"op": "EQ", "key": "status", "value": "OK"},\n'
+            '  "group_by": "run",\n'
+            '  "page": 1,\n'
+            '  "limit": 20\n'
+            "}\n"
+            "```\n\n"
+            "**Example Request Body (sessions):**\n"
+            "```json\n"
+            "{\n"
+            '  "filter": {"op": "CONTAINS", "key": "agent_id", "value": "stock"},\n'
+            '  "group_by": "session",\n'
             '  "page": 1,\n'
             '  "limit": 20\n'
             "}\n"
@@ -610,7 +616,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         body: TraceSearchRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
-        """Search traces using advanced FilterExpr DSL queries. Returns full TraceDetail with span tree."""
+        """Search traces using advanced FilterExpr DSL queries.
+
+        Returns TraceDetail (group_by=run) or TraceSessionStats (group_by=session).
+        """
         import time as time_module
 
         # Get database using db_id or default to first available
@@ -621,6 +630,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.search_traces(
                 filter_expr=body.filter,
+                group_by=body.group_by.value,
                 limit=body.limit,
                 page=body.page,
                 db_id=db_id,
@@ -638,45 +648,95 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 from_dict(body.filter)  # Validate structure; raises ValueError if invalid
                 filter_expr_dict = body.filter
 
-            if isinstance(db, AsyncBaseDb):
-                traces, total_count = await db.get_traces(
-                    filter_expr=filter_expr_dict,
-                    limit=body.limit,
-                    page=body.page,
-                )
-            else:
-                traces, total_count = db.get_traces(
-                    filter_expr=filter_expr_dict,
-                    limit=body.limit,
-                    page=body.page,
-                )
-
-            end_time_ms = time_module.time() * 1000
-            search_time_ms = round(end_time_ms - start_time_ms, 2)
-
-            # Calculate total pages
-            total_pages = (total_count + body.limit - 1) // body.limit if body.limit > 0 else 0
-
-            # Build full TraceDetail (with span tree) for each trace
-            trace_details = []
-            for trace in traces:
+            # Branch based on group_by mode
+            if body.group_by == TraceSearchGroupBy.SESSION:
+                # Session grouping - return TraceSessionStats
                 if isinstance(db, AsyncBaseDb):
-                    spans = await db.get_spans(trace_id=trace.trace_id)
+                    stats_list, total_count = await db.get_trace_stats(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
                 else:
-                    spans = db.get_spans(trace_id=trace.trace_id)
+                    stats_list, total_count = db.get_trace_stats(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
 
-                trace_details.append(TraceDetail.from_trace_and_spans(trace, spans))
+                end_time_ms = time_module.time() * 1000
+                search_time_ms = round(end_time_ms - start_time_ms, 2)
 
-            return PaginatedResponse(
-                data=trace_details,
-                meta=PaginationInfo(
-                    page=body.page,
-                    limit=body.limit,
-                    total_pages=total_pages,
-                    total_count=total_count,
-                    search_time_ms=search_time_ms,
-                ),
-            )
+                # Calculate total pages
+                total_pages = (total_count + body.limit - 1) // body.limit if body.limit > 0 else 0
+
+                # Convert stats to response models
+                stats_response = [
+                    TraceSessionStats(
+                        session_id=stat["session_id"],
+                        user_id=stat.get("user_id"),
+                        agent_id=stat.get("agent_id"),
+                        team_id=stat.get("team_id"),
+                        workflow_id=stat.get("workflow_id"),
+                        total_traces=stat["total_traces"],
+                        first_trace_at=stat["first_trace_at"],
+                        last_trace_at=stat["last_trace_at"],
+                    )
+                    for stat in stats_list
+                ]
+
+                return PaginatedResponse(
+                    data=stats_response,
+                    meta=PaginationInfo(
+                        page=body.page,
+                        limit=body.limit,
+                        total_pages=total_pages,
+                        total_count=total_count,
+                        search_time_ms=search_time_ms,
+                    ),
+                )
+
+            else:
+                # Run grouping (default) - return TraceDetail
+                if isinstance(db, AsyncBaseDb):
+                    traces, total_count = await db.get_traces(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
+                else:
+                    traces, total_count = db.get_traces(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
+
+                end_time_ms = time_module.time() * 1000
+                search_time_ms = round(end_time_ms - start_time_ms, 2)
+
+                # Calculate total pages
+                total_pages = (total_count + body.limit - 1) // body.limit if body.limit > 0 else 0
+
+                # Build full TraceDetail (with span tree) for each trace
+                trace_details = []
+                for trace in traces:
+                    if isinstance(db, AsyncBaseDb):
+                        spans = await db.get_spans(trace_id=trace.trace_id)
+                    else:
+                        spans = db.get_spans(trace_id=trace.trace_id)
+
+                    trace_details.append(TraceDetail.from_trace_and_spans(trace, spans))
+
+                return PaginatedResponse(
+                    data=trace_details,
+                    meta=PaginationInfo(
+                        page=body.page,
+                        limit=body.limit,
+                        total_pages=total_pages,
+                        total_count=total_count,
+                        search_time_ms=search_time_ms,
+                    ),
+                )
 
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid filter expression: {str(e)}")

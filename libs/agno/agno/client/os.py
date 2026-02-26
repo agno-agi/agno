@@ -2628,11 +2628,12 @@ class AgentOSClient:
     async def search_traces(
         self,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: str = "run",
         page: int = 1,
         limit: int = 20,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[TraceDetail]:
+    ) -> Union[PaginatedResponse[TraceDetail], PaginatedResponse[TraceSessionStats]]:
         """Search traces using the FilterExpr DSL for composable queries.
 
         Supports operators: EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH,
@@ -2640,19 +2641,21 @@ class AgentOSClient:
 
         Args:
             filter_expr: FilterExpr DSL as a dict (e.g., {"op": "EQ", "key": "status", "value": "OK"})
+            group_by: Grouping mode - "run" (default) returns TraceDetail, "session" returns TraceSessionStats
             page: Page number (1-indexed)
             limit: Number of traces per page
             db_id: Optional database ID to use
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            PaginatedResponse[TraceDetail]: Paginated list of trace details with span trees
+            PaginatedResponse[TraceDetail] if group_by="run", PaginatedResponse[TraceSessionStats] if group_by="session"
 
         Raises:
             HTTPStatusError: On HTTP errors (400 for invalid filter)
         """
         body: Dict[str, Any] = {
             "filter": filter_expr,
+            "group_by": group_by,
             "page": page,
             "limit": limit,
         }
@@ -2661,6 +2664,9 @@ class AgentOSClient:
             params["db_id"] = db_id
 
         data = await self._apost("/traces/search", data=body, params=params if params else None, headers=headers)
+
+        if group_by == "session":
+            return PaginatedResponse[TraceSessionStats].model_validate(data)
         return PaginatedResponse[TraceDetail].model_validate(data)
 
     # Metrics Operations

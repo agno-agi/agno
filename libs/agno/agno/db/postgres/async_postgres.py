@@ -2576,6 +2576,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2588,6 +2589,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2631,6 +2633,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if end_time:
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                    base_stmt = base_stmt.where(
+                        filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                    )
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
