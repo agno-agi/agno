@@ -47,6 +47,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
+from agno.resilience.policy import ResiliencePolicy
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunEvent,
@@ -272,6 +273,8 @@ class Agent:
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
+    # Resilience policy for fallback models and circuit breakers
+    resilience: Optional[ResiliencePolicy] = None
 
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
@@ -438,6 +441,7 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
+        resilience: Optional[ResiliencePolicy] = None,
         parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
@@ -590,6 +594,7 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
+        self.resilience = resilience
         self.parser_model = parser_model  # type: ignore[assignment]
         self.parser_model_prompt = parser_model_prompt
         self.input_schema = input_schema
