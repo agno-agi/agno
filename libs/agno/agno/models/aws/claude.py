@@ -223,7 +223,7 @@ class Claude(AnthropicClaude):
 
     def _prepare_request_kwargs(
         self,
-        system_message: str,
+        system_message: Union[str, List[str]],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
@@ -231,7 +231,8 @@ class Claude(AnthropicClaude):
         Prepare the request keyword arguments for the API call.
 
         Args:
-            system_message (str): The concatenated system messages.
+            system_message: The system message(s). Either a single string or a list of
+                two strings [static, dynamic] for multi-block prompt caching.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
 
@@ -241,15 +242,31 @@ class Claude(AnthropicClaude):
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         if system_message:
-            if self.cache_system_prompt:
+            if self.cache_system_prompt and isinstance(system_message, list) and len(system_message) == 2:
+                # Multi-block: static block gets cache_control, dynamic block does not
                 cache_control = (
                     {"type": "ephemeral", "ttl": "1h"}
                     if self.extended_cache_time is not None and self.extended_cache_time is True
                     else {"type": "ephemeral"}
                 )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
+                blocks: List[Dict[str, Any]] = []
+                if system_message[0]:
+                    blocks.append({"text": system_message[0], "type": "text", "cache_control": cache_control})
+                if system_message[1]:
+                    blocks.append({"text": system_message[1], "type": "text"})
+                if blocks:
+                    request_kwargs["system"] = blocks
+            elif self.cache_system_prompt:
+                sm = system_message if isinstance(system_message, str) else " ".join(system_message)
+                cache_control = (
+                    {"type": "ephemeral", "ttl": "1h"}
+                    if self.extended_cache_time is not None and self.extended_cache_time is True
+                    else {"type": "ephemeral"}
+                )
+                request_kwargs["system"] = [{"text": sm, "type": "text", "cache_control": cache_control}]
             else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+                sm = system_message if isinstance(system_message, str) else " ".join(system_message)
+                request_kwargs["system"] = [{"text": sm, "type": "text"}]
 
         # Format tools (this will handle strict mode)
         if tools:

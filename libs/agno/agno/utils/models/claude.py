@@ -264,7 +264,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
 def format_messages(
     messages: List[Message], compress_tool_results: bool = False
-) -> Tuple[List[Dict[str, Union[str, list]]], str]:
+) -> Tuple[List[Dict[str, Union[str, list]]], Union[str, List[str]]]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
@@ -273,17 +273,25 @@ def format_messages(
         compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple containing the list of API messages and the system message(s).
+        The system message is either a single string or a list of two strings
+        [static, dynamic] for multi-block prompt caching support.
     """
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
+    # Multi-block system message parts [static, dynamic] from get_system_message()
+    system_message_parts: Optional[List[str]] = None
 
     for message in messages:
         content = message.content or ""
         # Both "system" and "developer" roles should be extracted as system messages
         if message.role in ("system", "developer"):
             if content is not None:
-                system_messages.append(content)  # type: ignore
+                if isinstance(content, list) and len(content) == 2 and all(isinstance(c, str) for c in content):
+                    # Multi-block system message [static, dynamic] for prompt caching
+                    system_message_parts = content
+                else:
+                    system_messages.append(content)  # type: ignore
             continue
         elif message.role == "user":
             if isinstance(content, str):
@@ -362,6 +370,13 @@ def format_messages(
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
+    # If we have multi-block system message parts, propagate them for prompt caching
+    if system_message_parts is not None:
+        if system_messages:
+            # Prepend additional system messages (e.g. developer role) to the static block
+            combined_static = " ".join(system_messages) + " " + system_message_parts[0]
+            return chat_messages, [combined_static, system_message_parts[1]]
+        return chat_messages, system_message_parts
     return chat_messages, " ".join(system_messages)
 
 
