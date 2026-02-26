@@ -4431,6 +4431,17 @@ def _route_requirements_to_members(
         # initialize_team clears the cached session).
         member_run_output = getattr(reqs[0], "_member_run_response", None)
 
+        # If _member_run_response is not available (e.g., API flow where it's lost during
+        # JSON serialization), try to find the member's run from run_response.member_responses.
+        # This requires store_member_responses=True on the team.
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
@@ -4458,6 +4469,10 @@ def _route_requirements_to_members(
 
             _propagate_member_pause(run_response, member, member_response)
         else:
+            # Update the member's run in the team session so its status is persisted
+            # (member agents skip save_session when team_id is set)
+            session.upsert_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -4504,6 +4519,17 @@ async def _aroute_requirements_to_members(
         # Get the member's paused RunOutput from the requirement
         member_run_output = getattr(reqs[0], "_member_run_response", None)
 
+        # If _member_run_response is not available (e.g., API flow where it's lost during
+        # JSON serialization), try to find the member's run from run_response.member_responses.
+        # This requires store_member_responses=True on the team.
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -4533,6 +4559,10 @@ async def _aroute_requirements_to_members(
             _propagate_member_pause(run_response, member, member_response)
             return None
         else:
+            # Update the member's run in the team session so its status is persisted
+            # (member agents skip save_session when team_id is set, so we do it here)
+            session.upsert_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
 

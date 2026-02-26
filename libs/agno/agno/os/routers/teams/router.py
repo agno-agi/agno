@@ -1,3 +1,4 @@
+import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.registry import Registry
+from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -102,6 +104,56 @@ async def team_response_streamer(
         import traceback
 
         traceback.print_exc()
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+        return
+
+
+async def team_continue_response_streamer(
+    team: Union[Team, RemoteTeam],
+    run_id: str,
+    requirements: List,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Continue a paused team run and yield streaming response."""
+    try:
+        # Build kwargs for remote team auth
+        extra_kwargs: dict = {}
+        if auth_token and isinstance(team, RemoteTeam):
+            extra_kwargs["auth_token"] = auth_token
+
+        continue_response = team.acontinue_run(
+            run_id=run_id,
+            requirements=requirements,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background_tasks=background_tasks,
+            **extra_kwargs,
+        )
+        async for run_response_chunk in continue_response:
+            yield format_sse_event(run_response_chunk)  # type: ignore
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
         error_response = TeamRunErrorEvent(
             content=str(e),
             error_type=e.type if hasattr(e, "type") else None,
@@ -367,6 +419,140 @@ def get_team_router(
         # in cancel-before-start scenarios), so we always return success.
         await team.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
+
+    @router.post(
+        "/teams/{team_id}/runs/{run_id}/continue",
+        tags=["Teams"],
+        operation_id="continue_team_run",
+        response_model_exclude_none=True,
+        summary="Continue Team Run",
+        description=(
+            "Continue a paused or incomplete team run with updated requirements.\n\n"
+            "**Use Cases:**\n"
+            "- Resume execution after tool approval/rejection\n"
+            "- Provide manual tool execution results\n\n"
+            "**Requirements Parameter:**\n"
+            "JSON string containing array of requirement objects with tool execution results."
+        ),
+        responses={
+            200: {
+                "description": "Team run continued successfully",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunContent\ndata: {"created_at": 1757348314, "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {
+                "description": "Invalid JSON in requirements field or invalid requirement structure",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "Team not found", "model": NotFoundResponse},
+            409: {
+                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+            },
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def continue_team_run(
+        team_id: str,
+        run_id: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        requirements: str = Form(...),  # JSON string of requirements
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            session_id = request.state.session_id
+
+        # Parse the JSON string manually
+        try:
+            requirements_data = json.loads(requirements) if requirements else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in requirements field")
+
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if session_id is None or session_id == "":
+            log_warning(
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
+
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if session_id and not isinstance(team, RemoteTeam):
+            existing_run = await team.aget_run_output(run_id=run_id, session_id=session_id)
+            if existing_run is not None:
+                is_paused = getattr(existing_run, "is_paused", False)
+                if not is_paused:
+                    status = getattr(existing_run, "status", None)
+                    _status_to_detail = {
+                        RunStatus.running: "run is already running",
+                        RunStatus.completed: "run is already continued",
+                        RunStatus.error: "run is already errored",
+                        RunStatus.cancelled: "run is already cancelled",
+                        RunStatus.pending: "run is already pending",
+                    }
+                    detail = _status_to_detail.get(
+                        status,  # type: ignore[arg-type]
+                        f"run is not paused (status={getattr(status, 'value', status)})",
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=detail,
+                    )
+
+        # Convert requirements dict to RunRequirement objects if provided
+        updated_requirements = []
+        if requirements_data:
+            try:
+                from agno.run.requirement import RunRequirement
+
+                updated_requirements = [RunRequirement.from_dict(req) for req in requirements_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for requirements: {str(e)}")
+
+        # Extract auth token for remote teams
+        auth_token = get_auth_token_from_request(request)
+
+        if stream:
+            return StreamingResponse(
+                team_continue_response_streamer(
+                    team,
+                    run_id=run_id,
+                    requirements=updated_requirements,
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                    auth_token=auth_token,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            # Build extra kwargs for remote team auth
+            extra_kwargs: dict = {}
+            if auth_token and isinstance(team, RemoteTeam):
+                extra_kwargs["auth_token"] = auth_token
+
+            try:
+                run_response_obj = await team.acontinue_run(  # type: ignore
+                    run_id=run_id,
+                    requirements=updated_requirements,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                    background_tasks=background_tasks,
+                    **extra_kwargs,
+                )
+                return run_response_obj.to_dict()
+
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     @router.get(
         "/teams",
