@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -121,6 +121,32 @@ def test_get_json_schema_for_arg_union():
     union_schema = get_json_schema_for_arg(Union[str, int])
     assert "anyOf" in union_schema
     assert len(union_schema["anyOf"]) == 2
+
+
+def test_get_json_schema_for_arg_literal_strings():
+    schema = get_json_schema_for_arg(Literal["a", "b", "c"])
+    assert schema == {"type": "string", "enum": ["a", "b", "c"]}
+
+
+def test_get_json_schema_for_arg_literal_ints():
+    schema = get_json_schema_for_arg(Literal[1, 2, 3])
+    assert schema == {"type": "number", "enum": [1, 2, 3]}
+
+
+def test_get_json_schema_for_arg_literal_bools():
+    schema = get_json_schema_for_arg(Literal[True, False])
+    assert schema == {"type": "boolean", "enum": [True, False]}
+
+
+def test_get_json_schema_for_arg_literal_mixed():
+    schema = get_json_schema_for_arg(Literal["a", 1])
+    assert schema == {"enum": ["a", 1]}
+
+
+def test_get_json_schema_for_arg_literal_in_schema():
+    type_hints = {"status": Literal["active", "inactive", "pending"]}
+    schema = get_json_schema(type_hints)
+    assert schema["properties"]["status"] == {"type": "string", "enum": ["active", "inactive", "pending"]}
 
 
 # Test cases for get_json_schema

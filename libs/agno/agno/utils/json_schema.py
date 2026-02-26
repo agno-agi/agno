@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -140,6 +140,19 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                 except Exception:
                     continue
             return {"anyOf": types} if types else None
+        elif type_origin is Literal:
+            values = list(type_args)
+            if not values:
+                return {"type": "string"}
+            # Determine the JSON schema type from the literal values
+            value_types = {type(v) for v in values}
+            type_map = {bool: "boolean", int: "number", float: "number", str: "string"}
+            if len(value_types) == 1:
+                py_type = next(iter(value_types))
+                json_type = type_map.get(py_type)
+                if json_type:
+                    return {"type": json_type, "enum": values}
+            return {"enum": values}
 
     if isinstance(type_hint, type) and issubclass(type_hint, Enum):
         enum_values = [member.value for member in type_hint]
