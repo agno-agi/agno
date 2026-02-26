@@ -35,6 +35,7 @@ def _install_fake_telebot():
 _install_fake_telebot()
 
 from agno.os.interfaces.telegram import Telegram  # noqa: E402
+from agno.os.interfaces.telegram.router import markdown_to_telegram_html  # noqa: E402
 from agno.os.interfaces.telegram.security import (  # noqa: E402
     get_webhook_secret_token,
     is_development_mode,
@@ -1144,6 +1145,10 @@ class TestBotCommands:
         monkeypatch.setenv("APP_ENV", "development")
         agent = AsyncMock()
         mock_bot = AsyncMock()
+        mock_me = MagicMock()
+        mock_me.username = "my_bot"
+        mock_me.id = 99999
+        mock_bot.get_me = AsyncMock(return_value=mock_me)
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
             client = _build_telegram_client(agent=agent)
@@ -1954,7 +1959,7 @@ class TestCodexReviewFixes:
         assert resp.status_code == 200
         send_calls = mock_bot.send_message.call_args_list
         reasoning_call = send_calls[0]
-        # _send_message_safe converts to HTML
+        # _send_html converts to HTML
         sent_text = reasoning_call[0][1]
         assert "Reasoning:" in sent_text
         assert "Step 1" in sent_text
@@ -2175,7 +2180,7 @@ class TestCustomMessages:
         assert resp.status_code == 200
         agent.arun.assert_not_called()
         sent_text = mock_bot.send_message.call_args[0][1]
-        # _send_message_safe converts to HTML; plain text with no markdown stays as-is
+        # _send_html converts to HTML; plain text with no markdown stays as-is
         assert sent_text == "Welcome aboard!"
 
     def test_custom_help_message(self, monkeypatch):
@@ -2191,7 +2196,7 @@ class TestCustomMessages:
         assert resp.status_code == 200
         agent.arun.assert_not_called()
         sent_text = mock_bot.send_message.call_args[0][1]
-        # _send_message_safe converts to HTML; plain text stays as-is
+        # _send_html converts to HTML; plain text stays as-is
         assert sent_text == "Ask me anything!"
 
     def test_custom_error_message(self, monkeypatch):
@@ -2216,7 +2221,7 @@ class TestCustomMessages:
         assert resp.status_code == 200
         send_calls = mock_bot.send_message.call_args_list
         sent_texts = [call[0][1] for call in send_calls]
-        # _send_message_safe converts to HTML; "!" stays as-is
+        # _send_html converts to HTML; "!" stays as-is
         assert any("Oops!" in t for t in sent_texts)
 
 
@@ -2834,3 +2839,190 @@ class TestStreamingEnhancedEvents:
         send_calls = mock_bot.send_message.call_args_list
         sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         assert any("Step failed: timeout" in t for t in sent_texts), f"Expected error message, got: {sent_texts}"
+
+
+class TestMarkdownToTelegramHtml:
+    def test_plain_text_unchanged(self):
+        assert markdown_to_telegram_html("Hello world") == "Hello world"
+
+    def test_html_entities_escaped(self):
+        assert markdown_to_telegram_html("a < b & c > d") == "a &lt; b &amp; c &gt; d"
+
+    def test_bold_asterisks(self):
+        assert markdown_to_telegram_html("**bold**") == "<b>bold</b>"
+
+    def test_bold_underscores(self):
+        assert markdown_to_telegram_html("__bold__") == "<b>bold</b>"
+
+    def test_italic_asterisk(self):
+        assert markdown_to_telegram_html("*italic*") == "<i>italic</i>"
+
+    def test_italic_underscore(self):
+        assert markdown_to_telegram_html("_italic_") == "<i>italic</i>"
+
+    def test_inline_code(self):
+        assert markdown_to_telegram_html("`code`") == "<code>code</code>"
+
+    def test_strikethrough(self):
+        assert markdown_to_telegram_html("~~deleted~~") == "<s>deleted</s>"
+
+    def test_link_basic(self):
+        result = markdown_to_telegram_html("[Google](https://google.com)")
+        assert result == '<a href="https://google.com">Google</a>'
+
+    def test_link_with_ampersand_no_double_escape(self):
+        result = markdown_to_telegram_html("[Search](https://example.com?a=1&b=2)")
+        assert "&amp;amp;" not in result
+        assert 'href="https://example.com?a=1&amp;b=2"' in result
+
+    def test_link_with_parentheses_in_url(self):
+        result = markdown_to_telegram_html("[Test](https://en.wikipedia.org/wiki/Test_(disambiguation))")
+        assert "Test_(disambiguation)" in result
+        assert '<a href="' in result
+
+    def test_fenced_code_block(self):
+        md = "```python\nprint('hi')\n```"
+        result = markdown_to_telegram_html(md)
+        assert "<pre>" in result
+        assert "language-python" in result
+
+    def test_heading_to_bold(self):
+        assert markdown_to_telegram_html("## Title") == "<b>Title</b>"
+
+    def test_mixed_bold_and_link(self):
+        result = markdown_to_telegram_html("**See** [here](https://x.com)")
+        assert "<b>See</b>" in result
+        assert '<a href="https://x.com">here</a>' in result
+
+    def test_code_inside_bold(self):
+        result = markdown_to_telegram_html("**use `foo` here**")
+        assert "<b>" in result
+        assert "<code>foo</code>" in result
+
+    def test_unclosed_code_block(self):
+        md = "```\nunfinished"
+        result = markdown_to_telegram_html(md)
+        assert "<pre>" in result
+
+    def test_html_in_link_display_text_escaped(self):
+        result = markdown_to_telegram_html("[<script>](https://evil.com)")
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+
+    def test_empty_string(self):
+        assert markdown_to_telegram_html("") == ""
+
+    def test_link_with_quotes_in_url(self):
+        result = markdown_to_telegram_html('[Click](https://example.com?q="hello")')
+        assert "&quot;" in result
+        assert "<a href=" in result
+
+
+class TestCommandTargeting:
+    def _group_update(self, text, chat_id=-100123, msg_id=200):
+        return {
+            "update_id": 1,
+            "message": {
+                "message_id": msg_id,
+                "from": {"id": 67890, "is_bot": False},
+                "chat": {"id": chat_id, "type": "supergroup"},
+                "text": text,
+            },
+        }
+
+    def test_command_for_other_bot_ignored_in_group(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+        agent = AsyncMock()
+        mock_bot = AsyncMock()
+        mock_bot_me = MagicMock()
+        mock_bot_me.username = "my_bot"
+        mock_bot_me.id = 111
+        mock_bot.get_me = AsyncMock(return_value=mock_bot_me)
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post("/telegram/webhook", json=self._group_update("/start@other_bot"))
+
+        assert resp.status_code == 200
+        agent.arun.assert_not_called()
+        if mock_bot.send_message.called:
+            sent_texts = [str(c[0][1]) for c in mock_bot.send_message.call_args_list]
+            assert not any("ready to help" in t.lower() for t in sent_texts)
+
+    def test_command_for_our_bot_processed_in_group(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+        agent = AsyncMock()
+        mock_bot = AsyncMock()
+        mock_bot_me = MagicMock()
+        mock_bot_me.username = "my_bot"
+        mock_bot_me.id = 111
+        mock_bot.get_me = AsyncMock(return_value=mock_bot_me)
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post("/telegram/webhook", json=self._group_update("/start@my_bot"))
+
+        assert resp.status_code == 200
+        agent.arun.assert_not_called()
+        mock_bot.send_message.assert_called_once()
+
+    def test_command_without_suffix_in_dm(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+        agent = AsyncMock()
+        mock_bot = AsyncMock()
+
+        dm_update = {
+            "update_id": 1,
+            "message": {
+                "message_id": 100,
+                "from": {"id": 67890, "is_bot": False},
+                "chat": {"id": 12345, "type": "private"},
+                "text": "/start",
+            },
+        }
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp = client.post("/telegram/webhook", json=dm_update)
+
+        assert resp.status_code == 200
+        mock_bot.send_message.assert_called_once()
+
+
+class TestIdempotencyGuard:
+    def test_duplicate_update_id_returns_duplicate(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "reply"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+        mock_response.audio = None
+        mock_response.videos = None
+        mock_response.files = None
+        agent = AsyncMock()
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        update = {
+            "update_id": 99999,
+            "message": {
+                "message_id": 100,
+                "from": {"id": 67890, "is_bot": False},
+                "chat": {"id": 12345, "type": "private"},
+                "text": "Hello",
+            },
+        }
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent)
+            resp1 = client.post("/telegram/webhook", json=update)
+            resp2 = client.post("/telegram/webhook", json=update)
+
+        assert resp1.json()["status"] == "processing"
+        assert resp2.json()["status"] == "duplicate"

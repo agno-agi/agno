@@ -12,12 +12,14 @@ from agno.os.interfaces.telegram.security import validate_webhook_secret_token
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import RunCompletedEvent as AgentRunCompletedEvent
 from agno.run.agent import RunContentEvent as AgentRunContentEvent
+from agno.run.agent import RunErrorEvent as AgentRunErrorEvent
 from agno.run.agent import RunOutput
 from agno.run.agent import ToolCallCompletedEvent as AgentToolCallCompletedEvent
 from agno.run.agent import ToolCallStartedEvent as AgentToolCallStartedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -28,7 +30,6 @@ from agno.run.workflow import (
     StepStartedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
-    WorkflowRunOutput,
 )
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -45,19 +46,15 @@ TG_MAX_CAPTION_LENGTH = 1024
 TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
 TG_STREAM_EDIT_INTERVAL = 1.0  # Minimum seconds between message edits to avoid rate limits
 TG_MAX_FILE_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20 MB — Telegram API download limit
+_BYTES_PER_MB = 1024 * 1024
+_TG_MAX_FILE_DOWNLOAD_MB = TG_MAX_FILE_DOWNLOAD_SIZE // _BYTES_PER_MB
 
 
 def _escape_html(text: str) -> str:
-    """Escape HTML special characters."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def markdown_to_telegram_html(text: str) -> str:
-    """Convert standard markdown to Telegram-compatible HTML.
-
-    Handles fenced code blocks, inline code, bold, italic, strikethrough,
-    links, and headings. Falls back gracefully for unsupported syntax.
-    """
     lines = text.split("\n")
     result: list[str] = []
     in_code_block = False
@@ -65,14 +62,12 @@ def markdown_to_telegram_html(text: str) -> str:
     code_lang = ""
 
     for line in lines:
-        # Fenced code blocks: ```lang ... ```
         if line.strip().startswith("```"):
             if not in_code_block:
                 in_code_block = True
                 code_lang = line.strip().removeprefix("```").strip()
                 code_block_lines = []
             else:
-                # Close code block
                 in_code_block = False
                 code_content = _escape_html("\n".join(code_block_lines))
                 if code_lang:
@@ -84,7 +79,6 @@ def markdown_to_telegram_html(text: str) -> str:
             code_block_lines.append(line)
             continue
 
-        # Process inline formatting
         line = _convert_inline_markdown(line)
         result.append(line)
 
@@ -96,39 +90,53 @@ def markdown_to_telegram_html(text: str) -> str:
     return "\n".join(result)
 
 
+# Handles one level of nested parens in URLs (e.g. Wikipedia links)
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(((?:[^()]*|\([^()]*\))*)\)")
+
+
+def _escape_html_attr(url: str) -> str:
+    # Minimal escaping for href attributes: &, ", <, >
+    return url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _convert_inline_markdown(line: str) -> str:
-    """Convert inline markdown elements to Telegram HTML within a single line."""
-    # Headings: ### Heading -> <b>Heading</b>
     heading_match = re.match(r"^(#{1,6})\s+(.*)", line)
     if heading_match:
-        content = _escape_html(heading_match.group(2))
-        # Apply inline formatting to heading content
-        content = _apply_inline_formatting(content)
-        return f"<b>{content}</b>"
+        return f"<b>{_format_line_with_links(heading_match.group(2))}</b>"
+    return _format_line_with_links(line)
 
-    # Escape HTML entities first, then apply inline formatting
+
+def _format_line_with_links(line: str) -> str:
+    # Extract links BEFORE HTML-escaping to preserve raw URLs
+    placeholders: list[str] = []
+
+    def _replace_link(m: re.Match) -> str:
+        display = _escape_html(m.group(1))
+        display = _apply_inline_formatting(display)
+        url = _escape_html_attr(m.group(2))
+        tag = f'<a href="{url}">{display}</a>'
+        idx = len(placeholders)
+        placeholders.append(tag)
+        return f"\x00LINK{idx}\x00"
+
+    line = _LINK_RE.sub(_replace_link, line)
     line = _escape_html(line)
-    return _apply_inline_formatting(line)
+    line = _apply_inline_formatting(line)
+    for i, tag in enumerate(placeholders):
+        line = line.replace(f"\x00LINK{i}\x00", tag)
+    return line
 
 
 def _apply_inline_formatting(text: str) -> str:
-    """Apply inline markdown formatting (bold, italic, code, links, strikethrough) to HTML-escaped text."""
-    # Inline code: `code` (must be done before bold/italic to avoid conflicts)
     text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-    # Bold: **text** or __text__
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
-    # Italic: *text* or _text_ (but not inside words with underscores)
     text = re.sub(r"(?<!\w)\*([^*]+?)\*(?!\w)", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_]+?)_(?!\w)", r"<i>\1</i>", text)
-    # Strikethrough: ~~text~~
     text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
-    # Links: [text](url)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
     return text
 
 
-# --- Session ID scheme ---
 # Session IDs use a "tg:" prefix to namespace Telegram sessions.
 # Format variants:
 #   tg:{chat_id}                                  — DMs / private chats (one session per chat)
@@ -154,7 +162,7 @@ class ParsedMessage(NamedTuple):
 
 DEFAULT_START_MESSAGE = "Hello! I'm ready to help. Send me a message to get started."
 DEFAULT_HELP_MESSAGE = "Send me text, photos, voice notes, videos, or documents and I'll help you with them."
-DEFAULT_ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
+DEFAULT_ERROR_MESSAGE = "Sorry, there was an error processing your message. Send /new to start a fresh conversation."
 DEFAULT_NEW_MESSAGE = "New conversation started. How can I help you?"
 
 
@@ -188,6 +196,11 @@ def attach_routes(
 
     _bot_username: Optional[str] = None
     _bot_id: Optional[int] = None
+    # Dedup: recently seen update_ids to prevent duplicate processing on webhook retries
+    _processed_updates: dict[int, float] = {}
+    _DEDUP_TTL = 60.0
+    # Per-chat session generation counter; incremented by /new to force a fresh session
+    _session_generation: dict[str, int] = {}
 
     async def _get_bot_info() -> tuple:
         nonlocal _bot_username, _bot_id
@@ -196,14 +209,6 @@ def attach_routes(
             _bot_username = me.username
             _bot_id = me.id
         return _bot_username, _bot_id
-
-    async def _get_bot_username() -> str:
-        username, _ = await _get_bot_info()
-        return username
-
-    async def _get_bot_id() -> int:
-        _, bot_id = await _get_bot_info()
-        return bot_id
 
     _commands_registered: bool = False
 
@@ -235,15 +240,6 @@ def attach_routes(
                 if mention == bot_username.lower():
                     return True
         return False
-
-    def _is_reply_to_bot(message: dict, bot_id: int) -> bool:
-        reply_msg = message.get("reply_to_message")
-        if not reply_msg:
-            return False
-        return reply_msg.get("from", {}).get("id") == bot_id
-
-    def _strip_bot_mention(text: str, bot_username: str) -> str:
-        return re.sub(rf"@{re.escape(bot_username)}\b", "", text, flags=re.IGNORECASE).strip()
 
     def _parse_inbound_message(message: dict) -> ParsedMessage:
         message_text: Optional[str] = None
@@ -284,11 +280,6 @@ def attach_routes(
     ) -> tuple[
         Optional[List[Image]], Optional[List[Audio]], Optional[List[Video]], Optional[List[File]], Optional[str]
     ]:
-        """Download inbound media from Telegram and wrap in typed objects.
-
-        Returns a tuple of (images, audio, videos, files, warning).
-        The warning string is set when a document has an unsupported MIME type.
-        """
         images: Optional[List[Image]] = None
         audio: Optional[List[Audio]] = None
         videos: Optional[List[Video]] = None
@@ -311,10 +302,10 @@ def attach_routes(
             doc_name = document_meta.get("file_name", "unknown")
             doc_size = document_meta.get("file_size", 0)
             if doc_size and doc_size > TG_MAX_FILE_DOWNLOAD_SIZE:
-                size_mb = doc_size / (1024 * 1024)
+                size_mb = doc_size / _BYTES_PER_MB
                 log_warning(f"File too large to download: {doc_name} ({size_mb:.1f} MB)")
                 warning = (
-                    f"The file '{doc_name}' ({size_mb:.1f} MB) exceeds the 20 MB download limit "
+                    f"The file '{doc_name}' ({size_mb:.1f} MB) exceeds the {_TG_MAX_FILE_DOWNLOAD_MB} MB download limit "
                     "for Telegram bots. Please send a smaller file."
                 )
             else:
@@ -341,18 +332,22 @@ def attach_routes(
     async def _get_file_bytes(file_id: str) -> Optional[bytes]:
         try:
             file_info = await bot.get_file(file_id)
+            file_size = getattr(file_info, "file_size", None)
+            if isinstance(file_size, (int, float)) and file_size > TG_MAX_FILE_DOWNLOAD_SIZE:
+                size_mb = file_size / _BYTES_PER_MB
+                log_warning(f"File too large to download: {file_id} ({size_mb:.1f} MB)")
+                return None
             return await bot.download_file(file_info.file_path)
         except Exception as e:
             log_error(f"Error downloading file: {e}")
             return None
 
-    async def _send_message_safe(
+    async def _send_html(
         chat_id: int,
         text: str,
         reply_to_message_id: Optional[int] = None,
         message_thread_id: Optional[int] = None,
     ) -> Any:
-        """Send a message with HTML formatting, falling back to plain text on failure."""
         try:
             return await bot.send_message(
                 chat_id,
@@ -369,40 +364,32 @@ def attach_routes(
                 message_thread_id=message_thread_id,
             )
 
-    async def _edit_message_safe(text: str, chat_id: int, message_id: int) -> Any:
-        """Edit a message with HTML formatting, falling back to plain text on failure."""
+    async def _edit_html(text: str, chat_id: int, message_id: int) -> Any:
         try:
             return await bot.edit_message_text(markdown_to_telegram_html(text), chat_id, message_id, parse_mode="HTML")
         except Exception:
             return await bot.edit_message_text(text, chat_id, message_id)
 
-    async def _send_text_chunked(
+    async def _send_chunked(
         chat_id: int,
         text: str,
         reply_to_message_id: Optional[int] = None,
         message_thread_id: Optional[int] = None,
     ) -> None:
         if len(text) <= TG_MAX_MESSAGE_LENGTH:
-            await _send_message_safe(
+            await _send_html(
                 chat_id, text, reply_to_message_id=reply_to_message_id, message_thread_id=message_thread_id
             )
             return
         chunks: List[str] = [text[i : i + TG_CHUNK_SIZE] for i in range(0, len(text), TG_CHUNK_SIZE)]
         for i, chunk in enumerate(chunks, 1):
             reply_id = reply_to_message_id if i == 1 else None
-            await _send_message_safe(
+            await _send_html(
                 chat_id,
                 f"[{i}/{len(chunks)}] {chunk}",
                 reply_to_message_id=reply_id,
                 message_thread_id=message_thread_id,
             )
-
-    def _resolve_media_data(item: Any) -> Optional[Any]:
-        url = getattr(item, "url", None)
-        if url:
-            return url
-        get_bytes = getattr(item, "get_content_bytes", None)
-        return get_bytes() if callable(get_bytes) else None
 
     async def _send_response_media(
         response: Any,
@@ -410,12 +397,10 @@ def attach_routes(
         reply_to: Optional[int],
         message_thread_id: Optional[int] = None,
     ) -> bool:
-        """Send all media items from the response. Caption goes on the first item only."""
         any_media_sent = False
         content = getattr(response, "content", None)
         raw_caption = str(content)[:TG_MAX_CAPTION_LENGTH] if content else None
 
-        # Data-driven dispatch: maps response attributes to Telegram sender methods
         media_senders = [
             ("images", bot.send_photo),
             ("audio", bot.send_audio),
@@ -428,9 +413,11 @@ def attach_routes(
                 continue
             for item in items:
                 try:
-                    data = _resolve_media_data(item)
+                    data = getattr(item, "url", None)
+                    if not data:
+                        get_bytes = getattr(item, "get_content_bytes", None)
+                        data = get_bytes() if callable(get_bytes) else None
                     if data:
-                        # Try HTML caption first, fall back to plain
                         caption = markdown_to_telegram_html(raw_caption) if raw_caption else None
                         send_kwargs: dict = dict(
                             caption=caption,
@@ -460,13 +447,6 @@ def attach_routes(
         message_thread_id: Optional[int] = None,
         is_team: bool = False,
     ) -> Optional[Union[RunOutput, TeamRunOutput]]:
-        """Consume a streaming response and progressively edit a Telegram message.
-
-        Works with both Agent and Team streaming events. Sends an initial placeholder
-        message, then edits it as content arrives. Edits are throttled to
-        TG_STREAM_EDIT_INTERVAL seconds to respect Telegram rate limits.
-        Returns the final RunOutput/TeamRunOutput (yielded at end of stream) for media handling.
-        """
         sent_message_id: Optional[int] = None
         accumulated_content = ""
         status_lines: list[str] = []
@@ -474,7 +454,6 @@ def attach_routes(
         final_run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
 
         def _build_display_text() -> str:
-            """Combine tool status lines with response content for in-progress display."""
             parts: list[str] = []
             if status_lines:
                 parts.append("\n".join(status_lines))
@@ -486,32 +465,86 @@ def attach_routes(
             nonlocal sent_message_id, last_edit_time
             display = text[:TG_MAX_MESSAGE_LENGTH]
             if sent_message_id is None:
-                msg = await _send_message_safe(
+                msg = await _send_html(
                     chat_id, display, reply_to_message_id=reply_to, message_thread_id=message_thread_id
                 )
                 sent_message_id = msg.message_id
             else:
-                await _edit_message_safe(display, chat_id, sent_message_id)
+                await _edit_html(display, chat_id, sent_message_id)
             last_edit_time = time.monotonic()
 
+        async def _flush_display() -> None:
+            try:
+                await _send_or_edit(_build_display_text())
+            except Exception:
+                pass
+
         async for event in event_stream:
+            # Agent/Team final output
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 final_run_output = event
                 continue
 
-            # Show tool call name so the user knows what's happening
+            # Workflow step events
+            if isinstance(event, StepStartedEvent):
+                step_name = event.step_name or "unknown"
+                status_lines.append(f"> Running step: {step_name}...")
+                await _flush_display()
+                continue
+
+            if isinstance(event, StepCompletedEvent):
+                step_name = event.step_name or "unknown"
+                for i, line in enumerate(status_lines):
+                    if f"Running step: {step_name}..." in line:
+                        status_lines[i] = f"> Completed step: {step_name}"
+                        break
+                if event.content:
+                    accumulated_content = str(event.content)
+                await _flush_display()
+                continue
+
+            if isinstance(event, ParallelExecutionStartedEvent):
+                count = event.parallel_step_count or 0
+                status_lines.append(f"> Running {count} steps in parallel...")
+                await _flush_display()
+                continue
+
+            if isinstance(event, LoopIterationStartedEvent):
+                step_name = event.step_name or "loop"
+                iteration = event.iteration
+                max_iter = event.max_iterations
+                if max_iter:
+                    status_lines.append(f"> {step_name}: iteration {iteration}/{max_iter}...")
+                else:
+                    status_lines.append(f"> {step_name}: iteration {iteration}...")
+                await _flush_display()
+                continue
+
+            if isinstance(event, WorkflowCompletedEvent):
+                if event.content:
+                    accumulated_content = str(event.content)
+                continue
+
+            if isinstance(event, WorkflowErrorEvent):
+                accumulated_content = f"Error: {event.error or 'Unknown error'}"
+                continue
+
+            # Agent/Team run error — model failures, invalid input, etc.
+            if isinstance(event, (AgentRunErrorEvent, TeamRunErrorEvent)):
+                log_error(f"Run error during stream: {event.content or 'Unknown error'}")
+                accumulated_content = error_message
+                await _flush_display()
+                return final_run_output
+
+            # Tool call started
             if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
                 tool_name = event.tool.tool_name if event.tool else None
                 if tool_name:
-                    # For team streams, include agent name on member tool calls
                     agent_label = ""
                     if is_team and isinstance(event, AgentToolCallStartedEvent) and event.agent_name:
                         agent_label = f"[{event.agent_name}] "
                     status_lines.append(f"> {agent_label}Using {tool_name}...")
-                    try:
-                        await _send_or_edit(_build_display_text())
-                    except Exception:
-                        pass
+                    await _flush_display()
                 else:
                     try:
                         await bot.send_chat_action(chat_id, "typing", message_thread_id=message_thread_id)
@@ -519,16 +552,12 @@ def attach_routes(
                         pass
                 continue
 
-            # Show reasoning status
             if isinstance(event, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
                 status_lines.append("> Reasoning...")
-                try:
-                    await _send_or_edit(_build_display_text())
-                except Exception:
-                    pass
+                await _flush_display()
                 continue
 
-            # Update tool status from "Using" to "Used" when a tool call completes
+            # Tool call completed
             if isinstance(event, (AgentToolCallCompletedEvent, TeamToolCallCompletedEvent)):
                 tool_name = event.tool.tool_name if event.tool else None
                 if tool_name:
@@ -536,13 +565,10 @@ def attach_routes(
                         if f"Using {tool_name}..." in line:
                             status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
                             break
-                    try:
-                        await _send_or_edit(_build_display_text())
-                    except Exception:
-                        pass
+                    await _flush_display()
                 continue
 
-            # Handle content deltas from both Agent and Team streams
+            # Content deltas
             if isinstance(event, (AgentRunContentEvent, TeamRunContentEvent)) and event.content:
                 accumulated_content += str(event.content)
 
@@ -555,184 +581,31 @@ def attach_routes(
                 except Exception as e:
                     log_warning(f"Stream edit failed (will retry on next chunk): {e}")
 
+            # RunCompleted carries the final content — replace accumulated
             elif isinstance(event, (AgentRunCompletedEvent, TeamRunCompletedEvent)):
-                # RunCompletedEvent carries the final content — replace accumulated
                 if event.content:
                     accumulated_content = str(event.content)
 
-        # Final edit with complete content (no tool status lines)
         if accumulated_content and sent_message_id:
             try:
                 if len(accumulated_content) <= TG_MAX_MESSAGE_LENGTH:
-                    await _edit_message_safe(accumulated_content, chat_id, sent_message_id)
+                    await _edit_html(accumulated_content, chat_id, sent_message_id)
                 else:
-                    # Content exceeds max length: delete the streamed message and send chunked
                     try:
                         await bot.delete_message(chat_id, sent_message_id)
                     except Exception:
                         pass
-                    await _send_text_chunked(
+                    await _send_chunked(
                         chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
                     )
-                    sent_message_id = None  # Already handled
             except Exception as e:
                 log_warning(f"Final stream edit failed: {e}")
         elif accumulated_content and not sent_message_id:
-            # Never sent an initial message (very fast response), send normally
-            await _send_text_chunked(
+            await _send_chunked(
                 chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
             )
 
         return final_run_output
-
-    async def _stream_workflow_to_telegram(
-        event_stream: AsyncIterator[Any],
-        chat_id: int,
-        reply_to: Optional[int],
-        message_thread_id: Optional[int] = None,
-    ) -> None:
-        """Consume a workflow streaming response and progressively edit a Telegram message.
-
-        Handles workflow-specific events (step progress, parallel execution, loops)
-        as well as agent/team events emitted within steps (tool calls, content deltas).
-        """
-        sent_message_id: Optional[int] = None
-        accumulated_content = ""
-        status_lines: list[str] = []
-        last_edit_time = 0.0
-
-        def _build_display_text() -> str:
-            parts: list[str] = []
-            if status_lines:
-                parts.append("\n".join(status_lines))
-            if accumulated_content:
-                parts.append(accumulated_content)
-            return "\n\n".join(parts)
-
-        async def _send_or_edit(text: str) -> None:
-            nonlocal sent_message_id, last_edit_time
-            display = text[:TG_MAX_MESSAGE_LENGTH]
-            if sent_message_id is None:
-                msg = await _send_message_safe(
-                    chat_id, display, reply_to_message_id=reply_to, message_thread_id=message_thread_id
-                )
-                sent_message_id = msg.message_id
-            else:
-                await _edit_message_safe(display, chat_id, sent_message_id)
-            last_edit_time = time.monotonic()
-
-        async for event in event_stream:
-            # --- Workflow-level events ---
-            if isinstance(event, StepStartedEvent):
-                step_name = event.step_name or "unknown"
-                status_lines.append(f"> Running step: {step_name}...")
-                try:
-                    await _send_or_edit(_build_display_text())
-                except Exception:
-                    pass
-                continue
-
-            if isinstance(event, StepCompletedEvent):
-                step_name = event.step_name or "unknown"
-                # Update matching "Running step" line to "Completed step"
-                for i, line in enumerate(status_lines):
-                    if f"Running step: {step_name}..." in line:
-                        status_lines[i] = f"> Completed step: {step_name}"
-                        break
-                # Replace accumulated content with step content if available
-                if event.content:
-                    accumulated_content = str(event.content)
-                try:
-                    await _send_or_edit(_build_display_text())
-                except Exception:
-                    pass
-                continue
-
-            if isinstance(event, ParallelExecutionStartedEvent):
-                count = event.parallel_step_count or 0
-                status_lines.append(f"> Running {count} steps in parallel...")
-                try:
-                    await _send_or_edit(_build_display_text())
-                except Exception:
-                    pass
-                continue
-
-            if isinstance(event, LoopIterationStartedEvent):
-                step_name = event.step_name or "loop"
-                iteration = event.iteration
-                max_iter = event.max_iterations
-                if max_iter:
-                    status_lines.append(f"> {step_name}: iteration {iteration}/{max_iter}...")
-                else:
-                    status_lines.append(f"> {step_name}: iteration {iteration}...")
-                try:
-                    await _send_or_edit(_build_display_text())
-                except Exception:
-                    pass
-                continue
-
-            if isinstance(event, WorkflowCompletedEvent):
-                if event.content:
-                    accumulated_content = str(event.content)
-                continue
-
-            if isinstance(event, WorkflowErrorEvent):
-                accumulated_content = f"Error: {event.error or 'Unknown error'}"
-                continue
-
-            # --- Agent/Team events bubbled from within steps ---
-            if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
-                tool_name = event.tool.tool_name if event.tool else None
-                if tool_name:
-                    status_lines.append(f"> Using {tool_name}...")
-                    try:
-                        await _send_or_edit(_build_display_text())
-                    except Exception:
-                        pass
-                continue
-
-            if isinstance(event, (AgentToolCallCompletedEvent, TeamToolCallCompletedEvent)):
-                tool_name = event.tool.tool_name if event.tool else None
-                if tool_name:
-                    for i, line in enumerate(status_lines):
-                        if f"Using {tool_name}..." in line:
-                            status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
-                            break
-                    try:
-                        await _send_or_edit(_build_display_text())
-                    except Exception:
-                        pass
-                continue
-
-            if isinstance(event, (AgentRunContentEvent, TeamRunContentEvent)) and event.content:
-                accumulated_content += str(event.content)
-                now = time.monotonic()
-                if now - last_edit_time < TG_STREAM_EDIT_INTERVAL:
-                    continue
-                try:
-                    await _send_or_edit(_build_display_text())
-                except Exception:
-                    pass
-
-        # Final edit with complete content (no status lines)
-        if accumulated_content and sent_message_id:
-            try:
-                if len(accumulated_content) <= TG_MAX_MESSAGE_LENGTH:
-                    await _edit_message_safe(accumulated_content, chat_id, sent_message_id)
-                else:
-                    try:
-                        await bot.delete_message(chat_id, sent_message_id)
-                    except Exception:
-                        pass
-                    await _send_text_chunked(
-                        chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
-                    )
-            except Exception as e:
-                log_warning(f"Final workflow stream edit failed: {e}")
-        elif accumulated_content and not sent_message_id:
-            await _send_text_chunked(
-                chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
-            )
 
     @router.get(
         "/status",
@@ -764,10 +637,19 @@ def attach_routes(
 
             body = await request.json()
 
+            # Dedup webhook retries via update_id TTL cache
+            update_id = body.get("update_id")
+            if update_id is not None:
+                now = time.monotonic()
+                expired = [uid for uid, ts in _processed_updates.items() if now - ts > _DEDUP_TTL]
+                for uid in expired:
+                    del _processed_updates[uid]
+                if update_id in _processed_updates:
+                    return TelegramWebhookResponse(status="duplicate")
+                _processed_updates[update_id] = now
+
             # Only process new messages. edited_message, channel_post, and
             # callback_query are intentionally ignored for now.
-            # TODO: Track processed update_ids to prevent duplicate processing
-            # on webhook retries. Duplicates are rare and handled gracefully.
             message = body.get("message")
             if not message:
                 return TelegramWebhookResponse(status="ignored")
@@ -806,22 +688,42 @@ def attach_routes(
             await _register_commands()
 
             text = message.get("text", "")
-            cmd = text.split()[0].split("@")[0] if text else ""
+            cmd_token = text.split()[0] if text else ""
+            cmd = cmd_token.split("@")[0]
+
+            # In groups, ignore commands addressed to other bots
+            if is_group and "@" in cmd_token:
+                bot_username, _ = await _get_bot_info()
+                cmd_target = cmd_token.split("@", 1)[1].lower()
+                if cmd_target != bot_username.lower():
+                    return
+
             if cmd == "/start":
-                await _send_message_safe(chat_id, start_message, message_thread_id=forum_thread_id)
+                await _send_html(chat_id, start_message, message_thread_id=forum_thread_id)
                 return
             if cmd == "/help":
-                await _send_message_safe(chat_id, help_message, message_thread_id=forum_thread_id)
+                await _send_html(chat_id, help_message, message_thread_id=forum_thread_id)
                 return
             if cmd == "/new":
-                await _send_message_safe(chat_id, new_message, message_thread_id=forum_thread_id)
+                # Build the base key the same way session_id is built below
+                if forum_thread_id:
+                    base_key = f"tg:{chat_id}:topic:{forum_thread_id}"
+                elif is_group:
+                    base_key = f"tg:{chat_id}:group"
+                else:
+                    base_key = f"tg:{chat_id}"
+                _session_generation[base_key] = _session_generation.get(base_key, 0) + 1
+                await _send_html(chat_id, new_message, message_thread_id=forum_thread_id)
                 return
 
             if is_group:
-                bot_username = await _get_bot_username()
+                bot_username, bot_id = await _get_bot_info()
                 if reply_to_mentions_only:
                     is_mentioned = _message_mentions_bot(message, bot_username)
-                    is_reply = reply_to_bot_messages and _is_reply_to_bot(message, await _get_bot_id())
+                    reply_msg = message.get("reply_to_message")
+                    is_reply = reply_to_bot_messages and bool(
+                        reply_msg and reply_msg.get("from", {}).get("id") == bot_id
+                    )
                     if not is_mentioned and not is_reply:
                         return
 
@@ -833,21 +735,25 @@ def attach_routes(
             message_text = parsed.text
 
             if is_group and message_text:
-                message_text = _strip_bot_mention(message_text, bot_username)
+                message_text = re.sub(rf"@{re.escape(bot_username)}\b", "", message_text, flags=re.IGNORECASE).strip()
 
             user_id = str(message.get("from", {}).get("id", chat_id))
             # Session ID strategy:
             #   - Forum topics: scoped by topic (message_thread_id) for stable per-topic sessions
             #   - Groups without topics: scoped by reply thread (may drift across bot messages)
             #   - DMs: one session per chat
+            # Generation suffix rotated by /new to force a clean session
             if forum_thread_id:
-                session_id = f"tg:{chat_id}:topic:{forum_thread_id}"
+                base_key = f"tg:{chat_id}:topic:{forum_thread_id}"
             elif is_group:
                 reply_msg = message.get("reply_to_message")
                 root_msg_id = reply_msg.get("message_id", incoming_message_id) if reply_msg else incoming_message_id
-                session_id = f"tg:{chat_id}:thread:{root_msg_id}"
+                base_key = f"tg:{chat_id}:thread:{root_msg_id}"
             else:
-                session_id = f"tg:{chat_id}"
+                base_key = f"tg:{chat_id}"
+
+            gen = _session_generation.get(base_key, 0)
+            session_id = f"{base_key}:g{gen}" if gen else base_key
 
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")
@@ -859,7 +765,7 @@ def attach_routes(
             )
 
             if file_warning:
-                await _send_message_safe(chat_id, file_warning, message_thread_id=forum_thread_id)
+                await _send_html(chat_id, file_warning, message_thread_id=forum_thread_id)
 
             run_kwargs: dict = dict(
                 user_id=user_id,
@@ -870,18 +776,12 @@ def attach_routes(
                 files=files,
             )
 
-            # Streaming mode: progressively edit a single Telegram message as content arrives.
-            use_stream = stream and (agent or team or workflow)
+            use_stream = stream
 
             if use_stream:
                 if workflow:
-                    # Workflow streaming returns AsyncIterator[WorkflowRunOutputEvent].
-                    # Final content comes from WorkflowCompletedEvent within the stream,
-                    # so post-stream media/error handling is done inside _stream_workflow_to_telegram.
                     event_stream = workflow.arun(message_text, stream=True, stream_events=True, **run_kwargs)  # type: ignore[union-attr]
-                    await _stream_workflow_to_telegram(
-                        event_stream, chat_id, reply_to, message_thread_id=forum_thread_id
-                    )
+                    await _stream_to_telegram(event_stream, chat_id, reply_to, message_thread_id=forum_thread_id)
                     return
 
                 if agent:
@@ -897,11 +797,10 @@ def attach_routes(
                     agent_team_stream, chat_id, reply_to, message_thread_id=forum_thread_id, is_team=bool(team)
                 )
 
-                # Handle media from the final RunOutput/TeamRunOutput if present
                 if response:
                     if response.status == "ERROR":
                         log_error(response.content)
-                        await _send_text_chunked(
+                        await _send_chunked(
                             chat_id,
                             error_message,
                             reply_to_message_id=reply_to,
@@ -912,7 +811,7 @@ def attach_routes(
                     if show_reasoning:
                         reasoning = getattr(response, "reasoning_content", None)
                         if reasoning:
-                            await _send_text_chunked(
+                            await _send_chunked(
                                 chat_id,
                                 f"Reasoning:\n{reasoning}",
                                 reply_to_message_id=reply_to,
@@ -933,7 +832,7 @@ def attach_routes(
                     return
 
                 if response.status == "ERROR":
-                    await _send_text_chunked(
+                    await _send_chunked(
                         chat_id,
                         error_message,
                         reply_to_message_id=reply_to,
@@ -945,7 +844,7 @@ def attach_routes(
                 if show_reasoning:
                     reasoning = getattr(response, "reasoning_content", None)
                     if reasoning:
-                        await _send_text_chunked(
+                        await _send_chunked(
                             chat_id,
                             f"Reasoning:\n{reasoning}",
                             reply_to_message_id=reply_to,
@@ -960,9 +859,9 @@ def attach_routes(
                 # send the full text as a follow-up message so nothing is lost.
                 if response.content:
                     if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
-                        await _send_text_chunked(chat_id, response.content, message_thread_id=forum_thread_id)
+                        await _send_chunked(chat_id, response.content, message_thread_id=forum_thread_id)
                     elif not any_media_sent:
-                        await _send_text_chunked(
+                        await _send_chunked(
                             chat_id,
                             response.content,
                             reply_to_message_id=reply_to,
@@ -972,7 +871,7 @@ def attach_routes(
         except Exception as e:
             log_error(f"Error processing message: {e}")
             try:
-                await _send_text_chunked(chat_id, error_message, message_thread_id=forum_thread_id)
+                await _send_chunked(chat_id, error_message, message_thread_id=forum_thread_id)
             except Exception as send_error:
                 log_error(f"Error sending error message: {send_error}")
 
