@@ -29,9 +29,10 @@ Specific reader, cloud storage, and vector database integrations.
 
 | File | Databases |
 |------|-----------|
-| [vector_dbs/01_qdrant.py](./vector_dbs/01_qdrant.py) | Qdrant (recommended for production) |
+| [vector_dbs/01_qdrant.py](./vector_dbs/01_qdrant.py) | Qdrant (recommended default) |
 | [vector_dbs/02_local.py](./vector_dbs/02_local.py) | ChromaDB + LanceDB (local development) |
-| [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone + PgVector (managed/production) |
+| [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone (managed serverless) |
+| [vector_dbs/04_pgvector.py](./vector_dbs/04_pgvector.py) | PgVector (PostgreSQL) |
 
 ## Running
 

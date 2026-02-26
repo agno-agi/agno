@@ -1,19 +1,18 @@
 """
-Managed Vector Databases: Pinecone and PgVector
-=================================================
-For cloud-hosted or managed vector search at scale.
+Managed Vector Databases: Pinecone
+====================================
+Pinecone is a fully managed, serverless vector database for
+production workloads where you want zero infrastructure management.
 
-Pinecone:
+Features:
 - Fully managed, serverless option available
 - Automatic scaling and high availability
-- pip install pinecone
+- Metadata filtering
+- Namespaces for multi-tenancy
 
-PgVector:
-- PostgreSQL extension for vector search
-- Full SQL capabilities, reliable, battle-tested
-- Self-hosted or managed PostgreSQL services
+Requires: pip install pinecone
 
-See also: 01_qdrant.py for recommended default, 02_local.py for local dev.
+See also: 01_qdrant.py for recommended default, 04_pgvector.py for PostgreSQL.
 """
 
 from os import getenv
@@ -42,36 +41,18 @@ except ImportError:
     print("Pinecone not installed. Run: pip install pinecone")
 
 # ---------------------------------------------------------------------------
-# PgVector Setup
-# ---------------------------------------------------------------------------
-
-try:
-    from agno.vectordb.pgvector import PgVector
-
-    knowledge_pgvector = Knowledge(
-        vector_db=PgVector(
-            table_name="knowledge_demo",
-            db_url=getenv("PG_DB_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"),
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    )
-except ImportError:
-    knowledge_pgvector = None
-    print("PgVector not installed. Run: pip install pgvector psycopg[binary]")
-
-# ---------------------------------------------------------------------------
 # Run Demo
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pdf_url = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-
     if knowledge_pinecone:
         print("\n" + "=" * 60)
         print("Pinecone: managed serverless vector database")
         print("=" * 60 + "\n")
 
-        knowledge_pinecone.insert(url=pdf_url)
+        knowledge_pinecone.insert(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
         agent = Agent(
             model=OpenAIResponses(id="gpt-5.2"),
             knowledge=knowledge_pinecone,
@@ -79,17 +60,5 @@ if __name__ == "__main__":
             markdown=True,
         )
         agent.print_response("What Thai recipes do you know?", stream=True)
-
-    if knowledge_pgvector:
-        print("\n" + "=" * 60)
-        print("PgVector: PostgreSQL-based vector database")
-        print("=" * 60 + "\n")
-
-        knowledge_pgvector.insert(url=pdf_url)
-        agent = Agent(
-            model=OpenAIResponses(id="gpt-5.2"),
-            knowledge=knowledge_pgvector,
-            search_knowledge=True,
-            markdown=True,
-        )
-        agent.print_response("What Thai desserts are available?", stream=True)
+    else:
+        print("Skipping demo: Pinecone not installed.")
