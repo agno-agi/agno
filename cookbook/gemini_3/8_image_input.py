@@ -1,10 +1,9 @@
 """
 Image Understanding - Analyze and Describe Images
 ===================================================
-Gemini can analyze images -- describe content, read text, answer questions,
+Gemini can analyze images, describe content, read text, answer questions,
 and even identify objects or scenes. Pass images via URL or local file path.
-
-This is a native multimodal capability -- no OCR libraries or vision APIs needed.
+Gemini has native multimodal capabilities.
 
 Key concepts:
 - Image(url=...): Pass an image from a URL

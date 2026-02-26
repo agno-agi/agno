@@ -2,8 +2,6 @@
 URL Context - Read and Compare Web Pages
 ==========================================
 Gemini can fetch and read web pages natively with url_context=True.
-No scraping tools, no BeautifulSoup, no Selenium -- just pass URLs in your prompt
-and the model reads the pages directly.
 
 Key concepts:
 - url_context=True: Enables Gemini to fetch and read URLs from the prompt

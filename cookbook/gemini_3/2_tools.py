@@ -4,7 +4,7 @@ Agent with Tools - Finance Research Agent
 Add external tools so the agent can take actions beyond text generation.
 This agent uses web search to find current financial information.
 
-Tools let agents interact with the outside world -- search the web, call APIs,
+Tools let agents interact with the outside world: search the web, call APIs,
 read databases, run code. Without tools, an agent can only generate text from
 its training data.
 

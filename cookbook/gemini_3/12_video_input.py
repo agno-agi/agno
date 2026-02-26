@@ -20,7 +20,6 @@ Example prompts to try:
 """
 
 import httpx
-
 from agno.agent import Agent
 from agno.media import Video
 from agno.models.google import Gemini

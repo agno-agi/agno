@@ -5,7 +5,7 @@ Get structured, typed responses using Pydantic models.
 Instead of free-form text, the agent returns data you can use in code.
 
 Perfect for building pipelines, UIs, or integrations where you need
-predictable data shapes. Parse it, store it, display it -- no regex required.
+predictable data shapes. Parse it, store it, display it no regex required.
 
 Key concepts:
 - output_schema: A Pydantic BaseModel defining the response structure
@@ -21,10 +21,9 @@ Example prompts to try:
 
 from typing import List
 
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
 from agno.models.google import Gemini
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------

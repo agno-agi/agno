@@ -192,7 +192,7 @@ Team patterns:
 When to use teams vs single agents:
 - Single agent: Task is well-defined, one perspective is enough
 - Team: Task benefits from multiple specialist perspectives
-- Workflow (step 20): Steps must happen in a specific order
+- Workflow (step 20): Steps must happen in a specific, predictable order
 
 Use cases for music/film/gaming:
 - Music: Lyricist + Composer + Producer agents

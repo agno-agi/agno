@@ -1,20 +1,20 @@
 """
 Agent OS - Deploy All Agents as a Web Service
 ===============================================
-All agents and teams from steps 1-19 deployed as a web service.
+All agents, teams, and workflows from steps 1-20 deployed as a web service.
 Agent OS provides a web interface for interacting with your agents --
 chat with them, explore sessions, monitor traces, and manage knowledge.
 
 This is the capstone of the guide: everything you built, served on one endpoint.
 
 How to use:
-1. Start the server: python cookbook/gemini_3/20_agent_os.py
+1. Start the server: python cookbook/gemini_3/21_agent_os.py
 2. Visit https://os.agno.com in your browser
 3. Add your local endpoint: http://localhost:7777
-4. Select any agent or team and start chatting
+4. Select any agent, team, or workflow and start chatting
 
 Key concepts:
-- AgentOS: Wraps agents and teams into a FastAPI web service
+- AgentOS: Wraps agents, teams, and workflows into a FastAPI web service
 - get_app(): Returns a FastAPI app you can customize
 - serve(): Starts the server with uvicorn (hot-reload enabled)
 - tracing=True: Enables request tracing in the Agent OS UI
@@ -52,6 +52,7 @@ doc_reader = _import("13_pdf_input", "doc_reader")
 recipe_agent = _import("17_knowledge", "recipe_agent")
 tutor_agent = _import("18_memory", "tutor_agent")
 content_team = _import("19_team", "content_team")
+research_pipeline = _import("20_workflow", "research_pipeline")
 
 # ---------------------------------------------------------------------------
 # Create AgentOS
@@ -71,6 +72,7 @@ agent_os = AgentOS(
         tutor_agent,
     ],
     teams=[content_team],
+    workflows=[research_pipeline],
     # Enable request tracing in the Agent OS UI
     tracing=True,
 )
@@ -81,7 +83,7 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # reload=True enables hot-reload during development
-    agent_os.serve(app="20_agent_os:app", reload=True)
+    agent_os.serve(app="21_agent_os:app", reload=True)
 
 # ---------------------------------------------------------------------------
 # More Examples

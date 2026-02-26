@@ -25,11 +25,10 @@ from pathlib import Path
 from time import sleep
 
 import requests
-from google import genai
-from google.genai.types import UploadFileConfig
-
 from agno.agent import Agent
 from agno.models.google import Gemini
+from google import genai
+from google.genai.types import UploadFileConfig
 
 # ---------------------------------------------------------------------------
 # Workspace
@@ -103,16 +102,12 @@ cache_agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Query 1: The full transcript is in the cache, no need to re-send
-    run_output = cache_agent.run(
-        "Find a lighthearted moment from this transcript"
-    )
+    run_output = cache_agent.run("Find a lighthearted moment from this transcript")
     print(f"\nResponse:\n{run_output.content}")
     print(f"\nMetrics: {run_output.metrics}")
 
     # Query 2: Same cache, different question -- token savings
-    run_output = cache_agent.run(
-        "What was the most tense moment during the mission?"
-    )
+    run_output = cache_agent.run("What was the most tense moment during the mission?")
     print(f"\nResponse:\n{run_output.content}")
     print(f"\nMetrics: {run_output.metrics}")
 

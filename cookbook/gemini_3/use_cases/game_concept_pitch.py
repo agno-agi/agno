@@ -19,12 +19,11 @@ from io import BytesIO
 from pathlib import Path
 from typing import List
 
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent, RunOutput
 from agno.models.google import Gemini
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Workspace
@@ -39,12 +38,18 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 class GamePitch(BaseModel):
     title: str = Field(..., description="Game title")
     tagline: str = Field(..., description="One-line hook (max 15 words)")
-    genre: str = Field(..., description="Primary genre (e.g., action RPG, puzzle platformer)")
+    genre: str = Field(
+        ..., description="Primary genre (e.g., action RPG, puzzle platformer)"
+    )
     platform: List[str] = Field(..., description="Target platforms")
     target_audience: str = Field(..., description="Target demographic")
     core_mechanic: str = Field(..., description="The one thing that makes the game fun")
-    setting: str = Field(..., description="World and setting description (2-3 sentences)")
-    unique_selling_points: List[str] = Field(..., description="3-5 unique selling points")
+    setting: str = Field(
+        ..., description="World and setting description (2-3 sentences)"
+    )
+    unique_selling_points: List[str] = Field(
+        ..., description="3-5 unique selling points"
+    )
     comparable_titles: List[str] = Field(..., description="2-3 comparable games")
     monetization: str = Field(..., description="Monetization strategy")
     elevator_pitch: str = Field(..., description="Full elevator pitch (one paragraph)")
@@ -174,6 +179,7 @@ if __name__ == "__main__":
     if art_result and isinstance(art_result, RunOutput) and art_result.images:
         try:
             from PIL import Image as PILImage
+
             for i, img in enumerate(art_result.images):
                 if img.content:
                     image = PILImage.open(BytesIO(img.content))
@@ -185,9 +191,7 @@ if __name__ == "__main__":
 
     # Step 2: Structure the pitch
     print("\nWriting game pitch...\n")
-    pitch_result = pitch_writer.run(
-        f"Create a structured game pitch for: {game_idea}"
-    )
+    pitch_result = pitch_writer.run(f"Create a structured game pitch for: {game_idea}")
 
     pitch: GamePitch = pitch_result.content
     print(f"Title: {pitch.title}")

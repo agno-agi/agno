@@ -2,7 +2,7 @@
 Gemini Native Search - Real-Time News Agent
 =============================================
 Use Gemini's built-in Google Search integration.
-Unlike external tools (step 2), this is a native model capability --
+Unlike external tools (step 2), this is a native model capability
 no extra dependencies, no API keys beyond GOOGLE_API_KEY. Just set search=True.
 
 The model searches Google directly and weaves results into its response.

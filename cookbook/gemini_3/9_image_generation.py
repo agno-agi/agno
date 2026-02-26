@@ -77,7 +77,11 @@ if __name__ == "__main__":
             images=[Image(filepath=str(generated_path))],
         )
 
-        if edit_response and isinstance(edit_response, RunOutput) and edit_response.images:
+        if (
+            edit_response
+            and isinstance(edit_response, RunOutput)
+            and edit_response.images
+        ):
             for i, image_response in enumerate(edit_response.images):
                 image_bytes = image_response.content
                 if image_bytes:

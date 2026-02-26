@@ -1,11 +1,10 @@
 """
 Basic Agent - Your First Gemini Agent
 =======================================
-The simplest Agno agent. A Gemini model and a prompt -- nothing else.
-No tools, no memory, no persistence. This is your starting point.
+Simple Agno agent with Gemini 3 Flash.
 
 Key concepts:
-- Agent: The core building block in Agno -- wraps a model with instructions
+- Agent: The core building block in Agno wraps a model with instructions
 - print_response: Runs the agent and prints formatted output
 - stream=True: Streams tokens as they arrive instead of waiting for the full response
 - Sync vs async: Every Agno method has an async variant (aprint_response, arun, etc.)
@@ -36,17 +35,17 @@ chat_agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    chat_agent.print_response("What are the top 3 things to see in Paris?")
+    # chat_agent.print_response("What are the top 3 things to see in Paris?")
 
     # --- Sync + Streaming ---
-    chat_agent.print_response(
-        "What are the top 3 things to see in Paris?", stream=True
-    )
+    # chat_agent.print_response(
+    #     "What are the top 3 things to see in Paris?", stream=True
+    # )
 
     # --- Async ---
-    asyncio.run(
-        chat_agent.aprint_response("What are the top 3 things to see in Paris?")
-    )
+    # asyncio.run(
+    #     chat_agent.aprint_response("What are the top 3 things to see in Paris?")
+    # )
 
     # --- Async + Streaming ---
     asyncio.run(

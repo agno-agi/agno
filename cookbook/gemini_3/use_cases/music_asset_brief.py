@@ -19,12 +19,11 @@ Run:
 from typing import List
 
 import httpx
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
 from agno.media import Audio, Image
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +83,9 @@ if __name__ == "__main__":
     # Sample: analyze a track with audio and artwork
     # Replace these with your own audio URL and artwork URL
     audio_url = "https://agno-public.s3.amazonaws.com/demo/sample-audio.mp3"
-    artwork_url = "https://upload.wikimedia.org/wikipedia/en/1/1b/Blonde_-_Frank_Ocean.png"
+    artwork_url = (
+        "https://upload.wikimedia.org/wikipedia/en/1/1b/Blonde_-_Frank_Ocean.png"
+    )
 
     print("Downloading audio sample...")
     audio_response = httpx.get(audio_url)

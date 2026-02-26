@@ -1,10 +1,12 @@
 # Gemini 3 -- Build Agents with Google Gemini
 
-Build agents with Google Gemini, progressively adding capabilities at each step. From a basic chat to a multi-agent team deployed on Agent OS -- in 20 steps.
+Build Agno agents with Google Gemini, progressively adding capabilities at each step. From a basic chat to workflows and multi-agent teams deployed on Agent OS.
 
-Each example can be run independently and contains detailed comments to help you understand what's happening behind the scenes. We use **Gemini 3 Flash** -- fast, affordable, and excellent at tool calling.
+This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
 
-## Fast Path (2 minutes)
+Each example can be run independently and contains detailed comments + example prompts to help you understand what's happening behind the scenes. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change. We use either **Gemini 3 Flash** or **Gemini 3.1 Pro** as the model, depending on the example.
+
+## Fast Path
 
 ```bash
 # 1. Clone
@@ -22,8 +24,6 @@ export GOOGLE_API_KEY=your-google-api-key
 # 5. Run your first agent
 python cookbook/gemini_3/1_basic.py
 ```
-
-**That's it.** No Docker, no Postgres -- just Python and an API key.
 
 ## What You'll Build
 
@@ -63,26 +63,15 @@ python cookbook/gemini_3/1_basic.py
 | 15 | `15_file_search.py` | File Search Agent | Server-side RAG with citations | Managed document search |
 | 16 | `16_prompt_caching.py` | Transcript Analyst | Prompt caching for token savings | Cache large documents |
 
-### Part 5: Production
+### Part 5: Knowledge, Memory, Team, and Workflow
 
 | # | File | Agent | What It Adds | Key Features |
 |:--|:-----|:------|:-------------|:-------------|
 | 17 | `17_knowledge.py` | Recipe Assistant | ChromaDb knowledge + SqliteDb storage | Local RAG, hybrid search |
 | 18 | `18_memory.py` | Personal Tutor | LearningMachine + agentic memory | Agent improves over time |
 | 19 | `19_team.py` | Content Team | Multi-agent team (Writer/Editor/Fact-Checker) | Team coordination |
-| 20 | `20_agent_os.py` | Agent OS | All agents + team on Agent OS | Web UI, tracing, deployment |
-
-## 15-Minute Tour
-
-Short on time? Run these 5 steps for a quick tour of the highlights:
-
-```bash
-python cookbook/gemini_3/1_basic.py              # Your first agent
-python cookbook/gemini_3/2_tools.py              # Agent with web search
-python cookbook/gemini_3/8_image_input.py        # Image understanding
-python cookbook/gemini_3/12_video_input.py       # Video analysis
-python cookbook/gemini_3/19_team.py              # Multi-agent team
-```
+| 20 | `20_workflow.py` | Research Pipeline | Step-based workflow (Parallel, Condition) | Predictable multi-step pipelines |
+| 21 | `21_agent_os.py` | Agent OS | All agents + team + workflow on Agent OS | Web UI, tracing, deployment |
 
 ## Run Each Step
 
@@ -115,96 +104,19 @@ python cookbook/gemini_3/16_prompt_caching.py    # Prompt caching
 python cookbook/gemini_3/17_knowledge.py         # Knowledge + storage
 python cookbook/gemini_3/18_memory.py            # Memory + learning
 python cookbook/gemini_3/19_team.py              # Multi-agent team
-python cookbook/gemini_3/20_agent_os.py          # Agent OS (web UI)
+python cookbook/gemini_3/20_workflow.py           # Step-based workflow
+python cookbook/gemini_3/21_agent_os.py          # Agent OS (web UI)
 ```
-
-## Domain-Specific Prompt Ideas
-
-Each step works with domain-specific prompts. Here are ideas for music, film, and gaming:
-
-| Step | Music | Film | Gaming |
-|:-----|:------|:-----|:-------|
-| 2 (Tools) | "Find the latest music industry revenue trends" | "What films are trending at the box office?" | "What are the top-selling games this month?" |
-| 8 (Image) | "Analyze this album cover artwork" | "Describe the composition of this movie poster" | "What visual style does this game screenshot use?" |
-| 10 (Audio) | "Transcribe and describe the mood of this track" | "Analyze the dialogue in this film clip" | "What sound effects are used in this game trailer?" |
-| 12 (Video) | "Break down this music video scene by scene" | "Analyze the pacing of this film trailer" | "Review this game trailer for target audience" |
-| 19 (Team) | "Create a press release for an album launch" | "Write a film review with fact-checking" | "Draft a game announcement with market analysis" |
-
-See `use_cases/` for full working examples combining multiple steps.
 
 ## Run via Agent OS
 
-Agent OS provides a web interface for interacting with all your agents. Step 20 registers every agent and team from this guide.
+Agent OS provides a web interface for interacting with all your agents. Step 21 registers every agent, team, and workflow from this guide.
 
 ```bash
-python cookbook/gemini_3/20_agent_os.py
+python cookbook/gemini_3/21_agent_os.py
 ```
 
 Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
-
-| Agent in UI | What You Get |
-|:------------|:-------------|
-| Chat Assistant | Basic Gemini chat |
-| Finance Agent | Web search for financial research |
-| Movie Critic | Structured movie reviews |
-| News Agent | Real-time news via Gemini search |
-| Fact Checker | Grounded, cited responses |
-| URL Context Agent | Read and compare web pages |
-| Image Analyst | Image understanding |
-| Document Reader | PDF analysis |
-| Recipe Assistant | Knowledge base + conversation history |
-| Personal Tutor | Learns your preferences over time |
-| Content Team | Writer + Editor + Fact-Checker team |
-
-## When to Use Each Step
-
-| Need | Step |
-|:-----|:-----|
-| Simple Q&A, no memory needed | **1 - Basic** |
-| Agent needs to take actions (search, calculate) | **2 - Tools** |
-| Need typed, structured responses | **3 - Structured Output** |
-| Need current information from the web | **4 - Search** |
-| Need verifiable, cited answers | **5 - Grounding** |
-| Need to read and compare web pages | **6 - URL Context** |
-| Need complex reasoning (math, logic) | **7 - Thinking** |
-| Need to understand images | **8 - Image Input** |
-| Need to generate or edit images | **9 - Image Generation** |
-| Need to transcribe or analyze audio | **10 - Audio Input** |
-| Need to generate spoken audio | **11 - Text-to-Speech** |
-| Need to understand video or YouTube | **12 - Video Input** |
-| Need to read PDFs or CSVs | **13-14 - Document Input** |
-| Need managed RAG with citations | **15 - File Search** |
-| Need token savings on repeated context | **16 - Prompt Caching** |
-| Agent needs domain knowledge or conversation history | **17 - Knowledge** |
-| Agent should improve over time | **18 - Memory** |
-| Task needs multiple specialist perspectives | **19 - Team** |
-| Need a production web service | **20 - Agent OS** |
-
-**Start at step 1.** Add complexity only when simplicity fails.
-
-## Swap Models Anytime
-
-Agno is model-agnostic. Same code, different provider:
-
-```python
-# Gemini (default in these examples)
-from agno.models.google import Gemini
-model = Gemini(id="gemini-3-flash-preview")
-
-# OpenAI
-from agno.models.openai import OpenAIResponses
-model = OpenAIResponses(id="gpt-5.2")
-
-# Anthropic
-from agno.models.anthropic import Claude
-model = Claude(id="claude-sonnet-4-5")
-```
-
-## Related Cookbooks
-
-- **[00_quickstart](../00_quickstart/)** -- Model-agnostic fundamentals: guardrails, HITL, state management, workflows, typed I/O
-- **[90_models/google/gemini](../90_models/google/gemini/)** -- Raw Gemini API examples: Vertex AI, advanced file uploads, model variants
-- **[02_agents](../02_agents/)** -- Deep dive into agent features with async variants
 
 ## Troubleshooting
 
@@ -214,7 +126,6 @@ model = Claude(id="claude-sonnet-4-5")
 | `ModuleNotFoundError` | `uv pip install -r cookbook/gemini_3/requirements.txt` |
 | `429 Rate limit exceeded` | Wait a minute, or use a different model ID |
 | `Model not found` | Check model ID spelling -- use `gemini-3-flash-preview` or `gemini-3.1-pro-preview` |
-| Image generation fails | Make sure you're NOT setting `instructions` on the agent (not supported for image gen) |
 
 ## Learn More
 
