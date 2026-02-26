@@ -125,7 +125,6 @@ def _get_mode_instructions(team: "Team") -> str:
     content = "\n<how_to_respond>\n"
 
     if team.mode == TeamMode.tasks:
-        print(f"plan_first: {team.plan_first}")
         if team.plan_first:
             content += (
                 "You operate in autonomous task mode with plan-first execution.\n\n"
