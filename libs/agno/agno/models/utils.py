@@ -33,6 +33,10 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         from agno.models.azure import AzureOpenAI
 
         return AzureOpenAI(id=model_id)
+    elif model_provider == "azure-openai-responses":
+        from agno.models.azure import AzureOpenAIResponses
+
+        return AzureOpenAIResponses(id=model_id)
 
     elif model_provider == "cerebras":
         from agno.models.cerebras import Cerebras
