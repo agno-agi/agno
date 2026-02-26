@@ -1,17 +1,12 @@
 """
 Gemini Native Search - Real-Time News Agent
 =============================================
-Use Gemini's built-in Google Search integration.
-Unlike external tools (step 2), this is a native model capability
-no extra dependencies, no API keys beyond GOOGLE_API_KEY. Just set search=True.
-
-The model searches Google directly and weaves results into its response.
-This is different from tool-based search where the agent explicitly calls a tool.
+Use Gemini's built-in Google Search. Just set search=True on the model.
 
 Key concepts:
-- search=True: Enables Gemini's native Google Search integration
-- Native vs tool-based: Native search is seamless but less controllable
-- No extra dependencies: Unlike WebSearchTools, this needs no additional packages
+- search=True: Enables native Google Search on the Gemini model
+- No extra dependencies: Unlike WebSearchTools (step 2), nothing to install
+- Native search is seamless but less controllable than tool-based search
 
 Example prompts to try:
 - "What are the latest developments in AI this week?"
@@ -41,7 +36,7 @@ You are a news analyst. Summarize the latest developments clearly and concisely.
 # ---------------------------------------------------------------------------
 news_agent = Agent(
     name="News Agent",
-    # search=True enables Gemini's native Google Search -- no extra tools needed
+    # search=True enables Gemini's native Google Search, no extra tools needed
     model=Gemini(id="gemini-3-flash-preview", search=True),
     instructions=instructions,
     add_datetime_to_context=True,

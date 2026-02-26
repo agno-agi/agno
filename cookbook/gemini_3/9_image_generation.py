@@ -1,11 +1,7 @@
 """
 Image Generation and Editing - Create and Modify Images
 =========================================================
-Gemini can generate and edit images using response_modalities=["Text", "Image"].
-No external tools or APIs needed -- this is a native model capability.
-
-Generate images from text descriptions, or edit existing images by passing
-them alongside instructions.
+Generate and edit images natively with Gemini. No external tools needed.
 
 Key concepts:
 - response_modalities=["Text", "Image"]: Tells Gemini to output both text and images
@@ -26,14 +22,11 @@ from agno.agent import Agent, RunOutput
 from agno.media import Image
 from agno.models.google import Gemini
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Create Agent (no system message -- required for image generation)
+# Create Agent (no system message, required for image generation)
 # ---------------------------------------------------------------------------
 image_gen_agent = Agent(
     name="Image Generator",

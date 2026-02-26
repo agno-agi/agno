@@ -1,13 +1,7 @@
 """
 Knowledge Base + Storage - Recipe Assistant with RAG
 =====================================================
-Add persistent storage and a searchable knowledge base.
-The agent can recall conversations and use domain knowledge to answer questions.
-
-This builds on earlier steps by combining:
-- Storage: SqliteDb for conversation history across sessions
-- Knowledge: ChromaDb with hybrid search for domain knowledge
-- Embeddings: GeminiEmbedder for vector similarity
+Give an agent persistent storage and a searchable knowledge base.
 
 Key concepts:
 - Knowledge: A searchable collection of documents stored in a vector database
@@ -26,22 +20,14 @@ Example prompts to try:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.models.google import Gemini
 from agno.vectordb.chroma import ChromaDb, SearchType
+from db import gemini_agents_db
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Storage and Knowledge
-# ---------------------------------------------------------------------------
-db = SqliteDb(db_file=str(WORKSPACE / "gemini_agents.db"))
 
 knowledge = Knowledge(
     name="Recipe Knowledge",
@@ -54,7 +40,7 @@ knowledge = Knowledge(
         embedder=GeminiEmbedder(),
     ),
     # Store metadata about contents in the agent database
-    contents_db=db,
+    contents_db=gemini_agents_db,
 )
 
 # ---------------------------------------------------------------------------
@@ -86,7 +72,7 @@ recipe_agent = Agent(
     knowledge=knowledge,
     # Agent automatically searches knowledge when relevant
     search_knowledge=True,
-    db=db,
+    db=gemini_agents_db,
     # Include last 3 conversation turns for context
     add_history_to_context=True,
     num_history_runs=3,

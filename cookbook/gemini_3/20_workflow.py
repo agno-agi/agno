@@ -1,16 +1,11 @@
 """
 Workflow - Step-Based Agentic Pipeline
 ========================================
-Build a multi-step content pipeline using Agno's Workflow system.
-Unlike teams (step 19) where a leader LLM delegates dynamically,
-workflows execute steps in a defined order -- predictable and repeatable.
-
-This example builds a research-to-publication pipeline:
-  Research (parallel) -> Analyze -> Quality Gate -> Write -> Conditional Fact-Check
+Build a multi-step pipeline where steps execute in a defined order.
 
 Key concepts:
 - Workflow: Orchestrates steps in sequence, with branching and parallelism
-- Step: A single unit of work -- backed by an Agent, Team, or custom function
+- Step: A single unit of work, backed by an Agent, Team, or custom function
 - Parallel: Run multiple steps concurrently
 - Condition: Branch based on previous step output
 - StepInput: Carries the original input + all previous step outputs
@@ -23,10 +18,7 @@ Example prompts to try:
 - "History and future of space exploration"
 """
 
-from pathlib import Path
-
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 from agno.workflow import (
@@ -37,20 +29,10 @@ from agno.workflow import (
     StepOutput,
     Workflow,
 )
+from db import gemini_agents_db
 
 # ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
-WORKSPACE = Path(__file__).parent.joinpath("workspace")
-WORKSPACE.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Storage
-# ---------------------------------------------------------------------------
-db = SqliteDb(db_file=str(WORKSPACE / "gemini_agents.db"))
-
-# ---------------------------------------------------------------------------
-# Agents -- each handles one stage of the pipeline
+# Agents: each handles one stage of the pipeline
 # ---------------------------------------------------------------------------
 web_researcher = Agent(
     name="Web Researcher",
@@ -177,9 +159,9 @@ research_pipeline = Workflow(
     id="gemini-research-pipeline",
     name="Research Pipeline",
     description="Research-to-publication pipeline: parallel research, analysis, quality gate, writing, and conditional fact-checking.",
-    db=db,
+    db=gemini_agents_db,
     steps=[
-        # Step 1: Research in parallel -- two agents search simultaneously
+        # Step 1: Research in parallel (two agents search simultaneously)
         Parallel(
             "Research",
             Step(name="web_research", agent=web_researcher),
@@ -187,7 +169,7 @@ research_pipeline = Workflow(
         ),
         # Step 2: Analyst synthesizes all research
         Step(name="analysis", agent=analyst),
-        # Step 3: Quality gate -- stop early if analysis is too thin
+        # Step 3: Quality gate (stop early if analysis is too thin)
         Step(name="quality_gate", executor=quality_gate),
         # Step 4: Writer produces the final report
         Step(name="report", agent=report_writer),
@@ -198,7 +180,6 @@ research_pipeline = Workflow(
             steps=[Step(name="fact_check", agent=fact_checker)],
         ),
     ],
-    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -224,13 +205,13 @@ Workflow vs Team:
 
 Workflow building blocks:
 
-1. Step(agent=...)           -- Run an agent
-2. Step(team=...)            -- Run a team
-3. Step(executor=fn)         -- Run a custom function
-4. Parallel(step1, step2)    -- Run steps concurrently
-5. Condition(evaluator, steps, else_steps)  -- Branch based on logic
-6. Loop(steps, max_iterations, end_condition)  -- Repeat until done
-7. Router(choices, selector) -- Dynamically pick which step to run
+1. Step(agent=...)            Run an agent
+2. Step(team=...)             Run a team
+3. Step(executor=fn)          Run a custom function
+4. Parallel(step1, step2)     Run steps concurrently
+5. Condition(evaluator, ...)  Branch based on logic
+6. Loop(steps, ...)           Repeat until done
+7. Router(choices, selector)  Dynamically pick which step to run
 
 Accessing previous step outputs in a custom executor:
 

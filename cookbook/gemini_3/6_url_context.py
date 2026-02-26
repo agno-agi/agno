@@ -1,7 +1,7 @@
 """
 URL Context - Read and Compare Web Pages
 ==========================================
-Gemini can fetch and read web pages natively with url_context=True.
+Fetch and read web pages natively. Just set url_context=True on the model.
 
 Key concepts:
 - url_context=True: Enables Gemini to fetch and read URLs from the prompt
@@ -30,7 +30,7 @@ clear, structured comparisons.
 - Read all provided URLs thoroughly
 - Use tables for side-by-side comparisons
 - Highlight key differences and similarities
-- Be specific -- cite details from each source\
+- Be specific, cite details from each source
 """
 
 # ---------------------------------------------------------------------------

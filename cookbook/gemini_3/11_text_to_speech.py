@@ -1,10 +1,7 @@
 """
 Text-to-Speech - Generate Spoken Audio
 ========================================
-Gemini can generate spoken audio from text using the TTS model.
-Set response_modalities=["AUDIO"] and configure a voice.
-
-The output is raw audio data you can save as WAV and play back.
+Generate spoken audio from text using Gemini's TTS model.
 
 Key concepts:
 - response_modalities=["AUDIO"]: Tells Gemini to output audio instead of text
@@ -26,9 +23,6 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.utils.audio import write_wav_audio_to_file
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
@@ -38,7 +32,7 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 tts_agent = Agent(
     name="TTS Agent",
     model=Gemini(
-        # Dedicated TTS model -- different from the standard Gemini model
+        # Dedicated TTS model, not the standard Gemini model
         id="gemini-2.5-flash-preview-tts",
         response_modalities=["AUDIO"],
         speech_config={

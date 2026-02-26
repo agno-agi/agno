@@ -1,11 +1,7 @@
 """
 CSV Input - Analyze Datasets Directly
 =======================================
-Gemini can analyze CSV files directly -- no need to parse them yourself
-with pandas or csv modules. Pass CSV files with mime_type="text/csv".
-
-The model reads the data, understands column names, and can compute
-summaries, find patterns, and answer questions about the dataset.
+Pass CSV files to Gemini for analysis. No pandas or data processing needed.
 
 Key concepts:
 - File(filepath=..., mime_type="text/csv"): Pass a local CSV file
@@ -26,9 +22,6 @@ from agno.media import File
 from agno.models.google import Gemini
 from agno.utils.media import download_file
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
@@ -85,7 +78,7 @@ if __name__ == "__main__":
 CSV analysis patterns:
 
 1. Quick overview
-   "Describe this dataset -- columns, row count, data types"
+   "Describe this dataset: columns, row count, data types"
 
 2. Rankings and comparisons
    "What are the top 10 items by revenue?"

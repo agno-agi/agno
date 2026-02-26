@@ -1,12 +1,7 @@
 """
 Extended Thinking - Complex Reasoning with Budget Control
 ==========================================================
-Enable Gemini's extended thinking for complex reasoning tasks.
-The model "thinks" before responding, producing better answers for
-logic puzzles, math, coding, and multi-step problems.
-
-You control the thinking budget -- how many tokens the model can use
-for internal reasoning before producing the final answer.
+Let Gemini "think" before responding for better answers on complex tasks.
 
 Key concepts:
 - thinking_budget: Token budget for thinking (0=disable, -1=dynamic, or a number)

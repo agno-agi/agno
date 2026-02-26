@@ -1,14 +1,7 @@
 """
 Film Scene Breakdown - Analyze a Clip and Script with a Team
 ==============================================================
-Combines video analysis, PDF reading, and a multi-agent team to produce
-a professional scene breakdown for film production.
-
-This is what a real film production workflow looks like:
-1. Video Analyst watches the clip and describes scenes
-2. Script Reader extracts relevant dialogue and stage directions from the PDF
-3. Continuity Editor checks for consistency between script and footage
-4. Team leader synthesizes into a final scene breakdown
+Combines video analysis, PDF reading, and a multi-agent team for film production.
 
 Steps used: 12 (Video), 13 (PDF), 19 (Team)
 
@@ -23,7 +16,7 @@ from agno.models.google import Gemini
 from agno.team.team import Team
 
 # ---------------------------------------------------------------------------
-# Video Analyst -- watches and describes the clip
+# Video Analyst: watches and describes the clip
 # ---------------------------------------------------------------------------
 video_analyst = Agent(
     name="Video Analyst",
@@ -51,7 +44,7 @@ You are a film analysis expert. Watch video clips and provide detailed breakdown
 )
 
 # ---------------------------------------------------------------------------
-# Script Reader -- extracts relevant content from the script PDF
+# Script Reader: extracts relevant content from the script PDF
 # ---------------------------------------------------------------------------
 script_reader = Agent(
     name="Script Reader",
@@ -78,7 +71,7 @@ You are a script supervisor. Read scripts and extract relevant information.
 )
 
 # ---------------------------------------------------------------------------
-# Continuity Editor -- checks consistency
+# Continuity Editor: checks consistency
 # ---------------------------------------------------------------------------
 continuity_editor = Agent(
     name="Continuity Editor",

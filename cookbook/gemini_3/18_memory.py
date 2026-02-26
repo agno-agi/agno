@@ -1,14 +1,7 @@
 """
 Memory + Learning - Agent That Improves Over Time
 ===================================================
-The agent learns from interactions and improves over time.
-Interaction 1,000 should be better than interaction 1.
-
-This builds on step 17 by adding:
-- LearningMachine: Captures insights and user preferences automatically
-- LearnedKnowledge (AGENTIC mode): Agent decides what to save and retrieve
-- Agentic memory: Builds user profiles over time
-- ReasoningTools: The think tool for structured reasoning
+The agent learns from interactions so response 1,000 is better than response 1.
 
 Key concepts:
 - LearningMachine: Manages knowledge the agent discovers during conversations
@@ -25,24 +18,16 @@ Example prompts to try:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.google import Gemini
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.chroma import ChromaDb, SearchType
+from db import gemini_agents_db
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Storage
-# ---------------------------------------------------------------------------
-db = SqliteDb(db_file=str(WORKSPACE / "gemini_agents.db"))
 
 # ---------------------------------------------------------------------------
 # Knowledge: Static docs (teaching materials)
@@ -56,7 +41,7 @@ docs_knowledge = Knowledge(
         search_type=SearchType.hybrid,
         embedder=GeminiEmbedder(),
     ),
-    contents_db=db,
+    contents_db=gemini_agents_db,
 )
 
 # ---------------------------------------------------------------------------
@@ -70,7 +55,7 @@ learned_knowledge = Knowledge(
         search_type=SearchType.hybrid,
         embedder=GeminiEmbedder(),
     ),
-    contents_db=db,
+    contents_db=gemini_agents_db,
 )
 
 # ---------------------------------------------------------------------------
@@ -113,7 +98,7 @@ tutor_agent = Agent(
     ),
     # Builds user profiles from conversation patterns
     enable_agentic_memory=True,
-    db=db,
+    db=gemini_agents_db,
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
@@ -147,9 +132,9 @@ if __name__ == "__main__":
             query="student preferences"
         )
 
-    # Session 2: New task -- agent should apply learned preferences
+    # Session 2: New task, agent should apply learned preferences
     print("\n" + "=" * 60)
-    print("SESSION 2: New task -- agent applies learned preferences")
+    print("SESSION 2: New task, agent applies learned preferences")
     print("=" * 60 + "\n")
 
     tutor_agent.print_response(
@@ -166,15 +151,15 @@ if __name__ == "__main__":
 Learning modes:
 
 1. LearningMode.AGENTIC (this example)
-   Agent decides what to save -- best for production.
+   Agent decides what to save. Best for production.
    The agent saves genuinely useful insights, not noise.
 
 2. LearningMode.ALWAYS
-   Save everything -- useful for debugging and development.
+   Save everything. Useful for debugging and development.
    Can get noisy in production.
 
 3. LearningMode.NEVER
-   Disable learning -- useful for stateless agents.
+   Disable learning. Useful for stateless agents.
 
 The learning architecture:
 - Static knowledge: Documents you load (recipes, manuals, docs)

@@ -1,12 +1,7 @@
 """
 Agent with Tools - Finance Research Agent
 ==========================================
-Add external tools so the agent can take actions beyond text generation.
-This agent uses web search to find current financial information.
-
-Tools let agents interact with the outside world: search the web, call APIs,
-read databases, run code. Without tools, an agent can only generate text from
-its training data.
+Give an agent tools to search the web and take real-world actions.
 
 Key concepts:
 - tools: A list of Toolkit instances the agent can call
@@ -84,7 +79,7 @@ Tools are Python classes that inherit from Toolkit. Agno includes many built-in:
    from agno.tools.exa import ExaTools
    tools=[ExaTools()]
 
-4. Custom tools (write your own -- see step 8)
+4. Custom tools
    @tool
    def my_tool(query: str) -> str:
        return "result"

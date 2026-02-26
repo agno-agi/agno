@@ -1,19 +1,14 @@
 """
 File Search - Server-Side RAG with Citations
 ==============================================
-Gemini's File Search lets you upload documents to a managed store
-and query them with automatic chunking, embedding, and retrieval.
-No vector database setup needed -- it's all server-side.
-
-This is different from the Knowledge approach (step 17) which uses
-a local vector database. File Search is fully managed by Google.
+Upload documents to a Google-managed store and query them with automatic RAG.
 
 Key concepts:
 - create_file_search_store: Creates a managed document store on Google's servers
 - upload_to_file_search_store: Uploads documents for automatic chunking and indexing
 - file_search_store_names: Links the store to your Gemini model
 - Citations: Responses include source references you can verify
-- Managed RAG: No ChromaDB, no embeddings config -- Google handles it all
+- Managed RAG: No ChromaDB, no embeddings config. Google handles it all
 
 Example prompts to try:
 - "What are the main safety guidelines?"
@@ -26,9 +21,6 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.google import Gemini
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
@@ -112,7 +104,7 @@ if __name__ == "__main__":
 File Search vs local Knowledge (step 17):
 
 File Search (this example):
-- Fully managed by Google -- no local vector DB
+- Fully managed by Google, no local vector DB
 - Automatic chunking and embedding
 - Built-in citation support
 - Best for: quick prototyping, small document sets, when you don't want infra

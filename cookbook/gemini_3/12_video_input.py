@@ -1,10 +1,7 @@
 """
 Video Understanding - Analyze Video Content
 =============================================
-Gemini can process video files -- describe scenes, extract key moments,
-identify objects, and answer questions about the content.
-
-Supports video from bytes content (downloaded files) and YouTube URLs.
+Pass video files or YouTube URLs to Gemini for scene analysis and Q&A.
 
 Key concepts:
 - Video(content=..., format=...): Pass video bytes with format (mp4, etc.)

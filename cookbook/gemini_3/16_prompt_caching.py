@@ -1,13 +1,7 @@
 """
 Prompt Caching - Save Tokens on Repeated Queries
 ==================================================
-Cache large documents or system prompts to save tokens on repeated queries.
-Upload a file, create a cache with a TTL, then query without re-sending
-the full context each time.
-
-This is essential for production agents that repeatedly query the same
-large document (transcripts, codebases, manuals). The first query pays
-full token cost; subsequent queries only pay for the new prompt.
+Cache large documents server-side so repeated queries skip the full token cost.
 
 Key concepts:
 - genai.Client().caches.create: Creates a server-side cache with TTL
@@ -30,9 +24,6 @@ from agno.models.google import Gemini
 from google import genai
 from google.genai.types import UploadFileConfig
 
-# ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
 WORKSPACE = Path(__file__).parent.joinpath("workspace")
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
@@ -41,7 +32,7 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------------------------
 client = genai.Client()
 
-# Download a large text file (Apollo 11 transcript -- ~100K tokens)
+# Download a large text file (Apollo 11 transcript, ~100K tokens)
 txt_url = "https://storage.googleapis.com/generativeai-downloads/data/a11.txt"
 txt_path = WORKSPACE / "a11.txt"
 
@@ -82,7 +73,7 @@ cache = client.caches.create(
     config={
         "system_instruction": "You are an expert at analyzing transcripts.",
         "contents": [txt_file],
-        # Cache expires after 5 minutes -- set higher for production
+        # Cache expires after 5 minutes, set higher for production
         "ttl": "300s",
     },
 )
@@ -106,7 +97,7 @@ if __name__ == "__main__":
     print(f"\nResponse:\n{run_output.content}")
     print(f"\nMetrics: {run_output.metrics}")
 
-    # Query 2: Same cache, different question -- token savings
+    # Query 2: Same cache, different question, shows token savings
     run_output = cache_agent.run("What was the most tense moment during the mission?")
     print(f"\nResponse:\n{run_output.content}")
     print(f"\nMetrics: {run_output.metrics}")
@@ -131,5 +122,5 @@ TTL guidelines:
 Cache limitations:
 - Minimum cached content: ~32K tokens
 - Maximum TTL varies by model
-- Cache is per-model -- switching models requires a new cache
+- Cache is per-model, switching models requires a new cache
 """

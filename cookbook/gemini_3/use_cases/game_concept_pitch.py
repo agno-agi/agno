@@ -1,13 +1,7 @@
 """
 Game Concept Pitch - Generate Art and Structure a Pitch
 =========================================================
-Combines image generation, structured output, and a multi-agent team
-to produce a complete game concept pitch with concept art.
-
-This is what a real game pitch workflow looks like:
-1. Generate concept art for the game
-2. Structure the game concept into a formal pitch document
-3. A review team evaluates the pitch from multiple angles
+Combines image generation, structured output, and a multi-agent team for a game pitch.
 
 Steps used: 3 (Structured Output), 9 (Image Generation), 19 (Team)
 

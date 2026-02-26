@@ -1,11 +1,7 @@
 """
 Structured Output - Movie Critic with Typed Responses
 =======================================================
-Get structured, typed responses using Pydantic models.
-Instead of free-form text, the agent returns data you can use in code.
-
-Perfect for building pipelines, UIs, or integrations where you need
-predictable data shapes. Parse it, store it, display it no regex required.
+Get typed Pydantic responses instead of free-form text.
 
 Key concepts:
 - output_schema: A Pydantic BaseModel defining the response structure

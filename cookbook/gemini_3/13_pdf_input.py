@@ -1,11 +1,7 @@
 """
 PDF Understanding - Read and Analyze Documents
 ================================================
-Gemini can read and understand PDF documents.
-Pass PDFs via URL -- Gemini fetches and processes them directly.
-
-No PDF parsing libraries needed. The model reads text, tables,
-images, and layout from the PDF natively.
+Pass PDF documents to Gemini for reading and analysis. No parsing libraries needed.
 
 Key concepts:
 - File(url=..., mime_type="application/pdf"): Pass a PDF from a URL

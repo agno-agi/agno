@@ -1,14 +1,7 @@
 """
 Music Asset Brief - Analyze a Track and Produce a Brief
 =========================================================
-Combines audio analysis, image understanding, web search, and structured
-output to produce a comprehensive brief for a music track.
-
-This is what a real music-industry workflow looks like:
-1. Analyze the audio track (mood, genre, tempo)
-2. Analyze the album artwork (visual style, themes)
-3. Research the artist and current market context
-4. Produce a structured brief for marketing or A&R
+Combines audio analysis, image understanding, web search, and structured output for a music brief.
 
 Steps used: 2 (Tools), 3 (Structured Output), 8 (Image), 10 (Audio)
 
@@ -58,7 +51,7 @@ context to produce comprehensive asset briefs for A&R and marketing teams.
 
 ## Rules
 
-- Be specific about genre (not just "pop" -- say "synth-pop" or "indie pop")
+- Be specific about genre (not just "pop", say "synth-pop" or "indie pop")
 - Name comparable artists that are currently relevant
 - Marketing angles should be actionable
 - No emojis\
@@ -83,9 +76,7 @@ if __name__ == "__main__":
     # Sample: analyze a track with audio and artwork
     # Replace these with your own audio URL and artwork URL
     audio_url = "https://agno-public.s3.amazonaws.com/demo/sample-audio.mp3"
-    artwork_url = (
-        "https://upload.wikimedia.org/wikipedia/en/1/1b/Blonde_-_Frank_Ocean.png"
-    )
+    artwork_url = "https://agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg"
 
     print("Downloading audio sample...")
     audio_response = httpx.get(audio_url)

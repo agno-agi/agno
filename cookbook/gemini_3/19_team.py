@@ -1,12 +1,7 @@
 """
 Multi-Agent Team - Writer, Editor, and Fact-Checker
 =====================================================
-Split responsibilities across specialized agents coordinated by a team leader.
-Writer drafts, Editor refines, Fact-Checker verifies.
-
-Multi-agent teams are powerful but less predictable than single agents.
-The team leader is an LLM making delegation decisions -- sometimes brilliantly,
-sometimes not. Teams shine in human-supervised settings.
+Coordinate specialized agents with a team leader. Writer drafts, Editor refines, Fact-Checker verifies.
 
 Key concepts:
 - Team: Coordinates multiple agents, each with a specific role
@@ -21,27 +16,14 @@ Example prompts to try:
 - "Write a travel guide for visiting Tokyo in cherry blossom season"
 """
 
-from pathlib import Path
-
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
+from db import gemini_agents_db
 
 # ---------------------------------------------------------------------------
-# Workspace
-# ---------------------------------------------------------------------------
-WORKSPACE = Path(__file__).parent.joinpath("workspace")
-WORKSPACE.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Storage
-# ---------------------------------------------------------------------------
-db = SqliteDb(db_file=str(WORKSPACE / "gemini_agents.db"))
-
-# ---------------------------------------------------------------------------
-# Writer Agent -- drafts content
+# Writer Agent: drafts content
 # ---------------------------------------------------------------------------
 writer_instructions = """\
 You are a professional content writer. Write engaging, well-structured blog posts.
@@ -67,12 +49,12 @@ writer = Agent(
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=writer_instructions,
     tools=[WebSearchTools()],
-    db=db,
+    db=gemini_agents_db,
     add_datetime_to_context=True,
 )
 
 # ---------------------------------------------------------------------------
-# Editor Agent -- reviews and improves (no tools, text-only)
+# Editor Agent: reviews and improves (no tools, text-only)
 # ---------------------------------------------------------------------------
 editor_instructions = """\
 You are a senior editor. Review content for quality and suggest improvements.
@@ -98,12 +80,12 @@ editor = Agent(
     role="Review and improve content for clarity and quality",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=editor_instructions,
-    db=db,
+    db=gemini_agents_db,
     add_datetime_to_context=True,
 )
 
 # ---------------------------------------------------------------------------
-# Fact-Checker Agent -- verifies claims
+# Fact-Checker Agent: verifies claims
 # ---------------------------------------------------------------------------
 fact_checker_instructions = """\
 You are a fact-checker. Verify claims made in the content.
@@ -129,7 +111,7 @@ fact_checker_member = Agent(
     # Uses Gemini's native search for fact-checking
     model=Gemini(id="gemini-3-flash-preview", search=True),
     instructions=fact_checker_instructions,
-    db=db,
+    db=gemini_agents_db,
     add_datetime_to_context=True,
 )
 
@@ -158,7 +140,7 @@ Provide the final blog post followed by:
 - **Editorial Notes**: Key improvements made during editing
 - **Fact-Check Summary**: Verification status of key claims\
 """,
-    db=db,
+    db=gemini_agents_db,
     # Show each member's response in the output
     show_members_responses=True,
     add_datetime_to_context=True,

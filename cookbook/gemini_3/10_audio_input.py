@@ -1,11 +1,7 @@
 """
 Audio Understanding - Transcribe and Analyze Audio
 ====================================================
-Gemini can process audio files -- transcribe speech, summarize content,
-identify speakers, and answer questions about what it hears.
-
-Pass audio as bytes content with the appropriate MIME type.
-Supports MP3, WAV, FLAC, and other common formats.
+Pass audio files to Gemini for transcription, summarization, and analysis.
 
 Key concepts:
 - Audio(content=..., format=...): Pass audio bytes with format (mp3, wav, etc.)
