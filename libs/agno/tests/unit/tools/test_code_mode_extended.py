@@ -108,39 +108,31 @@ class TestNameCollisions:
         assert "4.0" in output, f"math.sqrt() broken because tool shadowed the module: {output!r}"
 
 
-# ── SEC-001: SafeCallable._fn exposes wrapper globals ────────────
+# ── SEC-001: Wrapper __globals__ exposes sandbox.py internals ─────
 
 
-@pytest.mark.xfail(reason="WONTFIX: _fn accessible via __slots__; fixing requires C extension. LLM threat model only.")
-class TestSandboxEscapeViaFnAttribute:
-    def test_fn_attribute_accessible(self):
+@pytest.mark.xfail(reason="WONTFIX: __globals__ inherent to Python functions. LLM threat model only.")
+class TestSandboxEscapeViaGlobals:
+    def test_globals_expose_io_module(self):
         cm = CodeMode(tools=[search_items])
-        output = cm.run_code("fn = search_items._fn\nresult = str(type(fn))")
-        assert "Error" in output, f"_fn attribute is accessible, exposing wrapper function: {output!r}"
+        output = cm.run_code("result = str('io' in search_items.__globals__)")
+        assert "Error" in output, f"io module accessible through __globals__: {output!r}"
 
-    def test_fn_globals_expose_io_module(self):
-        cm = CodeMode(tools=[search_items])
-        code = "fn = search_items._fn\nresult = str('io' in fn.__globals__)"
-        output = cm.run_code(code)
-        assert "Error" in output, f"io module accessible through _fn.__globals__: {output!r}"
-
-    def test_fn_globals_expose_unrestricted_builtins(self):
+    def test_globals_expose_unrestricted_builtins(self):
         cm = CodeMode(tools=[search_items])
         code = (
-            "fn = search_items._fn\n"
-            "bi = fn.__globals__['__builtins__']\n"
+            "bi = search_items.__globals__['__builtins__']\n"
             "has_open = 'open' in bi if isinstance(bi, dict) else hasattr(bi, 'open')\n"
             "result = str(has_open)"
         )
         output = cm.run_code(code)
-        assert "Error" in output, f"Unrestricted builtins accessible through _fn.__globals__: {output!r}"
+        assert "Error" in output, f"Unrestricted builtins accessible through __globals__: {output!r}"
 
-    def test_fn_closure_exposes_tool_object(self):
+    def test_closure_exposes_tool_object(self):
         cm = CodeMode(tools=[search_items])
-        code = "fn = search_items._fn\nresult = str(len(fn.__closure__))"
-        output = cm.run_code(code)
+        output = cm.run_code("result = str(len(search_items.__closure__))")
         assert "Error" in output, (
-            f"__closure__ accessible with {output} cells (includes tool object with modifiable blocked_modules)"
+            f"__closure__ accessible with {output} cells (includes tool object with modifiable state)"
         )
 
 
@@ -778,6 +770,74 @@ class TestToolResultFallbackPath:
         # Store ToolResult in non-result variable — hits fallback path
         output = cm.run_code('x = img_tool(prompt="cat")')
         assert "Generated: cat" in (output.content if isinstance(output, ToolResult) else output)
+
+
+# ── Regression tests for codex-review fixes ──────────────────────
+
+
+class TestAllowedBuiltinsEmptySet:
+    def test_empty_set_disables_all_builtins(self):
+        cm = CodeMode(tools=[search_items], allowed_builtins=set())
+        assert cm.safe_builtins == {}
+        output = cm.run_code("result = str(len([1,2,3]))")
+        assert "Error" in output or "NameError" in output
+
+    def test_none_uses_defaults(self):
+        cm = CodeMode(tools=[search_items], allowed_builtins=None)
+        assert len(cm.safe_builtins) > 0
+        output = cm.run_code("result = str(len([1,2,3]))")
+        assert output == "3"
+
+    def test_custom_subset(self):
+        cm = CodeMode(tools=[search_items], allowed_builtins={"len", "str"})
+        assert "len" in cm.safe_builtins
+        assert "min" not in cm.safe_builtins
+
+
+class TestRebuildDescriptionIdempotent:
+    def test_description_not_duplicated_after_rebuild(self):
+        cm = CodeMode(tools=[search_items])
+        funcs1 = cm.get_functions()
+        desc1 = funcs1["run_code"].description
+
+        cm.rebuild()
+        funcs2 = cm.get_functions()
+        desc2 = funcs2["run_code"].description
+        assert desc1 == desc2
+
+    def test_description_not_duplicated_after_multiple_rebuilds(self):
+        cm = CodeMode(tools=[search_items])
+        for _ in range(5):
+            cm.get_functions()
+            cm.rebuild()
+        funcs = cm.get_functions()
+        desc = funcs["run_code"].description
+        # Stubs should appear exactly once
+        assert desc.count("def search_items(") == 1
+
+
+class TestStubTripleQuoteEscape:
+    def test_docstring_with_triple_quotes(self):
+        def tool_with_quotes(x: str) -> str:
+            '''Returns """triple quoted""" text.'''
+            return x
+
+        cm = CodeMode(tools=[tool_with_quotes])
+        stub = cm.stub_map.get("tool_with_quotes", "")
+        assert '"""' not in stub.split("\n", 1)[1] or "'''" in stub
+
+
+class TestToolNameShadowingWarning:
+    def test_tool_named_json_warns(self, capsys):
+        def json(query: str) -> str:
+            """A badly named tool."""
+            return query
+
+        cm = CodeMode(tools=[json])
+        cm.run_code('result = "test"')
+
+        captured = capsys.readouterr()
+        assert "shadows" in captured.out
 
 
 class TestClassConstants:

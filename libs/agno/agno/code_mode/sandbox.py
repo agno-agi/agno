@@ -6,25 +6,10 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tupl
 
 from agno.tools.function import Function, ToolResult
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.code_mode.tool import CodeMode
-
-
-class SafeCallable:
-    __slots__ = ("_fn", "__name__", "__doc__")
-
-    def __init__(self, fn: Callable, name: str, doc: Optional[str]):
-        self._fn = fn
-        self.__name__ = name
-        self.__doc__ = doc or ""
-
-    def __call__(self, *args: Any, **kwargs: Any) -> str:
-        return self._fn(*args, **kwargs)
-
-    def __repr__(self) -> str:
-        return f"<tool {self.__name__}>"
 
 
 def make_wrapper(
@@ -34,9 +19,7 @@ def make_wrapper(
     media_collector: Optional[Dict[str, List[Any]]] = None,
     caller_loop: Any = None,
 ) -> Callable:
-    from agno.code_mode.tool import CodeMode
-
-    param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in CodeMode.FRAMEWORK_PARAMS]
+    param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in tool.FRAMEWORK_PARAMS]
 
     def wrapper(*args: Any, **kwargs: Any) -> str:
         entrypoint = func.entrypoint
@@ -71,8 +54,6 @@ def make_wrapper(
 
 
 def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]:
-    from agno.code_mode.tool import CodeMode
-
     args: Dict[str, Any] = {}
     run_code_func = tool.functions.get("run_code")
     if run_code_func is None:
@@ -84,7 +65,7 @@ def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]
         return args
 
     param_names = set(sig.parameters.keys())
-    for param, attr in CodeMode.FRAMEWORK_ARG_ATTRS.items():
+    for param, attr in tool.FRAMEWORK_ARG_ATTRS.items():
         if param in param_names:
             args[param] = getattr(run_code_func, attr)
     return args
@@ -123,20 +104,16 @@ def build_namespace(
     media_collector: Optional[Dict[str, List[Any]]] = None,
     caller_loop: Any = None,
 ) -> Tuple[Dict[str, Any], Set[str]]:
-    from agno.code_mode.tool import CodeMode
-
-    preapproved = dict(CodeMode.PREAPPROVED_MODULES)
+    preapproved = dict(tool.PREAPPROVED_MODULES)
     preapproved.update(tool.additional_modules)
 
     _real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
-
-    blocked_modules = CodeMode.BLOCKED_MODULES
 
     def _restricted_import(name: str, *args: Any, **kwargs: Any) -> Any:
         if name in preapproved:
             return preapproved[name]
         top_level = name.split(".")[0]
-        if top_level in blocked_modules:
+        if top_level in tool.BLOCKED_MODULES:
             raise ImportError(f"Import of '{name}' is not allowed.")
         return _real_import(name, *args, **kwargs)
 
@@ -148,8 +125,10 @@ def build_namespace(
 
     functions = tool.sandbox_async_functions if use_async else tool.sandbox_functions
     for name, func in functions.items():
+        if name in preapproved:
+            log_warning(f"CodeMode: Tool '{name}' shadows pre-imported module '{name}'")
         wrapper = make_wrapper(tool, name, func, media_collector=media_collector, caller_loop=caller_loop)
-        namespace[name] = SafeCallable(wrapper, name, func.description)
+        namespace[name] = wrapper
 
     base_keys = set(namespace.keys())
     return namespace, base_keys

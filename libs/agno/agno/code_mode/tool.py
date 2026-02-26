@@ -14,6 +14,7 @@ from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.models.message import Message
 
 
 class CodeMode(Toolkit):
@@ -173,7 +174,7 @@ class CodeMode(Toolkit):
         self.discovery_threshold = discovery_threshold
         self.additional_modules: Dict[str, Any] = additional_modules or {}
 
-        allowed = allowed_builtins or self.DEFAULT_BUILTINS
+        allowed = allowed_builtins if allowed_builtins is not None else self.DEFAULT_BUILTINS
         self.safe_builtins: Dict[str, Any] = {k: getattr(builtins, k) for k in allowed if hasattr(builtins, k)}
 
         self.sandbox_functions: Dict[str, Function] = collect_functions(tools, async_mode=False)
@@ -206,8 +207,7 @@ class CodeMode(Toolkit):
                 "You have access to a `run_code` tool that accepts plain English task descriptions.\n"
                 "A specialized code-generation model will write and execute Python code "
                 "that calls the available tools. You do NOT need to write code yourself.\n"
-                "Describe what data to fetch, what computations to perform, and the desired output format.\n"
-                "You do NOT need to write code yourself."
+                "Describe what data to fetch, what computations to perform, and the desired output format."
             )
         else:
             self.instructions = (
@@ -356,12 +356,13 @@ class CodeMode(Toolkit):
                 "Available tools:\n\n" + self.catalog
             )
         elif self.discovery_enabled:
-            base = run_code_func.description or ""
+            # Use method docstring as base to avoid re-appending on rebuild()
+            base = self.run_code.__doc__ or ""
             run_code_func.description = (
                 base + "\n\nAvailable tools (use search_tools for full signatures):\n\n" + self.catalog
             )
         else:
-            base = run_code_func.description or ""
+            base = self.run_code.__doc__ or ""
             run_code_func.description = base + "\n\nAvailable functions:\n\n" + self.stubs
 
     @staticmethod
@@ -371,7 +372,7 @@ class CodeMode(Toolkit):
             return m.group(1).strip()
         return text.strip()
 
-    def _build_codegen_messages(self, task: str, error: Optional[str] = None) -> "List":
+    def _build_codegen_messages(self, task: str, error: Optional[str] = None) -> "List[Message]":
         from agno.models.message import Message
 
         system = self.CODE_MODEL_SYSTEM + self.stubs

@@ -70,6 +70,7 @@ def generate_stub_map(
             full_doc = getdoc(func.entrypoint)
             if full_doc:
                 doc = full_doc
+        doc = doc.replace('"""', "'''")
 
         sig = ", ".join(args)
         stub = f"def {name}({sig}) -> str:\n"
