@@ -1331,7 +1331,7 @@ class Agent:
         )
 
     @overload
-    def arun(
+    async def arun(
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
@@ -1516,7 +1516,7 @@ class Agent:
         )
 
     @overload
-    def acontinue_run(
+    async def acontinue_run(
         self,
         run_response: Optional[RunOutput] = None,
         *,
