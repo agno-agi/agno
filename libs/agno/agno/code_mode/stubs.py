@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from inspect import getdoc
-from typing import Any, Callable, Dict, List, Set, Union
+from typing import AbstractSet, Any, Callable, Dict, List, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -46,7 +46,7 @@ def collect_functions(
 
 def generate_stub_map(
     functions: Dict[str, Function],
-    framework_params: Set[str],
+    framework_params: AbstractSet[str],
     json_type_map: Dict[str, str],
 ) -> Dict[str, str]:
     stub_map: Dict[str, str] = OrderedDict()
