@@ -2803,6 +2803,43 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error getting spans: {e}")
             return []
 
+    async def get_spans_batch(
+        self,
+        trace_ids: List[str],
+    ) -> Dict[str, List]:
+        """Get spans for multiple traces in a single query.
+
+        Args:
+            trace_ids: List of trace IDs to fetch spans for.
+
+        Returns:
+            Dict mapping trace_id -> List[Span].
+        """
+        if not trace_ids:
+            return {}
+
+        try:
+            from collections import defaultdict
+
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.trace_id.in_(trace_ids))
+                result = await sess.execute(stmt)
+                results = result.fetchall()
+
+                spans_by_trace: Dict[str, List] = defaultdict(list)
+                for row in results:
+                    span = Span.from_dict(dict(row._mapping))
+                    spans_by_trace[span.trace_id].append(span)
+                return dict(spans_by_trace)
+
+        except Exception as e:
+            log_error(f"Error getting spans batch: {e}")
+            return {}
+
     # -- Learning methods --
     async def get_learning(
         self,
