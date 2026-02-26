@@ -1,8 +1,6 @@
 # Archive
 
-Previous knowledge cookbooks preserved for reference and quick testing.
-These files use the old structure (one file per feature/integration).
-For the current cookbooks, see the parent directory.
+Knowledge cookbooks preserved for reference and quick testing.
 
 ## Quick Reference
 
@@ -19,9 +17,3 @@ For the current cookbooks, see the parent directory.
 | [lifecycle](./lifecycle/) | Remove content, remove vectors, skip-if-exists, contents DB tracking | 4 |
 | [protocol](./protocol/) | KnowledgeProtocol: file system implementation | 1 |
 | [os](./os/) | AgentOS with multiple knowledge instances | 1 |
-
-## Running
-
-```bash
-.venvs/demo/bin/python cookbook/07_knowledge/09_archive/readers/csv_reader.py
-```
