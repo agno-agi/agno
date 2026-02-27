@@ -260,6 +260,72 @@ def test_openai_like_without_deepseek_r1():
     assert is_openai_reasoning_model(model) is False
 
 
+def test_openai_like_with_qwen3_reasoning():
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="Qwen/Qwen3-30B-A3B",
+        base_url="http://localhost:8000/v1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_enable_thinking():
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="custom-finetune-v2",
+        base_url="http://localhost:8000/v1",
+    )
+    model.enable_thinking = True
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_qwq_reasoning():
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="qwq-32b",
+        base_url="http://localhost:8000/v1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_self_hosted_qwen3():
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="Qwen30B-A3B",
+        base_url="http://localhost:8000/v1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_self_hosted_non_reasoning():
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="llama-3.1-70b",
+        base_url="http://localhost:8000/v1",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_openai_chat_no_base_url_non_reasoning():
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="Qwen30B-A3B",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_vllm_not_matched_by_openai_checker():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="Qwen/Qwen3-8B",
+        enable_thinking=True,
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
 # ============================================================================
 # Anthropic Reasoning Model Tests
 # ============================================================================
