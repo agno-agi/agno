@@ -113,7 +113,6 @@ import json
 import os
 import shutil
 import sys
-import time
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum
@@ -3999,7 +3998,6 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     user_prompt = step_input.input
     template_path = session_state.get("template_path", "")
@@ -4421,8 +4419,6 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     session_state["total_slides"] = len(slides_data)
 
     slides_summary = json.dumps(slides_data, indent=2)
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 1 Content Generation: completed in %.2fs" % elapsed)
     return StepOutput(
         content=slides_summary,
         success=True,
@@ -4476,7 +4472,6 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 2: Planning images for slides...")
@@ -4528,13 +4523,9 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
             print(
                 "[VERBOSE] Image planner output (first 500 chars):\n%s" % result[:500]
             )
-        elapsed = time.time() - _step_start
-        print("[TIMING] Step 2 Image Planning: completed in %.2fs" % elapsed)
         return StepOutput(content=result, success=True)
 
     print("[WARNING] Image planner returned no content.")
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 2 Image Planning: completed in %.2fs" % elapsed)
     return StepOutput(
         content=json.dumps({"decisions": []}),
         success=True,
@@ -4556,7 +4547,6 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 3: Generating images with NanoBanana...")
@@ -4684,8 +4674,6 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
                 traceback.print_exc()
 
     session_state["generated_images"] = generated_images
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 3 Image Generation: completed in %.2fs" % elapsed)
     return StepOutput(
         content="Generated %d image(s) for presentation." % len(generated_images),
         success=True,
@@ -5332,7 +5320,6 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 4: Assembling final presentation with template...")
@@ -5592,8 +5579,6 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     output_prs.save(output_path)
     print("\nSaved final presentation: %s" % output_path)
 
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 4 Template Assembly: completed in %.2fs" % elapsed)
     return StepOutput(
         content="Presentation saved to %s (%d slides)" % (output_path, total_slides),
         success=True,
@@ -6492,7 +6477,6 @@ def step_visual_quality_review(
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 5 (Optional): UI/UX Design Review...")
@@ -6734,8 +6718,6 @@ def step_visual_quality_review(
             len(all_recommendations),
         )
         print("\n  %s" % summary)
-        elapsed = time.time() - _step_start
-        print("[TIMING] Step 5 Visual Quality Review: completed in %.2fs" % elapsed)
         return StepOutput(content=summary, success=True)
 
     except Exception as e:
@@ -6977,7 +6959,6 @@ if __name__ == "__main__":
         },
     )
 
-    _workflow_start = time.time()
     workflow.print_response(input=prompt, markdown=True)
 
     # If no template was provided, copy the generated file to the output path
@@ -6987,9 +6968,6 @@ if __name__ == "__main__":
             import shutil as _shutil
             _shutil.copy2(generated_file, output_path)
             print("No template specified: raw generated presentation saved to %s" % output_path)
-
-    _workflow_elapsed = time.time() - _workflow_start
-    print("[TIMING] Total workflow execution: %.2fs" % _workflow_elapsed)
 
     print("\n" + "=" * 60)
     print("Workflow complete!")
