@@ -42,9 +42,9 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -952,10 +952,10 @@ class Agent:
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
@@ -1644,6 +1644,7 @@ def get_agent_by_id(
 def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
@@ -1654,7 +1655,9 @@ def get_agents(
 
     agents: List[Agent] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        components, _ = db.list_components(
+            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
+        )
         for component in components:
             config = db.get_config(component_id=component["component_id"])
             if config is not None:

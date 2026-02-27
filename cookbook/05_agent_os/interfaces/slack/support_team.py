@@ -2,7 +2,17 @@
 Support Team
 ============
 
-Demonstrates support team.
+A multi-agent team that routes support questions to the right specialist.
+Technical Support handles code and API questions; Documentation Specialist
+searches Slack history and the web for existing answers.
+
+Key concepts:
+  - ``Team`` with a coordinator model routes questions to the best member.
+  - One member uses ``SlackTools`` to find past answers in Slack threads.
+  - Both members use ``WebSearchTools`` for external documentation.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             search:read, channels:history
 """
 
 from agno.agent import Agent

@@ -282,7 +282,6 @@ def create_knowledge_search_tool(
         return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
 
 
-
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
     def get_chat_history(num_chats: Optional[int] = None) -> str:
         """Use this function to get the chat history between the user and agent.
