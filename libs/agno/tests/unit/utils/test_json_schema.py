@@ -140,6 +140,10 @@ def test_get_json_schema_for_arg_literal():
     float_literal_schema = get_json_schema_for_arg(Literal[1.5, 2.5, 3.5])
     assert float_literal_schema == {"type": "number", "enum": [1.5, 2.5, 3.5]}
 
+    # Test mixed int/float Literal type - should use "number" to cover both
+    mixed_numeric_schema = get_json_schema_for_arg(Literal[1, 2.5, 3])
+    assert mixed_numeric_schema == {"type": "number", "enum": [1, 2.5, 3]}
+
     # Test single value Literal
     single_literal_schema = get_json_schema_for_arg(Literal["only_option"])
     assert single_literal_schema == {"type": "string", "enum": ["only_option"]}

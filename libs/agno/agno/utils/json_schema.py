@@ -125,19 +125,20 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     # log_info(f"Type origin: {type_origin}")
     if type_origin is not None:
         if type_origin is Literal:
-            # Handle Literal types - get the literal values and infer type from the first value
+            # Handle Literal types - check all values to determine the appropriate JSON type
+            # Order matters: check bool before int since bool is a subclass of int in Python
             if type_args:
-                first_arg = type_args[0]
-                if isinstance(first_arg, str):
+                if all(isinstance(arg, str) for arg in type_args):
                     return {"type": "string", "enum": list(type_args)}
-                elif isinstance(first_arg, int) and not isinstance(first_arg, bool):
-                    return {"type": "integer", "enum": list(type_args)}
-                elif isinstance(first_arg, float):
-                    return {"type": "number", "enum": list(type_args)}
-                elif isinstance(first_arg, bool):
+                elif all(isinstance(arg, bool) for arg in type_args):
                     return {"type": "boolean", "enum": list(type_args)}
+                elif all(isinstance(arg, int) and not isinstance(arg, bool) for arg in type_args):
+                    return {"type": "integer", "enum": list(type_args)}
+                elif all(isinstance(arg, (int, float)) and not isinstance(arg, bool) for arg in type_args):
+                    # Mixed int/float or pure float - use "number" which covers both
+                    return {"type": "number", "enum": list(type_args)}
                 else:
-                    # Fallback for mixed or other types
+                    # Fallback for mixed or other types - just provide enum without type
                     return {"enum": list(type_args)}
             return {"type": "string"}
         elif type_origin in (list, tuple, set, frozenset):
