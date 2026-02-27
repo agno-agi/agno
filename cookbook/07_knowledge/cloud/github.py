@@ -3,7 +3,11 @@ GitHub Content Source for Knowledge
 ====================================
 
 Load files and folders from GitHub repositories into your Knowledge base.
-Supports both public and private repositories using fine-grained personal access tokens.
+Supports both public and private repositories.
+
+Authentication methods:
+- Personal Access Token (PAT): simple, set ``token``
+- GitHub App: enterprise-grade, set ``app_id``, ``installation_id``, ``private_key``
 
 Features:
 - Load single files or entire folders recursively
@@ -12,10 +16,11 @@ Features:
 - Rich metadata stored for each file (repo, branch, path)
 
 Requirements:
-- For private repos: GitHub fine-grained PAT with "Contents: read" permission
+- For private repos with PAT: GitHub fine-grained PAT with "Contents: read" permission
+- For GitHub App auth: ``pip install PyJWT cryptography``
 
 Usage:
-    1. Configure GitHubConfig with repo and optional token
+    1. Configure GitHubConfig with repo and auth credentials
     2. Register the config on Knowledge via content_sources
     3. Use .file() or .folder() to create content references
     4. Insert into knowledge with knowledge.insert()
@@ -30,7 +35,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GitHubConfig
 from agno.vectordb.pgvector import PgVector
 
-# Configure GitHub content source
+# ---------------------------------------------------------------------------
+# Option 1: Personal Access Token authentication
+# ---------------------------------------------------------------------------
 # For private repos, set GITHUB_TOKEN env var to a fine-grained PAT with "Contents: read"
 github_config = GitHubConfig(
     id="my-repo",
@@ -38,6 +45,21 @@ github_config = GitHubConfig(
     repo="private/repo",  # Format: owner/repo
     token=getenv("GITHUB_TOKEN"),  # Optional for public repos
     branch="main",  # Default branch
+)
+
+# ---------------------------------------------------------------------------
+# Option 2: GitHub App authentication
+# ---------------------------------------------------------------------------
+# For organizations using GitHub Apps instead of personal tokens.
+# Requires: pip install PyJWT cryptography
+github_app_config = GitHubConfig(
+    id="org-repo",
+    name="Org Repository",
+    repo="my-org/private-repo",
+    app_id=getenv("GITHUB_APP_ID"),
+    installation_id=getenv("GITHUB_INSTALLATION_ID"),
+    private_key=getenv("GITHUB_APP_PRIVATE_KEY"),
+    branch="main",
 )
 
 # Create Knowledge with GitHub as a content source
