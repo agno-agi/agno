@@ -27,14 +27,10 @@ class GitlabTools(Toolkit):
         enable_list_merge_requests: bool = True,
         enable_get_merge_request: bool = True,
         enable_list_issues: bool = True,
-        enable_get_project: Optional[bool] = None,
         gitlab_client: Optional[Gitlab] = None,
         httpx_client: Optional[httpx.AsyncClient] = None,
         **kwargs,
     ):
-        if enable_get_project is not None:
-            enable_get_projects = enable_get_project
-
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout
