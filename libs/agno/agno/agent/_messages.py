@@ -310,7 +310,7 @@ def get_system_message(
             agent.memory_manager = None
 
         if agent.enable_agentic_memory:
-            dynamic_message_content += (
+            system_message_content += (
                 "\n<updating_user_memories>\n"
                 "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
                 "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
@@ -367,7 +367,7 @@ def get_system_message(
             agent.culture_manager = None
 
         if agent.enable_agentic_culture:
-            dynamic_message_content += (
+            system_message_content += (
                 "\n<contributing_to_culture>\n"
                 "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
                 "\n"
@@ -669,7 +669,7 @@ async def aget_system_message(
             agent.memory_manager = None
 
         if agent.enable_agentic_memory:
-            dynamic_message_content += (
+            system_message_content += (
                 "\n<updating_user_memories>\n"
                 "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
                 "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
@@ -726,7 +726,7 @@ async def aget_system_message(
             agent.culture_manager = None
 
         if agent.enable_agentic_culture:
-            dynamic_message_content += (
+            system_message_content += (
                 "\n<contributing_to_culture>\n"
                 "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
                 "\n"

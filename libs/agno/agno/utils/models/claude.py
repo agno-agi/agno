@@ -373,8 +373,9 @@ def format_messages(
     # If we have multi-block system message parts, propagate them for prompt caching
     if system_message_parts is not None:
         if system_messages:
-            # Prepend additional system messages (e.g. developer role) to the static block
-            combined_static = " ".join(system_messages) + " " + system_message_parts[0]
+            # Append additional system messages (e.g. developer role) after the static block
+            # to preserve the original ordering where the main system prompt comes first
+            combined_static = system_message_parts[0] + " " + " ".join(system_messages)
             return chat_messages, [combined_static, system_message_parts[1]]
         return chat_messages, system_message_parts
     return chat_messages, " ".join(system_messages)
