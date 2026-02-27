@@ -24,7 +24,9 @@ def get_json_type_for_py_type(arg: str) -> str:
     :return: The JSON schema type.
     """
     # log_info(f"Getting JSON type for: {arg}")
-    if arg in ("int", "float", "complex", "Decimal"):
+    if arg == "int":
+        return "integer"
+    elif arg in ("float", "complex", "Decimal"):
         return "number"
     elif arg in ("str", "string"):
         return "string"

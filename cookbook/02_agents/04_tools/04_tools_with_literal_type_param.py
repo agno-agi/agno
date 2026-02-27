@@ -67,7 +67,9 @@ def main():
 
     # Test with file operations
     print("Testing file operations with Literal types:")
-    agent.print_response("Create a new file called 'report.txt' with high priority", stream=True)
+    agent.print_response(
+        "Create a new file called 'report.txt' with high priority", stream=True
+    )
 
     print("\n" + "=" * 50 + "\n")
 
