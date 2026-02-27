@@ -1,0 +1,7 @@
+agno[google]
+duckduckgo-search
+chromadb
+httpx
+pydantic
+Pillow
+requests
