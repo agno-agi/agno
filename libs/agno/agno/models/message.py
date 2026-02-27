@@ -375,10 +375,16 @@ class Message(BaseModel):
             if use_compressed_content and self.compressed_content:
                 _logger("Compressed content:\n" + self.compressed_content)
             else:
-                if isinstance(self.content, str) or isinstance(self.content, list):
-                    _logger(self.content)
+                if isinstance(self.content, str):
+                    try:
+                        parsed = json.loads(self.content)
+                        _logger(json.dumps(parsed, indent=2, ensure_ascii=False))
+                    except (json.JSONDecodeError, TypeError):
+                        _logger(self.content)
+                elif isinstance(self.content, list):
+                    _logger(json.dumps(self.content, indent=2, ensure_ascii=False))
                 elif isinstance(self.content, dict):
-                    _logger(json.dumps(self.content, indent=2))
+                    _logger(json.dumps(self.content, indent=2, ensure_ascii=False))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
