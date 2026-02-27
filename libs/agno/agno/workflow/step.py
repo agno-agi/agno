@@ -243,9 +243,7 @@ class Step:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
                     except Exception:
-                        log_warning(
-                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance"
-                        )
+                        log_warning(f"deep_copy() failed for registry agent '{agent_id}', using shared instance")
                         agent = registry_agent
 
             # Fall back to database
@@ -271,9 +269,7 @@ class Step:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
                     except Exception:
-                        log_warning(
-                            f"deep_copy() failed for registry team '{team_id}', using shared instance"
-                        )
+                        log_warning(f"deep_copy() failed for registry team '{team_id}', using shared instance")
                         team = registry_team
 
             # Fall back to database
