@@ -144,6 +144,136 @@ Advanced example combining multiple skills:
 - Progressive skill loading
 - Skill orchestration patterns
 
+---
+
+## PowerPoint Workflow Pipelines
+
+Two production-grade PPTX generation pipelines live in this directory.
+They share a layered architecture: `powerpoint_chunked_workflow.py` imports
+all core logic from `powerpoint_template_workflow.py` via wildcard import.
+
+### `powerpoint_template_workflow.py` — Single-Call Pipeline
+
+**Best for:** Short presentations (up to ~7 slides).
+
+A sequential Agno workflow that generates a presentation in a single Claude
+API call, applies AI-generated images, assembles a branded `.pptx` template,
+and optionally runs per-slide visual quality review with Gemini vision.
+
+**Workflow steps:**
+
+| Step | Name | Description |
+|------|------|-------------|
+| 1 | Content Generation | Claude + pptx skill → raw `.pptx` |
+| 2 | Image Planning | Gemini decides which slides need images |
+| 3 | Image Generation | NanoBanana generates slide images |
+| 4 | Template Assembly | Applies template fonts, colors, layouts, OPC relationships |
+| 5 (opt) | Visual Quality Review | Gemini vision renders + inspects + corrects slides |
+
+**CLI Flags:**
+
+```
+--template, -t       Path to .pptx template (optional)
+--output, -o         Output filename (default: presentation_from_template.pptx)
+--prompt, -p         Presentation topic prompt
+--no-images          Skip AI image generation
+--no-stream          Disable streaming for Claude agent
+--min-images         Min slides with AI images (default: 1)
+--visual-review      Enable Step 5 Gemini vision QA (requires LibreOffice)
+--footer-text        Footer text for all slides
+--date-text          Date text for footer date placeholder
+--show-slide-numbers Preserve slide number placeholder
+--verbose, -v        Enable verbose/debug logging
+```
+
+**Run example:**
+
+```bash
+.venvs/demo/bin/python powerpoint_template_workflow.py \
+    -t my_template.pptx \
+    -p "Create a 5-slide overview of renewable energy trends" \
+    --visual-review --footer-text "Confidential" -v
+```
+
+---
+
+### `powerpoint_chunked_workflow.py` — Chunked Pipeline
+
+**Best for:** Large presentations (8-15+ slides) where single Claude API calls fail.
+
+An orchestration layer built on top of `powerpoint_template_workflow.py`.
+Splits the presentation into configurable chunks (default: 3 slides per chunk),
+calls Claude independently for each chunk, applies template/image/review per
+chunk, then merges all chunks into the final output.
+
+**Architecture:**
+
+```
+powerpoint_template_workflow.py   ← Core: helpers, agents, step functions (~7000 lines)
+        ↑ wildcard import
+powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge (~1500 lines)
+```
+
+**Workflow steps:**
+
+| Step | Name | Description |
+|------|------|-------------|
+| 1 | Optimize & Plan | LLM creates storyboard: slide count, per-slide content, tone |
+| 2 | Generate Chunks | Claude pptx skill called N times (chunk_size slides each) |
+| 3 | Process Chunks | Template assembly + image pipeline per chunk |
+| 4 (opt) | Visual Review | Gemini vision QA per chunk (up to --visual-passes passes each) |
+| 5 | Merge Chunks | OPC-aware merge of all chunk PPTX files into final output |
+
+**CLI Flags (inherits all template_workflow flags, plus):**
+
+```
+--chunk-size         Slides per Claude API call (default: 3)
+--max-retries        Retries per chunk on failure (default: 2)
+--visual-passes      Max visual inspection passes per chunk (default: 3)
+```
+
+**Run examples:**
+
+```bash
+# Basic: 10 slides, 3 per chunk, no template
+.venvs/demo/bin/python powerpoint_chunked_workflow.py \
+    -p "Create a 10-slide AI transformation strategy deck"
+
+# With template, 4 slides per chunk, visual review, 5 passes max
+.venvs/demo/bin/python powerpoint_chunked_workflow.py \
+    -t my_template.pptx \
+    -p "12-slide enterprise AI strategy deck" \
+    --chunk-size 4 --visual-review --visual-passes 5 \
+    -o final_deck.pptx
+
+# Quick: no images, no template, large deck
+.venvs/demo/bin/python powerpoint_chunked_workflow.py \
+    -p "Startup pitch deck for SaaS product" --no-images
+```
+
+**Key differences from `powerpoint_template_workflow.py`:**
+
+| Feature | `powerpoint_template_workflow.py` | `powerpoint_chunked_workflow.py` |
+|---------|----------------------------------|----------------------------------|
+| Slide capacity | ~7 slides (single Claude call) | 8-15+ slides (multiple Claude calls) |
+| Query optimization | No | Yes — storyboard + tone/brand context |
+| Storyboard files | No | Yes — `storyboard/global_context.md` + `slide_NNN.md` |
+| Chunk size control | N/A | `--chunk-size` (default 3) |
+| Retry per chunk | N/A | `--max-retries` (default 2) + exponential backoff |
+| Visual passes control | Fixed 3 | `--visual-passes` (default 3, configurable) |
+| Template step | Step 4 | Per-chunk in Step 3 |
+| Output directory | `output/` | `output_chunked/chunked_workflow_work/` |
+
+**Logging conventions (both files):**
+
+```
+[TIMING] step_XXX completed in X.Xs   — Always printed; step and sub-op durations
+[ERROR] ...                            — Always printed; failures
+[WARNING] ...                          — Always printed; non-fatal issues
+[VISUAL REVIEW MISSING FIX] ...       — Always printed; missing correction logic
+[VERBOSE] ...                          — Only with --verbose / -v flag
+```
+
 ## Features
 
 - **Progressive Disclosure**: Skills are loaded only when needed, optimizing token usage

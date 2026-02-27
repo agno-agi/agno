@@ -1,14 +1,138 @@
-# Architecture: PowerPoint Template Workflow
+# Architecture: PowerPoint Workflow Suite
 
-**File:** `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
+**Files:**
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py` — Single-call pipeline (up to ~7 slides)
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Chunked pipeline for large presentations (8-15+ slides)
+
 **Date:** 2026-02-25
+**Last Updated:** 2026-02-27
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
+
+---
+
+## Two Complementary Approaches
+
+This cookbook provides **two workflow files** that solve the same problem (AI-generated PowerPoint presentations) at different scales:
+
+| Aspect | `powerpoint_template_workflow.py` | `powerpoint_chunked_workflow.py` |
+|--------|----------------------------------|----------------------------------|
+| **Best for** | Short decks (up to ~7 slides) | Large decks (8-15+ slides) |
+| **Approach** | Single Claude API call for all content | Splits into N-slide chunks, merges result |
+| **Template** | Required | Optional |
+| **Visual review** | Optional (`--visual-review`) | Optional (`--visual-review`, template required) |
+| **Step count** | 4 steps (+ optional Step 5) | 2-5 steps depending on flags |
+| **Storyboard planning** | No — direct generation | Yes — query optimizer plans all slides first |
+
+### Relationship Between the Files
+
+```
+powerpoint_template_workflow.py
+  │
+  │  Provides (via wildcard import *):
+  │    - All Pydantic models (SlideImageDecision, ImagePlan, ShapeIssue, etc.)
+  │    - All dataclasses (SlideContent, ContentArea, RegionMap, etc.)
+  │    - All helper functions (_extract_slide_content, _populate_slide, etc.)
+  │    - All agents (image_planner, slide_quality_reviewer)
+  │    - All step functions (step_generate_images, step_assemble_template,
+  │                          step_visual_quality_review)
+  │    - VERBOSE module-level flag
+  │
+  └──► powerpoint_chunked_workflow.py
+         Adds on top:
+           - StoryboardPlan / SlideStoryboard Pydantic models
+           - query_optimizer agent
+           - generate_chunk_pptx() helper
+           - step_optimize_and_plan()
+           - step_generate_chunks()
+           - step_process_chunks()    (calls step_generate_images + step_assemble_template)
+           - step_visual_review_chunks()  (calls step_visual_quality_review per chunk)
+           - merge_pptx_files() + _clone_slide()
+           - step_merge_chunks()
+           - build_chunked_workflow()
+```
+
+**Key rule:** Do NOT add chunking logic to `powerpoint_template_workflow.py`. Keep them separate. The template workflow is self-contained for short decks; the chunked workflow wraps it for large decks.
+
+---
+
+## Chunked Workflow: Pipeline Modes
+
+The chunked workflow supports two distinct modes depending on whether `--template` is passed:
+
+### Mode A: Raw Generation (no `--template`)
+
+```
+User prompt
+    │
+    ▼
+Step 1: Optimize & Plan
+    │  (Claude Sonnet → StoryboardPlan)
+    ▼
+Step 2: Generate Chunks
+    │  (Claude pptx skill, N chunks)
+    ▼
+Step 5: Merge Chunks
+    │  (raw chunk_files → merged PPTX)
+    ▼
+Final PPTX
+```
+
+- `--visual-review` and `--visual-passes` are **completely ignored** even if passed
+- Step 3 (Process Chunks) is **skipped**
+- Step 4 (Visual Review) is **skipped**
+- Interim chunk PPTX files are **preserved** in `output_chunked/chunked_workflow_work/`
+
+### Mode B: Template-Assisted Generation (`--template` provided)
+
+```
+User prompt + Template
+    │
+    ▼
+Step 1: Optimize & Plan
+    │  (Claude Sonnet → StoryboardPlan)
+    ▼
+Step 2: Generate Chunks
+    │  (Claude pptx skill, N chunks)
+    ▼
+Step 3: Process Chunks
+    │  (image planning + image generation + template assembly per chunk)
+    ▼
+[Step 4: Visual Review]   ← only if --visual-review is also passed
+    │  (Gemini vision QA per chunk, up to --visual-passes passes)
+    ▼
+Step 5: Merge Chunks
+    │  (processed/reviewed chunks → merged PPTX)
+    ▼
+Final PPTX
+```
+
+### Step Source Selection in `step_merge_chunks()`
+
+| Mode | `has_template` | `visual_review` | Source used |
+|------|---------------|-----------------|-------------|
+| Raw (no template) | False | — | `chunk_files` (raw Claude output) |
+| Template, no visual review | True | False | `processed_chunks` |
+| Template + visual review | True | True | `reviewed_chunks` |
+
+### Enforced Guard in `main()`
+
+```python
+# Effective values — visual review/passes are forced off when no template
+effective_visual_review = bool(args.visual_review) and bool(args.template)
+effective_visual_passes = args.visual_passes if args.template else 0
+
+# Warnings printed if flags are passed but ignored
+if not args.template and args.visual_review:
+    print("[WARNING] --visual-review is ignored when --template is not provided")
+if not args.template and args.visual_passes != 3:
+    print("[WARNING] --visual-passes is ignored when --template is not provided")
+```
 
 ---
 
 ## Overview
 
-This cookbook implements a **5-step Agno Workflow pipeline** (Step 5 is optional) that generates professional PowerPoint presentations by combining AI content generation, AI image creation, and deterministic template assembly. The pipeline takes a user prompt and a `.pptx` template file, producing a final presentation that matches the template's visual style.
+This cookbook implements pipeline(s) (4–5 steps for the single-file workflow; 2–5 steps for the chunked workflow) that generate professional PowerPoint presentations by combining AI content generation, AI image creation, and deterministic template assembly.
 
 The architecture separates concerns into distinct workflow steps:
 1. An LLM generates raw slide content
@@ -118,7 +242,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | 4 | **Template Engine** | Builds comprehensive knowledge file first (user intent + content plan + deep template design analysis + image assets), then applies your company's template styling using that as the single source of truth | Deterministic Code |
 | 5 *(opt)* | **Gemini 2.5 Flash** (vision) | Inspects rendered slides, corrects critical defects | AI Agent + Deterministic Code |
 
-### What You Control
+### What You Control (`powerpoint_template_workflow.py`)
 
 | Option | What It Does | Default |
 |--------|-------------|---------|
@@ -132,6 +256,23 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--date-text` | Date text for footer date placeholder | Empty (remove) |
 | `--show-slide-numbers` | Keep slide number placeholders | Off |
 | `--verbose` / `-v` | Show detailed diagnostic output | Off |
+
+### What You Control (`powerpoint_chunked_workflow.py`)
+
+| Option | What It Does | Default | Notes |
+|--------|-------------|---------|-------|
+| `--template` / `-t` | .pptx template (optional) | None | Without it: raw generation mode |
+| `--prompt` / `-p` | Presentation topic | Built-in demo | |
+| `--output` / `-o` | Output filename | `presentation_chunked.pptx` | |
+| `--chunk-size` | Slides per Claude API call | 3 | Tune for quality vs. speed |
+| `--max-retries` | Retries per chunk on failure | 2 | |
+| `--no-images` | Skip image generation | Off | Only applies when `--template` is set |
+| `--visual-review` | Enable per-chunk visual QA | Off | **Ignored** when `--template` is not set |
+| `--visual-passes` | Max visual QA passes per chunk | 3 | **Ignored** when `--template` is not set |
+| `--footer-text` | Footer text for all slides | Empty | Only applies when `--template` is set |
+| `--date-text` | Date text for footer | Empty | Only applies when `--template` is set |
+| `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |
+| `--verbose` / `-v` | Verbose/debug logging | Off | |
 
 ### Quick Example
 
@@ -697,7 +838,10 @@ Conservative correction scope reduces the risk of a correction making the output
 
 ```
 cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/
-    powerpoint_template_workflow.py    # This file — the 5-step workflow
+    powerpoint_template_workflow.py    # Single-call pipeline (short decks, ≤7 slides)
+    powerpoint_chunked_workflow.py     # Chunked pipeline (large decks, 8-15+ slides)
+                                       #   imports everything from the template workflow
+                                       #   via wildcard import; adds chunked orchestration
     agent_with_powerpoint_template_v1.py  # Earlier single-agent version
     file_download_helper.py            # Shared: downloads skill-generated files
     my_template.pptx                   # Sample template
@@ -707,6 +851,67 @@ cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/
     README.md                          # Cookbook README
     TEST_LOG.md                        # Test results log
 ```
+
+---
+
+## Chunked Workflow: Additional Architecture Details
+
+### Session State Schema (chunked)
+
+The chunked workflow uses an extended `session_state` that includes all the standard keys from the template workflow plus these chunked-specific keys:
+
+```python
+# Additional keys in powerpoint_chunked_workflow.py session_state
+{
+    # Chunk orchestration (set before workflow runs)
+    "chunk_size": int,          # Slides per Claude API call (default: 3)
+    "max_retries": int,         # Max retries per chunk (default: 2)
+    "visual_passes": int,       # Max visual QA passes per chunk (0 when no template)
+
+    # Flags (forced off when no template)
+    "visual_review": bool,      # Always False when template_path is empty
+
+    # Set by step_optimize_and_plan
+    "storyboard": StoryboardPlan,       # Full per-slide storyboard plan
+    "storyboard_dir": str,              # Path to storyboard markdown files
+    "total_slides": int,                # Planned total slide count
+
+    # Set by step_generate_chunks
+    "chunk_files": List[Optional[str]], # Raw Claude-generated PPTX per chunk
+
+    # Set by step_process_chunks (only runs with template)
+    "processed_chunks": Dict[int, Optional[str]],  # Template-assembled PPTX per chunk
+
+    # Set by step_visual_review_chunks (only runs with template + visual_review)
+    "reviewed_chunks": Dict[int, Optional[str]],   # Visually reviewed PPTX per chunk
+}
+```
+
+### Chunked Workflow: `build_chunked_workflow()` Logic
+
+```python
+def build_chunked_workflow(session_state: Dict) -> Workflow:
+    has_template = bool(session_state.get("template_path"))
+    do_visual_review = has_template and bool(session_state.get("visual_review"))
+
+    steps = [
+        Step(name="Optimize and Plan", executor=step_optimize_and_plan),
+        Step(name="Generate Chunks", executor=step_generate_chunks),
+    ]
+
+    if has_template:                          # Process Chunks only with template
+        steps.append(Step(name="Process Chunks", executor=step_process_chunks))
+
+    if do_visual_review:                      # Visual Review only with template + flag
+        steps.append(Step(name="Visual Review Chunks", executor=step_visual_review_chunks))
+
+    steps.append(Step(name="Merge Chunks", executor=step_merge_chunks))
+    return Workflow(name="Chunked PPTX Workflow", steps=steps, session_state=session_state)
+```
+
+### Interim File Preservation
+
+Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or `shutil.rmtree()` on chunk files anywhere in the chunked workflow. Files accumulate in `output_chunked/chunked_workflow_work/` across runs. This is intentional: interim files are useful for debugging failed chunks and can be inspected directly.
 
 ---
 

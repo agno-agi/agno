@@ -1,14 +1,28 @@
 # Design: Visual Quality Improvements for PowerPoint Template Assembly
 
 **Date:** 2026-02-19
-**Last Updated:** 2026-02-25
+**Last Updated:** 2026-02-27
 **Status:** Implemented (Phase 1 + Phase 2)
 **Files affected:**
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` (inherits all improvements via `from powerpoint_template_workflow import *`)
 
 ---
 
 ## Implementation Status
+
+## Scope: Both Workflows
+
+The visual quality improvements described in this document apply to **both** workflow files:
+
+| File | How improvements apply |
+|------|----------------------|
+| `powerpoint_template_workflow.py` | Direct implementation — all functions live here |
+| `powerpoint_chunked_workflow.py` | Via wildcard import — inherits all functions automatically. `step_process_chunks()` calls `step_generate_images()` and `step_assemble_template()` per chunk; `step_visual_review_chunks()` calls `step_visual_quality_review()` per chunk. |
+
+**Important:** Visual quality improvements (both Phase 1 deterministic fixes and Phase 2 visual review) only apply in the chunked workflow **when `--template` is provided**. In raw generation mode (no template), `step_process_chunks` and `step_visual_review_chunks` are skipped entirely — the chunked workflow merges raw Claude-generated PPTX files directly.
+
+---
 
 ### Phase 1: Deterministic Quality Improvements — COMPLETE ✅
 
@@ -42,7 +56,7 @@ The optional Step 5 visual quality review agent has been implemented (2026-02-25
 | Step 5 executor | `step_visual_quality_review()` | ✅ Implemented |
 | CLI flag | `--visual-review` | ✅ Implemented |
 
-See [`ARCHITECTURE_powerpoint_template_workflow.md`](ARCHITECTURE_powerpoint_template_workflow.md) for full details on all implementations.
+See [`ARCHITECTURE_powerpoint_template_workflow.md`](ARCHITECTURE_powerpoint_template_workflow.md) for full details on all implementations, including the chunked workflow architecture, pipeline modes, and session state schema.
 
 ---
 
@@ -546,7 +560,13 @@ from pptx.enum.text import MSO_AUTO_SIZE  # for auto_size fallback
 
 ## Code Synchronization Note
 
-Both files contain identical copies of the core functions. Any change must be applied to **both files**. Consider in a future refactor extracting the shared functions into a common module (e.g., `_pptx_template_utils.py`) to eliminate duplication, but that is out of scope for this design.
+`powerpoint_chunked_workflow.py` imports all core functions from `powerpoint_template_workflow.py` via `from powerpoint_template_workflow import *`. This means:
+
+- **No duplication** of helper functions, agents, Pydantic models, or step functions between the two files
+- Any fix to a core function in `powerpoint_template_workflow.py` is automatically available in `powerpoint_chunked_workflow.py`
+- The chunked workflow only adds chunked-specific logic (storyboard planning, chunk generation, chunk merging) on top
+
+The earlier note about applying changes to "both files" no longer applies — `powerpoint_template_workflow.py` is the single source of truth for all shared functions. Consider extracting to a `_pptx_template_utils.py` module in a future refactor if the wildcard import becomes unwieldy, but that is out of scope for this design.
 
 ---
 

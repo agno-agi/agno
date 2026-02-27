@@ -130,3 +130,96 @@ export GOOGLE_API_KEY="..."
 - Footer text appears on all slides when `--footer-text` is used
 - Slide numbers appear when `--show-slide-numbers` is used
 - With `--visual-review`: quality_report in session_state, critical issues corrected
+
+### powerpoint_chunked_workflow.py — Initial Implementation
+
+**Status:** READY FOR TESTING (syntax verified, runtime test requires ANTHROPIC_API_KEY and GOOGLE_API_KEY)
+
+**Description:** New chunked PPTX generation workflow that solves the 10+ slide failure issue in `powerpoint_template_workflow.py`. Implements:
+- Query optimization with storyboard planning (Step 1)
+- Chunked Claude API calls with configurable chunk size (Steps 2-3)
+- Per-chunk template assembly + image pipeline (Step 4)
+- Per-chunk visual review with up to 3 passes (Step 5, optional)
+- OPC-aware PPTX merge (Step 6)
+
+**New CLI args:** `--chunk-size` (default 3), `--max-retries` (default 2)
+
+**Expected command:**
+```
+.venvs/demo/bin/python powerpoint_chunked_workflow.py -p "12-slide AI presentation" --chunk-size 4
+```
+
+**Result:** Syntax check PASS. Runtime testing requires API keys (ANTHROPIC_API_KEY, GOOGLE_API_KEY).
+
+---
+
+### powerpoint_chunked_workflow.py — Three Improvements
+
+**Date:** 2026-02-27
+**Status:** IMPLEMENTED (syntax verified, runtime test requires ANTHROPIC_API_KEY and GOOGLE_API_KEY)
+
+**Description:** Three targeted improvements applied to `powerpoint_chunked_workflow.py`:
+
+#### Improvement 1: `--visual-passes` CLI Argument
+
+Replaces the hardcoded `range(3)` loop in `step_visual_review_chunks()` with a configurable CLI argument.
+
+| Item | Detail |
+|------|--------|
+| New arg | `--visual-passes` (int, default=3) |
+| Session state key | `visual_passes` |
+| Usage in step | `max_passes = session_state.get("visual_passes", 3)` |
+| Print update | All "pass X/3" messages now print `f"pass {pass_num+1}/{max_passes}"` |
+
+**Example:**
+```bash
+.venvs/demo/bin/python powerpoint_chunked_workflow.py \
+  -p "12-slide AI strategy deck" -t my_template.pptx \
+  --visual-review --visual-passes 5
+```
+
+#### Improvement 2: Verbose Logging Optimization
+
+Applied consistent `if VERBOSE:` guards throughout the file following the same pattern used in `powerpoint_template_workflow.py`. The imported `VERBOSE` module-level flag (from the wildcard `*` import) is reused directly.
+
+**Verbose-gated debug prints added in:**
+
+| Function | Verbose logs added |
+|----------|--------------------|
+| `step_optimize_and_plan()` | Full optimizer prompt, full storyboard JSON, per-slide storyboard markdown |
+| `generate_chunk_pptx()` | Full chunk prompt, message count + types per attempt, file download attempt details (primary + fallback) |
+| `step_generate_chunks()` | Chunk breakdown showing which slide numbers are in each chunk |
+| `step_process_chunks()` | Session state keys before sub-steps, image plan decisions per chunk |
+| `step_visual_review_chunks()` | Full `SlideQualityReport` per slide after review, per-issue details (severity, fix, description) |
+| `merge_pptx_files()` | Source→target slide mapping per merge, total relationship copy count per slide |
+| `step_merge_chunks()` | Ordered list of chunk files being merged |
+
+**Always-printed (non-verbose) messages follow the spec pattern:**
+- `[STEP_NAME] Starting ...` / `[STEP_NAME] Done in X.Xs`
+- `[ERROR] ...` for errors
+- `[VISUAL REVIEW MISSING FIX] ...` always printed per spec, never gated
+
+#### Improvement 3: Duration Calculation Per Step
+
+Consistent step-level and sub-operation timing applied throughout.
+
+| Location | Timer variable | Print tag |
+|----------|---------------|-----------|
+| `step_optimize_and_plan()` | `step_start` / `step_elapsed` | `[TIMING] step_optimize_and_plan completed in X.Xs` |
+| `generate_chunk_pptx()` per attempt | `attempt_start` / `attempt_elapsed` | `[TIMING] Chunk N attempt M: X.Xs` |
+| `step_generate_chunks()` per chunk | `chunk_start` / `chunk_elapsed` | `[TIMING] Chunk N generation: X.Xs` |
+| `step_generate_chunks()` total | `step_start` / `step_elapsed` | `[TIMING] step_generate_chunks completed in X.Xs` |
+| `step_process_chunks()` per chunk | `chunk_proc_start` / `chunk_proc_elapsed` | `[TIMING] Chunk N processing: X.Xs` |
+| `step_process_chunks()` total | `step_start` / `step_elapsed` | `[TIMING] step_process_chunks completed in X.Xs` |
+| `step_visual_review_chunks()` per pass | `pass_start` / `pass_elapsed` | `[TIMING] Chunk N pass M: X.Xs` |
+| `step_visual_review_chunks()` per chunk | `chunk_review_start` / `chunk_review_elapsed` | `[TIMING] Chunk N total review: X.Xs` |
+| `step_visual_review_chunks()` total | `step_start` / `step_elapsed` | `[TIMING] step_visual_review_chunks completed in X.Xs` |
+| `merge_pptx_files()` | `merge_start` / `merge_elapsed` | `[TIMING] merge_pptx_files completed in X.Xs` |
+| `step_merge_chunks()` total | `step_start` / `step_elapsed` | `[TIMING] step_merge_chunks completed in X.Xs` |
+| `main()` total | `start_time` / `elapsed` | `[TIMING] Total workflow: X.Xs` |
+
+**Before/after line count:** 1317 → 1510 lines (+193 lines added)
+
+**Syntax check:** PASS
+
+---

@@ -93,3 +93,5 @@ pyrightconfig.json
 CLAUDE_PRIVATE.md
 
 output/
+
+output_chunked/
