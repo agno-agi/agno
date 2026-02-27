@@ -21,47 +21,74 @@ Workflow steps:
                                 by this knowledge file as the single source of truth.
   Step 5  Visual Quality Review (optional) - Gemini vision inspects rendered slides
 
+Operating modes:
+  With template (--template / -t):
+    Runs all applicable steps (1-4, optionally 5). The .pptx template provides
+    the visual design — fonts, colors, layouts, placeholders, decorative shapes.
+    The final output is a professionally styled presentation that matches your
+    corporate or personal brand.
+
+  Without template (no --template flag):
+    Runs only Steps 1, 2 (unless --no-images), and 3 (unless --no-images).
+    Step 4 (Template Assembly) is skipped entirely. The raw Claude-generated
+    .pptx file is copied directly to the output path. Useful for quickly
+    previewing AI-generated content before applying a template, or when no
+    template is available.
+
 Prerequisites:
 - uv pip install agno anthropic python-pptx google-genai pillow
 - export ANTHROPIC_API_KEY="your_api_key_here"
 - export GOOGLE_API_KEY="your_google_api_key_here"
-- A .pptx template file
+- A .pptx template file (optional — omit to get raw Claude output)
 
 Usage:
     # Basic usage with a template:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         --template my_template.pptx
 
+    # Run without a template (raw Claude output only):
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py
+
+    # Run without a template, with a custom prompt and output file:
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
+        -p "Create a 5-slide overview of renewable energy trends" -o energy.pptx
+
     # Full options: custom prompt, output path, verbose logging:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx -o report.pptx -p "Create a 5-slide AI trends presentation" -v
 
     # Disable streaming (more reliable for shorter prompts, may timeout on complex ones):
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx --no-stream
 
     # Skip AI image generation entirely:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx --no-images
 
     # Require at least 3 AI-generated images across slides:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx --min-images 3
 
     # Let the image planner decide freely (no minimum enforced):
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx --min-images 0
 
     # Enable visual quality review with Gemini vision (requires LibreOffice):
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx --visual-review
 
     # Add footer text and slide numbers to all slides:
-    .venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \\
+    /workspaces/agno/.venvs/demo/bin/python powerpoint_template_workflow.py \\
         -t my_template.pptx --footer-text "Confidential" --show-slide-numbers
 
 CLI Flags:
-    --template, -t       Path to the .pptx template file (required).
+    --template, -t       Path to the .pptx template file (optional).
+                         With template: runs the full pipeline including Step 4
+                         (Template Assembly), which applies the template's fonts,
+                         colors, and layouts to produce a professionally branded .pptx.
+                         Without template: skips Step 4; the raw Claude-generated
+                         presentation is saved directly to the output path. Steps 2
+                         and 3 (image generation) still run unless --no-images is set.
     --output, -o         Output filename (default: presentation_from_template.pptx).
     --prompt, -p         Custom prompt for the presentation content.
     --no-images          Skip AI image generation (Steps 2 and 3).
@@ -4005,7 +4032,10 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     content_agent = Agent(
         name="Content Generator",
         model=Claude(
-            id="claude-sonnet-4-5-20250929",  # Or: "claude-sonnet-4-6", "claude-opus-4-6"
+            id="claude-sonnet-4-6",
+            betas=["context-1m-2025-08-07"],
+            # "claude-sonnet-4-5-20250929",
+            # # Or: "claude-sonnet-4-6", "claude-opus-4-6"
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
         ),
         instructions=[
@@ -6717,8 +6747,10 @@ def parse_args():
     parser.add_argument(
         "--template",
         "-t",
-        required=True,
-        help="Path to the .pptx template file.",
+        default=None,
+        help="Path to the .pptx template file (optional). "
+        "When omitted, the raw Claude-generated presentation is used as output "
+        "without any template styling applied.",
     )
     parser.add_argument(
         "--output",
@@ -6790,13 +6822,13 @@ if __name__ == "__main__":
 
     VERBOSE = args.verbose
 
-    if not os.path.isfile(args.template):
-        print("Error: Template file not found: %s" % args.template)
-        sys.exit(1)
-
-    if not args.template.endswith(".pptx"):
-        print("Error: Template file must be a .pptx file")
-        sys.exit(1)
+    if args.template is not None:
+        if not os.path.isfile(args.template):
+            print("Error: Template file not found: %s" % args.template)
+            sys.exit(1)
+        if not args.template.endswith(".pptx"):
+            print("Error: Template file must be a .pptx file")
+            sys.exit(1)
 
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise ValueError("ANTHROPIC_API_KEY environment variable not set")
@@ -6851,7 +6883,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("PowerPoint Template Workflow")
     print("=" * 60)
-    print("Template: %s" % args.template)
+    print("Template: %s" % (args.template or "none (raw output)"))
     print("Output:   %s" % output_path)
     print("Images:   %s" % ("disabled" if args.no_images else "enabled"))
     print("Stream:   %s" % ("disabled" if args.no_stream else "enabled"))
@@ -6867,7 +6899,8 @@ if __name__ == "__main__":
         steps.append(Step(name="Image Planning", executor=step_plan_images))
         steps.append(Step(name="Image Generation", executor=step_generate_images))
 
-    steps.append(Step(name="Template Assembly", executor=step_assemble_template))
+    if args.template:
+        steps.append(Step(name="Template Assembly", executor=step_assemble_template))
 
     # Optional Step 5: Visual quality review with Gemini vision
     if args.visual_review:
@@ -6905,7 +6938,7 @@ if __name__ == "__main__":
         name="PowerPoint Template Workflow",
         steps=steps,
         session_state={
-            "template_path": args.template,
+            "template_path": args.template or "",
             "output_dir": output_dir,
             "output_path": output_path,
             "generated_file": "",
@@ -6927,6 +6960,14 @@ if __name__ == "__main__":
     )
 
     workflow.print_response(input=prompt, markdown=True)
+
+    # If no template was provided, copy the generated file to the output path
+    if not args.template:
+        generated_file = workflow.session_state.get("generated_file", "")
+        if generated_file and os.path.isfile(generated_file):
+            import shutil as _shutil
+            _shutil.copy2(generated_file, output_path)
+            print("No template specified: raw generated presentation saved to %s" % output_path)
 
     print("\n" + "=" * 60)
     print("Workflow complete!")
