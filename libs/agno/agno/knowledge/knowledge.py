@@ -36,6 +36,7 @@ class Knowledge:
     enable_catalog: bool = False
     enable_backup_tools: bool = False
     backup_dir: Optional[str] = None
+    backup_store: Optional[Any] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -82,9 +83,13 @@ class Knowledge:
                 knowledge_name=self.name,
             )
 
-        # Initialize backup store (local filesystem for direct document access)
+        # Initialize backup store (local filesystem, S3, or GCS for direct document access)
         self._backup_store = None
-        if self.backup_dir is not None or self.enable_backup_tools:
+        if self.backup_store is not None:
+            # User provided a pre-configured store (S3BackupStore, GCSBackupStore, etc.)
+            self._backup_store = self.backup_store
+            self._pipeline.backup_store = self._backup_store
+        elif self.backup_dir is not None or self.enable_backup_tools:
             from agno.knowledge.store.backup_store import BackupStore
 
             backup_path = self.backup_dir or f"tmp/knowledge_backup/{self.name or 'default'}"
