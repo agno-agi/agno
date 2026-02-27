@@ -44,6 +44,7 @@ class IngestionPipeline:
     isolate_vector_search: bool = False
     managed_backend: Optional[Any] = None
     backup_store: Optional[Any] = None
+    enrichment_model: Optional[Any] = None
 
     # ==========================================
     # MAIN ENTRY POINTS
@@ -902,6 +903,8 @@ class IngestionPipeline:
                 return
 
         content.status = ContentStatus.COMPLETED
+        if not content.description and self.enrichment_model is not None:
+            content.description = self._generate_description(content, read_documents)
         self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
         self._backup_documents(content, read_documents)
 
@@ -941,6 +944,8 @@ class IngestionPipeline:
                 return
 
         content.status = ContentStatus.COMPLETED
+        if not content.description and self.enrichment_model is not None:
+            content.description = await self._agenerate_description(content, read_documents)
         await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
         await self._abackup_documents(content, read_documents)
 
@@ -1127,6 +1132,52 @@ class IngestionPipeline:
                 )
         except Exception as e:
             log_warning(f"Could not backup content {content.id}: {e}")
+
+    # ==========================================
+    # ENRICHMENT (LLM description generation)
+    # ==========================================
+
+    _ENRICHMENT_SYSTEM_PROMPT = (
+        "You are a document cataloging assistant. "
+        "Given document content, write a single sentence description "
+        "suitable for a document catalog. Be concise: 10-25 words, no quotes, no formatting."
+    )
+
+    def _generate_description(self, content: Content, read_documents: List[Document]) -> str:
+        """Generate a short description for the content using the enrichment model."""
+        try:
+            from agno.models.message import Message
+
+            sample_text = "\n\n".join(d.content for d in read_documents if d.content)[:2000]
+            name = content.name or "document"
+            messages = [
+                Message(role="system", content=self._ENRICHMENT_SYSTEM_PROMPT),
+                Message(role="user", content=f"Document name: {name}\n\nContent sample:\n{sample_text}"),
+            ]
+            response = self.enrichment_model.response(messages=messages)
+            description = (response.content or "").strip()
+            return description[:200]
+        except Exception as e:
+            log_warning(f"Could not generate description for {content.id}: {e}")
+            return ""
+
+    async def _agenerate_description(self, content: Content, read_documents: List[Document]) -> str:
+        """Async variant of _generate_description."""
+        try:
+            from agno.models.message import Message
+
+            sample_text = "\n\n".join(d.content for d in read_documents if d.content)[:2000]
+            name = content.name or "document"
+            messages = [
+                Message(role="system", content=self._ENRICHMENT_SYSTEM_PROMPT),
+                Message(role="user", content=f"Document name: {name}\n\nContent sample:\n{sample_text}"),
+            ]
+            response = await self.enrichment_model.aresponse(messages=messages)
+            description = (response.content or "").strip()
+            return description[:200]
+        except Exception as e:
+            log_warning(f"Could not generate description for {content.id}: {e}")
+            return ""
 
     # ==========================================
     # MANAGED BACKEND INGESTION
