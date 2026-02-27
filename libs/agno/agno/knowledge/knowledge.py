@@ -36,6 +36,7 @@ class Knowledge:
     enable_catalog: bool = False
     enable_backup_tools: bool = False
     backup_dir: Optional[str] = None
+    enrichment_model: Optional[Any] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -66,6 +67,7 @@ class Knowledge:
             knowledge_name=self.name,
             isolate_vector_search=self.isolate_vector_search,
             managed_backend=self._managed_backend,
+            enrichment_model=self.enrichment_model,
         )
         self._remote_loader = RemoteLoader(
             pipeline=self._pipeline,
