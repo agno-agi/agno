@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
-# Known reasoning model patterns for self-hosted OpenAI-compatible servers
 _OPENAI_LIKE_REASONING_PATTERNS = (
     "deepseek-r1",
     "qwq",
@@ -23,7 +22,6 @@ _OPENAI_LIKE_REASONING_PATTERNS = (
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     class_name = reasoning_model.__class__.__name__
 
-    # Native OpenAI/Azure reasoning models (o-series, 4.x, 5.x)
     if class_name in ("OpenAIChat", "OpenAIResponses", "AzureOpenAI") and (
         ("o4" in reasoning_model.id)
         or ("o3" in reasoning_model.id)
@@ -35,20 +33,16 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     ):
         return True
 
-    # Self-hosted reasoning models via OpenAILike or OpenAIChat with custom base_url
-    # VLLM has its own handler — skip it here
+    # VLLM has its own handler
     if class_name == "VLLM":
         return False
 
-    # OpenAILike subclass OR OpenAIChat with custom base_url (self-hosted)
     is_openai_like = isinstance(reasoning_model, OpenAILike)
     is_self_hosted_openai = class_name == "OpenAIChat" and getattr(reasoning_model, "base_url", None) is not None
 
     if is_openai_like or is_self_hosted_openai:
-        # Explicit opt-in via enable_thinking flag
         if getattr(reasoning_model, "enable_thinking", None) is True:
             return True
-        # Known reasoning model ID patterns
         model_id = reasoning_model.id.lower()
         if any(pattern in model_id for pattern in _OPENAI_LIKE_REASONING_PATTERNS):
             return True
