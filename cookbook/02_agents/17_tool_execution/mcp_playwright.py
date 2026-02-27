@@ -1,9 +1,9 @@
 """
-Code Mode — MCP Playwright Multi-Step Agentic Test
-====================================================
+Tool Execution — MCP Playwright Multi-Step Agentic Test
+=========================================================
 Long-running agentic test: model browses multiple pages, takes screenshots,
 reasons about what it sees, and synthesizes findings. This is the real-world
-stress test for code_mode + MCP media sideband.
+stress test for tool execution + MCP media sideband.
 
 Validates:
 1. Multiple screenshots across turns don't bloat context (sideband works)
@@ -11,7 +11,7 @@ Validates:
 3. Media collector resets per run_code call (no cross-call leaks)
 4. Token usage stays proportional to text, not screenshot bytes
 
-Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/mcp_playwright.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/mcp_playwright.py
 """
 
 import asyncio
@@ -38,7 +38,7 @@ async def main():
         agent = Agent(
             model=Claude(id="claude-sonnet-4-20250514"),
             tools=[mcp_tools],
-            code_mode=True,
+            enable_tool_execution=True,
             markdown=True,
         )
 

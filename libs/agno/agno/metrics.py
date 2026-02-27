@@ -19,7 +19,7 @@ class ModelType(str, Enum):
     CULTURE_MODEL = "culture_model"
     LEARNING_MODEL = "learning_model"
     COMPRESSION_MODEL = "compression_model"
-    CODE_MODEL = "code_model"
+    TOOL_EXECUTION_MODEL = "tool_execution_model"
 
 
 if TYPE_CHECKING:

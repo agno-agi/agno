@@ -1,10 +1,10 @@
 """
-Code Mode — Codebase Documenter (Multi-MCP, 25 tools)
-======================================================
-Uses code_mode with two MCP servers (Filesystem + Git) to automatically
+Tool Execution — Codebase Documenter (Multi-MCP, 25 tools)
+============================================================
+Uses tool execution with two MCP servers (Filesystem + Git) to automatically
 document a Python project. The agent reads source files, generates a
 README.md, writes it to disk, and commits it — all orchestrated through
-code_mode's single-program execution.
+tool execution's single-program execution.
 
 Combined: 25 tools (13 filesystem + 12 git), triggering discovery mode.
 The agent uses search_tools to find relevant functions across both servers,
@@ -15,7 +15,7 @@ Requirements:
   - uv (uvx) for the git MCP server
 
 Run:
-  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/codebase_documenter.py
+  .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/codebase_documenter.py
 """
 
 import asyncio
@@ -140,11 +140,11 @@ def setup_sample_project(project_dir: Path):
 
 async def main():
     # .resolve() needed on macOS where /var/folders is a symlink to /private/var/folders
-    project_dir = Path(tempfile.mkdtemp(prefix="code_mode_docs_")).resolve()
+    project_dir = Path(tempfile.mkdtemp(prefix="tool_exec_docs_")).resolve()
     try:
         setup_sample_project(project_dir)
         print("=" * 60)
-        print("CODEBASE DOCUMENTER (Filesystem + Git MCP, code_mode)")
+        print("CODEBASE DOCUMENTER (Filesystem + Git MCP, tool execution)")
         print(f"Project: {project_dir}")
         print("=" * 60)
 
@@ -165,7 +165,7 @@ async def main():
                 name="Codebase Documenter",
                 model=Claude(id="claude-sonnet-4-20250514"),
                 tools=[fs_tools, git_tools],
-                code_mode=True,
+                enable_tool_execution=True,
                 tool_call_limit=10,
                 markdown=True,
             )

@@ -1,16 +1,16 @@
 """
-Code Mode — Multi-Toolkit Data Pipeline (36 tools)
-====================================================
+Tool Execution — Multi-Toolkit Data Pipeline (36 tools)
+=========================================================
 Combines DuckDbTools(13) + YFinanceTools(9) + CalculatorTools(8) + FileTools(6)
-into a single code_mode agent with 36 functions. Discovery mode auto-triggers
+into a single tool execution agent with 36 functions. Discovery mode auto-triggers
 at this scale, so the LLM uses search_tools to find relevant functions
 from across all four toolkits, then writes one code block that pipelines:
   fetch stock data -> load into DuckDB -> run analytics -> calculate -> save report
 
-Compares token usage and tool call count: Code Mode vs Traditional.
+Compares token usage and tool call count: Tool Execution vs Traditional.
 
 Run:
-  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/data_pipeline.py
+  .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/data_pipeline.py
 """
 
 from pathlib import Path
@@ -57,14 +57,14 @@ if __name__ == "__main__":
     all_tools = [yf, duckdb, calc, files]
 
     print("=" * 70)
-    print("CODE MODE (36 tools, discovery mode)")
+    print("TOOL EXECUTION (36 tools, discovery mode)")
     print("=" * 70)
 
     code_agent = Agent(
-        name="Code Mode Agent",
+        name="Tool Execution Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
         tools=all_tools,
-        code_mode=True,
+        enable_tool_execution=True,
         markdown=True,
     )
 
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("COMPARISON")
     print("=" * 70)
-    print(f"{'Metric':<25} {'Code Mode':>15} {'Traditional':>15} {'Savings':>15}")
+    print(f"{'Metric':<25} {'Tool Exec':>15} {'Traditional':>15} {'Savings':>15}")
     print("-" * 70)
     print(
         f"{'Input tokens':<25} {cm_input:>15,} {tm_input:>15,} {tm_input - cm_input:>15,}"

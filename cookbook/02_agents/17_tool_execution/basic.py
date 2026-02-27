@@ -1,14 +1,14 @@
 """
-Code Mode — Basic Example with YFinanceTools
-==============================================
-Demonstrates code_mode=True on an Agent. The LLM writes Python code
+Tool Execution — Basic Example with YFinanceTools
+===================================================
+Demonstrates enable_tool_execution=True on an Agent. The LLM writes Python code
 that calls multiple YFinance tools in a single exec() pass — loops,
 filters, and formatting included.
 
-Compares token usage: Code Mode vs Traditional tool_call mode.
+Compares token usage: Tool Execution vs Traditional tool_call mode.
 
 Run:
-  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/basic.py
+  .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/basic.py
 """
 
 from agno.agent import Agent
@@ -27,14 +27,14 @@ if __name__ == "__main__":
     )
 
     print("=" * 70)
-    print("CODE MODE (code_mode=True)")
+    print("TOOL EXECUTION (enable_tool_execution=True)")
     print("=" * 70)
 
     code_agent = Agent(
-        name="Code Mode Agent",
+        name="Tool Execution Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
         tools=[yf],
-        code_mode=True,
+        enable_tool_execution=True,
         tool_call_limit=3,
         markdown=True,
     )
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("COMPARISON")
     print("=" * 70)
-    print(f"{'Metric':<25} {'Code Mode':>15} {'Traditional':>15} {'Savings':>15}")
+    print(f"{'Metric':<25} {'Tool Exec':>15} {'Traditional':>15} {'Savings':>15}")
     print("-" * 70)
     print(
         f"{'Input tokens':<25} {cm_input:>15,} {tm_input:>15,} {tm_input - cm_input:>15,}"

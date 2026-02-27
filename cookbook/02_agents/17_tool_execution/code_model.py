@@ -1,8 +1,8 @@
 """
-Code Mode + code_model — Dual-Model Pattern
-=============================================
+Tool Execution + ToolExecutionManager — Dual-Model Pattern
+============================================================
 Uses a cheap/fast planning model (GPT-4o) as the agent's main model,
-while a specialized code_model (Claude) writes and executes Python code
+while a specialized code model (Claude) writes and executes Python code
 internally. The planning model just describes tasks in plain English.
 
 Benefits:
@@ -12,7 +12,7 @@ Benefits:
   - Works with ANY model as the planning model (even non-coding models)
 
 Run:
-  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/code_model.py
+  .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/code_model.py
 """
 
 import time
@@ -20,6 +20,7 @@ import time
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
+from agno.tool_execution import ToolExecutionManager
 from agno.tools.calculator import CalculatorTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     calc = CalculatorTools()
 
     print("=" * 70)
-    print("CODE MODEL DEMO")
+    print("TOOL EXECUTION MANAGER DEMO")
     print("Planning model: GPT-4o (describes tasks in English)")
     print("Code model:     Claude Sonnet 4 (writes Python code)")
     print("=" * 70)
@@ -48,8 +49,9 @@ if __name__ == "__main__":
         name="Stock Analyst",
         model=OpenAIChat(id="gpt-4o"),
         tools=[yf, calc],
-        code_mode=True,
-        code_model=Claude(id="claude-sonnet-4-20250514"),
+        tool_execution_manager=ToolExecutionManager(
+            model=Claude(id="claude-sonnet-4-20250514"),
+        ),
         tool_call_limit=5,
         markdown=True,
     )

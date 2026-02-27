@@ -9,17 +9,17 @@ from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
-    from agno.code_mode.tool import CodeMode
+    from agno.tool_execution.toolkit import _ToolExecutionKit
 
 
 def make_wrapper(
-    tool: "CodeMode",
+    tool: "_ToolExecutionKit",
     name: str,
     func: Function,
     media_collector: Optional[Dict[str, List[Any]]] = None,
     caller_loop: Any = None,
 ) -> Callable:
-    from agno.code_mode.tool import FRAMEWORK_PARAMS
+    from agno.tool_execution.toolkit import FRAMEWORK_PARAMS
 
     param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in FRAMEWORK_PARAMS]
 
@@ -55,7 +55,7 @@ def make_wrapper(
     return wrapper
 
 
-def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]:
+def get_framework_args(tool: "_ToolExecutionKit", entrypoint: Callable) -> Dict[str, Any]:
     args: Dict[str, Any] = {}
     run_code_func = tool.functions.get("run_code")
     if run_code_func is None:
@@ -67,7 +67,7 @@ def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]
         return args
 
     param_names = set(sig.parameters.keys())
-    from agno.code_mode.tool import FRAMEWORK_ARG_ATTRS
+    from agno.tool_execution.toolkit import FRAMEWORK_ARG_ATTRS
 
     for param, attr in FRAMEWORK_ARG_ATTRS.items():
         if param in param_names:
@@ -103,7 +103,7 @@ def bridge_async(
 
 
 def build_namespace(
-    tool: "CodeMode",
+    tool: "_ToolExecutionKit",
     use_async: bool = False,
     media_collector: Optional[Dict[str, List[Any]]] = None,
     caller_loop: Any = None,
@@ -134,7 +134,7 @@ def build_namespace(
     functions = tool.sandbox_async_functions if use_async else tool.sandbox_functions
     for name, func in functions.items():
         if name in preapproved:
-            log_warning(f"CodeMode: Tool '{name}' shadows pre-imported module '{name}'")
+            log_warning(f"ToolExecution: Tool '{name}' shadows pre-imported module '{name}'")
         wrapper = make_wrapper(tool, name, func, media_collector=media_collector, caller_loop=caller_loop)
         namespace[name] = wrapper
 
@@ -181,7 +181,7 @@ def extract_result(
 
 
 def execute_code(
-    tool: "CodeMode",
+    tool: "_ToolExecutionKit",
     code: str,
     use_async: bool = False,
     caller_loop: Any = None,
@@ -191,7 +191,7 @@ def execute_code(
             return f"{tool.EXEC_ERROR_PREFIX}Code exceeds maximum length of {tool.max_code_length} characters."
 
         code = prepare_python_code(code)
-        log_debug(f"CodeMode executing:\n{code}")
+        log_debug(f"ToolExecution executing:\n{code}")
 
         media_collector: Dict[str, List[Any]] = {"images": [], "videos": [], "audios": [], "files": []}
         namespace, base_keys = build_namespace(

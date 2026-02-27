@@ -187,11 +187,11 @@ class Agent:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
-    # --- Code Mode ---
-    # Enable code mode: the agent writes Python code to orchestrate tool calls in a single exec() pass.
-    code_mode: bool = False
-    # A dedicated model for generating code (optional; main model writes code if not set).
-    code_model: Optional[Model] = None
+    # --- Tool Execution ---
+    # Enable tool execution: the agent writes Python code to orchestrate tool calls in a single exec() pass
+    enable_tool_execution: bool = False
+    # Manager for configuring tool execution (model, retries, discovery, etc.)
+    tool_execution_manager: Optional[Any] = None
 
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
@@ -415,8 +415,8 @@ class Agent:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
-        code_mode: bool = False,
-        code_model: Optional[Union[Model, str]] = None,
+        enable_tool_execution: bool = False,
+        tool_execution_manager: Optional[Any] = None,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -569,8 +569,8 @@ class Agent:
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
 
-        self.code_mode = code_mode
-        self.code_model = code_model  # type: ignore[assignment]
+        self.enable_tool_execution = enable_tool_execution
+        self.tool_execution_manager = tool_execution_manager
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
@@ -646,7 +646,7 @@ class Agent:
         self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._code_mode: Optional[Any] = None
+        self._tool_execution_kit: Optional[Any] = None
 
         self._formatter: Optional[SafeFormatter] = None
 

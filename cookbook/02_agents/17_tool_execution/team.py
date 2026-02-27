@@ -1,7 +1,7 @@
 """
-Code Mode — Team with Tool-Writing Agent
-==========================================
-A team where the "Data Analyst" member uses code_mode to orchestrate
+Tool Execution — Team with Tool-Writing Agent
+================================================
+A team where the "Data Analyst" member uses enable_tool_execution to orchestrate
 heavy data operations, while the "Researcher" stays in normal mode
 for web search. The team leader routes tasks to the right agent.
 
@@ -9,7 +9,7 @@ This is the "tool-writing agent" pattern: one team member specializes
 in writing Python programs that call multiple tools efficiently.
 
 Run:
-  .venvs/demo/bin/python cookbook/02_agents/17_code_mode/team.py
+  .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/team.py
 """
 
 import time
@@ -37,7 +37,7 @@ researcher = Agent(
 
 data_analyst = Agent(
     name="Data Analyst",
-    role="Quantitative data specialist using code mode",
+    role="Quantitative data specialist using tool execution",
     model=model,
     tools=[
         YFinanceTools(
@@ -47,7 +47,7 @@ data_analyst = Agent(
         ),
         CalculatorTools(),
     ],
-    code_mode=True,
+    enable_tool_execution=True,
     instructions=[
         "You write Python programs to fetch and analyze financial data.",
         "Always present results in markdown tables.",

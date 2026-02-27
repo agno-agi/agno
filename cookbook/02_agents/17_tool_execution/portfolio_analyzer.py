@@ -1,17 +1,17 @@
 """
-Code Mode — Portfolio Analyzer (20-Stock Stress Test)
-======================================================
-Head-to-head comparison: code_mode vs traditional tool_call mode
+Tool Execution — Portfolio Analyzer (20-Stock Stress Test)
+===========================================================
+Head-to-head comparison: tool execution vs traditional tool_call mode
 on a task requiring 60+ sequential tool calls.
 
-Without code_mode: the model makes ~60 individual tool calls across ~60 turns.
+Without tool execution: the model makes ~60 individual tool calls across ~60 turns.
 Each turn re-reads all previous tool results -> O(N^2) token growth.
 
-With code_mode: the model writes ONE program with a loop -> 1-2 turns total.
+With tool execution: the model writes ONE program with a loop -> 1-2 turns total.
 
 No API keys needed (YFinance is free).
 
-Run: .venvs/demo/bin/python cookbook/02_agents/17_code_mode/portfolio_analyzer.py
+Run: .venvs/demo/bin/python cookbook/02_agents/17_tool_execution/portfolio_analyzer.py
 """
 
 import time
@@ -62,11 +62,11 @@ def build_yfinance():
     )
 
 
-def run_code_mode():
+def run_tool_execution():
     agent = Agent(
         model=Claude(id=MODEL),
         tools=[build_yfinance()],
-        code_mode=True,
+        enable_tool_execution=True,
         markdown=True,
         tool_call_limit=5,
     )
@@ -105,12 +105,12 @@ if __name__ == "__main__":
     print(f"PORTFOLIO ANALYZER — {len(STOCKS)} stocks, ~60 tool calls")
     print("=" * 70)
 
-    # Code mode
-    print("\n[1/2] Running CODE MODE...")
+    # Tool execution
+    print("\n[1/2] Running TOOL EXECUTION...")
     t0 = time.time()
-    code_resp = run_code_mode()
+    code_resp = run_tool_execution()
     code_time = time.time() - t0
-    cm = print_metrics("CODE MODE", code_resp, code_time)
+    cm = print_metrics("TOOL EXECUTION", code_resp, code_time)
 
     # Traditional
     print("\n[2/2] Running TRADITIONAL MODE...")
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("COMPARISON")
     print("=" * 70)
-    print(f"{'Metric':<25} {'Code Mode':>15} {'Traditional':>15} {'Savings':>15}")
+    print(f"{'Metric':<25} {'Tool Exec':>15} {'Traditional':>15} {'Savings':>15}")
     print("-" * 70)
     print(
         f"{'Input tokens':<25} {cm_input:>15,} {tm_input:>15,} {tm_input - cm_input:>15,}"
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     code_stocks_found = sum(1 for s in STOCKS if s.lower() in code_content)
     trad_stocks_found = sum(1 for s in STOCKS if s.lower() in trad_content)
     print(
-        f"\nStocks in output: code_mode={code_stocks_found}/{len(STOCKS)}, traditional={trad_stocks_found}/{len(STOCKS)}"
+        f"\nStocks in output: tool_exec={code_stocks_found}/{len(STOCKS)}, traditional={trad_stocks_found}/{len(STOCKS)}"
     )
 
     print(

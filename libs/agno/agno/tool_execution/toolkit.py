@@ -6,8 +6,8 @@ import math
 import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
-from agno.code_mode.sandbox import execute_code
-from agno.code_mode.stubs import collect_functions, generate_catalog, generate_stub_map, resolve_discovery
+from agno.tool_execution.sandbox import execute_code
+from agno.tool_execution.stubs import collect_functions, generate_catalog, generate_stub_map, resolve_discovery
 from agno.tools import Toolkit
 from agno.tools.function import Function, ToolResult
 from agno.utils.log import log_debug
@@ -42,7 +42,7 @@ JSON_TYPE_MAP: Dict[str, str] = {
 }
 
 
-class CodeMode(Toolkit):
+class _ToolExecutionKit(Toolkit):
     # Sentinel prefix to distinguish exec errors from real results
     EXEC_ERROR_PREFIX = "[[EXEC_ERROR]] "
 
@@ -157,13 +157,14 @@ class CodeMode(Toolkit):
         discovery_threshold: int = 15,
         additional_modules: Optional[Dict[str, Any]] = None,
         max_code_length: int = 10_000,
+        code_generation_prompt: Optional[str] = None,
         **kwargs: Any,
     ):
         self.code_model = code_model
         if self.code_model is not None:
             from agno.metrics import ModelType
 
-            self.code_model.model_type = ModelType.CODE_MODEL
+            self.code_model.model_type = ModelType.TOOL_EXECUTION_MODEL
         self.max_code_retries = max_code_retries
         # Coupled to hardcoded "result" in CODE_MODEL_SYSTEM and self.instructions
         self.return_variable = "result"
@@ -192,7 +193,11 @@ class CodeMode(Toolkit):
             sync_tools.insert(0, self.search_tools)
             async_tools.insert(0, (self.asearch_tools, "search_tools"))
 
-        super().__init__(name="code_mode", tools=sync_tools, async_tools=async_tools, **kwargs)
+        super().__init__(name="tool_execution", tools=sync_tools, async_tools=async_tools, **kwargs)
+
+        # Override CODE_MODEL_SYSTEM if custom prompt provided
+        if code_generation_prompt is not None:
+            self.CODE_MODEL_SYSTEM = code_generation_prompt
 
         if self.code_model is not None:
             self.instructions = (
@@ -364,14 +369,14 @@ class CodeMode(Toolkit):
         last_error: Optional[str] = None
         for attempt in range(self.max_code_retries):
             code = self._generate_code(task, error=last_error, run_response=run_response)
-            log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
+            log_debug(f"ToolExecution code_model attempt {attempt + 1}:\n{code}")
             result = execute_code(self, code, use_async=use_async)
             if isinstance(result, ToolResult):
                 return result
             if not result.startswith(self.EXEC_ERROR_PREFIX):
                 return result
             last_error = result.removeprefix(self.EXEC_ERROR_PREFIX)
-            log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
+            log_debug(f"ToolExecution code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
 
     async def _arun_with_code_model(
@@ -384,12 +389,12 @@ class CodeMode(Toolkit):
         last_error: Optional[str] = None
         for attempt in range(self.max_code_retries):
             code = await self._agenerate_code(task, error=last_error, run_response=run_response)
-            log_debug(f"CodeMode code_model attempt {attempt + 1}:\n{code}")
+            log_debug(f"ToolExecution code_model attempt {attempt + 1}:\n{code}")
             result = await loop.run_in_executor(None, partial(execute_code, self, code, use_async, caller_loop=loop))
             if isinstance(result, ToolResult):
                 return result
             if not result.startswith(self.EXEC_ERROR_PREFIX):
                 return result
             last_error = result.removeprefix(self.EXEC_ERROR_PREFIX)
-            log_debug(f"CodeMode code_model attempt {attempt + 1} failed: {last_error}")
+            log_debug(f"ToolExecution code_model attempt {attempt + 1} failed: {last_error}")
         return f"Code generation failed after {self.max_code_retries} attempts. Last error: {last_error}"
