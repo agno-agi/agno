@@ -366,6 +366,7 @@ class ContentStore:
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
             external_id=content_row.external_id,
+            content_hash=content_row.content_hash if hasattr(content_row, "content_hash") else None,
         )
 
     def _build_knowledge_row(self, content: Content) -> KnowledgeRow:
@@ -396,6 +397,7 @@ class ContentStore:
             status_message=self._ensure_string_field(content.status_message, "content.status_message", default=""),
             created_at=created_at,
             updated_at=updated_at,
+            content_hash=content.content_hash,
         )
 
     def _parse_content_status(self, status_str: Optional[str]) -> ContentStatus:
