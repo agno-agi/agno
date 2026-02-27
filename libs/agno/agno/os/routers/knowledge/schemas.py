@@ -213,6 +213,14 @@ class SourceFilesResponseSchema(BaseModel):
     meta: PaginationInfo = Field(..., description="Pagination metadata")
 
 
+class RefreshResponseSchema(BaseModel):
+    """Response model for the content refresh endpoint."""
+
+    results: Dict[str, str] = Field(..., description="Map of content_id to refresh status (refreshed/unchanged/error)")
+    total: int = Field(..., description="Total number of content items checked")
+    refreshed: int = Field(..., description="Number of content items that were refreshed")
+
+
 class ConfigResponseSchema(BaseModel):
     readers: Optional[Dict[str, ReaderSchema]] = Field(None, description="Available content readers")
     readersForType: Optional[Dict[str, List[str]]] = Field(None, description="Mapping of content types to reader IDs")
