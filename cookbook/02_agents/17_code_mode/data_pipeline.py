@@ -2,7 +2,7 @@
 Code Mode — Multi-Toolkit Data Pipeline (36 tools)
 ====================================================
 Combines DuckDbTools(13) + YFinanceTools(9) + CalculatorTools(8) + FileTools(6)
-into a single CodeMode with 36 functions. Discovery mode auto-triggers
+into a single code_mode agent with 36 functions. Discovery mode auto-triggers
 at this scale, so the LLM uses search_tools to find relevant functions
 from across all four toolkits, then writes one code block that pipelines:
   fetch stock data -> load into DuckDB -> run analytics -> calculate -> save report
@@ -16,7 +16,6 @@ Run:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.code_mode import CodeMode
 from agno.models.anthropic import Claude
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckdb import DuckDbTools
@@ -32,24 +31,6 @@ TASK = (
     "4. Calculate the average P/E ratio and total combined market cap.\n"
     "5. Save the final analysis report to /tmp/tech_stock_report.md\n\n"
     "Include a markdown table comparing all 5 stocks and a summary section with key findings."
-)
-
-CODE_MODE_INSTRUCTIONS = (
-    "You solve tasks by writing Python code using the run_code tool.\n\n"
-    "WORKFLOW:\n"
-    "1. Use search_tools to discover functions from each toolkit:\n"
-    "   - Search 'stock' or 'price' for financial data functions\n"
-    "   - Search 'table' or 'query' for DuckDB functions\n"
-    "   - Search 'calculate' or 'add' for math functions\n"
-    "   - Search 'save' or 'file' for file output functions\n"
-    "2. Write ONE complete Python program in run_code that performs the entire pipeline.\n\n"
-    "CRITICAL RULES:\n"
-    "- Write ONE complete program per run_code call. Do NOT make multiple small calls.\n"
-    "- Call functions DIRECTLY: get_current_stock_price(symbol='AAPL'). No prefix.\n"
-    "- json is pre-imported. Always use json.loads() to parse tool return values.\n"
-    "- For DuckDB: use create_table_from_path() or run_query() with CREATE TABLE AS.\n"
-    "- For files: use save_file(contents='...', file_name='report.md').\n"
-    "- Store your final answer in `result` as a formatted markdown string."
 )
 
 TRAD_INSTRUCTIONS = (
@@ -73,19 +54,17 @@ if __name__ == "__main__":
     calc = CalculatorTools()
     files = FileTools(base_dir=Path("/tmp"))
 
+    all_tools = [yf, duckdb, calc, files]
+
     print("=" * 70)
     print("CODE MODE (36 tools, discovery mode)")
     print("=" * 70)
 
-    cm = CodeMode(tools=[yf, duckdb, calc, files])
-    print(f"Total tools: {len(cm.sandbox_functions)}")
-    print(f"Discovery mode: {cm.discovery_enabled}")
-
     code_agent = Agent(
         name="Code Mode Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[cm],
-        instructions=CODE_MODE_INSTRUCTIONS,
+        tools=all_tools,
+        code_mode=True,
         markdown=True,
     )
 
@@ -100,7 +79,7 @@ if __name__ == "__main__":
     trad_agent = Agent(
         name="Traditional Agent",
         model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[yf, duckdb, calc, files],
+        tools=all_tools,
         instructions=TRAD_INSTRUCTIONS,
         markdown=True,
     )

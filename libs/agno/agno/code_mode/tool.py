@@ -4,7 +4,7 @@ import datetime
 import json
 import math
 import re
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.code_mode.sandbox import execute_code
 from agno.code_mode.stubs import collect_functions, generate_catalog, generate_stub_map, resolve_discovery
@@ -16,10 +16,37 @@ if TYPE_CHECKING:
     from agno.models.base import Model
     from agno.models.message import Message
 
+# Parameters the framework injects into tool functions — hidden from LLM stubs
+FRAMEWORK_PARAMS: frozenset = frozenset(
+    {"self", "fc", "agent", "team", "run_context", "images", "videos", "audios", "files"}
+)
+
+# Maps framework param names to the private attr on Function that holds the injected value
+FRAMEWORK_ARG_ATTRS: Dict[str, str] = {
+    "agent": "_agent",
+    "team": "_team",
+    "run_context": "_run_context",
+    "images": "_images",
+    "videos": "_videos",
+    "audios": "_audios",
+    "files": "_files",
+}
+
+JSON_TYPE_MAP: Dict[str, str] = {
+    "string": "str",
+    "number": "float",
+    "integer": "int",
+    "boolean": "bool",
+    "array": "list",
+    "object": "dict",
+}
+
 
 class CodeMode(Toolkit):
+    # Sentinel prefix to distinguish exec errors from real results
     EXEC_ERROR_PREFIX = "[[EXEC_ERROR]] "
 
+    # Best-effort blocklist — NOT a security boundary
     BLOCKED_MODULES: frozenset = frozenset(
         {
             "os",
@@ -47,29 +74,6 @@ class CodeMode(Toolkit):
             "traceback",
         }
     )
-
-    # Maps framework param names to the private attribute on Function that holds the injected value
-    FRAMEWORK_ARG_ATTRS: Dict[str, str] = {
-        "agent": "_agent",
-        "team": "_team",
-        "run_context": "_run_context",
-        "images": "_images",
-        "videos": "_videos",
-        "audios": "_audios",
-        "files": "_files",
-    }
-
-    # "self" and "fc" are framework params but injected differently (not via FRAMEWORK_ARG_ATTRS)
-    FRAMEWORK_PARAMS: frozenset = frozenset({"self", "fc"} | FRAMEWORK_ARG_ATTRS.keys())
-
-    JSON_TYPE_MAP: Dict[str, str] = {
-        "string": "str",
-        "number": "float",
-        "integer": "int",
-        "boolean": "bool",
-        "array": "list",
-        "object": "dict",
-    }
 
     PREAPPROVED_MODULES: Dict[str, Any] = {
         "json": json,
@@ -106,7 +110,6 @@ class CodeMode(Toolkit):
             "abs",
             "print",
             "isinstance",
-            "type",
             "format",
             "pow",
             "divmod",
@@ -128,10 +131,6 @@ class CodeMode(Toolkit):
             "OverflowError",
             "NotImplementedError",
             "Exception",
-            "__build_class__",
-            "True",
-            "False",
-            "None",
         }
     )
 
@@ -157,42 +156,35 @@ class CodeMode(Toolkit):
         discovery: Union[bool, str] = "auto",
         discovery_threshold: int = 15,
         additional_modules: Optional[Dict[str, Any]] = None,
-        return_variable: str = "result",
         max_code_length: int = 10_000,
-        allowed_builtins: Optional[Set[str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ):
-        self.source_tools = tools
         self.code_model = code_model
         if self.code_model is not None:
             from agno.metrics import ModelType
 
             self.code_model.model_type = ModelType.CODE_MODEL
         self.max_code_retries = max_code_retries
-        self.return_variable = return_variable
+        # Coupled to hardcoded "result" in CODE_MODEL_SYSTEM and self.instructions
+        self.return_variable = "result"
         self.max_code_length = max_code_length
-        self.discovery_threshold = discovery_threshold
         self.additional_modules: Dict[str, Any] = additional_modules or {}
-
-        allowed = allowed_builtins if allowed_builtins is not None else self.DEFAULT_BUILTINS
-        self.safe_builtins: Dict[str, Any] = {k: getattr(builtins, k) for k in allowed if hasattr(builtins, k)}
+        self.safe_builtins: Dict[str, Any] = {
+            k: getattr(builtins, k) for k in self.DEFAULT_BUILTINS if hasattr(builtins, k)
+        }
 
         self.sandbox_functions: Dict[str, Function] = collect_functions(tools, async_mode=False)
         self.sandbox_async_functions: Dict[str, Function] = collect_functions(tools, async_mode=True)
 
-        self.stub_map: Dict[str, str] = generate_stub_map(
-            self.sandbox_functions, self.FRAMEWORK_PARAMS, self.JSON_TYPE_MAP
-        )
+        self.stub_map: Dict[str, str] = generate_stub_map(self.sandbox_functions, FRAMEWORK_PARAMS, JSON_TYPE_MAP)
         self.stubs = "\n\n".join(self.stub_map.values())
 
         self.discovery_enabled = resolve_discovery(
-            self.code_model, discovery, len(self.sandbox_functions), self.discovery_threshold
+            self.code_model, discovery, len(self.sandbox_functions), discovery_threshold
         )
         self.catalog = (
             generate_catalog(self.sandbox_functions) if (self.discovery_enabled or self.code_model is not None) else ""
         )
-        self.sync_stubs_injected = False
-        self.async_stubs_injected = False
 
         sync_tools: List[Any] = [self.run_code]
         async_tools: List[Any] = [(self.arun_code, "run_code")]
@@ -236,7 +228,6 @@ class CodeMode(Toolkit):
             details = json.loads(get_details(product_id=data[0]["id"]))
             result = f"Found: {details['name']} at ${details['price']}"
         """
-        # fc.function is the deep-copied Function with _run_response injected
         run_response = getattr(fc.function, "_run_response", None) if fc else None
         if self.code_model is not None:
             return self._run_with_code_model(code, use_async=False, run_response=run_response)
@@ -248,7 +239,6 @@ class CodeMode(Toolkit):
         return result
 
     async def arun_code(self, code: str, fc: Optional[Any] = None) -> Union[str, ToolResult]:
-        # fc.function is the deep-copied Function with _run_response injected
         run_response = getattr(fc.function, "_run_response", None) if fc else None
         if self.code_model is not None:
             return await self._arun_with_code_model(code, use_async=True, run_response=run_response)
@@ -304,46 +294,21 @@ class CodeMode(Toolkit):
     async def asearch_tools(self, query: str) -> str:
         return self.search_tools(query)
 
-    def rebuild(self) -> None:
-        self.sandbox_functions = collect_functions(self.source_tools, async_mode=False)
-        self.sandbox_async_functions = collect_functions(self.source_tools, async_mode=True)
-
-        self.stub_map = generate_stub_map(self.sandbox_functions, self.FRAMEWORK_PARAMS, self.JSON_TYPE_MAP)
-        self.stubs = "\n\n".join(self.stub_map.values())
-
-        if self.discovery_enabled or self.code_model is not None:
-            self.catalog = generate_catalog(self.sandbox_functions)
-
-        self.sync_stubs_injected = False
-        self.async_stubs_injected = False
-
     def get_functions(self) -> Dict[str, Function]:
         funcs = super().get_functions()
-        self._inject_sync_stubs(funcs)
+        self._inject_stubs(funcs)
         return funcs
 
     def get_async_functions(self) -> Dict[str, Function]:
         funcs = super().get_async_functions()
-        self._inject_async_stubs(funcs)
+        self._inject_stubs(funcs)
         return funcs
 
-    def _inject_sync_stubs(self, funcs: Dict[str, Function]) -> None:
-        if self.sync_stubs_injected:
-            return
-        self._inject_stubs_into(funcs)
-        self.sync_stubs_injected = True
-
-    def _inject_async_stubs(self, funcs: Dict[str, Function]) -> None:
-        if self.async_stubs_injected:
-            return
-        self._inject_stubs_into(funcs)
-        self.async_stubs_injected = True
-
-    def _inject_stubs_into(self, funcs: Dict[str, Function]) -> None:
+    def _inject_stubs(self, funcs: Dict[str, Function]) -> None:
         run_code_func = funcs.get("run_code")
         if run_code_func is None:
             return
-
+        # Idempotent — always rebuilds from static sources
         if self.code_model is not None:
             run_code_func.description = (
                 "Execute a task by describing what you need done in plain English.\n\n"
@@ -356,7 +321,6 @@ class CodeMode(Toolkit):
                 "Available tools:\n\n" + self.catalog
             )
         elif self.discovery_enabled:
-            # Use method docstring as base to avoid re-appending on rebuild()
             base = self.run_code.__doc__ or ""
             run_code_func.description = (
                 base + "\n\nAvailable tools (use search_tools for full signatures):\n\n" + self.catalog

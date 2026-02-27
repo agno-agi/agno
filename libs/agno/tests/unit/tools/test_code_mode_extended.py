@@ -4,6 +4,7 @@ from typing import Optional
 import pytest
 
 from agno.code_mode import CodeMode
+from agno.code_mode.tool import FRAMEWORK_ARG_ATTRS, FRAMEWORK_PARAMS
 from agno.tools.function import Function, ToolResult
 from agno.utils.code_execution import prepare_python_code
 
@@ -775,45 +776,15 @@ class TestToolResultFallbackPath:
 # ── Regression tests for codex-review fixes ──────────────────────
 
 
-class TestAllowedBuiltinsEmptySet:
-    def test_empty_set_disables_all_builtins(self):
-        cm = CodeMode(tools=[search_items], allowed_builtins=set())
-        assert cm.safe_builtins == {}
-        output = cm.run_code("result = str(len([1,2,3]))")
-        assert "Error" in output or "NameError" in output
-
-    def test_none_uses_defaults(self):
-        cm = CodeMode(tools=[search_items], allowed_builtins=None)
-        assert len(cm.safe_builtins) > 0
-        output = cm.run_code("result = str(len([1,2,3]))")
-        assert output == "3"
-
-    def test_custom_subset(self):
-        cm = CodeMode(tools=[search_items], allowed_builtins={"len", "str"})
-        assert "len" in cm.safe_builtins
-        assert "min" not in cm.safe_builtins
-
-
-class TestRebuildDescriptionIdempotent:
-    def test_description_not_duplicated_after_rebuild(self):
+class TestDescriptionIdempotent:
+    def test_description_not_duplicated_after_multiple_calls(self):
         cm = CodeMode(tools=[search_items])
         funcs1 = cm.get_functions()
         desc1 = funcs1["run_code"].description
-
-        cm.rebuild()
         funcs2 = cm.get_functions()
         desc2 = funcs2["run_code"].description
         assert desc1 == desc2
-
-    def test_description_not_duplicated_after_multiple_rebuilds(self):
-        cm = CodeMode(tools=[search_items])
-        for _ in range(5):
-            cm.get_functions()
-            cm.rebuild()
-        funcs = cm.get_functions()
-        desc = funcs["run_code"].description
-        # Stubs should appear exactly once
-        assert desc.count("def search_items(") == 1
+        assert desc2.count("def search_items(") == 1
 
 
 class TestStubTripleQuoteEscape:
@@ -845,11 +816,11 @@ class TestClassConstants:
 
     def test_framework_params_includes_all(self):
         expected = {"self", "fc", "agent", "team", "run_context", "images", "videos", "audios", "files"}
-        assert CodeMode.FRAMEWORK_PARAMS == frozenset(expected)
+        assert FRAMEWORK_PARAMS == frozenset(expected)
 
     def test_framework_arg_attrs_keys_subset_of_params(self):
-        for key in CodeMode.FRAMEWORK_ARG_ATTRS:
-            assert key in CodeMode.FRAMEWORK_PARAMS
+        for key in FRAMEWORK_ARG_ATTRS:
+            assert key in FRAMEWORK_PARAMS
 
     def test_blocked_modules_is_frozenset(self):
         assert isinstance(CodeMode.BLOCKED_MODULES, frozenset)
@@ -876,5 +847,3 @@ class TestClassConstants:
     def test_constants_accessible_from_instance(self):
         cm = CodeMode(tools=[search_items])
         assert cm.BLOCKED_MODULES is CodeMode.BLOCKED_MODULES
-        assert cm.FRAMEWORK_PARAMS is CodeMode.FRAMEWORK_PARAMS
-        assert cm.JSON_TYPE_MAP is CodeMode.JSON_TYPE_MAP

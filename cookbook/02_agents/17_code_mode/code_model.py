@@ -1,7 +1,7 @@
 """
 Code Mode + code_model — Dual-Model Pattern
 =============================================
-Uses a cheap/fast planning model (Gemini) as the agent's main model,
+Uses a cheap/fast planning model (GPT-4o) as the agent's main model,
 while a specialized code_model (Claude) writes and executes Python code
 internally. The planning model just describes tasks in plain English.
 
@@ -18,8 +18,8 @@ Run:
 import time
 
 from agno.agent import Agent
-from agno.code_mode import CodeMode
 from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -38,23 +38,18 @@ if __name__ == "__main__":
     )
     calc = CalculatorTools()
 
-    # code_model: Claude writes the Python code internally
-    cm = CodeMode(
-        tools=[yf, calc],
-        code_model=Claude(id="claude-sonnet-4-20250514"),
-    )
-
     print("=" * 70)
     print("CODE MODEL DEMO")
-    print("Planning model: Claude Sonnet 4")
-    print("Code model: Claude Sonnet 4")
-    print(f"Tools: {len(cm.sandbox_functions)}")
+    print("Planning model: GPT-4o (describes tasks in English)")
+    print("Code model:     Claude Sonnet 4 (writes Python code)")
     print("=" * 70)
 
     agent = Agent(
         name="Stock Analyst",
-        model=Claude(id="claude-sonnet-4-20250514"),
-        tools=[cm],
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[yf, calc],
+        code_mode=True,
+        code_model=Claude(id="claude-sonnet-4-20250514"),
         tool_call_limit=5,
         markdown=True,
     )

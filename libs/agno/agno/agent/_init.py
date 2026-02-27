@@ -237,16 +237,10 @@ def get_models(agent: Agent) -> None:
 def _set_code_mode(agent: Agent) -> None:
     from agno.code_mode import CodeMode
 
-    if agent.code_mode_tools is not None:
-        tools_to_wrap = list(agent.code_mode_tools)
-    else:
-        if not isinstance(agent.tools, list):
-            raise ValueError(
-                "code_mode=True requires tools to be a list (not a callable factory). "
-                "Use code_mode_tools to specify which tools to wrap."
-            )
-        tools_to_wrap = [t for t in agent.tools if not isinstance(t, dict)]
-        agent.tools = []
+    if not isinstance(agent.tools, list):
+        raise ValueError("code_mode=True requires tools to be a list (not a callable factory)")
+    tools_to_wrap = [t for t in agent.tools if not isinstance(t, dict)]
+    agent.tools = []
 
     if not tools_to_wrap:
         log_warning("code_mode=True but no tools to wrap")

@@ -347,8 +347,8 @@ class TestFrameworkInjection:
 
 class TestPreapprovedModules:
     def test_datetime_available(self, code_mode_callables):
-        output = code_mode_callables.run_code("result = str(type(datetime.date.today()))")
-        assert "date" in output
+        output = code_mode_callables.run_code("result = str(datetime.date.today())")
+        assert "202" in output
 
     def test_datetime_operations(self, code_mode_callables):
         output = code_mode_callables.run_code("now = datetime.datetime.now()\nresult = str(now.year)")
@@ -423,20 +423,8 @@ class TestAdditionalModules:
         import datetime
 
         cm = CodeMode(tools=[search_items], additional_modules={"datetime": datetime})
-        output = cm.run_code("result = str(type(datetime.date.today()))")
-        assert "date" in output
-
-
-class TestReturnVariable:
-    def test_custom_return_variable(self):
-        cm = CodeMode(tools=[search_items], return_variable="answer")
-        output = cm.run_code('answer = "custom return"')
-        assert "custom return" in output
-
-    def test_custom_variable_takes_priority(self):
-        cm = CodeMode(tools=[search_items], return_variable="answer")
-        output = cm.run_code('answer = "correct"\nresult = "fallback"')
-        assert output == "correct"
+        output = cm.run_code("result = str(datetime.date.today())")
+        assert "202" in output
 
 
 def _make_many_callables(n: int):
@@ -587,23 +575,6 @@ class TestDiscoveryExecution:
         cm_standard = CodeMode(tools=[search_items], discovery=False)
         code = 'result = search_items(query="hello")'
         assert cm_discovery.run_code(code) == cm_standard.run_code(code)
-
-
-class TestRebuild:
-    def test_rebuild_updates_functions(self):
-        toolkit = SimpleToolkit()
-        cm = CodeMode(tools=[toolkit], discovery=True)
-        assert "greet" in cm.sandbox_functions
-        cm.rebuild()
-        assert "greet" in cm.sandbox_functions
-
-    def test_rebuild_resets_stubs_injected(self):
-        cm = CodeMode(tools=[search_items], discovery=True)
-        cm.get_functions()
-        assert cm.sync_stubs_injected is True
-        cm.rebuild()
-        assert cm.sync_stubs_injected is False
-        assert cm.async_stubs_injected is False
 
 
 def _mock_model_response(code: str):

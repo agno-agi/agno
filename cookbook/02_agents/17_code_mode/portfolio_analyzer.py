@@ -1,10 +1,10 @@
 """
-Code Mode — Portfolio Analyzer (10-Stock Stress Test)
+Code Mode — Portfolio Analyzer (20-Stock Stress Test)
 ======================================================
 Head-to-head comparison: code_mode vs traditional tool_call mode
-on a task requiring 40+ sequential tool calls.
+on a task requiring 60+ sequential tool calls.
 
-Without code_mode: the model makes ~40 individual tool calls across ~40 turns.
+Without code_mode: the model makes ~60 individual tool calls across ~60 turns.
 Each turn re-reads all previous tool results -> O(N^2) token growth.
 
 With code_mode: the model writes ONE program with a loop -> 1-2 turns total.
@@ -44,7 +44,7 @@ STOCKS = [
 ]
 
 TASK = (
-    f"Analyze these 10 stocks: {', '.join(STOCKS)}.\n"
+    f"Analyze these {len(STOCKS)} stocks: {', '.join(STOCKS)}.\n"
     "For EACH stock, get: current price, analyst recommendations, and key financial ratios.\n"
     "Then build a comprehensive markdown comparison table with columns:\n"
     "Stock | Price | P/E Ratio | Recommendation | Target Price\n"
@@ -78,7 +78,7 @@ def run_traditional():
         model=Claude(id=MODEL),
         tools=[build_yfinance()],
         markdown=True,
-        tool_call_limit=50,
+        tool_call_limit=80,
     )
     return agent.run(TASK)
 
@@ -102,7 +102,7 @@ def print_metrics(label, response, elapsed):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print(f"PORTFOLIO ANALYZER — {len(STOCKS)} stocks, ~40 tool calls")
+    print(f"PORTFOLIO ANALYZER — {len(STOCKS)} stocks, ~60 tool calls")
     print("=" * 70)
 
     # Code mode

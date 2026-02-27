@@ -19,7 +19,9 @@ def make_wrapper(
     media_collector: Optional[Dict[str, List[Any]]] = None,
     caller_loop: Any = None,
 ) -> Callable:
-    param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in tool.FRAMEWORK_PARAMS]
+    from agno.code_mode.tool import FRAMEWORK_PARAMS
+
+    param_names = [p for p in func.parameters.get("properties", {}).keys() if p not in FRAMEWORK_PARAMS]
 
     def wrapper(*args: Any, **kwargs: Any) -> str:
         entrypoint = func.entrypoint
@@ -65,7 +67,9 @@ def get_framework_args(tool: "CodeMode", entrypoint: Callable) -> Dict[str, Any]
         return args
 
     param_names = set(sig.parameters.keys())
-    for param, attr in tool.FRAMEWORK_ARG_ATTRS.items():
+    from agno.code_mode.tool import FRAMEWORK_ARG_ATTRS
+
+    for param, attr in FRAMEWORK_ARG_ATTRS.items():
         if param in param_names:
             args[param] = getattr(run_code_func, attr)
     return args
@@ -119,6 +123,10 @@ def build_namespace(
 
     builtins_dict = dict(tool.safe_builtins)
     builtins_dict["__import__"] = _restricted_import
+    # Required for class definitions inside exec()
+    builtins_dict["__build_class__"] = (
+        __builtins__["__build_class__"] if isinstance(__builtins__, dict) else __builtins__.__build_class__
+    )
 
     namespace: Dict[str, Any] = {"__builtins__": builtins_dict, "__name__": "__sandbox__"}
     namespace.update(preapproved)
