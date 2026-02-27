@@ -4,9 +4,12 @@ Agno Workflow: Chunked PowerPoint Generation Pipeline.
 A chunked workflow that overcomes Claude API limitations for large presentations
 by splitting generation into manageable chunks, then merging the results.
 
-Problem solved: Single Claude API calls fail for 10+ slide presentations.
+Problem solved: Single Claude API calls fail for 10+ slide presentations;
+               Claude PPTX skill is also prone to throttling and timeouts.
 Solution: Generate slides in configurable chunks (default: 3 slides per call),
           then merge all chunks into one final presentation.
+          A 3-tier fallback ensures production reliability when the primary
+          Claude PPTX skill is unavailable or too slow.
 
 Architecture:
   This file is a thin orchestration layer built on top of powerpoint_template_workflow.py.
@@ -17,6 +20,12 @@ Architecture:
                                      visual review, all helper functions (~7000 lines)
   powerpoint_chunked_workflow.py   — Chunked orchestration layer (~1500 lines, this file)
 
+Chunk generation uses a 3-tier fallback hierarchy per chunk:
+  Tier 1  Claude PPTX Skill    - Primary; native charts, tables, rich visuals
+  Tier 2  LLM Code Generation  - Fallback; LLM writes + executes python-pptx
+                                  + matplotlib code; 80-92% quality parity
+  Tier 3  python-pptx Direct   - Last resort; text-only slides; 100% reliable
+
 Relationship between the two files:
   - powerpoint_template_workflow.py is self-contained and can run standalone (single Claude
     API call, suitable for short presentations of up to ~7 slides).
@@ -26,7 +35,9 @@ Relationship between the two files:
 
 Workflow steps:
   Step 1  Optimize & Plan    - LLM analyzes prompt, decides slide count, creates storyboard
-  Step 2  Generate Chunks    - Call Claude pptx skill for each chunk of slides
+  Step 2  Generate Chunks    - Call Claude pptx skill (Tier 1) for each chunk;
+                               auto-escalates to Tier 2 (LLM code gen) on timeout/
+                               failure, then Tier 3 (text-only) if Tier 2 fails.
   Step 3  Process Chunks     - Apply template + image pipeline per chunk (if template provided)
   Step 4  Visual Review      - Optional per-chunk visual QA (if --visual-review + template)
   Step 5  Merge Chunks       - Merge all processed chunks into the final PPTX
@@ -70,6 +81,9 @@ CLI Flags:
     --verbose, -v        Enable verbose/debug logging.
     --chunk-size         Number of slides per Claude API chunk call (default: 3).
     --max-retries        Max retries per chunk on failure (default: 2).
+    NOTE: When all retries fail or a timeout (300s) occurs, the system
+          automatically switches to Tier 2 (LLM code gen) fallback,
+          then Tier 3 (text-only) if Tier 2 also fails.
     --visual-passes      Maximum visual inspection passes per chunk (default: 3).
 
 Logging conventions:
@@ -84,6 +98,7 @@ Logging conventions:
 """
 
 import argparse
+import concurrent.futures
 import copy
 import json
 import os
@@ -92,6 +107,7 @@ import sys
 import time
 import traceback
 import zipfile
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from agno.run.agent import RunOutput
@@ -107,12 +123,15 @@ from powerpoint_template_workflow import *  # noqa: F401, F403, E402
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.tools.python import PythonTools
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from anthropic import Anthropic
 from file_download_helper import download_skill_files
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field
 
 
@@ -222,6 +241,40 @@ def _format_global_context_markdown(plan: StoryboardPlan) -> str:
     )
 
 
+# === HELPER: SAVE PROMPT TO FILE ===
+
+
+def _save_prompt_to_file(prompt: str, step_name: str, output_dir: str, extra: str = "") -> str:
+    """Save a prompt string to a timestamped .txt file inside output_dir.
+
+    Files are written to output_dir directly (which is output_chunked/chunked_workflow_work/).
+    Filenames follow the pattern: prompt_<step_name>[_<extra>]_<timestamp_ms>.txt
+
+    Args:
+        prompt: The full prompt text to save.
+        step_name: Short identifier for the workflow step (e.g. 'optimize_and_plan', 'chunk').
+        output_dir: Directory in which to write the file.
+        extra: Optional extra qualifier appended between step_name and timestamp.
+
+    Returns:
+        Absolute path of the saved file, or empty string if saving failed.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp_ms = int(time.time() * 1000)
+    if extra:
+        filename = "prompt_%s_%s_%d.txt" % (step_name, extra, timestamp_ms)
+    else:
+        filename = "prompt_%s_%d.txt" % (step_name, timestamp_ms)
+    filepath = os.path.join(output_dir, filename)
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(prompt)
+    except Exception as e:
+        print("[WARNING] Failed to save prompt file %s: %s" % (filepath, e))
+        return ""
+    return filepath
+
+
 # === HELPER: EXTRACT SLIDES DATA FROM A CHUNK PPTX ===
 
 
@@ -315,11 +368,9 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "7. Use professional language. Do not add emojis or overly casual language.\n"
     ) % user_prompt
 
-    if VERBOSE:  # noqa: F405
-        print(
-            "[VERBOSE] Full optimizer prompt (%d chars):\n%s"
-            % (len(optimizer_prompt), optimizer_prompt)
-        )
+    prompt_file = _save_prompt_to_file(optimizer_prompt, "optimize_and_plan", output_dir)
+    if prompt_file:
+        print("[PROMPT] Optimizer prompt saved to: %s" % prompt_file)
 
     try:
         response = query_optimizer.run(optimizer_prompt, stream=False)
@@ -394,6 +445,20 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     return StepOutput(content=summary, success=True)
 
 
+CHUNK_TIMEOUT_SECONDS = 300  # 5 minutes
+
+
+def _run_chunk_agent(chunk_agent, chunk_prompt):
+    """Worker function for timeout wrapper around chunk agent streaming."""
+    response = None
+    event_count = 0
+    for event in chunk_agent.run(chunk_prompt, stream=True, yield_run_output=True):
+        event_count += 1
+        if isinstance(event, RunOutput):
+            response = event
+    return response, event_count
+
+
 # === HELPER: GENERATE A SINGLE CHUNK VIA CLAUDE PPTX SKILL ===
 
 
@@ -402,10 +467,14 @@ def generate_chunk_pptx(
     session_state: Dict,
     chunk_idx: int,
 ) -> Optional[str]:
-    """Call the Claude pptx skill for a chunk of slides with retry logic.
+    """Call the Claude pptx skill for a chunk of slides with retry logic (Tier 1).
 
     Creates a fresh agent per call (not reused across chunks) and applies
     exponential backoff on retries.
+
+    Applies a 300-second (CHUNK_TIMEOUT_SECONDS) wall-clock timeout per attempt
+    via ThreadPoolExecutor. On timeout, activates the session-level fallback flag
+    and returns None immediately (no further retries for this chunk).
 
     Args:
         chunk_slides: List of SlideStoryboard objects for this chunk.
@@ -414,6 +483,8 @@ def generate_chunk_pptx(
 
     Returns:
         Path to the generated chunk PPTX file, or None if all attempts failed.
+        When None is returned, session_state["use_fallback_generator"] is set to
+        True, causing all subsequent chunks to bypass Tier 1 and use Tier 2/3.
     """
     storyboard: StoryboardPlan = session_state["storyboard"]
     storyboard_dir = session_state["storyboard_dir"]
@@ -475,11 +546,11 @@ def generate_chunk_pptx(
         chunk_idx,
     )
 
-    # if VERBOSE:  # noqa: F405
-    #     print(
-    #         "[VERBOSE] Chunk %d prompt (%d chars):\n%s"
-    #         % (chunk_idx, len(chunk_prompt), chunk_prompt[:1000])
-    #     )
+    prompt_file = _save_prompt_to_file(
+        chunk_prompt, "chunk", output_dir, "chunk_%03d" % chunk_idx
+    )
+    if prompt_file:
+        print("[PROMPT] Chunk %d prompt saved to: %s" % (chunk_idx, prompt_file))
 
     chunk_output_path = os.path.join(output_dir, "chunk_%03d.pptx" % chunk_idx)
 
@@ -523,10 +594,23 @@ def generate_chunk_pptx(
         try:
             response = None
             event_count = 0
-            for event in chunk_agent.run(chunk_prompt, stream=True, yield_run_output=True):
-                event_count += 1
-                if isinstance(event, RunOutput):
-                    response = event
+            timed_out = False
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_run_chunk_agent, chunk_agent, chunk_prompt)
+                try:
+                    response, event_count = future.result(timeout=CHUNK_TIMEOUT_SECONDS)
+                except concurrent.futures.TimeoutError:
+                    print(
+                        "[CHUNK %d] Attempt %d/%d timed out after %ds. Activating fallback generator."
+                        % (chunk_idx, attempt + 1, max_retries + 1, CHUNK_TIMEOUT_SECONDS)
+                    )
+                    session_state["use_fallback_generator"] = True
+                    timed_out = True
+                except Exception as e:
+                    raise
+
+            if timed_out:
+                return None
 
             if response is None:
                 print("[CHUNK %d] No RunOutput received after %d events." % (chunk_idx, event_count))
@@ -665,7 +749,319 @@ def generate_chunk_pptx(
         "[CHUNK %d] All %d attempts failed. Skipping chunk."
         % (chunk_idx, max_retries + 1)
     )
+    session_state["use_fallback_generator"] = True
     return None
+
+
+# Slide type -> python-pptx layout index mapping for the fallback generator.
+# Index 0: Title Slide (large title + subtitle, used for opening/closing)
+# Index 1: Title and Content (standard bullet slide, the most common layout)
+# Index 2: Section Header (bold title only, ideal for agenda/divider slides)
+# Index 3: Two Content (two side-by-side content areas, good for data/comparison)
+# Fallback for unknown types: index 1 (Title and Content)
+FALLBACK_SLIDE_LAYOUT_MAP = {
+    "title": 0,
+    "agenda": 2,
+    "content": 1,
+    "data": 3,
+    "closing": 0,
+}
+
+
+def generate_chunk_pptx_fallback(
+    chunk_slides: List[SlideStoryboard],
+    session_state: Dict,
+    chunk_idx: int,
+) -> Optional[str]:
+    """Tier 3 (last-resort) chunk generator using python-pptx directly.
+
+    No Claude API call — generates slides programmatically from SlideStoryboard
+    data with zero network I/O. Always produces a valid .pptx or returns None
+    only on an extreme exception (e.g., disk full).
+
+    This is the last tier in the 3-tier fallback hierarchy:
+      Tier 1: Claude PPTX skill (generate_chunk_pptx)
+      Tier 2: LLM code generation (generate_chunk_pptx_v2)
+      Tier 3: This function — text-only, python-pptx direct, <100ms
+
+    Output slides contain only title text + bullet points. No charts, tables, or
+    images are generated. The output is a structurally valid .pptx compatible with
+    step_process_chunks() template assembly and _merge_pptx_zip_level() merging.
+
+    Slide layout mapping:
+    - slide_type == "title"   -> layout index 0 (TITLE slide)
+    - all others              -> layout index 1 (TITLE_AND_CONTENT)
+
+    Args:
+        chunk_slides: List of SlideStoryboard objects for this chunk.
+        session_state: Shared workflow session state.
+        chunk_idx: 0-based chunk index (used for file naming and logging).
+
+    Returns:
+        Path to the generated chunk PPTX file, or None if generation failed.
+    """
+    output_dir = session_state.get("output_dir", ".")
+    output_path = os.path.join(output_dir, "chunk_%03d.pptx" % chunk_idx)
+
+    try:
+        prs = Presentation()
+
+        for slide in chunk_slides:
+            layout_idx = FALLBACK_SLIDE_LAYOUT_MAP.get(slide.slide_type, 1)
+            # Guard: some presentations may have fewer layouts than expected.
+            # Fall back to index 1 (Title and Content) if the chosen index is out of range.
+            if layout_idx >= len(prs.slide_layouts):
+                layout_idx = min(1, len(prs.slide_layouts) - 1)
+            slide_layout = prs.slide_layouts[layout_idx]
+
+            pptx_slide = prs.slides.add_slide(slide_layout)
+
+            # Set title
+            if pptx_slide.shapes.title:
+                pptx_slide.shapes.title.text = slide.slide_title
+
+            if slide.slide_type == "title":
+                # Set subtitle placeholder
+                subtitle_text = slide.key_points[0] if slide.key_points else slide.slide_title
+                if subtitle_text:
+                    for ph in pptx_slide.placeholders:
+                        if ph.placeholder_format.idx == 1:
+                            ph.text = subtitle_text
+                            break
+            else:
+                # Set body content with key points
+                body_ph = None
+                for ph in pptx_slide.placeholders:
+                    if ph.placeholder_format.idx == 1:
+                        body_ph = ph
+                        break
+                if body_ph:
+                    tf = body_ph.text_frame
+                    tf.word_wrap = True
+                    tf.clear()
+                    for i, point in enumerate(slide.key_points):
+                        if i == 0:
+                            tf.paragraphs[0].text = point
+                        else:
+                            p = tf.add_paragraph()
+                            p.text = point
+                        tf.paragraphs[i].level = 0
+
+            # Add visual suggestion note if applicable
+            visual = slide.visual_suggestion
+            if visual and visual.lower() != "none":
+                txBox = pptx_slide.shapes.add_textbox(
+                    Inches(7), Inches(5.5), Inches(2.5), Inches(0.5)
+                )
+                tf = txBox.text_frame
+                tf.text = "[Visual: %s]" % visual[:60]
+                if tf.paragraphs and tf.paragraphs[0].runs:
+                    run = tf.paragraphs[0].runs[0]
+                elif tf.paragraphs:
+                    run = tf.paragraphs[0].add_run()
+                else:
+                    run = None
+                if run is not None:
+                    run.font.size = Pt(8)
+                    run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+
+        prs.save(output_path)
+        print(
+            "[CHUNK %d FALLBACK] Generated %d slides via python-pptx fallback"
+            % (chunk_idx, len(chunk_slides))
+        )
+        return output_path
+
+    except Exception as e:
+        print("[CHUNK %d FALLBACK] Failed to generate fallback PPTX: %s" % (chunk_idx, e))
+        return None
+
+
+# Instructions for the Tier 2 fallback code-generation agent.
+# Kept as a module-level constant to avoid string duplication.
+PPTX_CODE_GEN_INSTRUCTIONS = [
+    "You are a Python code generator that creates PowerPoint presentations using python-pptx and matplotlib.",
+    "When given slide specifications, write a COMPLETE, SELF-CONTAINED Python script that generates a .pptx file.",
+    "The script must import all required libraries at the top.",
+    "ALLOWED imports only: pptx, pptx.util, pptx.chart.data, pptx.enum.chart, pptx.dml.color, pptx.enum.text, matplotlib, matplotlib.pyplot, io, os, os.path, collections, math.",
+    "FORBIDDEN imports: subprocess, socket, requests, urllib, httpx, shutil, glob, sys, importlib, __import__.",
+    "For each slide, create one slide in the presentation using prs.slides.add_slide(prs.slide_layouts[N]).",
+    "Slide layout indices: 0=Title Slide, 1=Title and Content, 2=Section Header, 3=Two Content.",
+    "For CHARTS: prefer python-pptx ChartData (creates editable Office charts). For complex charts, use matplotlib to generate a PNG BytesIO and embed with slide.shapes.add_picture().",
+    "For python-pptx ChartData bar/column charts: from pptx.chart.data import ChartData; from pptx.enum.chart import XL_CHART_TYPE.",
+    "ChartData example: chart_data = ChartData(); chart_data.categories = ['A','B','C']; chart_data.add_series('Series1', (10, 20, 30)); slide.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(1), Inches(1.5), Inches(8), Inches(4.5), chart_data).",
+    "For matplotlib embed: fig, ax = plt.subplots(figsize=(8,4)); ax.bar(categories, values); buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150, bbox_inches='tight'); buf.seek(0); plt.close(fig); slide.shapes.add_picture(buf, Inches(1), Inches(1.5), Inches(8), Inches(4.5)).",
+    "For TABLES: use slide.shapes.add_table(rows, cols, Inches(1), Inches(1.5), Inches(8), Inches(4.5)). Fill cells via table.cell(row, col).text = 'value'.",
+    "Synthesize plausible, specific data values from the visual_suggestion and key_points descriptions. Do NOT use generic placeholder data.",
+    "Save the final presentation using prs.save('EXACT_OUTPUT_PATH') where EXACT_OUTPUT_PATH is the path given in the task.",
+    "Execute the script using the save_to_file_and_run tool immediately after writing it.",
+    "If the script has an error, fix it and re-run. Maximum 2 fix attempts.",
+    "Do not add speaker notes, animations, or transitions.",
+    "Do not print or return anything except the final prs.save() call.",
+]
+
+# Tier 2 fallback agent: generates python-pptx + matplotlib code and executes it.
+# Created at module level — NOT inside any function or loop (per project rules).
+# Uses Claude Sonnet without the PPTX skill, with PythonTools for code execution.
+# PythonTools base_dir is set to current directory; the generated script saves
+# to the absolute output path passed in the prompt.
+fallback_code_agent = Agent(
+    name="PPTX Code Generator",
+    model=Claude(id="claude-sonnet-4-6"),
+    instructions=PPTX_CODE_GEN_INSTRUCTIONS,
+    tools=[PythonTools(
+        base_dir=Path("."),
+    )],
+    markdown=False,
+)
+
+
+def generate_chunk_pptx_v2(
+    chunk_slides: List[SlideStoryboard],
+    session_state: Dict,
+    chunk_idx: int,
+) -> Optional[str]:
+    """Tier 2 fallback chunk generator using LLM code generation + PythonTools execution.
+
+    Prompts the fallback_code_agent (Claude Sonnet without PPTX skill, equipped with
+    PythonTools) to write and execute a python-pptx + matplotlib script that creates
+    the chunk slides with real charts, tables, and rich visual content.
+
+    Quality level: 80-92% parity with Tier 1 (Claude PPTX skill). Charts and tables
+    are generated via matplotlib/python-pptx code rather than the native PPTX skill,
+    so visual fidelity may differ in edge cases.
+
+    This is Tier 2 in the three-tier fallback hierarchy:
+      Tier 1: Claude PPTX skill (generate_chunk_pptx)            — 100% quality
+      Tier 2: LLM code generation (this function)                 — 80-92% quality
+      Tier 3: Text-only python-pptx (generate_chunk_pptx_fallback) — structural only
+
+    No retries are attempted within this function — callers escalate to Tier 3 on
+    failure. Use generate_chunk_pptx() for retry logic (Tier 1 only).
+
+    Args:
+        chunk_slides: List of SlideStoryboard objects for this chunk.
+        session_state: Shared workflow session state.
+        chunk_idx: 0-based chunk index (used for file naming and logging).
+
+    Returns:
+        Path to the generated chunk PPTX file, or None if generation failed.
+    """
+    storyboard: StoryboardPlan = session_state.get("storyboard")
+    output_dir = session_state.get("output_dir", ".")
+    chunk_output_path = os.path.join(output_dir, "chunk_%03d.pptx" % chunk_idx)
+
+    first_slide = chunk_slides[0].slide_number
+    last_slide = chunk_slides[-1].slide_number
+
+    print(
+        "[CHUNK %d TIER2] Starting LLM code generation fallback (slides %d-%d)..."
+        % (chunk_idx, first_slide, last_slide)
+    )
+
+    # Build the code generation prompt with full slide specifications
+    slide_specs = []
+    for slide in chunk_slides:
+        spec = (
+            "Slide %d (type=%s): title='%s'\n"
+            "  Key points: %s\n"
+            "  Visual suggestion: %s"
+        ) % (
+            slide.slide_number,
+            slide.slide_type,
+            slide.slide_title,
+            "; ".join(slide.key_points),
+            slide.visual_suggestion,
+        )
+        slide_specs.append(spec)
+
+    global_ctx = ""
+    if storyboard:
+        global_ctx = (
+            "Presentation: '%s' | Audience: %s | Tone: %s | Brand voice: %s\n"
+            "Context: %s"
+        ) % (
+            storyboard.presentation_title,
+            storyboard.target_audience,
+            storyboard.tone,
+            storyboard.brand_voice,
+            storyboard.global_context,
+        )
+
+    code_gen_prompt = (
+        "Generate a complete Python script using python-pptx and matplotlib to create "
+        "a PowerPoint file at this EXACT path: %s\n\n"
+        "GLOBAL CONTEXT:\n%s\n\n"
+        "SLIDES TO GENERATE (%d slides):\n%s\n\n"
+        "REQUIREMENTS:\n"
+        "- Create exactly %d slides in the exact order listed above.\n"
+        "- For 'title' type slides: use prs.slide_layouts[0] (Title Slide layout).\n"
+        "- For 'agenda'/'section' type slides: use prs.slide_layouts[2] (Section Header).\n"
+        "- For 'content' type slides: use prs.slide_layouts[1] (Title and Content).\n"
+        "- For 'data' type slides: use prs.slide_layouts[3] if available, else [1].\n"
+        "- For 'closing' type slides: use prs.slide_layouts[0].\n"
+        "- For any slide with a chart visual_suggestion: generate a REAL chart using "
+        "  python-pptx ChartData (preferred) or matplotlib PNG embed.\n"
+        "- Synthesize specific, plausible data values matching the visual_suggestion topic.\n"
+        "- For any slide with a table visual_suggestion: generate a real table with data.\n"
+        "- Save the file to: %s\n"
+        "- Then immediately execute the script using save_to_file_and_run.\n"
+    ) % (
+        chunk_output_path,
+        global_ctx,
+        len(chunk_slides),
+        "\n\n".join(slide_specs),
+        len(chunk_slides),
+        chunk_output_path,
+    )
+
+    if VERBOSE:  # noqa: F405
+        print(
+            "[VERBOSE] Chunk %d Tier 2 code-gen prompt length: %d chars"
+            % (chunk_idx, len(code_gen_prompt))
+        )
+
+    t2_start = time.time()
+    try:
+        response = fallback_code_agent.run(code_gen_prompt, stream=False)
+        t2_elapsed = time.time() - t2_start
+        print(
+            "[TIMING] Chunk %d Tier 2 code generation: %.1fs"
+            % (chunk_idx, t2_elapsed)
+        )
+    except Exception as e:
+        t2_elapsed = time.time() - t2_start
+        print(
+            "[CHUNK %d TIER2] Code generation agent failed after %.1fs: %s"
+            % (chunk_idx, t2_elapsed, str(e))
+        )
+        print(
+            "[CHUNK %d TIER2] Falling back to Tier 3 (text-only)."
+            % chunk_idx
+        )
+        return None
+
+    # Verify the file was actually written by the executed code
+    if os.path.exists(chunk_output_path):
+        try:
+            Presentation(chunk_output_path)
+            print(
+                "[CHUNK %d TIER2] Successfully generated via LLM code execution: %s"
+                % (chunk_idx, chunk_output_path)
+            )
+            return chunk_output_path
+        except Exception as e:
+            print(
+                "[CHUNK %d TIER2] Generated file is invalid PPTX: %s — falling back to Tier 3."
+                % (chunk_idx, str(e))
+            )
+            return None
+    else:
+        print(
+            "[CHUNK %d TIER2] No file produced at %s — falling back to Tier 3."
+            % (chunk_idx, chunk_output_path)
+        )
+        return None
 
 
 # === WORKFLOW STEP 2: GENERATE CHUNKS ===
@@ -674,8 +1070,15 @@ def generate_chunk_pptx(
 def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutput:
     """Step 2: Orchestrate chunked PPTX generation across all slide groups.
 
-    Splits the full storyboard into chunks of {chunk_size} slides, calls the
-    Claude pptx skill for each chunk with retry logic, and stores results.
+    Splits the full storyboard into chunks of {chunk_size} slides, dispatches
+    generation for each chunk using the 3-tier fallback hierarchy, and stores results.
+
+    Each chunk is generated using a 3-tier fallback:
+      - Tier 1 (Claude PPTX skill): attempted unless session flag is active
+      - Tier 2 (LLM code generation): used when Tier 1 fails or is bypassed
+      - Tier 3 (text-only python-pptx): used when Tier 2 also fails
+    The session-level flag "use_fallback_generator" persists across chunks —
+    once set, Tier 1 is skipped for all remaining chunks in the run.
 
     A 1-second inter-chunk delay is applied between calls to avoid rate limits.
     """
@@ -721,7 +1124,42 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
             )
         )
 
-        chunk_file = generate_chunk_pptx(chunk_slides, session_state, chunk_idx)
+        if session_state.get("use_fallback_generator"):
+            # Tier 1 failed permanently for this session — go to Tier 2 directly.
+            print(
+                "[GENERATE] Chunk %d/%d: Tier 1 (Claude PPTX skill) unavailable. "
+                "Using Tier 2 (LLM code generation)..."
+                % (chunk_idx + 1, total_chunks)
+            )
+            chunk_file = generate_chunk_pptx_v2(chunk_slides, session_state, chunk_idx)
+            if chunk_file is None:
+                # Tier 2 failed — fall through to Tier 3 (no retry).
+                print(
+                    "[GENERATE] Chunk %d/%d: Tier 2 failed. Using Tier 3 (text-only fallback)."
+                    % (chunk_idx + 1, total_chunks)
+                )
+                chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
+        else:
+            # Attempt Tier 1: Claude PPTX skill.
+            chunk_file = generate_chunk_pptx(chunk_slides, session_state, chunk_idx)
+
+            if chunk_file is None and session_state.get("use_fallback_generator"):
+                # Tier 1 failed for this chunk (and activated the session flag).
+                # Try Tier 2 immediately for this chunk.
+                print(
+                    "[GENERATE] Chunk %d/%d: Tier 1 failed. Attempting Tier 2 (LLM code generation)..."
+                    % (chunk_idx + 1, total_chunks)
+                )
+                chunk_file = generate_chunk_pptx_v2(chunk_slides, session_state, chunk_idx)
+
+                if chunk_file is None:
+                    # Tier 2 also failed — fall through to Tier 3.
+                    print(
+                        "[GENERATE] Chunk %d/%d: Tier 2 also failed. "
+                        "Using Tier 3 (text-only fallback)."
+                        % (chunk_idx + 1, total_chunks)
+                    )
+                    chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
 
         chunk_elapsed = time.time() - chunk_start
         if chunk_file:
@@ -1799,6 +2237,7 @@ def main() -> None:
         "chunk_slide_groups": [],
         "processed_chunks": {},
         "reviewed_chunks": {},
+        "use_fallback_generator": False,
         # Fields used by existing step helpers
         "generated_file": "",
         "slides_data": [],

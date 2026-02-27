@@ -5,7 +5,7 @@
 **Status:** Implemented (Phase 1 + Phase 2)
 **Files affected:**
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
-- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` (inherits all improvements via `from powerpoint_template_workflow import *`)
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` (inherits all improvements via `from powerpoint_template_workflow import *`; also adds a 3-tier chunk generation fallback — see below)
 
 ---
 
@@ -21,6 +21,9 @@ The visual quality improvements described in this document apply to **both** wor
 | `powerpoint_chunked_workflow.py` | Via wildcard import — inherits all functions automatically. `step_process_chunks()` calls `step_generate_images()` and `step_assemble_template()` per chunk; `step_visual_review_chunks()` calls `step_visual_quality_review()` per chunk. |
 
 **Important:** Visual quality improvements (both Phase 1 deterministic fixes and Phase 2 visual review) only apply in the chunked workflow **when `--template` is provided**. In raw generation mode (no template), `step_process_chunks` and `step_visual_review_chunks` are skipped entirely — the chunked workflow merges raw Claude-generated PPTX files directly.
+
+> **3-Tier Chunk Generation Fallback (chunked workflow only):**
+> `powerpoint_chunked_workflow.py` adds a production reliability layer on top of the template assembly pipeline. When the Claude PPTX skill (Tier 1) times out (>300s) or fails, the system automatically escalates to Tier 2 (LLM + `python-pptx` code generation via `PythonTools`) and then Tier 3 (text-only `python-pptx` fallback). The Tier 2 and Tier 3 outputs feed into the same `step_process_chunks()` template assembly and `_merge_pptx_zip_level()` pipeline unchanged. See `README.md` for the full fallback table.
 
 ---
 

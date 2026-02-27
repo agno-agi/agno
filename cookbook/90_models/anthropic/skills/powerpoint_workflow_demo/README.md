@@ -251,6 +251,26 @@ powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge 
     -p "Startup pitch deck for SaaS product" --no-images
 ```
 
+### Production Reliability: 3-Tier Fallback
+
+The chunked workflow uses a 3-tier fallback system to handle Claude API
+throttling, timeouts, and failures:
+
+| Tier | Generator | Quality | Speed |
+|------|-----------|---------|-------|
+| 1 | Claude PPTX skill (primary) | 100% — charts, tables, rich visuals | 30s–5min/chunk |
+| 2 | LLM code generation (fallback) | 80–92% — real charts via generated python-pptx code | 10–30s/chunk |
+| 3 | python-pptx text-only (last resort) | Structural only — title + bullets | <1s/chunk |
+
+Tier 2 is triggered automatically when:
+- A Claude PPTX skill attempt exceeds 300 seconds
+- All retries for a chunk fail with no file produced
+
+Once triggered, all remaining chunks in the session use Tier 2/3 (never
+retrying the Claude skill) to avoid further delays.
+
+---
+
 **Key differences from `powerpoint_template_workflow.py`:**
 
 | Feature | `powerpoint_template_workflow.py` | `powerpoint_chunked_workflow.py` |

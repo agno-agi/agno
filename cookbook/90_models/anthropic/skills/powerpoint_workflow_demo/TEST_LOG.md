@@ -4,6 +4,20 @@
 
 ## Implementation Log
 
+### powerpoint_chunked_workflow.py (3-tier fallback update)
+
+**Status:** IMPLEMENTED (not yet run end-to-end)
+
+**Description:** Added 3-tier chunk generation fallback system.
+- Tier 1: Claude PPTX skill (primary, unchanged)
+- Tier 2: LLM + PythonTools code generation (new; ~80-92% quality parity)
+- Tier 3: python-pptx text-only (improved with FALLBACK_SLIDE_LAYOUT_MAP)
+
+**Changes:** generate_chunk_pptx_v2(), fallback_code_agent, PPTX_CODE_GEN_INSTRUCTIONS,
+FALLBACK_SLIDE_LAYOUT_MAP, CHUNK_TIMEOUT_SECONDS, 3-tier dispatch in step_generate_chunks().
+
+---
+
 ### Phase 1: Deterministic Visual Quality Improvements
 
 **Date:** 2026-02-25

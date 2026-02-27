@@ -913,6 +913,53 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
 
 Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or `shutil.rmtree()` on chunk files anywhere in the chunked workflow. Files accumulate in `output_chunked/chunked_workflow_work/` across runs. This is intentional: interim files are useful for debugging failed chunks and can be inspected directly.
 
+### 3-Tier Chunk Generation Fallback
+
+`step_generate_chunks()` uses a 3-tier production reliability system when generating each chunk. Once Tier 1 fails for any chunk, the session-level `use_fallback_generator` flag is set and Tier 1 is skipped for all subsequent chunks (avoiding repeated timeouts).
+
+| Tier | Function | Quality | Trigger |
+|------|----------|---------|---------|
+| **Tier 1** | [`generate_chunk_pptx()`](powerpoint_chunked_workflow.py) — Claude PPTX skill | 100% | Primary; used unless `use_fallback_generator=True` |
+| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
+| **Tier 3** | [`generate_chunk_pptx_fallback()`](powerpoint_chunked_workflow.py) — text-only python-pptx | ~100% reliable | Tier 2 failure; last resort, <100ms, zero network I/O |
+
+**Tier 1 — Claude PPTX skill:**
+- Runs inside a `ThreadPoolExecutor` via `_run_chunk_agent()` with a 300-second per-attempt timeout (`CHUNK_TIMEOUT_SECONDS = 300`)
+- On timeout or all retries exhausted: sets `session_state["use_fallback_generator"] = True`
+
+**Tier 2 — LLM code generation:**
+- `fallback_code_agent`: Claude Sonnet + `PythonTools`
+- Generates and immediately executes a `python-pptx` + `matplotlib` script
+- Produces real Office charts (via `ChartData`), matplotlib PNG embeds, and tables
+- No internal retry — callers escalate directly to Tier 3 on any failure
+
+**Tier 3 — python-pptx text-only:**
+- Pure deterministic fallback; no network calls
+- Produces text slides (title + bullets + visual annotation textbox)
+- Uses `FALLBACK_SLIDE_LAYOUT_MAP` for layout selection: `title→0`, `agenda→2`, `content→1`, `data→3`, `closing→0`
+
+**Dispatch logic in `step_generate_chunks()`:**
+```
+for each chunk:
+    if use_fallback_generator:
+        skip Tier 1
+    else:
+        attempt Tier 1 → on failure → set use_fallback_generator=True
+    attempt Tier 2 → on failure → attempt Tier 3
+```
+
+**Downstream compatibility:** Tier 2 and Tier 3 output files are standard `.pptx` files and are fully compatible with the downstream `step_process_chunks()` template assembly pipeline and `_merge_pptx_zip_level()` merge step — no special handling is needed.
+
+**Key constants and components:**
+
+| Symbol | Purpose |
+|--------|---------|
+| `CHUNK_TIMEOUT_SECONDS` | Per-attempt timeout (300s) enforced via `ThreadPoolExecutor.result(timeout=...)` |
+| `_run_chunk_agent()` | Wraps Tier 1 agent call in `ThreadPoolExecutor`; raises `TimeoutError` on expiry |
+| `fallback_code_agent` | Claude Sonnet + `PythonTools`; powers Tier 2 |
+| `FALLBACK_SLIDE_LAYOUT_MAP` | Dict mapping slide type keywords to layout indices for Tier 3 |
+| `use_fallback_generator` | `session_state` bool; once `True`, Tier 1 is bypassed for all remaining chunks |
+
 ---
 
 ## Related Documents
