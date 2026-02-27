@@ -20,17 +20,17 @@ Environment Variables:
 from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.remote_content import GCSConfig
+from agno.knowledge.remote_content import GcsConfig
 from agno.vectordb.qdrant import Qdrant
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-gcs_config = GCSConfig(
+gcs_config = GcsConfig(
     id="my-gcs-bucket",
     name="My GCS Bucket",
-    bucket=getenv("GCS_BUCKET_NAME", "my-bucket"),
+    bucket_name=getenv("GCS_BUCKET_NAME", "my-bucket"),
 )
 
 knowledge = Knowledge(

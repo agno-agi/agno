@@ -14,9 +14,7 @@ Requirements: pip install lightrag-agno
 """
 
 from agno.agent import Agent
-from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -25,24 +23,19 @@ from agno.models.openai import OpenAIChat, OpenAIResponses
 try:
     from agno.vectordb.lightrag import LightRag
 
-    knowledge = Knowledge(
-        vector_db=LightRag(
-            db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-            collection_name="graph_rag_demo",
-            llm_model=OpenAIChat(id="gpt-4o"),
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    )
+    # LightRag connects to a running LightRAG server.
+    # Start one with: lightrag-server --host 0.0.0.0 --port 9621
+    lightrag = LightRag(server_url="http://localhost:9621")
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-5.2"),
-        knowledge=knowledge,
+        knowledge_retriever=lightrag.lightrag_knowledge_retriever,
         search_knowledge=True,
         markdown=True,
     )
 
 except ImportError:
-    knowledge = None
+    lightrag = None
     agent = None
     print("LightRAG not installed. Run: pip install lightrag-agno")
 
@@ -51,10 +44,10 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if knowledge and agent:
-        knowledge.insert(
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-        )
+    if lightrag and agent:
+        # Note: Documents must be ingested into LightRAG via its own API
+        # (e.g. lightrag.insert_file_bytes or lightrag.insert_text).
+        # The server handles chunking, entity extraction, and graph building.
 
         print("\n" + "=" * 60)
         print("Graph RAG: knowledge graph-based retrieval")
