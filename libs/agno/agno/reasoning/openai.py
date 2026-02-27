@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
+# Reasoning models commonly served via OpenAI-compatible APIs (vLLM, TGI, etc.)
 _OPENAI_LIKE_REASONING_PATTERNS = (
     "deepseek-r1",
     "qwq",
@@ -22,6 +23,7 @@ _OPENAI_LIKE_REASONING_PATTERNS = (
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     class_name = reasoning_model.__class__.__name__
 
+    # Case 1: Native OpenAI reasoning models (o1, o3, o4, GPT-4.1/4.5/5.x)
     if class_name in ("OpenAIChat", "OpenAIResponses", "AzureOpenAI") and (
         ("o4" in reasoning_model.id)
         or ("o3" in reasoning_model.id)
@@ -33,10 +35,15 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     ):
         return True
 
-    # VLLM has its own handler
+    # VLLM subclasses OpenAILike but has its own dedicated handler in reasoning/vllm.py
     if class_name == "VLLM":
         return False
 
+    # Case 2: Self-hosted reasoning models via OpenAI-compatible APIs
+    # Covers two scenarios from issue #6254:
+    #   - OpenAILike(base_url="http://localhost:8000/v1", id="Qwen3-30B-A3B")
+    #   - OpenAIChat(base_url="http://localhost:8000/v1", id="Qwen3-30B-A3B")
+    # OpenAIChat without base_url connects to api.openai.com which doesn't serve these models
     is_openai_like = isinstance(reasoning_model, OpenAILike)
     is_self_hosted_openai = class_name == "OpenAIChat" and getattr(reasoning_model, "base_url", None) is not None
 
