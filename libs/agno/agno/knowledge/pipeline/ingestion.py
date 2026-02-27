@@ -1129,6 +1129,80 @@ class IngestionPipeline:
             log_warning(f"Could not backup content {content.id}: {e}")
 
     # ==========================================
+    # CONTENT CHANGE DETECTION (for refresh)
+    # ==========================================
+
+    def check_content_changed(self, content: Content) -> bool:
+        """Check whether content has changed since last ingestion.
+
+        For file paths, compares file modification time against content.updated_at.
+        For URLs, re-fetches and compares content hash.
+        """
+        try:
+            if content.path:
+                path = Path(content.path)
+                if not path.exists():
+                    return False
+                mtime = int(path.stat().st_mtime)
+                return mtime > (content.updated_at or 0)
+            elif content.url:
+                new_hash = self._compute_url_hash(content.url)
+                if new_hash is None:
+                    return False
+                return new_hash != content.content_hash
+            elif content.file_data and content.file_data.content:
+                new_hash = self.build_content_hash(content)
+                return new_hash != content.content_hash
+        except Exception as e:
+            log_warning(f"Error checking content change for {content.id}: {e}")
+        return False
+
+    async def acheck_content_changed(self, content: Content) -> bool:
+        """Async variant of check_content_changed."""
+        try:
+            if content.path:
+                path = Path(content.path)
+                if not path.exists():
+                    return False
+                mtime = int(path.stat().st_mtime)
+                return mtime > (content.updated_at or 0)
+            elif content.url:
+                new_hash = await self._acompute_url_hash(content.url)
+                if new_hash is None:
+                    return False
+                return new_hash != content.content_hash
+            elif content.file_data and content.file_data.content:
+                new_hash = self.build_content_hash(content)
+                return new_hash != content.content_hash
+        except Exception as e:
+            log_warning(f"Error checking content change for {content.id}: {e}")
+        return False
+
+    def _compute_url_hash(self, url: str) -> Optional[str]:
+        """Fetch URL content and compute a hash for change detection."""
+        import httpx
+
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                return hashlib.md5(response.content).hexdigest()
+        except Exception as e:
+            log_warning(f"Could not fetch URL for hash computation: {e}")
+            return None
+
+    async def _acompute_url_hash(self, url: str) -> Optional[str]:
+        """Async variant of _compute_url_hash."""
+        try:
+            async with AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return hashlib.md5(response.content).hexdigest()
+        except Exception as e:
+            log_warning(f"Could not fetch URL for hash computation: {e}")
+            return None
+
+    # ==========================================
     # MANAGED BACKEND INGESTION
     # ==========================================
 

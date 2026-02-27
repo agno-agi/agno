@@ -36,6 +36,7 @@ class Knowledge:
     enable_catalog: bool = False
     enable_backup_tools: bool = False
     backup_dir: Optional[str] = None
+    refresh_cron: Optional[str] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -716,6 +717,65 @@ class Knowledge:
             log_warning("No vector DB provided")
             return False
         return self.vector_db.delete_by_metadata(metadata)
+
+    # ==========================================
+    # PUBLIC API - CONTENT REFRESH
+    # ==========================================
+
+    def refresh(self, content_id: Optional[str] = None) -> Dict[str, str]:
+        """Re-ingest content that has changed since last ingestion.
+
+        Args:
+            content_id: If provided, refresh only this content. Otherwise refresh all completed content.
+
+        Returns:
+            Dict mapping content_id to status: "refreshed", "unchanged", or "error".
+        """
+        if content_id:
+            content = self._content_store.get_content_by_id(content_id)
+            contents = [content] if content else []
+        else:
+            all_contents, _ = self._content_store.get_content(limit=1000)
+            contents = [c for c in all_contents if c.status == ContentStatus.COMPLETED]
+
+        results: Dict[str, str] = {}
+        for content in contents:
+            if not content.id:
+                continue
+            try:
+                if self._pipeline.check_content_changed(content):
+                    self._load_content(content, upsert=True, skip_if_exists=False)
+                    results[content.id] = "refreshed"
+                else:
+                    results[content.id] = "unchanged"
+            except Exception as e:
+                log_warning(f"Error refreshing content {content.id}: {e}")
+                results[content.id] = "error"
+        return results
+
+    async def arefresh(self, content_id: Optional[str] = None) -> Dict[str, str]:
+        """Async variant of refresh."""
+        if content_id:
+            content = await self._content_store.aget_content_by_id(content_id)
+            contents = [content] if content else []
+        else:
+            all_contents, _ = await self._content_store.aget_content(limit=1000)
+            contents = [c for c in all_contents if c.status == ContentStatus.COMPLETED]
+
+        results: Dict[str, str] = {}
+        for content in contents:
+            if not content.id:
+                continue
+            try:
+                if await self._pipeline.acheck_content_changed(content):
+                    await self._aload_content(content, upsert=True, skip_if_exists=False)
+                    results[content.id] = "refreshed"
+                else:
+                    results[content.id] = "unchanged"
+            except Exception as e:
+                log_warning(f"Error refreshing content {content.id}: {e}")
+                results[content.id] = "error"
+        return results
 
     # ==========================================
     # PUBLIC API - FILTER METHODS (forwarded to ContentStore)

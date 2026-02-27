@@ -21,6 +21,7 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatusResponse,
     ContentUpdateSchema,
     ReaderSchema,
+    RefreshResponseSchema,
     RemoteContentSourceSchema,
     SourceFileSchema,
     SourceFilesResponseSchema,
@@ -1362,6 +1363,53 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 total_count=result.total_count,
                 total_pages=result.total_pages,
             ),
+        )
+
+    @router.post(
+        "/knowledge/refresh",
+        response_model=RefreshResponseSchema,
+        status_code=200,
+        operation_id="refresh_knowledge",
+        summary="Refresh Knowledge Content",
+        description=(
+            "Re-ingest content that has changed since last ingestion. "
+            "Checks file modification times and URL content hashes to detect changes. "
+            "Can refresh all content or a specific content item by ID."
+        ),
+        responses={
+            200: {
+                "description": "Refresh completed",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "results": {
+                                "content-abc": "refreshed",
+                                "content-def": "unchanged",
+                            },
+                            "total": 2,
+                            "refreshed": 1,
+                        }
+                    }
+                },
+            },
+        },
+    )
+    async def refresh_knowledge(
+        request: Request,
+        content_id: Optional[str] = Query(default=None, description="Specific content ID to refresh"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to refresh"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+    ) -> RefreshResponseSchema:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Refresh not yet supported for RemoteKnowledge")
+
+        results = await knowledge.arefresh(content_id=content_id)
+        refreshed_count = sum(1 for v in results.values() if v == "refreshed")
+        return RefreshResponseSchema(
+            results=results,
+            total=len(results),
+            refreshed=refreshed_count,
         )
 
     return router

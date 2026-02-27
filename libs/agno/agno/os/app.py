@@ -130,9 +130,47 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     app.state.scheduler_poller = poller
     await poller.start()
 
+    # Auto-create refresh schedules for knowledge bases with refresh_cron
+    await _create_knowledge_refresh_schedules(agent_os)
+
     yield
 
     await poller.stop()
+
+
+async def _create_knowledge_refresh_schedules(agent_os: "AgentOS") -> None:
+    """Auto-create scheduler entries for knowledge bases with refresh_cron set."""
+    from agno.scheduler.manager import ScheduleManager
+
+    knowledge_instances = getattr(agent_os, "knowledge_instances", None) or getattr(agent_os, "knowledge", None) or []
+    if not knowledge_instances:
+        return
+
+    db = agent_os.db
+    if db is None:
+        return
+
+    manager = ScheduleManager(db=db)
+    for kb in knowledge_instances:
+        cron = getattr(kb, "refresh_cron", None)
+        if not cron:
+            continue
+        kb_name = getattr(kb, "name", None) or "default"
+        schedule_name = f"knowledge-refresh-{kb_name}"
+        try:
+            await manager.acreate(
+                name=schedule_name,
+                cron=cron,
+                endpoint="/knowledge/refresh",
+                method="POST",
+                description=f"Auto-refresh knowledge base: {kb_name}",
+                payload={"knowledge_id": kb_name},
+                if_exists="update",
+            )
+            log_info(f"Created refresh schedule '{schedule_name}' with cron '{cron}'")
+        except Exception as e:
+            log_warning(f"Could not create refresh schedule for '{kb_name}': {e}")
+    manager.close()
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
