@@ -240,7 +240,12 @@ class ChromaDb(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to merge with document metadata
         """
-        log_info(f"Inserting {len(documents)} documents")
+        # Filter out documents with empty content to avoid duplicate ID collisions
+        non_empty_documents = [doc for doc in documents if doc.content and doc.content.strip()]
+        if len(non_empty_documents) < len(documents):
+            skipped = len(documents) - len(non_empty_documents)
+            logger.warning(f"Skipping {skipped} document(s) with empty content")
+        log_info(f"Inserting {len(non_empty_documents)} documents")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -249,10 +254,11 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
-        for document in documents:
+        for idx, document in enumerate(non_empty_documents):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}_{idx}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -287,7 +293,12 @@ class ChromaDb(VectorDb):
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
-        log_info(f"Async Inserting {len(documents)} documents")
+        # Filter out documents with empty content to avoid duplicate ID collisions
+        non_empty_documents = [doc for doc in documents if doc.content and doc.content.strip()]
+        if len(non_empty_documents) < len(documents):
+            skipped = len(documents) - len(non_empty_documents)
+            logger.warning(f"Skipping {skipped} document(s) with empty content")
+        log_info(f"Async Inserting {len(non_empty_documents)} documents")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -300,13 +311,13 @@ class ChromaDb(VectorDb):
             # Use batch embedding when enabled and supported
             try:
                 # Extract content from all documents
-                doc_contents = [doc.content for doc in documents]
+                doc_contents = [doc.content for doc in non_empty_documents]
 
                 # Get batch embeddings and usage
                 embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
                 # Process documents with pre-computed embeddings
-                for j, doc in enumerate(documents):
+                for j, doc in enumerate(non_empty_documents):
                     try:
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
@@ -328,21 +339,21 @@ class ChromaDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in non_empty_documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
         else:
             # Use individual embedding
             try:
-                embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+                embed_tasks = [document.async_embed(embedder=self.embedder) for document in non_empty_documents]
                 await asyncio.gather(*embed_tasks, return_exceptions=True)
             except Exception as e:
                 logger.error(f"Error processing document: {e}")
 
-        for document in documents:
+        for idx, document in enumerate(non_empty_documents):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}_{idx}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -400,6 +411,11 @@ class ChromaDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_info(f"Upserting {len(documents)} documents")
+        # Filter out documents with empty content to avoid duplicate ID collisions
+        non_empty_documents = [doc for doc in documents if doc.content and doc.content.strip()]
+        if len(non_empty_documents) < len(documents):
+            skipped = len(documents) - len(non_empty_documents)
+            logger.warning(f"Skipping {skipped} document(s) with empty content")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -408,10 +424,11 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
-        for document in documents:
+        for idx, document in enumerate(non_empty_documents):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}_{idx}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -452,6 +469,11 @@ class ChromaDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_info(f"Async Upserting {len(documents)} documents")
+        # Filter out documents with empty content to avoid duplicate ID collisions
+        non_empty_documents = [doc for doc in documents if doc.content and doc.content.strip()]
+        if len(non_empty_documents) < len(documents):
+            skipped = len(documents) - len(non_empty_documents)
+            logger.warning(f"Skipping {skipped} document(s) with empty content")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -464,13 +486,13 @@ class ChromaDb(VectorDb):
             # Use batch embedding when enabled and supported
             try:
                 # Extract content from all documents
-                doc_contents = [doc.content for doc in documents]
+                doc_contents = [doc.content for doc in non_empty_documents]
 
                 # Get batch embeddings and usage
                 embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
                 # Process documents with pre-computed embeddings
-                for j, doc in enumerate(documents):
+                for j, doc in enumerate(non_empty_documents):
                     try:
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
@@ -492,18 +514,18 @@ class ChromaDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in non_empty_documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
         else:
             # Use individual embedding
-            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in non_empty_documents]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
-        for document in documents:
+        for idx, document in enumerate(non_empty_documents):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}_{idx}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
