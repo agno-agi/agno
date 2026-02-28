@@ -85,6 +85,11 @@ CLI Flags:
           automatically switches to Tier 2 (LLM code gen) fallback,
           then Tier 3 (text-only) if Tier 2 also fails.
     --visual-passes      Maximum visual inspection passes per chunk (default: 3).
+    --start-tier         Starting tier for chunk generation (default: 1):
+                         1 = Claude PPTX skill (best quality, native charts/tables)
+                         2 = LLM code generation (80-92% quality, faster, python-pptx+matplotlib)
+                         3 = Text-only (structural only, instant, no API calls)
+                         Fallback chain continues from selected tier (e.g., Tier 2 → Tier 3).
 
 Logging conventions:
     Always printed:
@@ -177,10 +182,14 @@ class StoryboardPlan(BaseModel):
 # === MODULE-LEVEL AGENTS ===
 # Do NOT create agents in loops — define them here at module level.
 
+# output_schema is intentionally omitted: claude-opus-4-6 does not support structured
+# outputs, which causes Agno to make an internal non-streaming extraction call that the
+# context-1m beta rejects ("Streaming is required for operations that may take longer
+# than 10 minutes").  The storyboard JSON is instead requested via prompt instructions
+# and parsed manually below.
 query_optimizer = Agent(
     name="Presentation Strategist",
-    model=Claude(id="claude-sonnet-4-6"),
-    betas=["context-1m-2025-08-07"],
+    model=Claude(id="claude-opus-4-6", betas=["context-1m-2025-08-07"], max_tokens=128000),
     description=(
         "You are a presentation strategist who first searches the web for current, "
         "relevant facts and data about the topic, then creates an optimized presentation "
@@ -193,8 +202,7 @@ query_optimizer = Agent(
             "max_uses": 5,
         }
     ],
-    thinking={"type": "disabled"},
-    output_schema=StoryboardPlan,
+    markdown=False,
 )
 
 
@@ -365,7 +373,29 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "     Example: 'bar chart: AI adoption rate by industry 2023' not just 'chart'.\n"
         "   - transition_note: one brief sentence connecting this slide to the next.\n"
         "6. Ensure continuity: the storyboard should feel like a coherent narrative arc.\n"
-        "7. Use professional language. Do not add emojis or overly casual language.\n"
+        "7. Use professional language. Do not add emojis or overly casual language.\n\n"
+        "STEP 3 — OUTPUT FORMAT:\n"
+        "Respond with ONLY a valid JSON object matching this exact schema (no markdown fences, "
+        "no extra commentary before or after the JSON):\n"
+        "{\n"
+        '  "total_slides": <integer>,\n'
+        '  "presentation_title": "<string>",\n'
+        '  "target_audience": "<string>",\n'
+        '  "tone": "<string>",\n'
+        '  "brand_voice": "<string>",\n'
+        '  "global_context": "<string>",\n'
+        '  "slides": [\n'
+        "    {\n"
+        '      "slide_number": <integer>,\n'
+        '      "slide_title": "<string>",\n'
+        '      "slide_type": "<title|agenda|content|data|closing>",\n'
+        '      "key_points": ["<string>", ...],\n'
+        '      "visual_suggestion": "<string>",\n'
+        '      "transition_note": "<string>"\n'
+        "    },\n"
+        "    ...\n"
+        "  ]\n"
+        "}\n"
     ) % user_prompt
 
     prompt_file = _save_prompt_to_file(optimizer_prompt, "optimize_and_plan", output_dir)
@@ -373,7 +403,10 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         print("[PROMPT] Optimizer prompt saved to: %s" % prompt_file)
 
     try:
-        response = query_optimizer.run(optimizer_prompt, stream=False)
+        response = None
+        for event in query_optimizer.run(optimizer_prompt, stream=True, yield_run_output=True):
+            if isinstance(event, RunOutput):
+                response = event
     except Exception as e:
         print("[ERROR] Query optimizer failed: %s" % str(e))
         traceback.print_exc()
@@ -381,7 +414,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             content="Query optimization failed: %s" % str(e), success=False
         )
 
-    # Parse the StoryboardPlan from response
+    # Parse the StoryboardPlan from response.
+    # Without output_schema the agent returns plain text; extract JSON from it.
     plan: Optional[StoryboardPlan] = None
     if response and response.content:
         content = response.content
@@ -393,10 +427,22 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             except Exception as e:
                 print("[ERROR] Failed to parse StoryboardPlan from dict: %s" % e)
         elif isinstance(content, str):
+            # Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+            import re as _re
+            json_text = content.strip()
+            fence_match = _re.search(r"```(?:json)?\s*([\s\S]+?)```", json_text)
+            if fence_match:
+                json_text = fence_match.group(1).strip()
+            # Locate the outermost JSON object in the text
+            obj_match = _re.search(r"\{[\s\S]+\}", json_text)
+            if obj_match:
+                json_text = obj_match.group(0)
             try:
-                plan = StoryboardPlan.model_validate_json(content)
+                plan = StoryboardPlan.model_validate_json(json_text)
             except Exception as e:
                 print("[ERROR] Failed to parse StoryboardPlan from JSON string: %s" % e)
+                if VERBOSE:  # noqa: F405
+                    print("[VERBOSE] Raw optimizer response (first 2000 chars):\n%s" % content[:2000])
 
     if not plan:
         print("[ERROR] No valid storyboard plan produced.")
@@ -554,13 +600,17 @@ def generate_chunk_pptx(
 
     chunk_output_path = os.path.join(output_dir, "chunk_%03d.pptx" % chunk_idx)
 
-    # Create a fresh agent per chunk call — do NOT reuse across calls
+    # Create a fresh agent per chunk call — do NOT reuse across calls.
+    # betas + max_tokens=128000: the PPTX skill generates full multi-slide decks whose
+    # output can be large; 128k tokens and the context-1m beta are both safe here because
+    # this agent is always invoked with stream=True (see _run_chunk_agent).
     chunk_agent = Agent(
         name="Chunk Generator %d" % chunk_idx,
         model=Claude(
-            id="claude-sonnet-4-6",
+            id="claude-opus-4-6",
             betas=["context-1m-2025-08-07"],
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
+            max_tokens=128000,
         ),
         instructions=[
             "You are a structured content generator for PowerPoint presentations.",
@@ -902,12 +952,16 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
 
 # Tier 2 fallback agent: generates python-pptx + matplotlib code and executes it.
 # Created at module level — NOT inside any function or loop (per project rules).
-# Uses Claude Sonnet without the PPTX skill, with PythonTools for code execution.
+# Uses Claude without the PPTX skill, with PythonTools for code execution.
 # PythonTools base_dir is set to current directory; the generated script saves
 # to the absolute output path passed in the prompt.
+# NOTE: betas=["context-1m-2025-08-07"] is intentionally omitted because this agent
+# is invoked with stream=False (see generate_chunk_pptx_v2), and the context-1m beta
+# mandates streaming for every call — using it with stream=False raises:
+# "Streaming is required for operations that may take longer than 10 minutes."
 fallback_code_agent = Agent(
     name="PPTX Code Generator",
-    model=Claude(id="claude-sonnet-4-6"),
+    model=Claude(id="claude-opus-4-6", max_tokens=128000),
     instructions=PPTX_CODE_GEN_INSTRUCTIONS,
     tools=[PythonTools(
         base_dir=Path("."),
@@ -1021,9 +1075,14 @@ def generate_chunk_pptx_v2(
             % (chunk_idx, len(code_gen_prompt))
         )
 
+    # stream=True is required: max_tokens=128000 causes the Anthropic SDK to enforce
+    # streaming for all calls that may take longer than 10 minutes, even without betas.
+    # Tier 2 only cares whether the file was created on disk, not about the response
+    # content, so we iterate through the stream and discard events.
     t2_start = time.time()
     try:
-        response = fallback_code_agent.run(code_gen_prompt, stream=False)
+        for _ in fallback_code_agent.run(code_gen_prompt, stream=True):
+            pass
         t2_elapsed = time.time() - t2_start
         print(
             "[TIMING] Chunk %d Tier 2 code generation: %.1fs"
@@ -1111,6 +1170,7 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
     chunk_files: List[Optional[str]] = []
     successful = 0
     total_chunks = len(chunks)
+    start_tier = session_state.get("start_tier", 1)
 
     for chunk_idx, chunk_slides in enumerate(chunks):
         chunk_start = time.time()
@@ -1124,23 +1184,41 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
             )
         )
 
-        if session_state.get("use_fallback_generator"):
-            # Tier 1 failed permanently for this session — go to Tier 2 directly.
+        # Determine effective starting tier for this chunk
+        # If use_fallback_generator flag is set (Tier 1 failed in a previous chunk),
+        # effective tier is max(start_tier, 2) to skip Tier 1 permanently.
+        effective_tier = max(start_tier, 2) if session_state.get("use_fallback_generator") else start_tier
+
+        chunk_file = None
+
+        if effective_tier == 3:
+            # Start with Tier 3: text-only python-pptx (no fallback needed)
             print(
-                "[GENERATE] Chunk %d/%d: Tier 1 (Claude PPTX skill) unavailable. "
-                "Using Tier 2 (LLM code generation)..."
+                "[GENERATE] Chunk %d/%d: Starting at Tier 3 (text-only, instant)."
+                % (chunk_idx + 1, total_chunks)
+            )
+            chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
+
+        elif effective_tier == 2:
+            # Start with Tier 2: LLM code generation, fallback to Tier 3
+            print(
+                "[GENERATE] Chunk %d/%d: Starting at Tier 2 (LLM code generation)."
                 % (chunk_idx + 1, total_chunks)
             )
             chunk_file = generate_chunk_pptx_v2(chunk_slides, session_state, chunk_idx)
             if chunk_file is None:
-                # Tier 2 failed — fall through to Tier 3 (no retry).
                 print(
-                    "[GENERATE] Chunk %d/%d: Tier 2 failed. Using Tier 3 (text-only fallback)."
+                    "[GENERATE] Chunk %d/%d: Tier 2 failed. Falling back to Tier 3 (text-only)."
                     % (chunk_idx + 1, total_chunks)
                 )
                 chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
-        else:
-            # Attempt Tier 1: Claude PPTX skill.
+
+        else:  # effective_tier == 1
+            # Start with Tier 1: Claude PPTX skill, fallback to Tier 2 → Tier 3
+            print(
+                "[GENERATE] Chunk %d/%d: Starting at Tier 1 (Claude PPTX skill)."
+                % (chunk_idx + 1, total_chunks)
+            )
             chunk_file = generate_chunk_pptx(chunk_slides, session_state, chunk_idx)
 
             if chunk_file is None and session_state.get("use_fallback_generator"):
@@ -2160,6 +2238,19 @@ def main() -> None:
         default=3,
         help="Maximum visual inspection passes per chunk (default: 3).",
     )
+    parser.add_argument(
+        "--start-tier",
+        type=int,
+        choices=[1, 2, 3],
+        default=1,
+        help=(
+            "Starting tier for chunk generation (default: 1). "
+            "1=Claude PPTX skill (best quality), "
+            "2=LLM code generation (80-92%% quality, faster), "
+            "3=text-only (structural, instant). "
+            "Fallback continues from selected tier."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -2229,6 +2320,7 @@ def main() -> None:
         "chunk_size": args.chunk_size,
         "max_retries": args.max_retries,
         "visual_passes": effective_visual_passes,
+        "start_tier": args.start_tier,
         # Fields populated by steps
         "storyboard": None,
         "storyboard_dir": None,
@@ -2267,6 +2359,10 @@ def main() -> None:
         print("Visual review: skipped (no template)")
     print("Chunk size: %d slides per API call" % args.chunk_size)
     print("Max retries per chunk: %d" % args.max_retries)
+    print("Start tier: %d (%s)" % (
+        args.start_tier,
+        {1: "Claude PPTX skill", 2: "LLM code generation", 3: "text-only"}[args.start_tier]
+    ))
     print("Images:     %s" % ("disabled" if args.no_images else "enabled"))
     if args.verbose:
         print("Verbose:    enabled")

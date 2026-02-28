@@ -4030,14 +4030,20 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
         if VERBOSE:
             print("[VERBOSE] Exception suppressed: %s" % str(e))
 
+    # Claude 4.6 Token Limits
+    # Model 	Context Window (Input)	Max Output Tokens
+    # Claude Opus 4.6	200,000 / 1,000,000 (beta)	128,000 tokens
+    # Claude Sonnet 4.6	200,000 / 1,000,000 (beta)	64,000 tokens
+
     # Create the Claude agent
     content_agent = Agent(
         name="Content Generator",
         model=Claude(
-            id="claude-sonnet-4-6",
+            id="claude-opus-4-6",
             betas=["context-1m-2025-08-07"],
             # "claude-sonnet-4-5-20250929",
             # # Or: "claude-sonnet-4-6", "claude-opus-4-6"
+            max_tokens=128000,
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
         ),
         instructions=[
