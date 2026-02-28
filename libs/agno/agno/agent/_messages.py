@@ -1639,22 +1639,29 @@ def get_messages_for_parser_model_stream(
 
 
 def get_messages_for_output_model(agent: Agent, messages: List[Message]) -> List[Message]:
-    """Get the messages for the output model."""
+    """Get the messages for the output model.
+
+    Returns a new list so the original run messages (and their system prompt)
+    are never mutated — this keeps traces/observability accurate.
+    """
+    from copy import deepcopy
+
+    output_messages = [deepcopy(m) for m in messages]
 
     if agent.output_model_prompt is not None:
         system_message_exists = False
-        for message in messages:
+        for message in output_messages:
             if message.role == "system":
                 system_message_exists = True
                 message.content = agent.output_model_prompt
                 break
         if not system_message_exists:
-            messages.insert(0, Message(role="system", content=agent.output_model_prompt))
+            output_messages.insert(0, Message(role="system", content=agent.output_model_prompt))
 
     # Remove the last assistant message from the messages list
-    messages.pop(-1)
+    output_messages.pop(-1)
 
-    return messages
+    return output_messages
 
 
 # ---------------------------------------------------------------------------

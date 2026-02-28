@@ -555,7 +555,8 @@ class Claude(Model):
                 )
                 request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
             else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+                # Use plain string so trace/observability tools can read the full prompt
+                request_kwargs["system"] = system_message
 
         # Add code execution tool if skills are enabled
         if self.skills:
