@@ -93,7 +93,7 @@ class AzureOpenAIEmbedder(Embedder):
 
     def _response(self, text: str) -> CreateEmbeddingResponse:
         _request_params: Dict[str, Any] = {
-            "input": text,
+            "input": [text],
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
@@ -124,7 +124,7 @@ class AzureOpenAIEmbedder(Embedder):
     async def _aresponse(self, text: str) -> CreateEmbeddingResponse:
         """Async version of _response method."""
         _request_params: Dict[str, Any] = {
-            "input": text,
+            "input": [text],
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
