@@ -244,6 +244,10 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+        # Fallback: if not found with user_id, retry without it to find sessions
+        # created via the API with a different (or no) user_id
+        if team_session is None and user_id is not None:
+            team_session = cast(TeamSession, _read_session(team, session_id=session_id))
 
     # Create new session if none found
     if team_session is None:
@@ -309,8 +313,16 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         if _has_async_db(team):
             team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
+            # Fallback: if not found with user_id, retry without it to find sessions
+            # created via the API with a different (or no) user_id
+            if team_session is None and user_id is not None:
+                team_session = cast(TeamSession, await _aread_session(team, session_id=session_id))
         else:
             team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+            # Fallback: if not found with user_id, retry without it to find sessions
+            # created via the API with a different (or no) user_id
+            if team_session is None and user_id is not None:
+                team_session = cast(TeamSession, _read_session(team, session_id=session_id))
 
     # Create new session if none found
     if team_session is None:
