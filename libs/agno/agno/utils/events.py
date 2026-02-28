@@ -37,8 +37,10 @@ from agno.run.agent import (
     RunStartedEvent,
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
+    ToolCallCancelledEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
+    ToolCallFailedEvent,
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
@@ -74,8 +76,10 @@ from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationComple
 from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
 from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import ToolCallCancelledEvent as TeamToolCallCancelledEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
+from agno.run.team import ToolCallFailedEvent as TeamToolCallFailedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 from agno.session.summary import SessionSummary
 
@@ -630,6 +634,58 @@ def create_team_tool_call_error_event(
         run_id=from_run_response.run_id,
         tool=tool,
         error=error,
+    )
+
+
+def create_tool_call_failed_event(
+    from_run_response: RunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> ToolCallFailedEvent:
+    return ToolCallFailedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
+    )
+
+
+def create_team_tool_call_failed_event(
+    from_run_response: TeamRunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> TeamToolCallFailedEvent:
+    return TeamToolCallFailedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
+    )
+
+
+def create_tool_call_cancelled_event(
+    from_run_response: RunOutput, tool: ToolExecution, reason: Optional[str] = None
+) -> ToolCallCancelledEvent:
+    return ToolCallCancelledEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        reason=reason,
+    )
+
+
+def create_team_tool_call_cancelled_event(
+    from_run_response: TeamRunOutput, tool: ToolExecution, reason: Optional[str] = None
+) -> TeamToolCallCancelledEvent:
+    return TeamToolCallCancelledEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        reason=reason,
     )
 
 

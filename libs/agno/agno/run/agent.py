@@ -154,6 +154,8 @@ class RunEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     tool_call_error = "ToolCallError"
+    tool_call_failed = "ToolCallFailed"
+    tool_call_cancelled = "ToolCallCancelled"
 
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
@@ -421,6 +423,20 @@ class ToolCallErrorEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ToolCallFailedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.tool_call_failed.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class ToolCallCancelledEvent(BaseAgentRunEvent):
+    event: str = RunEvent.tool_call_cancelled.value
+    tool: Optional[ToolExecution] = None
+    reason: Optional[str] = None
+
+
+@dataclass
 class ParserModelResponseStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.parser_model_response_started.value
 
@@ -519,6 +535,8 @@ RunOutputEvent = Union[
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
+    ToolCallFailedEvent,
+    ToolCallCancelledEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
@@ -557,6 +575,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.tool_call_error.value: ToolCallErrorEvent,
+    RunEvent.tool_call_failed.value: ToolCallFailedEvent,
+    RunEvent.tool_call_cancelled.value: ToolCallCancelledEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
