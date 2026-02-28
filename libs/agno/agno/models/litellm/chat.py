@@ -438,9 +438,10 @@ class LiteLLM(Model):
             if not isinstance(function_data, dict):
                 function_data = {}
 
-            # Update function name if provided
-            if function_data.get("name") is not None:
-                name = function_data.get("name", "")
+            # Update function name if provided (skip empty strings to avoid
+            # overwriting a valid name from a previous chunk)
+            if function_data.get("name"):
+                name = function_data["name"]
                 if isinstance(tool_calls_by_index[index]["function"], dict):
                     # type: ignore
                     tool_calls_by_index[index]["function"]["name"] = name
