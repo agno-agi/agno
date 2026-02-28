@@ -426,11 +426,11 @@ class LiteLLM(Model):
             if index not in tool_calls_by_index:
                 tool_calls_by_index[index] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
 
-            # Update with new information
-            if tc.get("id") is not None:
+            # Update with new information (skip empty strings to avoid overwriting valid data)
+            if tc.get("id"):
                 tool_calls_by_index[index]["id"] = tc["id"]
 
-            if tc.get("type") is not None:
+            if tc.get("type"):
                 tool_calls_by_index[index]["type"] = tc["type"]
 
             # Update function information
@@ -438,9 +438,9 @@ class LiteLLM(Model):
             if not isinstance(function_data, dict):
                 function_data = {}
 
-            # Update function name if provided
-            if function_data.get("name") is not None:
-                name = function_data.get("name", "")
+            # Update function name if provided (skip empty strings to avoid overwriting valid names)
+            if function_data.get("name"):
+                name = function_data["name"]
                 if isinstance(tool_calls_by_index[index]["function"], dict):
                     # type: ignore
                     tool_calls_by_index[index]["function"]["name"] = name
