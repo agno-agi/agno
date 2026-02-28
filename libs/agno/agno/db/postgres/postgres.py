@@ -3494,6 +3494,7 @@ class PostgresDb(BaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -3502,6 +3503,7 @@ class PostgresDb(BaseDb):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -3518,6 +3520,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.component_type == component_type.value)
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
+                if exclude_component_ids:
+                    where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)

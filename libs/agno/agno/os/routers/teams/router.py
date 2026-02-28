@@ -476,7 +476,10 @@ def get_team_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            for db_team in get_teams(db=os.db, registry=registry):
+            # Exclude teams whose IDs are owned by the registry
+            exclude_ids = registry.get_team_ids() if registry else None
+            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            for db_team in db_teams:
                 team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                 teams.append(team_response)
 

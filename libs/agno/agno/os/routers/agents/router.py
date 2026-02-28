@@ -656,9 +656,13 @@ def get_agent_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
 
-            for db_agent in get_agents(db=os.db, registry=registry):
-                agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
-                agents.append(agent_response)
+            # Exclude agents whose IDs are owned by the registry
+            exclude_ids = registry.get_agent_ids() if registry else None
+            db_agents = get_agents(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            if db_agents:
+                for db_agent in db_agents:
+                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    agents.append(agent_response)
 
         return agents
 
