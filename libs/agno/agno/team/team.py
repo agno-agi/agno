@@ -101,6 +101,8 @@ class Team:
     respond_directly: bool = False
     # If True, the team leader will delegate the task to all members, instead of deciding for a subset
     delegate_to_all_members: bool = False
+    # If False, the team leader will never respond directly to the user — it will always delegate to a member.
+    enable_team_leader_response: bool = True
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
@@ -413,6 +415,7 @@ class Team:
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
+        enable_team_leader_response: bool = True,
         max_iterations: int = 10,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -525,6 +528,7 @@ class Team:
             respond_directly=respond_directly,
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
+            enable_team_leader_response=enable_team_leader_response,
             max_iterations=max_iterations,
             user_id=user_id,
             session_id=session_id,
