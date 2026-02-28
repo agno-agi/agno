@@ -46,8 +46,8 @@ def get_entrypoint_for_tool(
     async def call_tool(
         tool_name: str,
         run_context: Optional["RunContext"] = None,
-        agent: Optional["Agent"] = None,
-        team: Optional["Team"] = None,
+        _agno_agent: Optional["Agent"] = None,
+        _agno_team: Optional["Team"] = None,
         **kwargs,
     ) -> ToolResult:
         # Execute the MCP tool call
@@ -62,11 +62,11 @@ def get_entrypoint_for_tool(
                 # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
                 if isinstance(mcp_tools_instance, MultiMCPTools):
                     active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=run_context, server_idx=server_idx, agent=agent, team=team
+                        run_context=run_context, server_idx=server_idx, agent=_agno_agent, team=_agno_team
                     )
                 else:
                     active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=run_context, agent=agent, team=team
+                        run_context=run_context, agent=_agno_agent, team=_agno_team
                     )
             else:
                 active_session = session

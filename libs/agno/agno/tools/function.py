@@ -854,9 +854,15 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an agent argument (by name)
         if "agent" in sig.parameters:
             entrypoint_args["agent"] = self.function._agent
+        # MCP tools use prefixed names to avoid collisions with tool parameters
+        # (e.g. Linear MCP server has a "team" parameter on its tools)
+        if "_agno_agent" in sig.parameters:
+            entrypoint_args["_agno_agent"] = self.function._agent
         # Check if the entrypoint has a team argument (by name)
         if "team" in sig.parameters:
             entrypoint_args["team"] = self.function._team
+        if "_agno_team" in sig.parameters:
+            entrypoint_args["_agno_team"] = self.function._team
         # Check if the entrypoint has a run_context argument
         if "run_context" in sig.parameters:
             entrypoint_args["run_context"] = self.function._run_context
