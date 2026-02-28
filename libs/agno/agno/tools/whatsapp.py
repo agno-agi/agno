@@ -19,6 +19,8 @@ class WhatsAppTools(Toolkit):
         version: Optional[str] = None,
         recipient_waid: Optional[str] = None,
         async_mode: bool = False,
+        split_messages: bool = False,
+        split_separator: str = "\n\n",
     ):
         """Initialize WhatsApp toolkit.
 
@@ -28,6 +30,8 @@ class WhatsAppTools(Toolkit):
             version: API version to use
             recipient_waid: Default recipient WhatsApp ID (optional)
             async_mode: Whether to use async methods (default: False)
+            split_messages: Whether to split text messages by separator and send as multiple messages (default: False)
+            split_separator: Separator used to split messages when split_messages is True (default: "\\n\\n")
         """
         # Core credentials
         self.access_token = access_token or getenv("WHATSAPP_ACCESS_TOKEN")
@@ -46,6 +50,8 @@ class WhatsAppTools(Toolkit):
         # API version and mode
         self.version = version or getenv("WHATSAPP_VERSION", "v22.0")
         self.async_mode = async_mode
+        self.split_messages = split_messages
+        self.split_separator = split_separator
 
         tools: List[Any] = []
         if self.async_mode:
@@ -129,6 +135,33 @@ class WhatsAppTools(Toolkit):
 
         logger.debug(f"Sending WhatsApp message to {recipient}: {text}")
         logger.debug(f"Current config - Phone Number ID: {self.phone_number_id}, Version: {self.version}")
+
+        if self.split_messages:
+            parts = [part.strip() for part in text.split(self.split_separator) if part.strip()]
+            if len(parts) > 1:
+                message_ids: List[str] = []
+                for part in parts:
+                    data = {
+                        "messaging_product": "whatsapp",
+                        "recipient_type": recipient_type,
+                        "to": recipient,
+                        "type": "text",
+                        "text": {"preview_url": preview_url, "body": part},
+                    }
+                    try:
+                        response = self._send_message_sync(data)
+                        message_id = response.get("messages", [{}])[0].get("id", "unknown")
+                        message_ids.append(message_id)
+                    except httpx.HTTPStatusError as e:
+                        logger.error(f"Failed to send WhatsApp message: {e}")
+                        logger.error(
+                            f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}"
+                        )
+                        raise
+                    except Exception as e:
+                        logger.error(f"Unexpected error sending WhatsApp message: {str(e)}")
+                        raise
+                return f"Sent {len(message_ids)} messages. Message IDs: {', '.join(message_ids)}"
 
         data = {
             "messaging_product": "whatsapp",
@@ -220,6 +253,33 @@ class WhatsAppTools(Toolkit):
 
         logger.debug(f"Sending WhatsApp message to {recipient}: {text}")
         logger.debug(f"Current config - Phone Number ID: {self.phone_number_id}, Version: {self.version}")
+
+        if self.split_messages:
+            parts = [part.strip() for part in text.split(self.split_separator) if part.strip()]
+            if len(parts) > 1:
+                message_ids: List[str] = []
+                for part in parts:
+                    data = {
+                        "messaging_product": "whatsapp",
+                        "recipient_type": recipient_type,
+                        "to": recipient,
+                        "type": "text",
+                        "text": {"preview_url": preview_url, "body": part},
+                    }
+                    try:
+                        response = await self._send_message_async(data)
+                        message_id = response.get("messages", [{}])[0].get("id", "unknown")
+                        message_ids.append(message_id)
+                    except httpx.HTTPStatusError as e:
+                        logger.error(f"Failed to send WhatsApp message: {e}")
+                        logger.error(
+                            f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}"
+                        )
+                        raise
+                    except Exception as e:
+                        logger.error(f"Unexpected error sending WhatsApp message: {str(e)}")
+                        raise
+                return f"Sent {len(message_ids)} messages. Message IDs: {', '.join(message_ids)}"
 
         data = {
             "messaging_product": "whatsapp",
