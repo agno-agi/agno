@@ -369,7 +369,11 @@ def attach_routes(
             except (UnicodeDecodeError, Exception):
                 return content
         elif isinstance(content, str):
-            return base64.b64decode(content)
+            try:
+                return base64.b64decode(content)
+            except Exception:
+                log_warning("Failed to decode base64 content: not valid base64 data")
+                return None
         return None
 
     def _send_whatsapp_message(tools: WhatsAppTools, recipient: str, message: str, italics: bool = False):

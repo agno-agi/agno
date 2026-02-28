@@ -13,7 +13,7 @@ class ReplyButton(BaseModel):
     """A quick-reply button."""
 
     id: str = Field(..., description="Unique button identifier (e.g. 'yes', 'no').")
-    title: str = Field(..., description="Button display text, max 20 characters.")
+    title: str = Field(..., max_length=20, description="Button display text, max 20 characters.")
 
 
 class ListRow(BaseModel):
