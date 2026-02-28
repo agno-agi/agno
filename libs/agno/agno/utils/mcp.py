@@ -45,11 +45,13 @@ def get_entrypoint_for_tool(
 
     async def call_tool(
         tool_name: str,
-        run_context: Optional["RunContext"] = None,
-        agent: Optional["Agent"] = None,
-        team: Optional["Team"] = None,
         **kwargs,
     ) -> ToolResult:
+        # Extract framework-injected parameters to avoid collisions
+        # with MCP tool parameters that may share the same names
+        run_context: Optional["RunContext"] = kwargs.pop("run_context", None)
+        agent: Optional["Agent"] = kwargs.pop("agent", None)
+        team: Optional["Team"] = kwargs.pop("team", None)
         # Execute the MCP tool call
         try:
             # Get the appropriate session for this run
