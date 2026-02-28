@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
@@ -345,3 +346,40 @@ class TeamSession:
             return None
 
         return self.summary  # type: ignore
+
+    @property
+    def session_metrics(self) -> Optional[SessionMetrics]:
+        """Cumulative token usage metrics for this session."""
+        if self.session_data is None:
+            return None
+        raw = self.session_data.get("session_metrics")
+        if raw is None:
+            return None
+        if isinstance(raw, SessionMetrics):
+            return raw
+        if isinstance(raw, dict):
+            return SessionMetrics.from_dict(raw)
+        if isinstance(raw, RunMetrics):
+            return SessionMetrics(
+                input_tokens=raw.input_tokens,
+                output_tokens=raw.output_tokens,
+                total_tokens=raw.total_tokens,
+                audio_input_tokens=raw.audio_input_tokens,
+                audio_output_tokens=raw.audio_output_tokens,
+                audio_total_tokens=raw.audio_total_tokens,
+                cache_read_tokens=raw.cache_read_tokens,
+                cache_write_tokens=raw.cache_write_tokens,
+                reasoning_tokens=raw.reasoning_tokens,
+                cost=raw.cost,
+            )
+        return None
+
+    @session_metrics.setter
+    def session_metrics(self, value: Optional[SessionMetrics]) -> None:
+        """Set the cumulative token usage metrics for this session."""
+        if self.session_data is None:
+            self.session_data = {}
+        if value is None:
+            self.session_data.pop("session_metrics", None)
+        else:
+            self.session_data["session_metrics"] = value.to_dict()
