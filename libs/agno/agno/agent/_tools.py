@@ -474,6 +474,9 @@ def determine_tools_for_model(
                 func._audios = joint_audios
                 func._videos = joint_videos
 
+    # Store reference so add_tool() can append mid-execution
+    agent._active_model_tools = _functions
+
     return _functions
 
 
