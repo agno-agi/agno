@@ -161,11 +161,12 @@ class GcsJsonDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from the GCS JSON file.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -176,7 +177,11 @@ class GcsJsonDb(BaseDb):
         try:
             sessions = self._read_json_file(self.session_table_name)
             original_count = len(sessions)
-            sessions = [s for s in sessions if s.get("session_id") != session_id]
+            sessions = [
+                s
+                for s in sessions
+                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
+            ]
 
             if len(sessions) < original_count:
                 self._write_json_file(self.session_table_name, sessions)
@@ -191,18 +196,23 @@ class GcsJsonDb(BaseDb):
             log_warning(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the GCS JSON file.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             sessions = self._read_json_file(self.session_table_name)
-            sessions = [s for s in sessions if s.get("session_id") not in session_ids]
+            sessions = [
+                s
+                for s in sessions
+                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
+            ]
             self._write_json_file(self.session_table_name, sessions)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
@@ -355,7 +365,12 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the GCS JSON file."""
         try:
@@ -366,6 +381,8 @@ class GcsJsonDb(BaseDb):
                     session_data.get("session_id") == session_id
                     and session_data.get("session_type") == session_type.value
                 ):
+                    if user_id is not None and session_data.get("user_id") != user_id:
+                        continue
                     # Update session name in session_data
                     if "session_data" not in session_data:
                         session_data["session_data"] = {}
@@ -411,6 +428,9 @@ class GcsJsonDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
                     # Update existing session
                     session_dict["updated_at"] = int(time.time())
                     sessions[i] = session_dict
@@ -964,10 +984,26 @@ class GcsJsonDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the GCS JSON file."""
+        """Get all knowledge contents from the GCS JSON file.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
             total_count = len(knowledge_items)
 

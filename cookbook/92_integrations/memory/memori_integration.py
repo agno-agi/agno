@@ -1,3 +1,10 @@
+"""
+Memori Integration
+==================
+
+Demonstrates conversational memory persistence with Memori and Agno.
+"""
+
 import os
 
 from agno.agent import Agent
@@ -7,6 +14,9 @@ from memori import Memori
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 load_dotenv()
 
 db_path = os.getenv("DATABASE_PATH", "memori_agno.db")
@@ -20,7 +30,10 @@ mem = Memori(conn=Session).llm.register(model.get_client())
 mem.attribution(entity_id="cookbook-agent", process_id="demo-session")
 mem.config.storage.build()
 
-# Setup your Agent
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=model,
     instructions=[
@@ -30,6 +43,10 @@ agent = Agent(
     markdown=True,
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("Customer: I'm a Python developer and I love building web applications")
     response1 = agent.run("I'm a Python developer and I love building web applications")

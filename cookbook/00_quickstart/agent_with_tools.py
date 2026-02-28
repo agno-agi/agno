@@ -19,9 +19,9 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Agent Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are a Finance Agent — a data-driven analyst who retrieves market data,
 computes key ratios, and produces concise, decision-ready insights.
@@ -54,29 +54,29 @@ computes key ratios, and produces concise, decision-ready insights.
 - No emojis.\
 """
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 agent_with_tools = Agent(
     name="Agent with Tools",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     add_datetime_to_context=True,
     markdown=True,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent_with_tools.print_response(
         "Give me a quick investment brief on NVIDIA", stream=True
     )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 Try these prompts:
 

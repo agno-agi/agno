@@ -1,5 +1,5 @@
 """
-👩‍💻 Agent with Daytona tools
+‍ Agent with Daytona tools
 
 This example shows how to use Agno's Daytona integration to run Agent-generated code in a remote, secure sandbox.
 
@@ -13,6 +13,11 @@ This example shows how to use Agno's Daytona integration to run Agent-generated 
 
 from agno.agent import Agent
 from agno.tools.daytona import DaytonaTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 agent = Agent(
     name="Coding Agent with Daytona tools",
@@ -36,6 +41,10 @@ agent = Agent(
     ],
 )
 
-agent.print_response(
-    "Write JavaScript code to generate 10 random numbers between 1 and 100, sort them in ascending order, and print each number"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Write JavaScript code to generate 10 random numbers between 1 and 100, sort them in ascending order, and print each number"
+    )

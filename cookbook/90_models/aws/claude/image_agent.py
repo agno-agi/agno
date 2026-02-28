@@ -1,7 +1,18 @@
+"""
+Aws Image Agent
+===============
+
+Cookbook example for `aws/claude/image_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.aws import Claude
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Claude(id="global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
@@ -18,3 +29,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

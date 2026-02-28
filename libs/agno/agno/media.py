@@ -436,6 +436,22 @@ class File(BaseModel):
         else:
             return None
 
+    def get_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            if isinstance(self.content, bytes):
+                return self.content
+            elif isinstance(self.content, str):
+                return self.content.encode("utf-8")
+            return None
+        elif self.url:
+            import httpx
+
+            return httpx.get(self.url).content
+        elif self.filepath:
+            with open(self.filepath, "rb") as f:
+                return f.read()
+        return None
+
     def _normalise_content(self) -> Optional[Union[str, bytes]]:
         if self.content is None:
             return None

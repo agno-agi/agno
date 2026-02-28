@@ -43,3 +43,4 @@ agent.print_response(query, markdown=True)
 - **[Async Retriever](./async_retriever.py)** - Asynchronous retrieval with concurrent processing
 - **[Basic Retriever](./retriever.py)** - Custom retrieval logic and processing
 - **[Retriever with Dependencies](./retriever_with_dependencies.py)** - Access runtime dependencies in custom retrievers
+- **[Team Retriever](./team_retriever.py)** - Custom retriever on a Team

@@ -122,10 +122,14 @@ def attach_routes(
             start_time_ms = time.time() * 1000
             offset = (page - 1) * limit
 
+            # Exclude components whose IDs are owned by the registry
+            exclude_ids = registry.get_all_component_ids() if registry else None
+
             components, total_count = db.list_components(
                 component_type=DbComponentType(component_type.value) if component_type else None,
                 limit=limit,
                 offset=offset,
+                exclude_component_ids=exclude_ids or None,
             )
 
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
@@ -243,6 +247,8 @@ def attach_routes(
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
                 update_kwargs["metadata"] = body.metadata
+            if body.current_version is not None:
+                update_kwargs["current_version"] = body.current_version
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
 

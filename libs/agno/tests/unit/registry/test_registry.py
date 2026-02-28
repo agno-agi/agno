@@ -178,6 +178,7 @@ class TestRegistryInit:
         assert basic_registry.dbs == []
         assert basic_registry.vector_dbs == []
         assert basic_registry.schemas == []
+        assert basic_registry.functions == []
 
     def test_init_generates_unique_id(self):
         """Test that each registry gets a unique ID."""
@@ -226,6 +227,14 @@ class TestRegistryInit:
         assert len(reg.schemas) == 2
         assert SampleInputSchema in reg.schemas
         assert SampleOutputSchema in reg.schemas
+
+    def test_init_with_functions(self):
+        """Test registry initialization with functions."""
+        reg = Registry(functions=[sample_function, another_function])
+
+        assert len(reg.functions) == 2
+        assert sample_function in reg.functions
+        assert another_function in reg.functions
 
     def test_init_full_registry(self, full_registry):
         """Test registry with all component types."""
@@ -503,3 +512,278 @@ class TestRegistryIntegration:
         }
         rehydrated = reg.rehydrate_function(func_dict)
         assert rehydrated.entrypoint is None
+
+
+# =============================================================================
+# get_function() Tests
+# =============================================================================
+
+
+class TestGetFunction:
+    """Tests for Registry.get_function() method."""
+
+    def test_get_function_found(self):
+        """Test getting a function that exists."""
+        reg = Registry(functions=[sample_function, another_function])
+
+        func = reg.get_function("sample_function")
+
+        assert func is sample_function
+
+    def test_get_function_multiple(self):
+        """Test getting different functions."""
+        reg = Registry(functions=[sample_function, another_function, search_function])
+
+        func1 = reg.get_function("sample_function")
+        func2 = reg.get_function("another_function")
+        func3 = reg.get_function("search_function")
+
+        assert func1 is sample_function
+        assert func2 is another_function
+        assert func3 is search_function
+
+    def test_get_function_not_found(self):
+        """Test getting a function that doesn't exist."""
+        reg = Registry(functions=[sample_function])
+
+        func = reg.get_function("nonexistent_function")
+
+        assert func is None
+
+    def test_get_function_empty_registry(self, basic_registry):
+        """Test getting function from empty registry."""
+        func = basic_registry.get_function("sample_function")
+
+        assert func is None
+
+    def test_get_function_case_sensitive(self):
+        """Test that function lookup is case sensitive."""
+        reg = Registry(functions=[sample_function])
+
+        # Correct name
+        found = reg.get_function("sample_function")
+        assert found is sample_function
+
+        # Wrong case
+        not_found = reg.get_function("Sample_Function")
+        assert not_found is None
+
+        not_found2 = reg.get_function("SAMPLE_FUNCTION")
+        assert not_found2 is None
+
+    def test_get_function_with_lambda(self):
+        """Test that lambdas work (they have __name__ = '<lambda>')."""
+        my_lambda = lambda x: x * 2  # noqa: E731
+        reg = Registry(functions=[my_lambda])
+
+        # Lambda functions have __name__ = '<lambda>'
+        func = reg.get_function("<lambda>")
+
+        assert func is my_lambda
+
+
+# =============================================================================
+# get_db() Tests
+# =============================================================================
+
+
+class TestGetDb:
+    """Tests for Registry.get_db() method."""
+
+    def test_get_db_found(self, mock_db):
+        """Test getting a database that exists."""
+        reg = Registry(dbs=[mock_db])
+
+        db = reg.get_db("test-db")
+
+        assert db is mock_db
+
+    def test_get_db_multiple(self):
+        """Test getting different databases."""
+        db1 = MagicMock()
+        db1.id = "db-1"
+        db2 = MagicMock()
+        db2.id = "db-2"
+        db3 = MagicMock()
+        db3.id = "db-3"
+
+        reg = Registry(dbs=[db1, db2, db3])
+
+        assert reg.get_db("db-1") is db1
+        assert reg.get_db("db-2") is db2
+        assert reg.get_db("db-3") is db3
+
+    def test_get_db_not_found(self, mock_db):
+        """Test getting a database that doesn't exist."""
+        reg = Registry(dbs=[mock_db])
+
+        db = reg.get_db("nonexistent-db")
+
+        assert db is None
+
+    def test_get_db_empty_registry(self, basic_registry):
+        """Test getting database from empty registry."""
+        db = basic_registry.get_db("some-db")
+
+        assert db is None
+
+    def test_get_db_case_sensitive(self, mock_db):
+        """Test that database lookup is case sensitive."""
+        reg = Registry(dbs=[mock_db])
+
+        # Correct id
+        found = reg.get_db("test-db")
+        assert found is mock_db
+
+        # Wrong case
+        not_found = reg.get_db("Test-Db")
+        assert not_found is None
+
+        not_found2 = reg.get_db("TEST-DB")
+        assert not_found2 is None
+
+
+# =============================================================================
+# get_agent() / get_team() Tests
+# =============================================================================
+
+
+class TestGetAgent:
+    """Tests for Registry.get_agent() method."""
+
+    def test_get_agent_found(self):
+        """Test getting an agent that exists."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        reg = Registry(agents=[agent])
+
+        result = reg.get_agent("agent-1")
+
+        assert result is agent
+
+    def test_get_agent_multiple(self):
+        """Test getting different agents."""
+        a1 = MagicMock()
+        a1.id = "a1"
+        a2 = MagicMock()
+        a2.id = "a2"
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent("a1") is a1
+        assert reg.get_agent("a2") is a2
+
+    def test_get_agent_not_found(self):
+        """Test getting an agent that doesn't exist."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        reg = Registry(agents=[agent])
+
+        assert reg.get_agent("nonexistent") is None
+
+    def test_get_agent_empty_registry(self, basic_registry):
+        """Test getting agent from registry with no agents."""
+        assert basic_registry.get_agent("any-id") is None
+
+    def test_get_agent_no_id_attribute(self):
+        """Test agent without id attribute is skipped."""
+        agent = MagicMock(spec=[])  # no attributes
+        reg = Registry(agents=[agent])
+
+        assert reg.get_agent("anything") is None
+
+
+class TestGetTeam:
+    """Tests for Registry.get_team() method."""
+
+    def test_get_team_found(self):
+        """Test getting a team that exists."""
+        team = MagicMock()
+        team.id = "team-1"
+        reg = Registry(teams=[team])
+
+        result = reg.get_team("team-1")
+
+        assert result is team
+
+    def test_get_team_not_found(self):
+        """Test getting a team that doesn't exist."""
+        team = MagicMock()
+        team.id = "team-1"
+        reg = Registry(teams=[team])
+
+        assert reg.get_team("nonexistent") is None
+
+    def test_get_team_empty_registry(self, basic_registry):
+        """Test getting team from registry with no teams."""
+        assert basic_registry.get_team("any-id") is None
+
+
+# =============================================================================
+# get_agent_ids() / get_team_ids() / get_all_component_ids() Tests
+# =============================================================================
+
+
+class TestGetComponentIds:
+    """Tests for Registry ID set methods."""
+
+    def test_get_agent_ids(self):
+        """Test getting all agent IDs."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        a2 = MagicMock()
+        a2.id = "agent-2"
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent_ids() == {"agent-1", "agent-2"}
+
+    def test_get_agent_ids_empty(self, basic_registry):
+        """Test agent IDs from empty registry."""
+        assert basic_registry.get_agent_ids() == set()
+
+    def test_get_agent_ids_skips_none(self):
+        """Test that agents without id are excluded."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        a2 = MagicMock(spec=[])  # no id attribute
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent_ids() == {"agent-1"}
+
+    def test_get_team_ids(self):
+        """Test getting all team IDs."""
+        t1 = MagicMock()
+        t1.id = "team-1"
+        t2 = MagicMock()
+        t2.id = "team-2"
+        reg = Registry(teams=[t1, t2])
+
+        assert reg.get_team_ids() == {"team-1", "team-2"}
+
+    def test_get_team_ids_empty(self, basic_registry):
+        """Test team IDs from empty registry."""
+        assert basic_registry.get_team_ids() == set()
+
+    def test_get_all_component_ids(self):
+        """Test getting combined agent + team IDs."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        t1 = MagicMock()
+        t1.id = "team-1"
+        reg = Registry(agents=[a1], teams=[t1])
+
+        assert reg.get_all_component_ids() == {"agent-1", "team-1"}
+
+    def test_get_all_component_ids_no_overlap(self):
+        """Test that agent and team IDs are unioned, not intersected."""
+        a1 = MagicMock()
+        a1.id = "shared-id"
+        t1 = MagicMock()
+        t1.id = "shared-id"
+        reg = Registry(agents=[a1], teams=[t1])
+
+        # Same ID from both should appear once
+        assert reg.get_all_component_ids() == {"shared-id"}
+
+    def test_get_all_component_ids_empty(self, basic_registry):
+        """Test combined IDs from empty registry."""
+        assert basic_registry.get_all_component_ids() == set()

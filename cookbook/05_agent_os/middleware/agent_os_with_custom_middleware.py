@@ -19,6 +19,10 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 # === Rate Limiting Middleware ===
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -147,6 +151,10 @@ app.add_middleware(
     log_body=False,
     log_headers=False,
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

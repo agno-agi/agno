@@ -962,27 +962,42 @@ def test_intermediate_steps_with_member_agents_nested_team():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert set(events.keys()) == {
-        TeamRunEvent.run_started,
-        TeamRunEvent.model_request_started,
-        TeamRunEvent.model_request_completed,
-        TeamRunEvent.tool_call_started,
-        TeamRunEvent.tool_call_completed,
-        TeamRunEvent.reasoning_started,
-        TeamRunEvent.reasoning_step,
-        TeamRunEvent.reasoning_completed,
-        RunEvent.run_started,
-        RunEvent.model_request_started,
-        RunEvent.model_request_completed,
-        RunEvent.tool_call_started,
-        RunEvent.tool_call_completed,
-        RunEvent.run_content,
-        RunEvent.run_content_completed,
-        RunEvent.run_completed,
-        TeamRunEvent.run_content,
-        TeamRunEvent.run_content_completed,
-        TeamRunEvent.run_completed,
+    # Core events that must always be present
+    required_events = {
+        TeamRunEvent.run_started.value,
+        TeamRunEvent.model_request_started.value,
+        TeamRunEvent.model_request_completed.value,
+        TeamRunEvent.tool_call_started.value,
+        TeamRunEvent.tool_call_completed.value,
+        RunEvent.run_started.value,
+        RunEvent.model_request_started.value,
+        RunEvent.model_request_completed.value,
+        RunEvent.run_content.value,
+        RunEvent.run_content_completed.value,
+        RunEvent.run_completed.value,
+        TeamRunEvent.run_content.value,
+        TeamRunEvent.run_content_completed.value,
+        TeamRunEvent.run_completed.value,
     }
+    # Reasoning events are optional - model may or may not use the reasoning tool
+    optional_reasoning_events = {
+        TeamRunEvent.reasoning_started.value,
+        TeamRunEvent.reasoning_step.value,
+        TeamRunEvent.reasoning_completed.value,
+    }
+    # Member agent tool events are optional - depends on delegation
+    optional_member_tool_events = {
+        RunEvent.tool_call_started.value,
+        RunEvent.tool_call_completed.value,
+    }
+
+    actual_events = set(events.keys())
+    # Check that all required events are present
+    assert required_events.issubset(actual_events), f"Missing required events: {required_events - actual_events}"
+    # Check that actual events are within the expected set (required + optional)
+    all_expected = required_events | optional_reasoning_events | optional_member_tool_events
+    unexpected_events = actual_events - all_expected
+    assert not unexpected_events, f"Unexpected events: {unexpected_events}"
 
 
 def test_intermediate_steps_with_member_agents_streaming_off():

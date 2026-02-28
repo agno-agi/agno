@@ -71,13 +71,13 @@ def test_vector_search(lance_db, sample_documents):
     """Test vector search"""
     lance_db.insert(documents=sample_documents, content_hash="test_hash")
     results = lance_db.vector_search("coconut dishes", limit=2)
+    assert results is not None
     assert len(results) == 2
-    # results is a DataFrame, so check the 'payload' column for content
-    # Each payload is a JSON string, so parse it and check for 'coconut'
+    # results is a list of dicts (LanceDB .to_list()), check payload for content
     import json
 
     found = False
-    for _, row in results.iterrows():
+    for row in results:
         payload = json.loads(row["payload"])
         if "coconut" in payload["content"].lower():
             found = True
@@ -501,3 +501,29 @@ def test_insert_reembeds_empty_embedding(lance_db):
     vector = result.iloc[0]["vector"]
     assert vector is not None
     assert len(vector) == 1024
+
+
+def test_get_table_names_new(lance_db):
+    """Test _get_table_names uses list_tables()"""
+    from unittest.mock import MagicMock
+
+    mock_conn = MagicMock()
+    mock_conn.list_tables.return_value = MagicMock(tables=["table1", "table2"])
+
+    result = lance_db._get_table_names(mock_conn)
+
+    mock_conn.list_tables.assert_called_once()
+    assert result == ["table1", "table2"]
+
+
+def test_get_table_names_old(lance_db):
+    """Test _get_table_names falls back to table_names() for old LanceDB versions"""
+    from unittest.mock import MagicMock
+
+    mock_conn = MagicMock(spec=["table_names"])  # No list_tables attribute
+    mock_conn.table_names.return_value = ["old_table1", "old_table2"]
+
+    result = lance_db._get_table_names(mock_conn)
+
+    mock_conn.table_names.assert_called_once()
+    assert result == ["old_table1", "old_table2"]

@@ -8,7 +8,9 @@ from agno.agent import Agent
 from agno.db.singlestore.singlestore import SingleStoreDb
 from agno.tools.websearch import WebSearchTools
 
-# Configure SingleStore DB connection
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 USERNAME = getenv("SINGLESTORE_USERNAME")
 PASSWORD = getenv("SINGLESTORE_PASSWORD")
 HOST = getenv("SINGLESTORE_HOST")
@@ -20,11 +22,18 @@ db_url = (
 )
 db = SingleStoreDb(db_url=db_url)
 
-# Create an agent with SingleStore db
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
 )
-agent.print_response("How many people live in Canada?")
-agent.print_response("What is their national anthem called?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("How many people live in Canada?")
+    agent.print_response("What is their national anthem called?")

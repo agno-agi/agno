@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
@@ -187,9 +187,6 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-
                 assistant_message.metrics.start_timer()
 
                 response = self.get_client().chat.complete(
@@ -199,9 +196,6 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-
                 assistant_message.metrics.start_timer()
                 response = self.get_client().chat.complete(
                     model=self.id,
@@ -236,9 +230,6 @@ class MistralChat(Model):
         Stream the response from the Mistral model.
         """
         mistral_messages = format_messages(messages, compress_tool_results)
-
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -280,8 +271,6 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
                 assistant_message.metrics.start_timer()
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
@@ -290,8 +279,6 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
                 assistant_message.metrics.start_timer()
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
@@ -326,9 +313,6 @@ class MistralChat(Model):
         """
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async for chunk in await self.get_client().chat.stream_async(
@@ -417,20 +401,25 @@ class MistralChat(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Any) -> Metrics:
+    def _get_metrics(self, response_usage: Any) -> MessageMetrics:
         """
-        Parse the given Mistral usage into an Agno Metrics object.
+        Parse the given Mistral usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Mistral
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        if hasattr(response_usage, "prompt_tokens_details") and response_usage.prompt_tokens_details:
+            metrics.cache_read_tokens = getattr(response_usage.prompt_tokens_details, "cached_tokens", 0) or 0
+        if hasattr(response_usage, "completion_tokens_details") and response_usage.completion_tokens_details:
+            metrics.reasoning_tokens = getattr(response_usage.completion_tokens_details, "reasoning_tokens", 0) or 0
 
         return metrics

@@ -21,6 +21,10 @@ from agno.os.middleware import JWTMiddleware, TokenSource
 from agno.tools.websearch import WebSearchTools
 from fastapi import FastAPI, Response
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
@@ -116,6 +120,10 @@ agent_os = AgentOS(
 # Get the app and add RBAC middleware
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """
