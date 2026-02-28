@@ -4451,13 +4451,20 @@ image_planner = Agent(
         "- If has_image_placeholder is true: ALWAYS set needs_image to true.",
         "- Title slides (index 0): ALWAYS generate an image — first impressions matter.",
         "- Slides with existing images: NEVER generate (already have visuals).",
-        "- Data slides (has_table or has_chart is true): Usually skip unless topic is very visual.",
+        "- Data slides (has_table, has_chart, or has_data_vis is true): NEVER generate an image.",
+        "  These slides already contain native data visualizations (charts, tables, or infographics).",
+        "  Adding an external AI-generated image would collide with the native visual and degrade clarity.",
+        "- Slides where visual_suggestion contains 'chart', 'table', 'infographic', 'diagram', or 'graph':",
+        "  NEVER generate an image. These slides will have native data visualizations from python-pptx,",
+        "  not external images. Setting needs_image=true here would insert an unrelated photo/illustration",
+        "  that clashes with the chart or table.",
         "- All other content slides: Default to YES. Visuals enhance every presentation.",
         "- If the user explicitly requested 'visuals', 'images', or 'with pictures',",
-        "  generate images for at LEAST half of eligible slides.",
+        "  generate images for at LEAST half of ELIGIBLE (non-data-vis) slides.",
         "",
-        "IMPORTANT: When in doubt, generate an image. It is better to have too many",
-        "images than too few. Empty picture placeholders look unprofessional.",
+        "IMPORTANT: When in doubt about non-data-vis slides, generate an image. It is better",
+        "to have too many images than too few. Empty picture placeholders look unprofessional.",
+        "But NEVER add images to data-vis slides (charts, tables, infographics, diagrams).",
         "",
         "When writing image prompts:",
         "- Use the PRESENTATION TOPIC to create relevant imagery.",
@@ -4597,16 +4604,33 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
     decisions = plan_data.get("decisions", [])
     slides_needing_images = [d for d in decisions if d.get("needs_image", False)]
 
-    # Enforce minimum images if configured
+    # Enforce minimum images if configured.
+    # IMPORTANT: Only consider non-data-vis slides as candidates.
+    # Slides with native charts, tables, or infographics must NEVER receive an
+    # AI-generated image — the external photo/illustration would collide with the
+    # native visual and degrade the slide's clarity.
+    DATA_VIS_KEYWORDS = ("chart", "table", "infographic", "diagram", "graph")
     min_images = session_state.get("min_images", 1)
     if len(slides_needing_images) < min_images and min_images > 0:
         print(
             "Image planner selected %d slides, but --min-images=%d. Adding more..."
             % (len(slides_needing_images), min_images)
         )
-        # Find slides not yet selected, preferring those with image placeholders
+        # Find slides not yet selected, excluding data-vis slides
         selected_indices = {d["slide_index"] for d in slides_needing_images}
-        remaining = [d for d in decisions if d["slide_index"] not in selected_indices]
+        remaining = [
+            d for d in decisions
+            if d["slide_index"] not in selected_indices
+            # Skip slides that the planner flagged as having native data visualizations
+            and not d.get("has_table", False)
+            and not d.get("has_chart", False)
+            and not d.get("has_data_vis", False)
+            # Skip slides whose visual_suggestion mentions a data-vis type
+            and not any(
+                kw in d.get("visual_suggestion", "").lower()
+                for kw in DATA_VIS_KEYWORDS
+            )
+        ]
         # Sort: image_placeholder slides first, then title slide (index 0)
         remaining.sort(
             key=lambda d: (
@@ -4640,6 +4664,14 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
         s["index"] for s in slides_data if s.get("has_image", False)
     }
 
+    # Build a lookup from slide_index -> slide metadata for the belt-and-suspenders
+    # guard below. This is necessary because SlideImageDecision (the image planner's
+    # output schema) only carries slide_index, needs_image, image_prompt, and reasoning —
+    # it never has has_table, has_chart, has_data_vis, or visual_suggestion.
+    # Without this lookup, the existing decision.get("has_table", ...) checks always
+    # return False and the guard never fires, allowing data-vis slides to receive images.
+    slides_data_by_idx: Dict[int, dict] = {s.get("index", i): s for i, s in enumerate(slides_data)}
+
     # Initialize NanoBanana
     google_api_key = os.getenv("GOOGLE_API_KEY")
     if not google_api_key:
@@ -4662,6 +4694,36 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
         if slide_idx in slides_with_existing_images:
             print(
                 "  Slide %d: Already has image from Claude, skipping." % (slide_idx + 1)
+            )
+            continue
+
+        # Belt-and-suspenders guard: even if this decision slipped through the
+        # min_images enforcement filter above, never generate an external AI image
+        # for a slide that carries native data visualizations (charts, tables,
+        # infographics, or diagrams). The native visual already fills the visual
+        # region; an added photo would collide and degrade the slide.
+        #
+        # IMPORTANT: SlideImageDecision (image planner output) only carries
+        # slide_index, needs_image, image_prompt, and reasoning — it NEVER has
+        # has_table, has_chart, has_data_vis, or visual_suggestion.
+        # We must look these up from slides_data_by_idx, which was enriched by
+        # step_process_chunks with storyboard data (Fix: was reading from decision).
+        _slide_meta = slides_data_by_idx.get(slide_idx, {})
+        if (
+            _slide_meta.get("has_table", False)
+            or _slide_meta.get("has_chart", False)
+            or _slide_meta.get("has_data_vis", False)
+        ):
+            print(
+                "  Slide %d: Contains native data visualization (chart/table/infographic)."
+                " Skipping AI image generation to avoid collision." % (slide_idx + 1)
+            )
+            continue
+        vs = _slide_meta.get("visual_suggestion", "").lower()
+        if any(kw in vs for kw in DATA_VIS_KEYWORDS):
+            print(
+                "  Slide %d: Data-vis visual_suggestion ('%s…') detected."
+                " Skipping AI image generation." % (slide_idx + 1, vs[:40])
             )
             continue
 
@@ -5480,6 +5542,44 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         # The keys may be int or str depending on how they were stored.
         gen_img = generated_images.get(idx) or generated_images.get(str(idx))
 
+        # Template assembly guard: suppress any generated image if the slide carries
+        # native data visualizations. Three independent detection layers ensure coverage
+        # across all Tiers (Tier 1: Claude PPTX skill native charts/tables,
+        # Tier 2: python-pptx native ChartData objects, Tier 3: infographic shapes
+        # not detectable as charts/tables but flagged via storyboard has_data_vis):
+        #
+        #   Layer 1 — PPTX shape inspection: content.charts / content.tables
+        #             (populated by _extract_slide_content; catches Tier 1 & 2)
+        #   Layer 2 — slides_data metadata: has_data_vis / has_chart / has_table
+        #             (enriched in step_process_chunks from storyboard; catches Tier 3)
+        #   Layer 3 — visual_suggestion keyword scan (belt-and-suspenders)
+        #
+        # Inserting an external AI photo alongside any native data visual would
+        # collide with the visual region and degrade slide clarity.
+        _slides_data_lookup = {
+            s.get("index", i): s
+            for i, s in enumerate(session_state.get("slides_data", []))
+        }
+        _slide_meta_asm = _slides_data_lookup.get(idx, {})
+        _DATA_VIS_KW_ASM = ("chart", "table", "infographic", "diagram", "graph")
+        _slide_has_data_vis = (
+            bool(content.charts)
+            or bool(content.tables)
+            or _slide_meta_asm.get("has_chart", False)
+            or _slide_meta_asm.get("has_table", False)
+            or _slide_meta_asm.get("has_data_vis", False)
+            or any(
+                _kw in _slide_meta_asm.get("visual_suggestion", "").lower()
+                for _kw in _DATA_VIS_KW_ASM
+            )
+        )
+        if gen_img is not None and _slide_has_data_vis:
+            print(
+                "  Slide %d: Has native data visualization (chart/table/infographic) — "
+                "suppressing generated image to preserve data visualization." % (idx + 1)
+            )
+            gen_img = None
+
         # Find layout FIRST so we can detect picture placeholders before
         # deciding whether to add a free-floating image.
         content_mix = _classify_content_mix(
@@ -5762,6 +5862,21 @@ slide_quality_reviewer = Agent(
         "",
         "Use 'none' ONLY when the issue requires AI-generated images, human content",
         "editing, or a completely different slide layout.",
+        "",
+        "=== DATA VISUALIZATION SLIDES (charts, tables, infographics) ===",
+        "If the rendered slide clearly contains a native chart, table, or infographic",
+        "(a data visualization element that fills the visual region), do NOT penalize it",
+        "for lacking a photo or illustration. The data visual IS the intended element —",
+        "it occupies the visual region on purpose. Specifically:",
+        "- Do NOT set is_visually_bland=True purely because no AI-generated image is present.",
+        "- Do NOT report visual_enrichment_needed with programmatic_fix='none' citing absence",
+        "  of a photo/illustration on a slide that already has a chart or table.",
+        "- Do NOT suggest adding an AI-generated photo to a slide that already has data visuals.",
+        "You SHOULD still report genuine structural defects on these slides (text_overflow,",
+        "ghost_text, overlap, low_contrast, element_clipped) and design issues unrelated to",
+        "image absence (e.g. typography_hierarchy, poor_spacing, color_underutilized in text",
+        "regions). When the prompt includes '[Data vis: chart/table/infographic present]',",
+        "apply this rule strictly — the slide is intentionally structured around its data visual.",
         "",
         "=== VISUAL BLANDNESS ===",
         "A slide is visually bland (is_visually_bland=True) when it fails to use",
@@ -6569,6 +6684,13 @@ def step_visual_quality_review(
                 print("[VERBOSE] Template style re-extraction failed: %s" % str(e))
 
         # --- Phase 3: Vision inspection with UI/UX designer agent ---
+        # Build a per-slide data-vis lookup so the reviewer knows which slides
+        # contain native charts/tables/infographics and must not be penalised
+        # for the absence of an AI-generated photo.
+        _DATA_VIS_KW_REVIEW = ("chart", "table", "infographic", "diagram", "graph")
+        _slides_data_list = session_state.get("slides_data", [])
+        _slides_data_map = {s.get("index", i): s for i, s in enumerate(_slides_data_list)}
+
         reports = []
         for idx, img_path in enumerate(slide_images):
             print("  Reviewing slide %d / %d..." % (idx + 1, len(slide_images)))
@@ -6576,19 +6698,39 @@ def step_visual_quality_review(
                 with open(img_path, "rb") as f:
                     img_bytes = f.read()
 
+                # Determine whether this slide carries a native data visualization.
+                # When it does, the reviewer must not flag it for missing a photo/image.
+                _s_meta = _slides_data_map.get(idx, {})
+                _slide_has_data_vis = (
+                    _s_meta.get("has_chart", False)
+                    or _s_meta.get("has_table", False)
+                    or _s_meta.get("has_data_vis", False)
+                    or any(
+                        _kw in _s_meta.get("visual_suggestion", "").lower()
+                        for _kw in _DATA_VIS_KW_REVIEW
+                    )
+                )
+                data_vis_flag = (
+                    "[Data vis: chart/table/infographic present] "
+                    if _slide_has_data_vis
+                    else ""
+                )
+
                 # Include template context in the prompt so the agent can
-                # reference specific accent colors and fonts in its feedback
+                # reference specific accent colors and fonts in its feedback.
+                # data_vis_flag tells the agent not to penalise the slide for
+                # the intentional absence of an AI-generated photo/illustration.
                 context_prefix = (
                     ("[Template context: %s] " % template_context)
                     if template_context
                     else ""
                 )
                 prompt = (
-                    "%sYou are reviewing slide %d of %d in a professional "
+                    "%s%sYou are reviewing slide %d of %d in a professional "
                     "presentation. Assess both structural quality and design excellence. "
                     "Provide a design_score (1-10), identify all issues, and flag "
                     "whether the slide is visually bland."
-                ) % (context_prefix, idx + 1, len(slide_images))
+                ) % (context_prefix, data_vis_flag, idx + 1, len(slide_images))
 
                 # Use AgnoImage with raw bytes — Agno requires Image objects,
                 # not raw dicts, for multimodal agent.run() calls.

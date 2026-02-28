@@ -1,5 +1,6 @@
 import functools
 import runpy
+import traceback
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -79,8 +80,9 @@ class PythonTools(Toolkit):
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.error(f"Error saving and running code: {e}")
-            return f"Error saving and running code: {e}"
+            tb_str = traceback.format_exc()
+            logger.error(f"Error saving and running code: {e}\n{tb_str}")
+            return f"Error saving and running code: {e}\nTraceback:\n{tb_str}"
 
     def run_python_file_return_variable(self, file_name: str, variable_to_return: Optional[str] = None) -> str:
         """This function runs code in a Python file.

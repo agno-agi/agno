@@ -23,7 +23,7 @@ Architecture:
 Chunk generation uses a 3-tier fallback hierarchy per chunk:
   Tier 1  Claude PPTX Skill    - Primary; native charts, tables, rich visuals
   Tier 2  LLM Code Generation  - Fallback; LLM writes + executes python-pptx
-                                  + matplotlib code; 80-92% quality parity
+                                  code (native charts only); 80-92% quality parity
   Tier 3  python-pptx Direct   - Last resort; text-only slides; 100% reliable
 
 Relationship between the two files:
@@ -87,7 +87,7 @@ CLI Flags:
     --visual-passes      Maximum visual inspection passes per chunk (default: 3).
     --start-tier         Starting tier for chunk generation (default: 1):
                          1 = Claude PPTX skill (best quality, native charts/tables)
-                         2 = LLM code generation (80-92% quality, faster, python-pptx+matplotlib)
+                         2 = LLM code generation (80-92% quality, faster, python-pptx native charts)
                          3 = Text-only (structural only, instant, no API calls)
                          Fallback chain continues from selected tier (e.g., Tier 2 → Tier 3).
 
@@ -572,6 +572,12 @@ def generate_chunk_pptx(
         "Do not add extra slides. Do not include slide numbers outside the range %d-%d.\n"
         "Use clean formatting without custom fonts or colors. "
         "Include tables or charts only where explicitly suggested.\n"
+        "For any chart: use native PPTX chart objects only (bar, column, line, or pie) — "
+        "do NOT use matplotlib or embed chart images.\n"
+        "For any table: use native PPTX table objects only — do NOT embed a table as an image "
+        "or use matplotlib/PIL to render one.\n"
+        "For infographics or diagrams: use native PowerPoint shapes (rectangles, arrows, text boxes) "
+        "or a native table to approximate the visual — do NOT insert images for infographics or diagrams.\n"
         "Save the output as 'chunk_%03d.pptx'."
     ) % (
         global_context,
@@ -619,6 +625,10 @@ def generate_chunk_pptx(
             "Do NOT apply custom fonts, colors, or theme styling.",
             "Do NOT add animations, transitions, or speaker notes.",
             "Keep tables to max 6 rows x 5 columns.",
+            "For charts: use only native PPTX chart objects (bar, column, line, or pie). Do NOT use matplotlib, PIL, or any image-based approach for charts.",
+            "For any chart mentioned in a visual_suggestion: produce a native Office chart with synthesized data — never embed a chart as an image.",
+            "For tables: use ONLY native PPTX table objects — never embed a table as an image or use matplotlib/PIL to render one.",
+            "For infographics or diagrams: use native PowerPoint shapes (rectangles, arrows, text boxes) or a native table to approximate the visual — never insert an image for an infographic or diagram.",
         ],
         markdown=True,
     )
@@ -818,6 +828,34 @@ FALLBACK_SLIDE_LAYOUT_MAP = {
 }
 
 
+def _detect_chart_type_from_suggestion(visual: str) -> Optional[object]:
+    """Return an XL_CHART_TYPE enum value when the visual_suggestion describes a chart.
+
+    Scans the visual_suggestion string for chart-type keywords.
+    Returns None if no recognizable chart keyword is found (e.g. an image,
+    icon, or diagram description), in which case the caller should fall back
+    to a textbox annotation.
+
+    Keyword mapping:
+      pie                        -> XL_CHART_TYPE.PIE
+      line                       -> XL_CHART_TYPE.LINE
+      bar (horizontal context)   -> XL_CHART_TYPE.BAR_CLUSTERED
+      column / chart (generic)   -> XL_CHART_TYPE.COLUMN_CLUSTERED
+    """
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    v = visual.lower()
+    if "pie" in v:
+        return XL_CHART_TYPE.PIE
+    if "line" in v:
+        return XL_CHART_TYPE.LINE
+    if "bar" in v:
+        return XL_CHART_TYPE.BAR_CLUSTERED
+    if "column" in v or "chart" in v:
+        return XL_CHART_TYPE.COLUMN_CLUSTERED
+    return None
+
+
 def generate_chunk_pptx_fallback(
     chunk_slides: List[SlideStoryboard],
     session_state: Dict,
@@ -832,10 +870,13 @@ def generate_chunk_pptx_fallback(
     This is the last tier in the 3-tier fallback hierarchy:
       Tier 1: Claude PPTX skill (generate_chunk_pptx)
       Tier 2: LLM code generation (generate_chunk_pptx_v2)
-      Tier 3: This function — text-only, python-pptx direct, <100ms
+      Tier 3: This function — python-pptx direct, <100ms
 
-    Output slides contain only title text + bullet points. No charts, tables, or
-    images are generated. The output is a structurally valid .pptx compatible with
+    Output slides contain title text + bullet points. When a slide's
+    visual_suggestion contains a chart-type keyword (bar, column, line, pie, chart),
+    a native python-pptx chart is inserted using CategoryChartData + add_chart()
+    (no matplotlib or image embedding). Non-chart visuals receive a small textbox
+    annotation. The output is a structurally valid .pptx compatible with
     step_process_chunks() template assembly and _merge_pptx_zip_level() merging.
 
     Slide layout mapping:
@@ -897,23 +938,131 @@ def generate_chunk_pptx_fallback(
                             p.text = point
                         tf.paragraphs[i].level = 0
 
-            # Add visual suggestion note if applicable
+            # Add visual element if applicable — prefer native chart over textbox label
             visual = slide.visual_suggestion
             if visual and visual.lower() != "none":
-                txBox = pptx_slide.shapes.add_textbox(
-                    Inches(7), Inches(5.5), Inches(2.5), Inches(0.5)
-                )
-                tf = txBox.text_frame
-                tf.text = "[Visual: %s]" % visual[:60]
-                if tf.paragraphs and tf.paragraphs[0].runs:
-                    run = tf.paragraphs[0].runs[0]
-                elif tf.paragraphs:
-                    run = tf.paragraphs[0].add_run()
+                chart_xl_type = _detect_chart_type_from_suggestion(visual)
+                if chart_xl_type is not None:
+                    # Insert a native python-pptx chart with synthesized sample data.
+                    # CategoryChartData / add_chart() produce editable Office chart objects;
+                    # no matplotlib or image embedding is used.
+                    try:
+                        from pptx.chart.data import CategoryChartData
+                        chart_data = CategoryChartData()
+                        chart_data.categories = ["Q1", "Q2", "Q3", "Q4"]
+                        chart_data.add_series("Series 1", (25, 40, 35, 55))
+                        pptx_slide.shapes.add_chart(
+                            chart_xl_type,
+                            Inches(1),
+                            Inches(2.5),
+                            Inches(8),
+                            Inches(3.5),
+                            chart_data,
+                        )
+                    except Exception as chart_err:
+                        print(
+                            "[CHUNK FALLBACK] Native chart insertion failed: %s; "
+                            "falling back to textbox label." % chart_err
+                        )
+                        txBox = pptx_slide.shapes.add_textbox(
+                            Inches(7), Inches(5.5), Inches(2.5), Inches(0.5)
+                        )
+                        tf = txBox.text_frame
+                        tf.text = "[Chart: %s]" % visual[:60]
+                        if tf.paragraphs and tf.paragraphs[0].runs:
+                            run = tf.paragraphs[0].runs[0]
+                        elif tf.paragraphs:
+                            run = tf.paragraphs[0].add_run()
+                        else:
+                            run = None
+                        if run is not None:
+                            run.font.size = Pt(8)
+                            run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
                 else:
-                    run = None
-                if run is not None:
-                    run.font.size = Pt(8)
-                    run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+                    v_lower = visual.lower()
+                    if "table" in v_lower:
+                        # Insert a native 2x2 placeholder table using python-pptx add_table().
+                        # No matplotlib or image embedding — all native OOXML.
+                        try:
+                            table_shape = pptx_slide.shapes.add_table(
+                                2, 2, Inches(1), Inches(2.5), Inches(8), Inches(3.0)
+                            )
+                            tbl = table_shape.table
+                            tbl.cell(0, 0).text = "Item"
+                            tbl.cell(0, 1).text = "Value"
+                            tbl.cell(1, 0).text = "—"
+                            tbl.cell(1, 1).text = "—"
+                        except Exception as tbl_err:
+                            print(
+                                "[CHUNK FALLBACK] Native table insertion failed: %s; "
+                                "falling back to textbox label." % tbl_err
+                            )
+                            txBox = pptx_slide.shapes.add_textbox(
+                                Inches(7), Inches(5.5), Inches(2.5), Inches(0.5)
+                            )
+                            tf = txBox.text_frame
+                            tf.text = "[Table: %s]" % visual[:60]
+                            if tf.paragraphs and tf.paragraphs[0].runs:
+                                run = tf.paragraphs[0].runs[0]
+                            elif tf.paragraphs:
+                                run = tf.paragraphs[0].add_run()
+                            else:
+                                run = None
+                            if run is not None:
+                                run.font.size = Pt(8)
+                                run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+                    elif "infographic" in v_lower or "diagram" in v_lower:
+                        # Insert labeled rectangle shapes to approximate an infographic/diagram.
+                        # Uses native python-pptx shapes — no images inserted.
+                        try:
+                            from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
+                            labels = ["Step 1", "Step 2", "Step 3"]
+                            box_w = Inches(2.2)
+                            box_h = Inches(1.0)
+                            top = Inches(2.8)
+                            for li, label in enumerate(labels):
+                                left = Inches(0.8 + li * 2.8)
+                                shape = pptx_slide.shapes.add_shape(
+                                    MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+                                    left, top, box_w, box_h,
+                                )
+                                shape.text = label
+                                shape.text_frame.paragraphs[0].font.size = Pt(11)
+                        except Exception as inf_err:
+                            print(
+                                "[CHUNK FALLBACK] Infographic shape insertion failed: %s; "
+                                "falling back to textbox label." % inf_err
+                            )
+                            txBox = pptx_slide.shapes.add_textbox(
+                                Inches(7), Inches(5.5), Inches(2.5), Inches(0.5)
+                            )
+                            tf = txBox.text_frame
+                            tf.text = "[Visual: %s]" % visual[:60]
+                            if tf.paragraphs and tf.paragraphs[0].runs:
+                                run = tf.paragraphs[0].runs[0]
+                            elif tf.paragraphs:
+                                run = tf.paragraphs[0].add_run()
+                            else:
+                                run = None
+                            if run is not None:
+                                run.font.size = Pt(8)
+                                run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+                    else:
+                        # Non-chart, non-table, non-diagram visual: add a label annotation
+                        txBox = pptx_slide.shapes.add_textbox(
+                            Inches(7), Inches(5.5), Inches(2.5), Inches(0.5)
+                        )
+                        tf = txBox.text_frame
+                        tf.text = "[Visual: %s]" % visual[:60]
+                        if tf.paragraphs and tf.paragraphs[0].runs:
+                            run = tf.paragraphs[0].runs[0]
+                        elif tf.paragraphs:
+                            run = tf.paragraphs[0].add_run()
+                        else:
+                            run = None
+                        if run is not None:
+                            run.font.size = Pt(8)
+                            run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
         prs.save(output_path)
         print(
@@ -930,19 +1079,22 @@ def generate_chunk_pptx_fallback(
 # Instructions for the Tier 2 fallback code-generation agent.
 # Kept as a module-level constant to avoid string duplication.
 PPTX_CODE_GEN_INSTRUCTIONS = [
-    "You are a Python code generator that creates PowerPoint presentations using python-pptx and matplotlib.",
+    "You are a Python code generator that creates PowerPoint presentations using python-pptx.",
     "When given slide specifications, write a COMPLETE, SELF-CONTAINED Python script that generates a .pptx file.",
     "The script must import all required libraries at the top.",
-    "ALLOWED imports only: pptx, pptx.util, pptx.chart.data, pptx.enum.chart, pptx.dml.color, pptx.enum.text, matplotlib, matplotlib.pyplot, io, os, os.path, collections, math.",
-    "FORBIDDEN imports: subprocess, socket, requests, urllib, httpx, shutil, glob, sys, importlib, __import__.",
+    "ALLOWED imports only: pptx, pptx.util, pptx.chart.data, pptx.enum.chart, pptx.dml.color, pptx.enum.text, io, os, os.path, collections, math.",
+    "FORBIDDEN imports: matplotlib, matplotlib.pyplot, subprocess, socket, requests, urllib, httpx, shutil, glob, sys, importlib, __import__.",
     "For each slide, create one slide in the presentation using prs.slides.add_slide(prs.slide_layouts[N]).",
     "Slide layout indices: 0=Title Slide, 1=Title and Content, 2=Section Header, 3=Two Content.",
-    "For CHARTS: prefer python-pptx ChartData (creates editable Office charts). For complex charts, use matplotlib to generate a PNG BytesIO and embed with slide.shapes.add_picture().",
+    "For CHARTS: ALWAYS use python-pptx native CategoryChartData or ChartData (creates editable Office charts). NEVER use matplotlib, PIL, or any image-based approach for charts.",
     "For python-pptx ChartData bar/column charts: from pptx.chart.data import ChartData; from pptx.enum.chart import XL_CHART_TYPE.",
     "ChartData example: chart_data = ChartData(); chart_data.categories = ['A','B','C']; chart_data.add_series('Series1', (10, 20, 30)); slide.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(1), Inches(1.5), Inches(8), Inches(4.5), chart_data).",
-    "For matplotlib embed: fig, ax = plt.subplots(figsize=(8,4)); ax.bar(categories, values); buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150, bbox_inches='tight'); buf.seek(0); plt.close(fig); slide.shapes.add_picture(buf, Inches(1), Inches(1.5), Inches(8), Inches(4.5)).",
-    "For TABLES: use slide.shapes.add_table(rows, cols, Inches(1), Inches(1.5), Inches(8), Inches(4.5)). Fill cells via table.cell(row, col).text = 'value'.",
+    "For line charts use XL_CHART_TYPE.LINE, for pie charts use XL_CHART_TYPE.PIE — always via ChartData, never via image embedding.",
+    "For TABLES: ALWAYS use slide.shapes.add_table(rows, cols, Inches(1), Inches(1.5), Inches(8), Inches(4.5)). Fill cells via table.cell(row, col).text = 'value'. NEVER embed a table as an image or use matplotlib/PIL to render one.",
+    "For INFOGRAPHICS or DIAGRAMS: use native python-pptx shapes (add_shape with MSO_AUTO_SHAPE_TYPE.RECTANGLE, add_textbox, add_connector) or a native table to approximate the layout. NEVER insert an image for an infographic or diagram.",
     "Synthesize plausible, specific data values from the visual_suggestion and key_points descriptions. Do NOT use generic placeholder data.",
+    "CHART AXIS SAFETY: When styling chart axes, always wrap axis.format.line.fill.background(), axis.format.line.color.rgb, and axis.major_gridlines.format.line.color.rgb calls in try/except blocks to handle cases where the underlying XML element does not yet exist. Example: try: chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0x80,0x80,0x80)\nexcept Exception: pass",
+    "CHART AXIS SAFETY: Similarly wrap axis.tick_labels.font.color.rgb, chart.legend.font.color.rgb, and series.data_labels.font.color.rgb in try/except blocks — these can raise 'NoneType object has no attribute attrib' if the XML element is absent.",
     "Save the final presentation using prs.save('EXACT_OUTPUT_PATH') where EXACT_OUTPUT_PATH is the path given in the task.",
     "Execute the script using the save_to_file_and_run tool immediately after writing it.",
     "If the script has an error, fix it and re-run. Maximum 2 fix attempts.",
@@ -950,7 +1102,7 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "Do not print or return anything except the final prs.save() call.",
 ]
 
-# Tier 2 fallback agent: generates python-pptx + matplotlib code and executes it.
+# Tier 2 fallback agent: generates python-pptx code with native charts and executes it.
 # Created at module level — NOT inside any function or loop (per project rules).
 # Uses Claude without the PPTX skill, with PythonTools for code execution.
 # PythonTools base_dir is set to current directory; the generated script saves
@@ -978,11 +1130,12 @@ def generate_chunk_pptx_v2(
     """Tier 2 fallback chunk generator using LLM code generation + PythonTools execution.
 
     Prompts the fallback_code_agent (Claude Sonnet without PPTX skill, equipped with
-    PythonTools) to write and execute a python-pptx + matplotlib script that creates
-    the chunk slides with real charts, tables, and rich visual content.
+    PythonTools) to write and execute a python-pptx script that creates the chunk
+    slides with native charts (CategoryChartData/ChartData), tables, and rich visual content.
+    matplotlib is FORBIDDEN — all charts must use python-pptx native chart objects.
 
     Quality level: 80-92% parity with Tier 1 (Claude PPTX skill). Charts and tables
-    are generated via matplotlib/python-pptx code rather than the native PPTX skill,
+    are generated via python-pptx native objects rather than the native PPTX skill,
     so visual fidelity may differ in edge cases.
 
     This is Tier 2 in the three-tier fallback hierarchy:
@@ -1043,7 +1196,7 @@ def generate_chunk_pptx_v2(
         )
 
     code_gen_prompt = (
-        "Generate a complete Python script using python-pptx and matplotlib to create "
+        "Generate a complete Python script using python-pptx to create "
         "a PowerPoint file at this EXACT path: %s\n\n"
         "GLOBAL CONTEXT:\n%s\n\n"
         "SLIDES TO GENERATE (%d slides):\n%s\n\n"
@@ -1055,9 +1208,11 @@ def generate_chunk_pptx_v2(
         "- For 'data' type slides: use prs.slide_layouts[3] if available, else [1].\n"
         "- For 'closing' type slides: use prs.slide_layouts[0].\n"
         "- For any slide with a chart visual_suggestion: generate a REAL chart using "
-        "  python-pptx ChartData (preferred) or matplotlib PNG embed.\n"
+        "  python-pptx native ChartData ONLY (e.g. CategoryChartData + slide.shapes.add_chart()).\n"
+        "  Do NOT use matplotlib, PIL, or any image-based approach for charts.\n"
         "- Synthesize specific, plausible data values matching the visual_suggestion topic.\n"
-        "- For any slide with a table visual_suggestion: generate a real table with data.\n"
+        "- For any slide with a table visual_suggestion: generate a REAL native table using slide.shapes.add_table(). NEVER use matplotlib or embed a table as an image.\n"
+        "- For any slide with an infographic or diagram visual_suggestion: use native python-pptx shapes (add_shape with MSO_AUTO_SHAPE_TYPE.RECTANGLE, add_textbox) or a native table to approximate it. NEVER insert an image for an infographic or diagram.\n"
         "- Save the file to: %s\n"
         "- Then immediately execute the script using save_to_file_and_run.\n"
     ) % (
@@ -1335,6 +1490,27 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
         # Determine which slides are in this chunk
         chunk_slides = chunk_slide_groups[chunk_idx] if chunk_idx < len(chunk_slide_groups) else []
         slides_data = _extract_chunk_slides_data(chunk_file)
+
+        # Enrich slides_data entries with storyboard visual_suggestion and has_data_vis.
+        # _extract_chunk_slides_data only sees raw PPTX shapes (has_chart, has_table).
+        # For Tier 2/3 chunks the storyboard visual_suggestion is the authoritative
+        # signal for "this slide will carry an infographic/diagram/chart/table and must
+        # NOT receive an external AI-generated image."
+        # Without this enrichment the image_planner receives no keyword signal for
+        # data-vis slides, so it may incorrectly plan images for them.
+        _DATA_VIS_KW = ("chart", "table", "infographic", "diagram", "graph")
+        for _sd_i, _sd in enumerate(slides_data):
+            if _sd_i < len(chunk_slides):
+                _vs = chunk_slides[_sd_i].visual_suggestion or ""
+                _sd["visual_suggestion"] = _vs
+                # has_data_vis: true when the storyboard declares a data visual
+                # OR the actual PPTX shape inspection found a chart or table.
+                _sd["has_data_vis"] = (
+                    _sd.get("has_chart", False)
+                    or _sd.get("has_table", False)
+                    or any(_kw in _vs.lower() for _kw in _DATA_VIS_KW)
+                )
+
         total_chunk_slides = len(slides_data)
 
         assembled_path = os.path.join(
@@ -1678,6 +1854,7 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
     Returns:
         True if merge succeeded, False otherwise.
     """
+    import posixpath
     import re
     from lxml import etree
 
@@ -1775,7 +1952,12 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
 
                             # Resolve the actual part path in the source zip
                             # e.g. "../media/image1.png" -> "ppt/media/image1.png"
-                            actual_old = "ppt/slides/" + target.lstrip("../")
+                            # NOTE: lstrip("../") is character-based and strips individual
+                            # '.' and '/' chars, giving wrong results for nested paths like
+                            # "../charts/chart1.xml" (produces "ppt/slides/charts/chart1.xml"
+                            # instead of "ppt/charts/chart1.xml"). Use posixpath.normpath
+                            # to handle the ".." parent-dir segment correctly.
+                            actual_old = posixpath.normpath("ppt/slides/" + target)
 
                             if actual_old not in src_names:
                                 continue
@@ -1817,13 +1999,21 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                                         + os.path.basename(new_part_name)
                                         + ".rels"
                                     )
-                                    out_zip.writestr(cr_new, cr_bytes)
-                                    # Copy chart's embedded xlsx workbook
+                                    # Copy chart's embedded xlsx workbook and
+                                    # build an updated chart rels XML that points
+                                    # to the newly-renamed workbook file.
+                                    # NOTE: wb_old uses posixpath.normpath to
+                                    # correctly resolve "../embeddings/file.xlsx"
+                                    # relative to ppt/charts/ (not ppt/slides/).
+                                    # lstrip("../") would incorrectly strip leading
+                                    # '.' and '/' characters individually.
                                     cr_tree = etree.fromstring(cr_bytes)
                                     for cr_rel in cr_tree.findall("{%s}Relationship" % NS_RELS):
                                         cr_target = cr_rel.get("Target", "")
                                         if cr_target.startswith(".."):
-                                            wb_old = "ppt/charts/" + cr_target.lstrip("../")
+                                            wb_old = posixpath.normpath(
+                                                os.path.dirname(actual_old) + "/" + cr_target
+                                            )
                                             if wb_old in src_names:
                                                 wb_bytes = src_zip.read(wb_old)
                                                 wb_stem, wb_ext = os.path.splitext(
@@ -1837,9 +2027,34 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                                                 )
                                                 if wb_new not in set(out_zip.namelist()):
                                                     out_zip.writestr(wb_new, wb_bytes)
+                                                # Update the chart rels entry to point
+                                                # to the renamed workbook.
+                                                # The new target must be relative to the
+                                                # chart's directory (ppt/charts/), so we
+                                                # build a "../<subdir>/<name>" path.
+                                                new_wb_rel_target = (
+                                                    "../"
+                                                    + "/".join(wb_new.split("/")[1:])
+                                                )
+                                                cr_rel.set("Target", new_wb_rel_target)
+                                    # Serialise the (possibly updated) rels tree.
+                                    updated_cr_bytes = etree.tostring(
+                                        cr_tree,
+                                        xml_declaration=True,
+                                        encoding="UTF-8",
+                                        standalone=True,
+                                    )
+                                    out_zip.writestr(cr_new, updated_cr_bytes)
 
-                            # Update the relationship target to point to new unique name
-                            new_rel_target = "../" + "/".join(new_part_name.split("/")[2:])
+                            # Update the slide relationship target to point to the new
+                            # unique part name.
+                            # NOTE: split("/")[2:] was wrong — it drops the subdirectory,
+                            # e.g. "ppt/charts/chart1_s5_1.xml".split("/")[2:] yields
+                            # ["chart1_s5_1.xml"] (missing "charts"), giving the incorrect
+                            # relative target "../chart1_s5_1.xml".
+                            # split("/")[1:] yields ["charts", "chart1_s5_1.xml"],
+                            # producing the correct "../charts/chart1_s5_1.xml".
+                            new_rel_target = "../" + "/".join(new_part_name.split("/")[1:])
                             rel.set("Target", new_rel_target)
 
                         updated_rels_bytes = etree.tostring(
@@ -2246,7 +2461,7 @@ def main() -> None:
         help=(
             "Starting tier for chunk generation (default: 1). "
             "1=Claude PPTX skill (best quality), "
-            "2=LLM code generation (80-92%% quality, faster), "
+            "2=LLM code generation (80-92%% quality, faster, python-pptx native charts), "
             "3=text-only (structural, instant). "
             "Fallback continues from selected tier."
         ),
