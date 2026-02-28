@@ -47,6 +47,7 @@ from agno.utils.events import (
     create_reasoning_started_event,
     create_reasoning_step_event,
     create_run_output_content_event,
+    create_tool_call_args_delta_event,
     create_tool_call_completed_event,
     create_tool_call_error_event,
     create_tool_call_started_event,
@@ -1407,6 +1408,22 @@ def handle_model_response_chunk(
             # Handle citations (one chunk)
             if model_response_event.citations is not None:
                 run_response.citations = model_response_event.citations
+
+            # Emit tool call args delta events for streaming tool call arguments
+            if model_response_event.tool_call_deltas is not None and stream_events:
+                for delta in model_response_event.tool_call_deltas:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_args_delta_event(
+                            from_run_response=run_response,
+                            tool_call_index=delta.get("index"),
+                            tool_call_id=delta.get("id"),
+                            tool_call_name=delta.get("name"),
+                            arguments_delta=delta.get("arguments_delta", ""),
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
 
             # Only yield if we have content to show
             if content_type != "str":

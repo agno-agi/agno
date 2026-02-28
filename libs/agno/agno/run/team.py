@@ -147,6 +147,7 @@ class TeamRunEvent(str, Enum):
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
     tool_call_error = "TeamToolCallError"
+    tool_call_args_delta = "TeamToolCallArgsDelta"
 
     reasoning_started = "TeamReasoningStarted"
     reasoning_step = "TeamReasoningStep"
@@ -428,6 +429,15 @@ class ToolCallErrorEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ToolCallArgsDeltaEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.tool_call_args_delta.value
+    tool_call_index: Optional[int] = None
+    tool_call_id: Optional[str] = None
+    tool_call_name: Optional[str] = None
+    arguments_delta: str = ""
+
+
+@dataclass
 class ParserModelResponseStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.parser_model_response_started.value
 
@@ -550,6 +560,7 @@ TeamRunOutputEvent = Union[
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
+    ToolCallArgsDeltaEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
@@ -590,6 +601,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.tool_call_error.value: ToolCallErrorEvent,
+    TeamRunEvent.tool_call_args_delta.value: ToolCallArgsDeltaEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,

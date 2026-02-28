@@ -144,6 +144,9 @@ class ModelResponse:
 
     updated_session_state: Optional[Dict[str, Any]] = None
 
+    # Tool call argument deltas for streaming
+    tool_call_deltas: Optional[List[Dict[str, Any]]] = None
+
     # Compression stats
     compression_stats: Optional[Dict[str, Any]] = None
 
