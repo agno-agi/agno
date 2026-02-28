@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
+from agno.models.openrouter.provider_routing import ProviderRouting
 
 
 @dataclass
@@ -32,6 +33,10 @@ class OpenRouterResponses(OpenResponses):
         models (Optional[List[str]]): List of fallback model IDs to use if the primary model
             fails due to rate limits, timeouts, or unavailability. OpenRouter will automatically
             try these models in order. Example: ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1"]
+        provider_routing (Optional[ProviderRouting]): Configuration for OpenRouter provider routing.
+            Controls how requests are routed to different providers. Supports fields like order,
+            allow_fallbacks, require_parameters, data_collection, sort, and more.
+            See: https://openrouter.ai/docs/guides/routing/provider-selection
 
     Example:
         ```python
@@ -56,6 +61,10 @@ class OpenRouterResponses(OpenResponses):
     # Dynamic model routing - fallback models if primary fails
     # https://openrouter.ai/docs/features/model-routing
     models: Optional[List[str]] = None
+
+    # Provider routing - control how requests are routed to providers
+    # https://openrouter.ai/docs/guides/routing/provider-selection
+    provider_routing: Optional[ProviderRouting] = None
 
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
@@ -120,15 +129,16 @@ class OpenRouterResponses(OpenResponses):
             tool_choice=tool_choice,
         )
 
-        # Add fallback models to extra_body if specified
-        if self.models:
-            # Get existing extra_body or create new dict
+        # Add OpenRouter-specific params to extra_body if specified
+        if self.models or self.provider_routing:
             extra_body = request_params.get("extra_body") or {}
 
-            # Merge fallback models into extra_body
-            extra_body["models"] = self.models
+            if self.models:
+                extra_body["models"] = self.models
 
-            # Update request params
+            if self.provider_routing:
+                extra_body["provider"] = self.provider_routing.to_dict()
+
             request_params["extra_body"] = extra_body
 
         return request_params
