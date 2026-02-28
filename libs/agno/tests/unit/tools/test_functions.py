@@ -811,3 +811,48 @@ def test_function_cache_pydantic_model_nested(tmp_path):
 
     retrieved_result = func._get_cached_result(cache_file)
     assert retrieved_result == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+
+
+def test_build_entrypoint_args_skips_colliding_framework_params():
+    """Regression test for https://github.com/agno-agi/agno/issues/6760.
+
+    When an MCP tool has a parameter named 'team' or 'agent', the framework
+    must NOT inject its own Agent/Team objects under the same key — otherwise
+    Python raises TypeError('got multiple values for keyword argument').
+    """
+    from functools import partial
+
+    async def call_tool(
+        tool_name: str,
+        run_context=None,
+        agent=None,
+        team=None,
+        **kwargs,
+    ):
+        return {"agent": agent, "team": team, "kwargs": kwargs}
+
+    entrypoint = partial(call_tool, tool_name="save_issue")
+
+    func = Function(name="save_issue", entrypoint=entrypoint)
+    func._agent = object()  # Simulate framework-injected Agent
+    func._team = object()  # Simulate framework-injected Team
+
+    # LLM provides 'team' as a tool argument — collision with framework param
+    fc = FunctionCall(function=func, arguments={"title": "Bug", "team": "Engineering"})
+    args = fc._build_entrypoint_args()
+
+    # 'team' must NOT be in entrypoint_args because it collides with user arg
+    assert "team" not in args, "Framework 'team' should be skipped when user provides 'team'"
+    # 'agent' should still be injected (no collision)
+    assert "agent" in args, "Framework 'agent' should be injected when no collision"
+
+    # Without collision, both should be injected
+    fc_no_collision = FunctionCall(function=func, arguments={"title": "Bug"})
+    args_no_collision = fc_no_collision._build_entrypoint_args()
+    assert "team" in args_no_collision
+    assert "agent" in args_no_collision
+
+    # None values should NOT be treated as collisions — framework should still inject
+    fc_none_value = FunctionCall(function=func, arguments={"title": "Bug", "agent": None})
+    args_none = fc_none_value._build_entrypoint_args()
+    assert "agent" in args_none, "Framework 'agent' should be injected when user provides agent=None"

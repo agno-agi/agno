@@ -851,14 +851,28 @@ class FunctionCall(BaseModel):
         sig = signature(self.function.entrypoint)  # type: ignore
         entrypoint_args = {}
 
+        # User-provided tool arguments — framework args that collide with these
+        # must NOT be injected, to prevent TypeError on duplicate keyword arguments.
+        # This can happen when MCP tools have parameters named 'agent', 'team', etc.
+        # Note: None values are treated as "not provided" — the framework should
+        # still inject its objects when the LLM passes null/None.
+        # See: https://github.com/agno-agi/agno/issues/6760
+        user_args = self.arguments or {}
+
         # Check if the entrypoint has an agent argument (by name)
-        if "agent" in sig.parameters:
+        if "agent" in sig.parameters and not (
+            "agent" in user_args and user_args["agent"] is not None
+        ):
             entrypoint_args["agent"] = self.function._agent
         # Check if the entrypoint has a team argument (by name)
-        if "team" in sig.parameters:
+        if "team" in sig.parameters and not (
+            "team" in user_args and user_args["team"] is not None
+        ):
             entrypoint_args["team"] = self.function._team
         # Check if the entrypoint has a run_context argument
-        if "run_context" in sig.parameters:
+        if "run_context" in sig.parameters and not (
+            "run_context" in user_args and user_args["run_context"] is not None
+        ):
             entrypoint_args["run_context"] = self.function._run_context
         # Check if the entrypoint has an fc argument
         if "fc" in sig.parameters:
@@ -885,6 +899,8 @@ class FunctionCall(BaseModel):
             for param_name, hint in hints.items():
                 if param_name in entrypoint_args:
                     continue  # Already handled by name-based injection
+                if param_name in user_args and user_args[param_name] is not None:
+                    continue  # Collision with user-provided tool argument
                 if isinstance(hint, type):
                     if issubclass(hint, Agent) and self.function._agent is not None:
                         entrypoint_args[param_name] = self.function._agent

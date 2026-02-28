@@ -50,6 +50,23 @@ def get_entrypoint_for_tool(
         team: Optional["Team"] = None,
         **kwargs,
     ) -> ToolResult:
+        # Handle name collisions between framework-injected parameters and
+        # MCP tool parameters with the same names (e.g. Linear MCP's 'team').
+        # When _build_entrypoint_args detects a collision it skips injection,
+        # so the LLM-provided value (a JSON primitive) lands on the named
+        # parameter instead of in **kwargs.  Redirect it back to kwargs
+        # where MCP tool arguments belong and reset the framework param.
+        _json_primitives = (str, int, float, bool, list, dict)
+        if team is not None and isinstance(team, _json_primitives):
+            kwargs["team"] = team
+            team = None
+        if agent is not None and isinstance(agent, _json_primitives):
+            kwargs["agent"] = agent
+            agent = None
+        if run_context is not None and isinstance(run_context, _json_primitives):
+            kwargs["run_context"] = run_context
+            run_context = None
+
         # Execute the MCP tool call
         try:
             # Get the appropriate session for this run

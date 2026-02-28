@@ -460,3 +460,46 @@ async def test_hitl_params_with_tool_name_prefix():
     assert "myprefix_SearchTool" in tools.functions
     # HITL setting should still be applied (matched by original name)
     assert tools.functions["myprefix_SearchTool"].requires_confirmation is True
+
+
+@pytest.mark.asyncio
+async def test_call_tool_redirects_colliding_params_to_kwargs():
+    """Regression test for https://github.com/agno-agi/agno/issues/6760.
+
+    When an MCP tool has parameters named 'team' or 'agent' (e.g. Linear MCP),
+    the LLM-provided values must end up in **kwargs (passed to the MCP server),
+    not be consumed by the framework's named parameters.
+    """
+    from unittest.mock import AsyncMock
+
+    from mcp.types import CallToolResult, TextContent
+
+    from agno.utils.mcp import get_entrypoint_for_tool
+
+    mock_tool = MagicMock()
+    mock_tool.name = "save_issue"
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[TextContent(type="text", text="created")],
+            isError=False,
+        )
+    )
+    mock_session.send_ping = AsyncMock()
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, mock_session)
+
+    # Simulate: LLM calls save_issue(title="Bug", team="Engineering")
+    # Framework does NOT inject team (collision detected by _build_entrypoint_args),
+    # so team="Engineering" lands on the named parameter.
+    result = await entrypoint(
+        tool_name="save_issue",
+        team="Engineering",  # LLM-provided string, not a Team object
+        title="Bug",
+    )
+
+    # The MCP tool should receive both title AND team in kwargs
+    mock_session.call_tool.assert_called_once_with(
+        "save_issue",
+        {"title": "Bug", "team": "Engineering"},
+    )
