@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -299,11 +300,12 @@ class TeamSession:
             # Get response
             response_str = ""
             if run.content:
-                response_str = (
-                    run.content.model_dump_json(indent=2, exclude_none=True)
-                    if isinstance(run.content, BaseModel)
-                    else str(run.content)
-                )
+                if isinstance(run.content, BaseModel):
+                    response_str = run.content.model_dump_json(indent=2, exclude_none=True)
+                elif isinstance(run.content, dict):
+                    response_str = json.dumps(run.content, indent=2)
+                else:
+                    response_str = str(run.content)
 
             history_data.append((input_str, response_str))
 
