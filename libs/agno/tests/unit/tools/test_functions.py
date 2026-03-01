@@ -63,7 +63,7 @@ def test_decorator_instantiation():
     assert test_func.description == "Test function with parameters."
     assert test_func.entrypoint is not None
     assert test_func.parameters["properties"]["param1"]["type"] == "string"
-    assert test_func.parameters["properties"]["param2"]["type"] == "number"
+    assert test_func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in test_func.parameters["required"]
     assert "param2" not in test_func.parameters["required"]
 
@@ -110,7 +110,7 @@ def test_function_from_callable():
     assert "param1" in func.parameters["properties"]
     assert "param2" in func.parameters["properties"]
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]  # Because it has a default value
 
@@ -167,7 +167,7 @@ def test_function_process_entrypoint():
 
     func.process_entrypoint()
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]
 

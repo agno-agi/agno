@@ -411,8 +411,12 @@ HANDLERS: Dict[str, _EventHandler] = {
     WorkflowRunEvent.condition_execution_completed.value: _make_wf_handler("cond", "Condition", started=False),
     WorkflowRunEvent.router_execution_started.value: _make_wf_handler("router", "Router", started=True),
     WorkflowRunEvent.router_execution_completed.value: _make_wf_handler("router", "Router", started=False),
-    WorkflowRunEvent.workflow_agent_started.value: _make_wf_handler("agent", "Running", started=True, name_attr="agent_name"),
-    WorkflowRunEvent.workflow_agent_completed.value: _make_wf_handler("agent", "Running", started=False, name_attr="agent_name"),
+    WorkflowRunEvent.workflow_agent_started.value: _make_wf_handler(
+        "agent", "Running", started=True, name_attr="agent_name"
+    ),
+    WorkflowRunEvent.workflow_agent_completed.value: _make_wf_handler(
+        "agent", "Running", started=False, name_attr="agent_name"
+    ),
     WorkflowRunEvent.steps_execution_started.value: _make_wf_handler("steps", "Steps", started=True),
     WorkflowRunEvent.steps_execution_completed.value: _make_wf_handler("steps", "Steps", started=False),
 }

@@ -6,14 +6,15 @@ Approval-backed HITL: @approval + @tool(requires_confirmation=True) with persist
 """
 
 import json
-import httpx
 
+import httpx
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools import tool
 from agno.os import AgentOS
+from agno.tools import tool
+
 DB_FILE = "tmp/approvals_test.db"
 
 
@@ -58,10 +59,9 @@ agent_os = AgentOS(
     description="Example app for tracing with multiple models, agents, teams, and workflows",
     agents=[
         agent,
-        ],
-        tracing=True,
-        db=db,
-        
+    ],
+    tracing=True,
+    db=db,
 )
 app = agent_os.get_app()
 
