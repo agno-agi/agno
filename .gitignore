@@ -76,6 +76,8 @@ agno_json_data/
 .claude/
 .cursor/
 .conductor/
+.context/
+.codex/
 
 # Private design documents (symlinked)
 /specs
