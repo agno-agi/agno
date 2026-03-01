@@ -93,13 +93,13 @@ class AzureOpenAIEmbedder(Embedder):
 
     def _response(self, text: str) -> CreateEmbeddingResponse:
         _request_params: Dict[str, Any] = {
-            "input": text,
+            "input": [text],
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.id.startswith("text-embedding-3") or self.azure_deployment is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -124,13 +124,13 @@ class AzureOpenAIEmbedder(Embedder):
     async def _aresponse(self, text: str) -> CreateEmbeddingResponse:
         """Async version of _response method."""
         _request_params: Dict[str, Any] = {
-            "input": text,
+            "input": [text],
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.id.startswith("text-embedding-3") or self.azure_deployment is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
