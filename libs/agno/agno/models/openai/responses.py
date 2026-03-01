@@ -560,6 +560,8 @@ class OpenAIResponses(Model):
                         file_block = self._format_file_for_input(file)
                         if file_block:
                             message_dict["content"].append(file_block)
+                        else:
+                            log_warning(f"Unsupported file format, skipping: {file}")
 
                 formatted_messages.append(message_dict)
 
