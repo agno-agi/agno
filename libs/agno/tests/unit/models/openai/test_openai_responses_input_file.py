@@ -112,10 +112,7 @@ def test_format_file_content_bytes():
 
 def test_format_file_id():
     """OpenAI file IDs should produce a file_id block."""
-    file = File(id="file-abc123", content=b"placeholder")
-    # Clear content so URL/filepath/content paths don't match first
-    file.content = None
-    # Need to bypass validator — create with content then clear
+    file = File(id="file-abc123")
     result = OpenAIResponses._format_file_for_input(file)
 
     assert result is not None

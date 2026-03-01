@@ -312,10 +312,7 @@ class OpenAIResponses(Model):
         """Check if any tool in the list is a file_search tool."""
         if not tools:
             return False
-        for tool in tools:
-            if isinstance(tool, dict) and tool.get("type") == "file_search":
-                return True
-        return False
+        return any(isinstance(tool, dict) and tool.get("type") == "file_search" for tool in tools)
 
     @staticmethod
     def _format_file_for_input(file: File) -> Optional[Dict[str, Any]]:
@@ -555,7 +552,7 @@ class OpenAIResponses(Model):
                 # Embed files inline as input_file blocks when file_search is not present
                 if message.files and not self._has_file_search_tool(tools):
                     if not isinstance(message_dict.get("content"), list):
-                        message_dict["content"] = [{"type": "input_text", "text": message.content or ""}]
+                        message_dict["content"] = [{"type": "input_text", "text": message_dict.get("content") or ""}]
                     for file in message.files:
                         file_block = self._format_file_for_input(file)
                         if file_block:
