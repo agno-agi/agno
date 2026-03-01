@@ -5,14 +5,14 @@ OpenAI API, which is required by non-default deployed models (e.g.
 Cohere-embed-v3-multilingual).  See: https://github.com/agno-agi/agno/issues/6759
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 
 @pytest.fixture()
 def _mock_openai():
-    """Patch the openai module so we can import AzureOpenAIEmbedder without credentials."""
+    """Create a mock OpenAI client and response for testing without credentials."""
     mock_response = MagicMock()
     mock_response.data = [MagicMock(embedding=[0.1, 0.2, 0.3])]
     mock_response.usage = MagicMock()
@@ -89,19 +89,12 @@ class TestAzureOpenAIEmbedderInputFormat:
 
     @pytest.mark.asyncio()
     async def test_aresponse_wraps_input_as_list(self, _mock_openai):
-        mock_client, mock_response = _mock_openai
+        _, mock_response = _mock_openai
 
         from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
 
         async_mock = MagicMock()
-        async_mock.embeddings.create = MagicMock(return_value=mock_response)
-
-        # Make the create method an async-compatible mock
-        import asyncio
-
-        future = asyncio.Future()
-        future.set_result(mock_response)
-        async_mock.embeddings.create.return_value = future
+        async_mock.embeddings.create = AsyncMock(return_value=mock_response)
 
         embedder = AzureOpenAIEmbedder(
             id="Cohere-embed-v3-multilingual",

@@ -180,7 +180,7 @@ class AzureOpenAIEmbedder(Embedder):
             }
             if self.user is not None:
                 req["user"] = self.user
-            if self.id.startswith("text-embedding-3"):
+            if self.id.startswith("text-embedding-3") or self.azure_deployment is not None:
                 req["dimensions"] = self.dimensions
             if self.request_params:
                 req.update(self.request_params)
