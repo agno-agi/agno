@@ -345,6 +345,7 @@ class OpenAIResponses(Model):
         if file.filepath or file.content:
             content_bytes = file.get_content_bytes()
             if content_bytes is None:
+                log_warning(f"Could not read content from file: {file.filepath or file.filename or 'unknown'}")
                 return None
 
             # Resolve MIME type
@@ -413,7 +414,11 @@ class OpenAIResponses(Model):
         for file_id in file_ids:
             self.get_client().vector_stores.files.create(vector_store_id=vector_store.id, file_id=file_id)
         while True:
-            uploaded_files = self.get_client().vector_stores.files.list(vector_store_id=vector_store.id)
+            uploaded_files = list(self.get_client().vector_stores.files.list(vector_store_id=vector_store.id))
+            # Wait until all files appear in the list (eventual consistency)
+            if len(uploaded_files) < len(file_ids):
+                time.sleep(1)
+                continue
             all_completed = True
             failed = False
             for file in uploaded_files:
