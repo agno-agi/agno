@@ -181,7 +181,7 @@ def attach_routes(
                 dependencies = {"User info": f"User's Whatsapp number = {phone_number}"}
 
             if agent:
-                if send_user_number_to_context:
+                if send_user_number_to_context and isinstance(agent, Agent):
                     agent.add_dependencies_to_context = True
                 response = await agent.arun(  # type: ignore[misc]
                     message_text,
@@ -194,7 +194,7 @@ def attach_routes(
                     dependencies=dependencies,
                 )
             elif team:
-                if send_user_number_to_context:
+                if send_user_number_to_context and isinstance(team, Team):
                     team.add_dependencies_to_context = True
                 response = await team.arun(  # type: ignore
                     message_text,
@@ -207,8 +207,6 @@ def attach_routes(
                     dependencies=dependencies,
                 )
             elif workflow:
-                if send_user_number_to_context:
-                    workflow.add_dependencies_to_context = True
                 response = await workflow.arun(  # type: ignore
                     message_text,
                     user_id=phone_number,

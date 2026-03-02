@@ -20,7 +20,6 @@ from agno.models.google import Gemini
 from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.tools.eleven_labs import ElevenLabsTools
-from agno.tools.whatsapp import WhatsAppTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
