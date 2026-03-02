@@ -180,10 +180,14 @@ class MultiMCPTools(Toolkit):
         return self._initialized
 
     async def is_alive(self) -> bool:
+        import asyncio
+
         try:
             for session in self._sessions:
                 await session.send_ping()
             return True
+        except asyncio.CancelledError:
+            raise
         except (RuntimeError, BaseException):
             return False
 

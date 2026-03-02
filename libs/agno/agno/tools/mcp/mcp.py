@@ -402,11 +402,15 @@ class MCPTools(Toolkit):
             pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
+        import asyncio
+
         if self.session is None:
             return False
         try:
             await self.session.send_ping()
             return True
+        except asyncio.CancelledError:
+            raise
         except (RuntimeError, BaseException):
             return False
 
