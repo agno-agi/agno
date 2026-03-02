@@ -26,6 +26,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import json_serializer
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
@@ -4964,12 +4965,12 @@ class PostgresDb(BaseDb):
             log_debug(f"Error counting approvals: {e}")
             return 0
 
-    def update_approval_run_status(self, run_id: str, run_status: str) -> int:
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
         """Update run_status on all approvals for a given run_id.
 
         Args:
             run_id: The run ID to match.
-            run_status: The new run status (e.g., "COMPLETED", "ERROR", "CANCELLED").
+            run_status: The new run status.
 
         Returns:
             Number of approvals updated.
@@ -4982,7 +4983,7 @@ class PostgresDb(BaseDb):
                 stmt = (
                     table.update()
                     .where(table.c.run_id == run_id)
-                    .values(run_status=run_status, updated_at=int(time.time()))
+                    .values(run_status=run_status.value, updated_at=int(time.time()))
                 )
                 result = sess.execute(stmt)
                 return result.rowcount

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from agno.run.base import RunStatus
 from agno.utils.dttm import now_epoch_s
 from agno.utils.log import log_debug, log_warning
 
@@ -144,7 +145,7 @@ def _build_approval_dict(
         "created_at": now_epoch_s(),
         "updated_at": None,
         # Run status is PAUSED when the approval is created (run is paused waiting for approval)
-        "run_status": "PAUSED",
+        "run_status": RunStatus.paused.value,
     }
 
 
@@ -509,7 +510,7 @@ async def acreate_audit_approval(
 # ---------------------------------------------------------------------------
 
 
-def update_approval_run_status(db: Any, run_id: str, run_status: str) -> None:
+def update_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> None:
     """Update run_status on all approvals for a given run_id.
 
     Called when a run completes, errors, or is cancelled after being paused.
@@ -518,7 +519,7 @@ def update_approval_run_status(db: Any, run_id: str, run_status: str) -> None:
     Args:
         db: Database adapter instance.
         run_id: The run ID to match.
-        run_status: The new run status (e.g., "COMPLETED", "ERROR", "CANCELLED").
+        run_status: The new run status.
     """
     if db is None:
         return
@@ -536,7 +537,7 @@ def update_approval_run_status(db: Any, run_id: str, run_status: str) -> None:
         log_warning(f"Error updating approval run_status (sync): {e}")
 
 
-async def aupdate_approval_run_status(db: Any, run_id: str, run_status: str) -> None:
+async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> None:
     """Async variant of update_approval_run_status.
 
     Called when a run completes, errors, or is cancelled after being paused.
@@ -545,7 +546,7 @@ async def aupdate_approval_run_status(db: Any, run_id: str, run_status: str) -> 
     Args:
         db: Database adapter instance.
         run_id: The run ID to match.
-        run_status: The new run status (e.g., "COMPLETED", "ERROR", "CANCELLED").
+        run_status: The new run status.
     """
     if db is None:
         return
