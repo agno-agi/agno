@@ -111,6 +111,11 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Start and stop the scheduler poller."""
     from agno.scheduler import ScheduleExecutor, SchedulePoller
 
+    if agent_os._scheduler_base_url is None:
+        log_info(
+            "scheduler_base_url not set, using default http://127.0.0.1:7777. "
+            "If your server is running on a different port, set scheduler_base_url to match."
+        )
     base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
     internal_token = agent_os._internal_service_token
     if internal_token is None:
@@ -297,6 +302,9 @@ class AgentOS:
         self._initialize_teams()
         self._initialize_workflows()
 
+        # Populate registry with code-defined agents/teams
+        self._populate_registry()
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -341,6 +349,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Populate registry with code-defined agents/teams
+        self._populate_registry()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -544,6 +555,31 @@ class AgentOS:
             # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
             workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
+    def _populate_registry(self) -> None:
+        """Populate the registry with code-defined agents and teams.
+
+        This ensures that workflows loaded from DB can rehydrate their steps
+        using code-defined agents/teams via the registry.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        if self.agents:
+            existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
+            for agent in self.agents:
+                agent_id = getattr(agent, "id", None)
+                if not isinstance(agent, RemoteAgent) and agent_id is not None and agent_id not in existing_agent_ids:
+                    self.registry.agents.append(agent)
+                    existing_agent_ids.add(agent_id)
+
+        if self.teams:
+            existing_team_ids = {getattr(t, "id", None) for t in self.registry.teams}
+            for team in self.teams:
+                team_id = getattr(team, "id", None)
+                if not isinstance(team, RemoteTeam) and team_id is not None and team_id not in existing_team_ids:
+                    self.registry.teams.append(team)
+                    existing_team_ids.add(team_id)
+
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
@@ -678,12 +714,16 @@ class AgentOS:
         # Component routes require sync database operations
         if self.db is not None and isinstance(self.db, BaseDb):
             routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        else:
+            log_debug("Components router not enabled: requires a db to be provided to AgentOS")
         if self.registry is not None:
             routers.append(get_registry_router(registry=self.registry))
         # Add schedule and approval routers if a db is available
         if self.db is not None:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+        else:
+            log_debug("Scheduler and Approval routers not enabled: requires a db to be provided to AgentOS")
 
         for router in routers:
             self._add_router(fastapi_app, router)
