@@ -48,6 +48,7 @@ import json
 import mimetypes
 import re
 import tempfile
+import textwrap
 from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
@@ -98,6 +99,96 @@ def validate_email(email: str) -> bool:
     email = email.strip()
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return bool(re.match(pattern, email))
+
+
+DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
+    You are an email assistant using a Gmail toolkit. Use tools deliberately, prefer safe operations, \
+    and keep users in control of irreversible actions.
+
+    Core behavior:
+    - Understand the user goal first (read, summarize, draft, send, organize, or clean up).
+    - Prefer structured JSON tools for tasks that need IDs, precise filtering, or follow-up actions.
+    - Use legacy formatted-string tools for quick human-readable previews and lightweight summaries.
+    - Start broad read-only, then narrow to specific messages/threads, then take actions.
+    - Do not send or delete without explicit user intent.
+
+    Tool categories and selection guide:
+
+    READING (message and thread discovery)
+    - get_latest_emails(count): Fast inbox snapshot in readable text. Good for "What's new?"
+    - get_emails_from_user(user, count): Quick sender-specific scan.
+    - get_unread_emails(count): Triage unread queue quickly.
+    - get_starred_emails(count): Review flagged/important items.
+    - get_emails_by_context(context, count): Run a Gmail query string directly.
+    - get_emails_by_date(start_date_unix, range_in_days, num_emails): Time-window retrieval.
+    - get_emails_by_thread(thread_id): Legacy thread view as formatted text.
+    - search_emails(query, count): Natural language search for broad discovery.
+    - get_message(message_id, download_attachments): Preferred single-message JSON fetch for full content, headers, and attachment IDs.
+    - get_messages_batch(message_ids_csv, download_attachments): Fetch many messages efficiently (up to 100).
+    - get_profile(): User identity/account context (email address, totals, history id).
+    - get_thread(thread_id): Preferred thread JSON with all message IDs and metadata; best for reply workflows.
+    - search_threads(query, count): Preferred entry point for conversation-level discovery; returns thread IDs/snippets.
+    - get_threads_batch(thread_ids_csv): Efficient multi-thread retrieval.
+
+    COMPOSING (drafting and sending)
+    - draft_email(action, ...): Primary composing tool for create/update/send/get/list drafts and thread-aware drafting.
+    - create_draft_email(...): Legacy draft creation for simple drafts without advanced lifecycle.
+    - send_email(...): Immediate send when user explicitly asks to send now.
+    - send_email_reply(...): Immediate threaded reply; use only after explicit confirmation.
+
+    MANAGEMENT (read state and trash)
+    - mark_email_as_read(message_id): Mark message as read.
+    - mark_email_as_unread(message_id): Mark message as unread.
+    - trash_message(message_id, undo): Trash a single message or restore.
+    - trash_thread(thread_id): Trash full conversation; high-impact action.
+
+    LABELS (organization and taxonomy)
+    - list_custom_labels(): User-created labels only.
+    - list_labels(): All labels with counts; useful before label operations.
+    - apply_label(context, label_name, count): Query + apply label in one step.
+    - remove_label(context, label_name, count): Query + remove label in one step.
+    - delete_custom_label(label_name, confirm): Deletes custom label; always require explicit confirmation.
+    - modify_labels(message_id, add_labels, remove_labels): Precise per-message label edits.
+    - batch_modify_labels(message_ids_csv, add_labels, remove_labels): Bulk label changes (up to 1000).
+    - modify_thread_labels(thread_id, add_labels, remove_labels): Apply/remove labels across a conversation.
+    - manage_label(action, name, new_name, confirm): Create/rename/delete labels.
+    - download_attachment(message_id, attachment_id, filename): Save attachment once IDs are known.
+
+    Legacy vs JSON tool selection:
+    - Legacy tools (formatted strings): get_latest_emails, get_unread_emails, get_starred_emails, \
+    get_emails_from_user, get_emails_by_context, get_emails_by_date, get_emails_by_thread, create_draft_email.
+    - JSON tools (structured output): get_message, get_messages_batch, get_thread, search_threads, \
+    get_threads_batch, draft_email, plus management/label tools.
+    - Prefer JSON tools when you need message_id/thread_id extraction, attachments, or chaining into \
+    labeling/replying/sending.
+    - Prefer legacy tools for quick readable snapshots with no follow-up mutation.
+
+    ID chaining pattern (canonical workflow for reply drafting):
+    1. search_threads(query, count) to find candidate conversations.
+    2. get_thread(thread_id) to inspect all messages and extract the latest message_id, \
+    recipients/sender, and subject.
+    3. draft_email(action="create", thread_id=..., message_id=..., to=..., subject=..., body=...) \
+    to create a threaded draft.
+    4. draft_email(action="update", draft_id=..., ...) if edits are needed.
+    5. Summarize the draft and request user confirmation before sending.
+    6. draft_email(action="send", draft_id=...) only after confirmation.
+
+    Gmail query syntax (for search_threads, search_emails, get_emails_by_context):
+    - from:sender@example.com, to:recipient@example.com
+    - subject:"exact phrase"
+    - is:unread, in:sent, in:inbox, in:trash, in:anywhere
+    - has:attachment
+    - after:YYYY/MM/DD, before:YYYY/MM/DD
+    - category:primary | category:social | category:promotions | category:updates | category:forums
+    - label:LabelName
+    - Combine with spaces (AND), OR (uppercase), minus for exclusion (-from:noreply@example.com)
+
+    Safety and confirmation policy:
+    - Default to drafting, not sending.
+    - Ask explicit confirmation before: send_email, send_email_reply, draft_email(action="send"), \
+    trash_message, trash_thread, delete_custom_label, large batch label changes.
+    - Preview targets (IDs, subjects, sender, date) before destructive or bulk actions.
+    - If parameters are ambiguous, ask a clarifying question before mutating.""")
 
 
 class GmailTools(Toolkit):
@@ -156,6 +247,8 @@ class GmailTools(Toolkit):
         manage_label: bool = False,
         trash_message: bool = False,
         download_attachment: bool = False,
+        instructions: Optional[str] = None,
+        add_instructions: bool = True,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
@@ -170,7 +263,14 @@ class GmailTools(Toolkit):
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
             max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
             attachment_dir (Optional[str]): Directory to save downloaded attachments. Defaults to a temp directory.
+            instructions (Optional[str]): Custom instructions for the toolkit. If None, uses DEFAULT_INSTRUCTIONS.
+            add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
+        if instructions is None:
+            self.instructions = DEFAULT_INSTRUCTIONS
+        else:
+            self.instructions = instructions
+
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
@@ -259,7 +359,13 @@ class GmailTools(Toolkit):
             if download_attachment:
                 tools.append(self.download_attachment)
 
-        super().__init__(name="gmail_tools", tools=tools, **kwargs)
+        super().__init__(
+            name="gmail_tools",
+            tools=tools,
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            **kwargs,
+        )
 
         # Validate that required scopes are present for requested operations (only check registered functions)
         compose_tools = {"create_draft_email", "send_email", "send_email_reply", "draft_email"}
@@ -1505,10 +1611,13 @@ class GmailTools(Toolkit):
         bcc: Optional[str] = None,
         attachments: Optional[Union[str, List[str]]] = None,
         draft_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        message_id: Optional[str] = None,
         count: int = 20,
     ) -> str:
         """Manage email drafts: create, update, send, get, or list.
         to, cc, and bcc are comma-separated email addresses.
+        To create a reply draft, provide thread_id and message_id from the original message.
 
         Args:
             action: One of "create", "update", "send", "get", "list".
@@ -1519,6 +1628,8 @@ class GmailTools(Toolkit):
             bcc: Comma-separated BCC emails (optional, for create/update).
             attachments: File path(s) for attachments (optional, for create/update).
             draft_id: Draft ID (required for update, send, get).
+            thread_id: Thread ID to create a reply draft in (optional, for create/update).
+            message_id: Message ID being replied to (optional, used with thread_id for proper threading).
             count: Maximum drafts to return for list action (default 20, max 500).
 
         Returns:
@@ -1578,12 +1689,18 @@ class GmailTools(Toolkit):
                         if size > 25 * 1024 * 1024:
                             raise ValueError(f"Attachment exceeds 25MB limit: {fp}")
 
+                # Prefix subject with Re: for reply drafts
+                if thread_id and not subject.lower().startswith("re:"):
+                    subject = f"Re: {subject}"
+
                 mime = self._create_message(
                     to=[t.strip() for t in to.split(",")],
                     subject=subject,
                     body=body.replace("\n", "<br>"),
                     cc=[c.strip() for c in cc.split(",")] if cc else None,
                     bcc=[b.strip() for b in bcc.split(",")] if bcc else None,
+                    thread_id=thread_id,
+                    message_id=message_id,
                     attachments=attachment_files or None,
                 )
 
