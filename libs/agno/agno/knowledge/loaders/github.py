@@ -27,6 +27,9 @@ class GitHubLoader(BaseLoader):
     """Loader for GitHub content."""
 
     # Cache for GitHub App installation tokens: {cache_key: (token, expires_at_timestamp)}
+    # Note: locks are held for the full token exchange (including the HTTP call).
+    # This serializes concurrent refreshes across all cache keys, which is
+    # acceptable since token refreshes are infrequent (~once per hour).
     _github_app_token_cache: Dict[str, tuple] = {}
     _token_cache_lock = threading.Lock()
     _async_token_cache_lock: Optional[asyncio.Lock] = None
@@ -113,8 +116,9 @@ class GitHubLoader(BaseLoader):
         """
         import time
 
-        if self._async_token_cache_lock is None:
-            self.__class__._async_token_cache_lock = asyncio.Lock()
+        with self._token_cache_lock:
+            if self._async_token_cache_lock is None:
+                self.__class__._async_token_cache_lock = asyncio.Lock()
 
         lock = self._async_token_cache_lock
         assert lock is not None
