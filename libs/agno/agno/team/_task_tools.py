@@ -110,8 +110,21 @@ def _get_task_management_tools(
             store_events=team.store_events,
         )
 
-    def _emit_task_updated(task, previous_status):
-        """Create a TaskUpdatedEvent routed through handle_event."""
+    def _emit_task_updated(task, previous_status, result: Optional[str] = None):
+        """Create a TaskUpdatedEvent routed through handle_event.
+
+        Args:
+            task: The task being updated.
+            previous_status: The status before this update.
+            result: Explicit result to include. If None, only includes task.result
+                   for terminal statuses (completed/failed) to avoid stale data
+                   during in_progress transitions.
+        """
+        # Only include result for terminal statuses, or if explicitly provided
+        effective_result = result
+        if effective_result is None and task.status in (TaskStatus.completed, TaskStatus.failed):
+            effective_result = task.result
+
         return handle_event(
             create_team_task_updated_event(
                 from_run_response=run_response,
@@ -119,7 +132,7 @@ def _get_task_management_tools(
                 title=task.title,
                 status=task.status.value,
                 previous_status=previous_status,
-                result=task.result,
+                result=effective_result,
                 assignee=task.assignee,
             ),
             run_response,
