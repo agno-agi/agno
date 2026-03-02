@@ -26,7 +26,9 @@ class SystemPromptBlock(BaseModel):
 
     text: str
     cache: bool = True
-    ttl: Literal["5m", "1h"] = "5m"
+    # Per-block cache TTL. None means "use model default" (i.e. extended_cache_time).
+    # Set explicitly to override the model-level setting.
+    ttl: Optional[Literal["5m", "1h"]] = None
 
 
 class MessageReferences(BaseModel):

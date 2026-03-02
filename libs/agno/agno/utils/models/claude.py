@@ -250,8 +250,8 @@ def build_system_blocks(
     for prompt_block in system_message:
         b: Dict[str, Any] = {"text": prompt_block.text, "type": "text"}
         if cache_system_prompt and prompt_block.cache:
-            # Per-block ttl takes priority; fall back to model-level extended_cache_time
-            effective_ttl = prompt_block.ttl if prompt_block.ttl != "5m" else ("1h" if extended_cache_time else "5m")
+            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time
+            effective_ttl = prompt_block.ttl if prompt_block.ttl is not None else ("1h" if extended_cache_time else "5m")
             cc = {"type": "ephemeral"}
             if effective_ttl == "1h":
                 cc["ttl"] = "1h"
@@ -267,12 +267,14 @@ def format_messages(
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
-        messages (List[Message]): The list of messages to process.
+        messages: The list of messages to process.
         compress_tool_results: Whether to compress tool results.
 
     Returns:
-        A tuple of (chat_messages, system_message) where system_message is either
-        a plain string or a list of SystemPromptBlock when structured blocks are available.
+        A tuple of ``(chat_messages, system_message)``.  ``system_message`` is a
+        plain ``str`` when no structured blocks are present, or a
+        ``List[SystemPromptBlock]`` when the system message carries per-block
+        cache metadata (e.g. independent TTLs).
     """
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []

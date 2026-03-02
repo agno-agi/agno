@@ -32,7 +32,7 @@ blocks = [
     ),
     # Dynamic per-user context, never cached (changes every request)
     SystemPromptBlock(
-        text="The user is on the Enterprise plan and prefers Python examples. It's currently 5:15.35am EST",
+        text=f"The user is on the Enterprise plan and prefers Python examples. Current time: {__import__('datetime').datetime.now().isoformat()}",
         cache=False,
     ),
 ]

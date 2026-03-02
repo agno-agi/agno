@@ -321,8 +321,8 @@ def test_mixed_ttl_blocks():
     assert "cache_control" not in kwargs["system"][2]
 
 
-def test_per_block_ttl_overrides_model_extended_cache_time():
-    """Block-level ttl='5m' stays 5m even when model has extended_cache_time=True."""
+def test_explicit_block_ttl_overrides_model_extended_cache_time():
+    """Explicit block-level ttl='5m' stays 5m even when model has extended_cache_time=True."""
     claude = Claude(cache_system_prompt=True, extended_cache_time=True)
     blocks = [
         SystemPromptBlock(text="Explicit 5m.", cache=True, ttl="5m"),
@@ -330,12 +330,9 @@ def test_per_block_ttl_overrides_model_extended_cache_time():
     ]
     kwargs = claude._prepare_request_kwargs(blocks)
 
-    # Explicit 5m: model extended_cache_time acts as fallback, but block said 5m so it stays 5m?
-    # Actually per the logic: if ttl != "5m" use block ttl, else fall back to model level.
-    # So ttl="5m" + extended_cache_time=True => effective_ttl="1h"
-    # This is by design: "5m" is the default, meaning "I didn't set a preference, use model default".
-    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-    # Default ttl with extended_cache_time=True => 1h
+    # Explicit ttl="5m" overrides model-level extended_cache_time
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+    # ttl=None falls back to model-level extended_cache_time=True => 1h
     assert kwargs["system"][1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
 
