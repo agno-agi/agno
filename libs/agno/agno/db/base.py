@@ -11,6 +11,7 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.base import RunStatus
 from agno.session import Session
 
 
@@ -1084,6 +1085,18 @@ class BaseDb(ABC):
         """Get count of pending approvals."""
         raise NotImplementedError
 
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1786,4 +1799,16 @@ class AsyncBaseDb(ABC):
 
     async def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
         """Get count of pending approvals."""
+        raise NotImplementedError
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
         raise NotImplementedError
