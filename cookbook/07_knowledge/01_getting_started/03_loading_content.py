@@ -62,6 +62,8 @@ if __name__ == "__main__":
         path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
         metadata={"source": "local_file"},
     )
+    # Async equivalent: await knowledge.ainsert(name="CV", path="...", metadata={...})
+
     agent.print_response("What skills does Jordan Mitchell have?", stream=True)
 
     # --- 2. From a URL ---

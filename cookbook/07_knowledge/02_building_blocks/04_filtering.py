@@ -4,16 +4,19 @@ Filtering: Metadata-Based Search Refinement
 Filters let you narrow search results based on document metadata.
 This is essential for multi-user, multi-topic, or access-controlled systems.
 
-Three approaches:
-1. Dict filters: Simple key-value matching {"category": "recipes"}
-2. FilterExpr: Powerful expressions with AND, OR, NOT, EQ, IN, GT, LT
-3. Metadata at insert time: Tag documents for later filtering
+Two stages of filtering:
+1. On load: Tag documents with metadata at insert time
+2. On search: Apply filters when the agent searches
+
+Filter approaches:
+- Dict filters: Simple key-value matching {"category": "recipes"}
+- FilterExpr: Powerful expressions with AND, OR, NOT, EQ, IN, GT, LT
 
 See also: 05_agentic_filtering.py for agent-driven filter selection.
 """
 
 from agno.agent import Agent
-from agno.filters import AND, EQ, IN
+from agno.filters import AND, EQ, GT, IN, NOT, OR
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -40,22 +43,28 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Insert documents with metadata for filtering
+    # --- Stage 1: On load - tag documents with metadata ---
+    print("\n" + "=" * 60)
+    print("STAGE 1: Insert with metadata (on-load filtering)")
+    print("=" * 60 + "\n")
+
     knowledge.insert(
         name="Thai Recipes",
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        metadata={"cuisine": "thai", "category": "recipes"},
+        metadata={"cuisine": "thai", "category": "recipes", "difficulty": 3},
     )
 
     knowledge.insert(
         name="Company Info",
         text_content="Agno is an AI framework for building agents with knowledge.",
-        metadata={"category": "docs", "topic": "agno"},
+        metadata={"category": "docs", "topic": "agno", "difficulty": 1},
     )
 
-    # --- 1. Dict filters: simple key-value matching ---
+    # --- Stage 2: On search - filter at query time ---
+
+    # 2a. Dict filters: simple key-value matching
     print("\n" + "=" * 60)
-    print("APPROACH 1: Dict filters")
+    print("STAGE 2a: Dict filters (simple key-value)")
     print("=" * 60 + "\n")
 
     agent_dict = Agent(
@@ -67,9 +76,9 @@ if __name__ == "__main__":
     )
     agent_dict.print_response("What recipes do you know?", stream=True)
 
-    # --- 2. FilterExpr: powerful filter expressions ---
+    # 2b. FilterExpr with AND + EQ + IN
     print("\n" + "=" * 60)
-    print("APPROACH 2: FilterExpr")
+    print("STAGE 2b: FilterExpr (AND, EQ, IN)")
     print("=" * 60 + "\n")
 
     agent_expr = Agent(
@@ -82,3 +91,47 @@ if __name__ == "__main__":
         markdown=True,
     )
     agent_expr.print_response("What recipes do you know?", stream=True)
+
+    # 2c. FilterExpr with OR
+    print("\n" + "=" * 60)
+    print("STAGE 2c: FilterExpr (OR)")
+    print("=" * 60 + "\n")
+
+    agent_or = Agent(
+        model=OpenAIResponses(id="gpt-5.2"),
+        knowledge=knowledge,
+        search_knowledge=True,
+        knowledge_filters=[
+            OR(EQ("category", "recipes"), EQ("category", "docs"))
+        ],
+        markdown=True,
+    )
+    agent_or.print_response("What do you know?", stream=True)
+
+    # 2d. FilterExpr with GT (greater than)
+    print("\n" + "=" * 60)
+    print("STAGE 2d: FilterExpr (GT - difficulty > 2)")
+    print("=" * 60 + "\n")
+
+    agent_gt = Agent(
+        model=OpenAIResponses(id="gpt-5.2"),
+        knowledge=knowledge,
+        search_knowledge=True,
+        knowledge_filters=[GT("difficulty", 2)],
+        markdown=True,
+    )
+    agent_gt.print_response("What do you know?", stream=True)
+
+    # 2e. FilterExpr with NOT
+    print("\n" + "=" * 60)
+    print("STAGE 2e: FilterExpr (NOT - exclude docs)")
+    print("=" * 60 + "\n")
+
+    agent_not = Agent(
+        model=OpenAIResponses(id="gpt-5.2"),
+        knowledge=knowledge,
+        search_knowledge=True,
+        knowledge_filters=[NOT(EQ("category", "docs"))],
+        markdown=True,
+    )
+    agent_not.print_response("What do you know?", stream=True)

@@ -23,3 +23,7 @@ Advanced knowledge patterns for power users and custom integrations.
 ```bash
 .venvs/demo/bin/python cookbook/07_knowledge/04_advanced/01_custom_retriever.py
 ```
+
+## Further Reading
+
+- [Knowledge Overview](https://docs.agno.com/knowledge/overview)

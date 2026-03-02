@@ -51,20 +51,22 @@ cookbook/07_knowledge/
 |-- 01_getting_started/        Start here
 |   |-- 01_basic_rag.py            Traditional RAG with context injection
 |   |-- 02_agentic_rag.py          Agent-driven search decisions
-|   +-- 03_loading_content.py      All source types: file, URL, text, topics
+|   |-- 03_loading_content.py      All source types: file, URL, text, topics
+|   +-- 04_choosing_components.md  Decision guide
 |
 |-- 02_building_blocks/        Core components
 |   |-- 01_chunking_strategies.py  Side-by-side comparison
 |   |-- 02_hybrid_search.py        Vector + keyword + hybrid
 |   |-- 03_reranking.py            Two-stage retrieval
 |   |-- 04_filtering.py            Dict + FilterExpr
-|   +-- 05_agentic_filtering.py    Agent-driven filters
+|   |-- 05_agentic_filtering.py    Agent-driven filters
+|   +-- 06_embedders.py            Embedder comparison
 |
 |-- 03_production/             Real-world patterns
 |   |-- 01_multi_source_rag.py     Multiple content types
 |   |-- 02_knowledge_lifecycle.py  Insert, update, remove, track
 |   |-- 03_multi_tenant.py         Per-tenant isolation
-|   +-- 04_agent_os.py             Agent OS integration
+|   +-- 04_error_handling.py       Robust ingestion
 |
 |-- 04_advanced/               Power user patterns
 |   |-- 01_custom_retriever.py     Custom retrieval function

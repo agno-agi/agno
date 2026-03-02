@@ -9,10 +9,11 @@ Implement this when you need:
 - Custom search logic that doesn't fit the vector DB model
 - Integration with existing retrieval systems
 
-The protocol requires implementing search() and asearch() methods.
+The protocol requires implementing build_context(), get_tools(), and aget_tools().
+Optionally implement retrieve()/aretrieve() for the search_knowledge feature.
 """
 
-from typing import List, Optional
+from typing import Callable, List
 
 from agno.agent import Agent
 from agno.knowledge.document import Document
@@ -37,26 +38,33 @@ class InMemoryKnowledge(KnowledgeProtocol):
     def add(self, name: str, content: str) -> None:
         self.documents.append(Document(name=name, content=content))
 
-    def search(
-        self,
-        query: str,
-        limit: int = 5,
-        filters: Optional[dict] = None,
-    ) -> List[Document]:
-        # Simple substring matching (replace with your search logic)
+    def _search(self, query: str, limit: int = 5) -> List[Document]:
+        """Simple substring matching (replace with your search logic)."""
         results = []
         for doc in self.documents:
             if doc.content and query.lower() in doc.content.lower():
                 results.append(doc)
         return results[:limit] or self.documents[:limit]
 
-    async def asearch(
-        self,
-        query: str,
-        limit: int = 5,
-        filters: Optional[dict] = None,
-    ) -> List[Document]:
-        return self.search(query, limit, filters)
+    # --- Required protocol methods ---
+
+    def build_context(self, **kwargs) -> str:
+        return "Use the search tool to find information in the knowledge base."
+
+    def get_tools(self, **kwargs) -> List[Callable]:
+        return []
+
+    async def aget_tools(self, **kwargs) -> List[Callable]:
+        return []
+
+    # --- Optional: enables search_knowledge feature ---
+
+    def retrieve(self, query: str, **kwargs) -> List[Document]:
+        max_results = kwargs.get("max_results", 5)
+        return self._search(query, limit=max_results)
+
+    async def aretrieve(self, query: str, **kwargs) -> List[Document]:
+        return self.retrieve(query, **kwargs)
 
 
 # ---------------------------------------------------------------------------

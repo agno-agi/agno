@@ -54,7 +54,8 @@ if __name__ == "__main__":
         print("=" * 60 + "\n")
 
         knowledge = create_knowledge(search_type)
-        knowledge.insert(url=pdf_url)
+        # skip_if_exists=True avoids re-processing if run multiple times
+        knowledge.insert(url=pdf_url, skip_if_exists=True)
 
         agent = Agent(
             model=OpenAIResponses(id="gpt-5.2"),

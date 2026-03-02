@@ -21,7 +21,7 @@ Environment Variables:
     AZURE_CLIENT_SECRET        - App registration client secret
     AZURE_STORAGE_ACCOUNT_NAME - Storage account (for Blob)
     AZURE_CONTAINER_NAME       - Container name (for Blob)
-    SHAREPOINT_SITE_URL        - SharePoint site URL
+    SHAREPOINT_HOSTNAME        - SharePoint hostname (e.g. contoso.sharepoint.com)
 """
 
 from os import getenv
@@ -52,7 +52,7 @@ sharepoint = SharePointConfig(
     tenant_id=getenv("AZURE_TENANT_ID"),
     client_id=getenv("AZURE_CLIENT_ID"),
     client_secret=getenv("AZURE_CLIENT_SECRET"),
-    site_url=getenv("SHAREPOINT_SITE_URL"),
+    hostname=getenv("SHAREPOINT_HOSTNAME"),
 )
 
 knowledge = Knowledge(

@@ -14,6 +14,7 @@ Requirements: pip install lightrag-agno
 """
 
 from agno.agent import Agent
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
@@ -23,19 +24,21 @@ from agno.models.openai import OpenAIResponses
 try:
     from agno.vectordb.lightrag import LightRag
 
-    # LightRag connects to a running LightRAG server.
-    # Start one with: lightrag-server --host 0.0.0.0 --port 9621
-    lightrag = LightRag(server_url="http://localhost:9621")
+    knowledge = Knowledge(
+        vector_db=LightRag(
+            server_url="http://localhost:9621",
+        ),
+    )
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-5.2"),
-        knowledge_retriever=lightrag.lightrag_knowledge_retriever,
+        knowledge=knowledge,
         search_knowledge=True,
         markdown=True,
     )
 
 except ImportError:
-    lightrag = None
+    knowledge = None
     agent = None
     print("LightRAG not installed. Run: pip install lightrag-agno")
 
@@ -44,10 +47,10 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if lightrag and agent:
-        # Note: Documents must be ingested into LightRAG via its own API
-        # (e.g. lightrag.insert_file_bytes or lightrag.insert_text).
-        # The server handles chunking, entity extraction, and graph building.
+    if knowledge and agent:
+        knowledge.insert(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
 
         print("\n" + "=" * 60)
         print("Graph RAG: knowledge graph-based retrieval")

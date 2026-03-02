@@ -33,7 +33,7 @@ from agno.vectordb.qdrant import Qdrant
 s3_config = S3Config(
     id="my-bucket",
     name="My S3 Bucket",
-    bucket=getenv("AWS_S3_BUCKET", "my-bucket"),
+    bucket_name=getenv("AWS_S3_BUCKET", "my-bucket"),
     region=getenv("AWS_REGION", "us-east-1"),
 )
 
