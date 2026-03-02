@@ -120,7 +120,17 @@ async def team_continue_response_streamer(
     background_tasks: Optional[BackgroundTasks] = None,
 ) -> AsyncGenerator:
     try:
-        continue_response = team.acontinue_run(
+        if isinstance(team, RemoteTeam):
+            result = await team.acontinue_run(
+                run_id=run_id,
+                stream=True,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            yield format_sse_event(result)  # type: ignore[arg-type]
+            return
+
+        continue_response = team.acontinue_run(  # type: ignore[call-overload]
             run_id=run_id,
             requirements=requirements,
             session_id=session_id,
@@ -129,8 +139,8 @@ async def team_continue_response_streamer(
             stream_events=True,
             background_tasks=background_tasks,
         )
-        async for chunk in continue_response:
-            yield format_sse_event(chunk)
+        async for chunk in continue_response:  # type: ignore[union-attr]
+            yield format_sse_event(chunk)  # type: ignore[arg-type]
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -149,6 +159,51 @@ async def team_continue_response_streamer(
         )
         yield format_sse_event(error_response)
         return
+
+
+async def _enrich_requirements_from_session(
+    team: Team,
+    run_id: str,
+    session_id: Optional[str],
+    incoming_tools: List,
+) -> List:
+    import asyncio
+
+    from agno.db.base import SessionType
+    from agno.run.requirement import RunRequirement
+
+    confirmed_map = {t.tool_call_id: t for t in incoming_tools if t.tool_call_id}
+
+    db = getattr(team, "db", None)
+    if db is not None and session_id:
+        try:
+            loop = asyncio.get_running_loop()
+            team_session = await loop.run_in_executor(
+                None,
+                lambda: db.get_session(session_id=session_id, session_type=SessionType.TEAM),
+            )
+            if team_session is not None:
+                stored_run = team_session.get_run(run_id)
+                if stored_run is not None and getattr(stored_run, "requirements", None):
+                    for req in stored_run.requirements:
+                        tcid = req.tool_execution.tool_call_id if req.tool_execution else None
+                        if tcid and tcid in confirmed_map:
+                            incoming = confirmed_map[tcid]
+                            req.confirmation = incoming.confirmed
+                            req.confirmation_note = getattr(incoming, "confirmation_note", None)
+                            if req.tool_execution:
+                                req.tool_execution.confirmed = incoming.confirmed
+                    return list(stored_run.requirements)
+        except Exception:
+            pass
+
+    requirements = []
+    for tool_exec in incoming_tools:
+        req = RunRequirement(tool_execution=tool_exec)
+        req.confirmation = tool_exec.confirmed
+        req.confirmation_note = getattr(tool_exec, "confirmation_note", None)
+        requirements.append(req)
+    return requirements
 
 
 def get_team_router(
@@ -448,7 +503,6 @@ def get_team_router(
         import json
 
         from agno.models.response import ToolExecution
-        from agno.run.requirement import RunRequirement
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -464,16 +518,35 @@ def get_team_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        requirements = []
+        incoming_tools = []
         for tool_data in tools_data:
             try:
-                tool_exec = ToolExecution.from_dict(tool_data)
+                incoming_tools.append(ToolExecution.from_dict(tool_data))
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
-            req = RunRequirement(tool_execution=tool_exec)
-            req.confirmation = tool_exec.confirmed
-            req.confirmation_note = getattr(tool_exec, "confirmation_note", None)
-            requirements.append(req)
+
+        if isinstance(team, RemoteTeam):
+            if stream:
+                return StreamingResponse(
+                    team_continue_response_streamer(
+                        team,
+                        run_id=run_id,
+                        requirements=[],
+                        session_id=session_id,
+                        user_id=user_id,
+                        background_tasks=background_tasks,
+                    ),
+                    media_type="text/event-stream",
+                )
+            result = await team.acontinue_run(
+                run_id=run_id,
+                stream=False,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return result.to_dict()
+
+        requirements = await _enrich_requirements_from_session(team, run_id, session_id, incoming_tools)
 
         if stream:
             return StreamingResponse(
@@ -488,7 +561,7 @@ def get_team_router(
                 media_type="text/event-stream",
             )
 
-        run_response_obj = await team.acontinue_run(
+        run_response_obj = await team.acontinue_run(  # type: ignore[misc]
             run_id=run_id,
             requirements=requirements,
             session_id=session_id,

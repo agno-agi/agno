@@ -158,7 +158,7 @@ async def agent_continue_response_streamer(
 
 
 async def _team_continue_streamer(
-    team,
+    team: "Union[Any, Any]",
     run_id: str,
     requirements: List,
     session_id: Optional[str] = None,
@@ -166,19 +166,32 @@ async def _team_continue_streamer(
     background_tasks: Optional[BackgroundTasks] = None,
 ) -> AsyncGenerator:
     from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+    from agno.team.remote import RemoteTeam
+    from agno.team.team import Team
 
     try:
-        continue_response = team.acontinue_run(
-            run_id=run_id,
-            requirements=requirements,
-            session_id=session_id,
-            user_id=user_id,
-            stream=True,
-            stream_events=True,
-            background_tasks=background_tasks,
-        )
-        async for chunk in continue_response:
-            yield format_sse_event(chunk)
+        if isinstance(team, RemoteTeam):
+            result = await team.acontinue_run(
+                run_id=run_id,
+                stream=True,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            yield format_sse_event(result)  # type: ignore[arg-type]
+            return
+
+        if isinstance(team, Team):
+            continue_response = team.acontinue_run(  # type: ignore[call-overload]
+                run_id=run_id,
+                requirements=requirements,
+                session_id=session_id,
+                user_id=user_id,
+                stream=True,
+                stream_events=True,
+                background_tasks=background_tasks,
+            )
+            async for chunk in continue_response:  # type: ignore[union-attr]
+                yield format_sse_event(chunk)  # type: ignore[arg-type]
     except Exception as e:
         import traceback
 
@@ -540,8 +553,10 @@ def get_agent_router(
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             from agno.models.response import ToolExecution
+            from agno.os.routers.teams.router import _enrich_requirements_from_session
             from agno.os.utils import get_team_by_id
-            from agno.run.requirement import RunRequirement
+            from agno.team.remote import RemoteTeam
+            from agno.team.team import Team
 
             team = get_team_by_id(team_id=agent_id, teams=os.teams, db=os.db, registry=os.registry, create_fresh=True)
             if team is not None:
@@ -550,35 +565,53 @@ def get_agent_router(
                 except json.JSONDecodeError:
                     raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-                requirements = []
-                for tool_data in tools_data_for_team:
-                    tool_exec = ToolExecution.from_dict(tool_data)
-                    req = RunRequirement(tool_execution=tool_exec)
-                    req.confirmation = tool_exec.confirmed
-                    req.confirmation_note = getattr(tool_exec, "confirmation_note", None)
-                    requirements.append(req)
+                incoming_tools = [ToolExecution.from_dict(td) for td in tools_data_for_team]
 
-                if stream:
-                    return StreamingResponse(
-                        _team_continue_streamer(
-                            team,
-                            run_id=run_id,
-                            requirements=requirements,
-                            session_id=session_id,
-                            user_id=user_id,
-                            background_tasks=background_tasks,
-                        ),
-                        media_type="text/event-stream",
+                if isinstance(team, RemoteTeam):
+                    if stream:
+                        return StreamingResponse(
+                            _team_continue_streamer(
+                                team,
+                                run_id=run_id,
+                                requirements=[],
+                                session_id=session_id,
+                                user_id=user_id,
+                                background_tasks=background_tasks,
+                            ),
+                            media_type="text/event-stream",
+                        )
+                    result = await team.acontinue_run(
+                        run_id=run_id,
+                        stream=False,
+                        user_id=user_id,
+                        session_id=session_id,
                     )
-                run_response_obj = await team.acontinue_run(
-                    run_id=run_id,
-                    requirements=requirements,
-                    session_id=session_id,
-                    user_id=user_id,
-                    stream=False,
-                    background_tasks=background_tasks,
-                )
-                return run_response_obj.to_dict()
+                    return result.to_dict()
+
+                if isinstance(team, Team):
+                    requirements = await _enrich_requirements_from_session(team, run_id, session_id, incoming_tools)
+
+                    if stream:
+                        return StreamingResponse(
+                            _team_continue_streamer(
+                                team,
+                                run_id=run_id,
+                                requirements=requirements,
+                                session_id=session_id,
+                                user_id=user_id,
+                                background_tasks=background_tasks,
+                            ),
+                            media_type="text/event-stream",
+                        )
+                    run_response_obj = await team.acontinue_run(  # type: ignore[misc]
+                        run_id=run_id,
+                        requirements=requirements,
+                        session_id=session_id,
+                        user_id=user_id,
+                        stream=False,
+                        background_tasks=background_tasks,
+                    )
+                    return run_response_obj.to_dict()
 
             raise HTTPException(status_code=404, detail="Agent not found")
 
