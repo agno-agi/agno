@@ -409,6 +409,7 @@ class GmailTools(Toolkit):
                 oauth_kwargs["login_hint"] = self.login_hint
             self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
 
+        # Save the credentials for future use
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
             log_debug("Gmail credentials saved")
