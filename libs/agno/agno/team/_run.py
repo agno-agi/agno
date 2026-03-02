@@ -51,6 +51,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -724,11 +725,26 @@ def _run_tasks_stream(
 
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for frontend
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -2505,11 +2521,26 @@ async def _arun_tasks_stream(
 
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for creating detailed events
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
