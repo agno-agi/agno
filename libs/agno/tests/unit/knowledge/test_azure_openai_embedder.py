@@ -12,7 +12,7 @@ import pytest
 
 @pytest.fixture()
 def _mock_openai():
-    """Create a mock OpenAI client and response for testing without credentials."""
+    """Create and return mocked OpenAI client and response objects for testing AzureOpenAIEmbedder without real credentials."""
     mock_response = MagicMock()
     mock_response.data = [MagicMock(embedding=[0.1, 0.2, 0.3])]
     mock_response.usage = MagicMock()
