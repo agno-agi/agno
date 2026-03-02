@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
-from agno.models.message import Message, MessageReferences
+from agno.models.message import Message, MessageReferences, SystemPromptBlock
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunOutput
@@ -130,6 +130,17 @@ def get_system_message(
     if agent.system_message is not None:
         if isinstance(agent.system_message, Message):
             return agent.system_message
+
+        if isinstance(agent.system_message, list) and all(
+            isinstance(b, SystemPromptBlock) for b in agent.system_message
+        ):
+            blocks: List[SystemPromptBlock] = agent.system_message
+            joined = "\n".join(block.text for block in blocks)
+            return Message(
+                role=agent.system_message_role,
+                content=joined,
+                system_prompt_blocks=blocks,
+            )
 
         sys_message_content: str = ""
         if isinstance(agent.system_message, str):
@@ -472,6 +483,17 @@ async def aget_system_message(
     if agent.system_message is not None:
         if isinstance(agent.system_message, Message):
             return agent.system_message
+
+        if isinstance(agent.system_message, list) and all(
+            isinstance(b, SystemPromptBlock) for b in agent.system_message
+        ):
+            blocks: List[SystemPromptBlock] = agent.system_message
+            joined = "\n".join(block.text for block in blocks)
+            return Message(
+                role=agent.system_message_role,
+                content=joined,
+                system_prompt_blocks=blocks,
+            )
 
         sys_message_content: str = ""
         if isinstance(agent.system_message, str):
