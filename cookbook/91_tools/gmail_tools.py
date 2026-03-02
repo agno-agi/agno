@@ -112,7 +112,7 @@ agent = Agent(
     output_schema=FindEmailOutput,
 )
 
-# Example 5: Enable new JSON tools with boolean flags (thread-aware draft reply)
+# Example 5: Thread-aware draft reply using new tools
 thread_reply_agent = Agent(
     name="Thread Reply Agent",
     model=OpenAIChat(id="gpt-4o"),
