@@ -23,6 +23,7 @@ from os import getenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GitHubConfig
+from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 
 # ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ github_config = GitHubConfig(
 # github_config = GitHubConfig(
 #     id="org-repo",
 #     name="Org Repository",
-#     repo="my-org/private-repo",
+#     repo="owner/repo",
 #     app_id=getenv("GITHUB_APP_ID"),
 #     installation_id=getenv("GITHUB_INSTALLATION_ID"),
 #     private_key=getenv("GITHUB_APP_PRIVATE_KEY"),
@@ -69,6 +70,7 @@ knowledge = Knowledge(
 # Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
+    model=OpenAIChat(id="gpt-5.1"),
     name="GitHub Agent",
     knowledge=knowledge,
     search_knowledge=True,

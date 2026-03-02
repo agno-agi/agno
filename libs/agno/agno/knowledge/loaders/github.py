@@ -28,9 +28,8 @@ class GitHubLoader(BaseLoader):
     """Loader for GitHub content."""
 
     # Cache for GitHub App installation tokens: {cache_key: (token, expires_at_timestamp)}
-    # Note: locks are held for the full token exchange (including the HTTP call).
-    # This serializes concurrent refreshes across all cache keys, which is
-    # acceptable since token refreshes are infrequent (~once per hour).
+    # Uses double-checked locking: lock-free fast path for cache hits,
+    # lock only on cache miss to coordinate token refresh.
     _github_app_token_cache: Dict[str, tuple] = {}
     _token_cache_lock = threading.Lock()
     _async_token_cache_lock: Optional[asyncio.Lock] = None
@@ -106,10 +105,20 @@ class GitHubLoader(BaseLoader):
         an installation access token via the GitHub API.  Tokens are cached
         until 60 seconds before expiry.
 
+        Uses double-checked locking: the cache is read lock-free first (safe
+        under the GIL since dict.get and tuple reads are atomic).  The lock is
+        only acquired on a cache miss to coordinate the token refresh.
+
         Requires ``PyJWT[crypto]``: ``pip install PyJWT cryptography``
         """
         cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
 
+        # Fast path: lock-free cache read
+        cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        # Slow path: acquire lock, re-check, then refresh
         with self._token_cache_lock:
             cached = self._check_cached_token(self._github_app_token_cache, cache_key)
             if cached is not None:
@@ -117,21 +126,22 @@ class GitHubLoader(BaseLoader):
 
             url, jwt_headers = self._build_jwt_and_url(gh_config)
 
-            try:
-                with httpx.Client() as client:
-                    response = client.post(url, headers=jwt_headers, timeout=30.0)
-                    response.raise_for_status()
-                    data = response.json()
-            except httpx.HTTPStatusError as e:
-                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
-                raise
-            except httpx.HTTPError as e:
-                log_error(f"GitHub App token exchange request failed: {e}")
-                raise
+        # HTTP call outside the lock — other threads can refresh different keys concurrently
+        try:
+            with httpx.Client() as client:
+                response = client.post(url, headers=jwt_headers, timeout=30.0)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as e:
+            log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+            raise
+        except httpx.HTTPError as e:
+            log_error(f"GitHub App token exchange request failed: {e}")
+            raise
 
-            installation_token, expires_at_ts = self._parse_token_response(data)
-            self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
-            return installation_token
+        installation_token, expires_at_ts = self._parse_token_response(data)
+        self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
+        return installation_token
 
     async def _aget_github_app_token(self, gh_config: GitHubConfig) -> str:
         """Generate or retrieve a cached installation access token for GitHub App auth (async).
@@ -139,16 +149,28 @@ class GitHubLoader(BaseLoader):
         Async variant of ``_get_github_app_token``.  Uses ``httpx.AsyncClient``
         so the event loop is not blocked during the token exchange.
 
+        Uses double-checked locking: the cache is read without the async lock
+        first (safe because no ``await`` is involved, so no coroutine can
+        interleave).  The lock is only acquired on a cache miss.
+
         Requires ``PyJWT[crypto]``: ``pip install PyJWT cryptography``
         """
+        cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
+
+        # Fast path: lock-free cache read (no await, so no interleaving)
+        cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        # Ensure the async lock exists (sync lock guards initialization)
         with self._token_cache_lock:
             if self._async_token_cache_lock is None:
                 self.__class__._async_token_cache_lock = asyncio.Lock()
 
         lock = self._async_token_cache_lock
         assert lock is not None
-        cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
 
+        # Slow path: acquire async lock, re-check, then refresh
         async with lock:
             cached = self._check_cached_token(self._github_app_token_cache, cache_key)
             if cached is not None:
@@ -156,21 +178,22 @@ class GitHubLoader(BaseLoader):
 
             url, jwt_headers = self._build_jwt_and_url(gh_config)
 
-            try:
-                async with AsyncClient() as client:
-                    response = await client.post(url, headers=jwt_headers, timeout=30.0)
-                    response.raise_for_status()
-                    data = response.json()
-            except httpx.HTTPStatusError as e:
-                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
-                raise
-            except httpx.HTTPError as e:
-                log_error(f"GitHub App token exchange request failed: {e}")
-                raise
+        # HTTP call outside the lock — other coroutines can proceed
+        try:
+            async with AsyncClient() as client:
+                response = await client.post(url, headers=jwt_headers, timeout=30.0)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as e:
+            log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+            raise
+        except httpx.HTTPError as e:
+            log_error(f"GitHub App token exchange request failed: {e}")
+            raise
 
-            installation_token, expires_at_ts = self._parse_token_response(data)
-            self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
-            return installation_token
+        installation_token, expires_at_ts = self._parse_token_response(data)
+        self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
+        return installation_token
 
     def _validate_github_config(
         self,
