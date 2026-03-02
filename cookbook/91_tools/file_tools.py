@@ -1,9 +1,9 @@
 """
 File Tools - File System Operations and Management
 
-This example demonstrates how to use FileTools for file operations.
+This example demonstrates how to use FileTools for file operations
+including reading, writing, searching files, and searching file contents.
 Shows enable_ flag patterns for selective function access.
-FileTools is a small tool (<6 functions) so it uses enable_ flags.
 """
 
 from pathlib import Path
@@ -85,6 +85,28 @@ agent_writer = Agent(
     markdown=True,
 )
 
+# Example 5: Content search agent using enable_search_content
+# search_content lets the agent grep through file contents (case-insensitive)
+# for a query string, returning matching files with snippets.
+agent_content_search = Agent(
+    tools=[
+        FileTools(
+            Path("tmp/file"),
+            enable_read_file=True,
+            enable_search_content=True,
+            enable_list_files=True,
+            enable_save_file=False,
+        )
+    ],
+    description="You are a content search specialist that finds information within files.",
+    instructions=[
+        "Search through file contents to find relevant information",
+        "Use search_content to locate files containing specific terms",
+        "Summarize the matches and provide context from the snippets",
+    ],
+    markdown=True,
+)
+
 # Example usage
 
 # ---------------------------------------------------------------------------
@@ -112,5 +134,11 @@ if __name__ == "__main__":
     print("\n=== File Search Example ===")
     agent_full.print_response(
         "Search for all files which have an extension '.txt' and save the answer to a new file named 'all_txt_files.txt'",
+        markdown=True,
+    )
+
+    print("\n=== Content Search Example ===")
+    agent_content_search.print_response(
+        "Search inside all files for the word 'Python' and summarize what you find",
         markdown=True,
     )
