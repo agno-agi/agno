@@ -2,23 +2,17 @@
 GitHub Content Source for Knowledge
 ====================================
 
-Load files and folders from GitHub repositories into your Knowledge base.
-Supports both public and private repositories using fine-grained personal access tokens.
+Load files and folders from GitHub repositories into your Knowledge base,
+then query them with an Agent.
 
-Features:
-- Load single files or entire folders recursively
-- Works with public repos (no token needed) or private repos (token required)
-- Automatic file type detection and reader selection
-- Rich metadata stored for each file (repo, branch, path)
+Authentication methods:
+- Personal Access Token (PAT): simple, set ``token``
+- GitHub App: enterprise-grade, set ``app_id``, ``installation_id``, ``private_key``
 
 Requirements:
-- For private repos: GitHub fine-grained PAT with "Contents: read" permission
-
-Usage:
-    1. Configure GitHubConfig with repo and optional token
-    2. Register the config on Knowledge via content_sources
-    3. Use .file() or .folder() to create content references
-    4. Insert into knowledge with knowledge.insert()
+- PostgreSQL with pgvector: ``./cookbook/scripts/run_pgvector.sh``
+- For private repos with PAT: GitHub fine-grained PAT with "Contents: read" permission
+- For GitHub App auth: ``pip install PyJWT cryptography``
 
 Run this cookbook:
     python cookbook/07_knowledge/cloud/github.py
@@ -26,21 +20,43 @@ Run this cookbook:
 
 from os import getenv
 
+from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GitHubConfig
+from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 
-# Configure GitHub content source
+# ---------------------------------------------------------------------------
+# Option 1: Personal Access Token authentication
+# ---------------------------------------------------------------------------
 # For private repos, set GITHUB_TOKEN env var to a fine-grained PAT with "Contents: read"
 github_config = GitHubConfig(
     id="my-repo",
     name="My Repository",
-    repo="private/repo",  # Format: owner/repo
+    repo="owner/repo",  # Format: owner/repo
     token=getenv("GITHUB_TOKEN"),  # Optional for public repos
-    branch="main",  # Default branch
+    branch="main",
 )
 
-# Create Knowledge with GitHub as a content source
+# ---------------------------------------------------------------------------
+# Option 2: GitHub App authentication
+# ---------------------------------------------------------------------------
+# For organizations using GitHub Apps instead of personal tokens.
+# Requires: pip install PyJWT cryptography
+#
+# github_config = GitHubConfig(
+#     id="org-repo",
+#     name="Org Repository",
+#     repo="owner/repo",
+#     app_id=getenv("GITHUB_APP_ID"),
+#     installation_id=getenv("GITHUB_INSTALLATION_ID"),
+#     private_key=getenv("GITHUB_APP_PRIVATE_KEY"),
+#     branch="main",
+# )
+
+# ---------------------------------------------------------------------------
+# Knowledge Base
+# ---------------------------------------------------------------------------
 knowledge = Knowledge(
     name="GitHub Knowledge",
     vector_db=PgVector(
@@ -50,25 +66,36 @@ knowledge = Knowledge(
     content_sources=[github_config],
 )
 
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
+agent = Agent(
+    model=OpenAIChat(id="gpt-5.1"),
+    name="GitHub Agent",
+    knowledge=knowledge,
+    search_knowledge=True,
+)
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Insert a single file
-    print("Inserting single file from GitHub...")
+    print("Inserting README from GitHub...")
     knowledge.insert(
         name="README",
         remote_content=github_config.file("README.md"),
     )
 
     # Insert an entire folder (recursive)
-    # Use trailing slash or just the folder name - both work
     print("Inserting folder from GitHub...")
     knowledge.insert(
-        name="Cookbook Examples",
-        remote_content=github_config.folder("cookbook/01_basics"),
+        name="Docs",
+        remote_content=github_config.folder("docs"),
     )
 
-    # Insert from a different branch
-    print("Inserting from specific branch...")
-    knowledge.insert(
-        name="Dev Docs",
-        remote_content=github_config.file("docs/index.md", branch="dev"),
+    # Query the knowledge base through the agent
+    agent.print_response(
+        "Summarize what this repository is about based on the README",
+        markdown=True,
     )
