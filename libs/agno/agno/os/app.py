@@ -743,6 +743,7 @@ class AgentOS:
         if self.registry is not None:
             routers.append(get_registry_router(registry=self.registry))
         else:
+            log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
             routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
         for router in routers:
