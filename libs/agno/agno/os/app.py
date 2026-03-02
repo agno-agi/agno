@@ -171,7 +171,7 @@ def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRou
     for path in [prefix, f"{prefix}/{{path:path}}"]:
 
         @router.api_route(path, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-        async def _disabled(request: Request, _detail: str = detail) -> None:
+        async def _disabled(_detail: str = detail) -> None:
             raise HTTPException(status_code=503, detail=_detail)
 
     return router
