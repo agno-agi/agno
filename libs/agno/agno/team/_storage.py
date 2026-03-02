@@ -22,9 +22,9 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.utils import get_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
@@ -37,8 +37,10 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
+    aget_session_metrics_util,
     get_last_run_output_util,
     get_run_output_util,
+    get_session_metrics_util,
 )
 from agno.utils.log import (
     log_debug,
@@ -126,17 +128,30 @@ async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -
 # ---------------------------------------------------------------------------
 
 
-def get_session_metrics_internal(team: "Team", session: TeamSession) -> Metrics:
+def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionMetrics:
     # Get the session_metrics from the database
     if session.session_data is not None and "session_metrics" in session.session_data:
         session_metrics_from_db = session.session_data.get("session_metrics")
         if session_metrics_from_db is not None:
             if isinstance(session_metrics_from_db, dict):
-                return Metrics(**session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, Metrics):
+                return SessionMetrics.from_dict(session_metrics_from_db)
+            elif isinstance(session_metrics_from_db, SessionMetrics):
                 return session_metrics_from_db
-
-    return Metrics()
+            elif isinstance(session_metrics_from_db, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_from_db.input_tokens,
+                    output_tokens=session_metrics_from_db.output_tokens,
+                    total_tokens=session_metrics_from_db.total_tokens,
+                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    cost=session_metrics_from_db.cost,
+                )
+    return SessionMetrics()
 
 
 # ---------------------------------------------------------------------------
@@ -1164,3 +1179,17 @@ def delete(
         raise ValueError("Cannot delete team without an id")
 
     return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+
+
+def get_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return get_session_metrics_util(team, session_id=session_id)
+
+
+async def aget_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return await aget_session_metrics_util(team, session_id=session_id)

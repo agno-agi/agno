@@ -18,9 +18,16 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
-    from agno.workflow.types import StepOutput, WorkflowMetrics
+    from agno.workflow.types import (
+        ErrorRequirement,
+        StepOutput,
+        StepRequirement,
+        WorkflowMetrics,
+    )
 else:
     StepOutput = Any
+    StepRequirement = Any
+    ErrorRequirement = Any
     WorkflowMetrics = Any
 
 
@@ -37,6 +44,7 @@ class WorkflowRunEvent(str, Enum):
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
+    step_paused = "StepPaused"
     step_error = "StepError"
 
     loop_execution_started = "LoopExecutionStarted"
@@ -49,9 +57,11 @@ class WorkflowRunEvent(str, Enum):
 
     condition_execution_started = "ConditionExecutionStarted"
     condition_execution_completed = "ConditionExecutionCompleted"
+    condition_paused = "ConditionPaused"
 
     router_execution_started = "RouterExecutionStarted"
     router_execution_completed = "RouterExecutionCompleted"
+    router_paused = "RouterPaused"
 
     steps_execution_started = "StepsExecutionStarted"
     steps_execution_completed = "StepsExecutionCompleted"
@@ -214,6 +224,24 @@ class StepCompletedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class StepPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step execution is paused (e.g., requires user confirmation or user input)"""
+
+    event: str = WorkflowRunEvent.step_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Confirmation fields
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+
+    # User input fields
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+
+
+@dataclass
 class StepErrorEvent(BaseWorkflowRunOutputEvent):
     """Event sent when step execution fails"""
 
@@ -346,6 +374,21 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class RouterPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when router pauses for user input (HITL)"""
+
+    event: str = WorkflowRunEvent.router_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    # Available choices for user to select from
+    available_choices: List[str] = field(default_factory=list)
+    # Message to display to user
+    user_input_message: Optional[str] = None
+    # Whether multiple selections are allowed
+    allow_multiple_selections: bool = False
+
+
+@dataclass
 class StepsExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when steps execution starts"""
 
@@ -432,6 +475,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowCancelledEvent,
     StepStartedEvent,
     StepCompletedEvent,
+    StepPausedEvent,
     StepErrorEvent,
     LoopExecutionStartedEvent,
     LoopIterationStartedEvent,
@@ -443,6 +487,7 @@ WorkflowRunOutputEvent = Union[
     ConditionExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     RouterExecutionCompletedEvent,
+    RouterPausedEvent,
     StepsExecutionStartedEvent,
     StepsExecutionCompletedEvent,
     StepOutputEvent,
@@ -459,6 +504,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_paused.value: StepPausedEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
@@ -470,6 +516,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.condition_execution_completed.value: ConditionExecutionCompletedEvent,
     WorkflowRunEvent.router_execution_started.value: RouterExecutionStartedEvent,
     WorkflowRunEvent.router_execution_completed.value: RouterExecutionCompletedEvent,
+    WorkflowRunEvent.router_paused.value: RouterPausedEvent,
     WorkflowRunEvent.steps_execution_started.value: StepsExecutionStartedEvent,
     WorkflowRunEvent.steps_execution_completed.value: StepsExecutionCompletedEvent,
     WorkflowRunEvent.step_output.value: StepOutputEvent,
@@ -534,9 +581,67 @@ class WorkflowRunOutput:
 
     status: RunStatus = RunStatus.pending
 
+    # Unified HITL requirements to continue a paused workflow
+    # Handles all HITL types: confirmation, user input, and route selection
+    step_requirements: Optional[List["StepRequirement"]] = None
+
+    # Error-level HITL requirements for handling step failures
+    error_requirements: Optional[List["ErrorRequirement"]] = None
+
+    # Track the paused step for resumption and debugging
+    paused_step_index: Optional[int] = None
+    paused_step_name: Optional[str] = None
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if the workflow is paused waiting for step confirmation or router selection"""
+        return self.status == RunStatus.paused
+
     @property
     def is_cancelled(self):
         return self.status == RunStatus.cancelled
+
+    @property
+    def active_step_requirements(self) -> List["StepRequirement"]:
+        """Get step requirements that still need to be resolved"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if not req.is_resolved]
+
+    @property
+    def steps_requiring_confirmation(self) -> List["StepRequirement"]:
+        """Get step requirements that need user confirmation"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_confirmation]
+
+    @property
+    def steps_requiring_user_input(self) -> List["StepRequirement"]:
+        """Get step requirements that need user input (custom fields, not route selection)"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_user_input]
+
+    @property
+    def steps_requiring_route(self) -> List["StepRequirement"]:
+        """Get step requirements that need route selection (Router HITL)"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_route_selection]
+
+    @property
+    def active_error_requirements(self) -> List["ErrorRequirement"]:
+        """Get error requirements that still need user decision"""
+        if not self.error_requirements:
+            return []
+        return [req for req in self.error_requirements if not req.is_resolved]
+
+    @property
+    def steps_with_errors(self) -> List["ErrorRequirement"]:
+        """Get error requirements that need user decision (retry or skip)"""
+        if not self.error_requirements:
+            return []
+        return [req for req in self.error_requirements if req.needs_decision]
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
@@ -556,6 +661,8 @@ class WorkflowRunOutput:
                 "events",
                 "metrics",
                 "workflow_agent_run",
+                "step_requirements",
+                "error_requirements",
             ]
         }
 
@@ -611,6 +718,12 @@ class WorkflowRunOutput:
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
+
+        if self.step_requirements is not None:
+            _dict["step_requirements"] = [req.to_dict() for req in self.step_requirements]
+
+        if self.error_requirements is not None:
+            _dict["error_requirements"] = [req.to_dict() for req in self.error_requirements]
 
         return _dict
 
@@ -679,6 +792,34 @@ class WorkflowRunOutput:
             final_events.append(event)
         events = final_events
 
+        # Parse step_requirements
+        step_requirements_data = data.pop("step_requirements", None)
+        step_requirements = None
+        if step_requirements_data:
+            from agno.workflow.types import StepRequirement
+
+            step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
+
+        # Handle legacy router_requirements by converting to step_requirements
+        router_requirements_data = data.pop("router_requirements", None)
+        if router_requirements_data:
+            from agno.workflow.types import StepRequirement as StepReq
+
+            # Convert legacy router_requirements to step_requirements with requires_route_selection=True
+            router_as_step_reqs = [StepReq.from_dict(req) for req in router_requirements_data]
+            if step_requirements is None:
+                step_requirements = router_as_step_reqs
+            else:
+                step_requirements.extend(router_as_step_reqs)
+
+        # Parse error_requirements
+        error_requirements_data = data.pop("error_requirements", None)
+        error_requirements = None
+        if error_requirements_data:
+            from agno.workflow.types import ErrorRequirement
+
+            error_requirements = [ErrorRequirement.from_dict(req) for req in error_requirements_data]
+
         input_data = data.pop("input", None)
 
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
@@ -687,7 +828,7 @@ class WorkflowRunOutput:
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
 
-        return cls(
+        result = cls(
             step_results=parsed_step_results,
             workflow_agent_run=workflow_agent_run,
             metadata=metadata,
@@ -699,9 +840,12 @@ class WorkflowRunOutput:
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
+            step_requirements=step_requirements,
+            error_requirements=error_requirements,
             input=input_data,
             **filtered_data,
         )
+        return result
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
