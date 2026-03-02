@@ -18,7 +18,7 @@ except ImportError:
 @dataclass
 class AzureOpenAIEmbedder(Embedder):
     id: str = "text-embedding-3-small"  # This has to match the model that you deployed at the provided URL
-    dimensions: int = 1536
+    dimensions: Optional[int] = None
     encoding_format: Literal["float", "base64"] = "float"
     user: Optional[str] = None
     api_key: Optional[str] = getenv("AZURE_EMBEDDER_OPENAI_API_KEY")
@@ -33,6 +33,10 @@ class AzureOpenAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[AzureOpenAIClient] = None
     async_client: Optional[AsyncAzureOpenAIClient] = None
+
+    def __post_init__(self):
+        if self.dimensions is None and self.id.startswith("text-embedding-3"):
+            self.dimensions = 1536
 
     @property
     def client(self) -> AzureOpenAIClient:
@@ -99,7 +103,7 @@ class AzureOpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3") or self.azure_deployment is not None:
+        if self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -130,7 +134,7 @@ class AzureOpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3") or self.azure_deployment is not None:
+        if self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -180,7 +184,7 @@ class AzureOpenAIEmbedder(Embedder):
             }
             if self.user is not None:
                 req["user"] = self.user
-            if self.id.startswith("text-embedding-3") or self.azure_deployment is not None:
+            if self.dimensions is not None:
                 req["dimensions"] = self.dimensions
             if self.request_params:
                 req.update(self.request_params)
