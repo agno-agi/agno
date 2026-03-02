@@ -40,6 +40,7 @@ db = SqliteDb(
     db_file=DB_FILE, session_table="agent_sessions", approvals_table="approvals"
 )
 agent = Agent(
+    name="Approval User Input Agent",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[send_money],
     markdown=True,
@@ -66,11 +67,10 @@ if __name__ == "__main__":
         db=db,
     )
 agent_os = AgentOS(
-    description="Example app for tracing with multiple models, agents, teams, and workflows",
+    description="Example app for approvals with user input",
     agents=[
         agent,
     ],
-    tracing=True,
     db=db,
 )
 app = agent_os.get_app()
