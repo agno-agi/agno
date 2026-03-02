@@ -26,6 +26,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import json_serializer
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
@@ -3519,4 +3520,31 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return (await sess.execute(stmt)).scalar() or 0
         except Exception as e:
             log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = (
+                        table.update()
+                        .where(table.c.run_id == run_id)
+                        .values(run_status=run_status.value, updated_at=int(time.time()))
+                    )
+                    result = await sess.execute(stmt)
+                    return result.rowcount or 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
             return 0
