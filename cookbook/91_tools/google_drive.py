@@ -20,7 +20,7 @@ The Tool Kit Functions are:
 """
 
 from agno.agent import Agent
-from agno.tools.google_drive import GoogleDriveTools
+from agno.tools.google import GoogleDriveTools
 
 # ---------------------------------------------------------------------------
 # Create Agent

@@ -6,7 +6,7 @@ Demonstrates youtube tools.
 """
 
 from agno.agent import Agent
-from agno.tools.youtube import YouTubeTools
+from agno.tools.google import YouTubeTools
 
 # ---------------------------------------------------------------------------
 # Create Agent

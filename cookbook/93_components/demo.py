@@ -14,7 +14,7 @@ from agno.os import AgentOS
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.parallel import ParallelTools
-from agno.tools.youtube import YouTubeTools
+from agno.tools.google import YouTubeTools
 from agno.vectordb.pgvector import PgVector
 from pydantic import BaseModel
 
