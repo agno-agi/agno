@@ -6,7 +6,7 @@ from agno.models.azure import AzureFoundryClaude
 class TestClientCached:
     def test_sync_client_cached(self):
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="test-key",
             resource="my-resource",
         )
@@ -24,7 +24,7 @@ class TestClientCached:
 
     def test_async_client_cached(self):
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="test-key",
             resource="my-resource",
         )
@@ -44,7 +44,7 @@ class TestClientCached:
 class TestIsClosedRecreation:
     def test_closed_sync_client_is_recreated(self):
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="test-key",
             resource="my-resource",
         )
@@ -65,7 +65,7 @@ class TestIsClosedRecreation:
 
     def test_open_sync_client_is_reused(self):
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="test-key",
             resource="my-resource",
         )
@@ -79,7 +79,7 @@ class TestIsClosedRecreation:
 
     def test_closed_async_client_is_recreated(self):
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="test-key",
             resource="my-resource",
         )
@@ -100,7 +100,7 @@ class TestIsClosedRecreation:
 
     def test_open_async_client_is_reused(self):
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="test-key",
             resource="my-resource",
         )
@@ -119,7 +119,7 @@ class TestEnvVarFallbacks:
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_RESOURCE", raising=False)
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_BASE_URL", raising=False)
 
-        model = AzureFoundryClaude(id="claude-sonnet-4-6")
+        model = AzureFoundryClaude(id="claude-sonnet-4-5")
         params = model._get_client_params()
 
         assert params["api_key"] == "env-api-key"
@@ -129,7 +129,7 @@ class TestEnvVarFallbacks:
         monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "my-resource")
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_BASE_URL", raising=False)
 
-        model = AzureFoundryClaude(id="claude-sonnet-4-6")
+        model = AzureFoundryClaude(id="claude-sonnet-4-5")
         params = model._get_client_params()
 
         assert params["resource"] == "my-resource"
@@ -139,7 +139,7 @@ class TestEnvVarFallbacks:
         monkeypatch.setenv("ANTHROPIC_FOUNDRY_BASE_URL", "https://custom.azure.com")
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_RESOURCE", raising=False)
 
-        model = AzureFoundryClaude(id="claude-sonnet-4-6")
+        model = AzureFoundryClaude(id="claude-sonnet-4-5")
         params = model._get_client_params()
 
         assert params["base_url"] == "https://custom.azure.com"
@@ -150,7 +150,7 @@ class TestClientParams:
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_API_KEY", raising=False)
 
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="explicit-key",
             resource="my-resource",
         )
@@ -166,7 +166,7 @@ class TestClientParams:
             return "azure-ad-token"
 
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             azure_ad_token_provider=my_token_provider,
             resource="my-resource",
         )
@@ -179,7 +179,7 @@ class TestClientParams:
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_API_KEY", raising=False)
 
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="key",
             timeout=30,
             max_retries=5,
@@ -193,7 +193,7 @@ class TestClientParams:
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_API_KEY", raising=False)
 
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="key",
             default_headers={"X-Custom": "value"},
         )
@@ -205,7 +205,7 @@ class TestClientParams:
         monkeypatch.delenv("ANTHROPIC_FOUNDRY_API_KEY", raising=False)
 
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="key",
             client_params={"custom_param": "custom_value"},
         )
@@ -219,7 +219,7 @@ class TestClientParams:
         monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "env-resource")
 
         model = AzureFoundryClaude(
-            id="claude-sonnet-4-6",
+            id="claude-sonnet-4-5",
             api_key="explicit-key",
             resource="explicit-resource",
         )
