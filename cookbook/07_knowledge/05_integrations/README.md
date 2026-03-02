@@ -22,8 +22,9 @@ Specific reader, cloud storage, and vector database integrations.
 | File | Provider |
 |------|----------|
 | [cloud/01_aws.py](./cloud/01_aws.py) | S3 buckets |
-| [cloud/02_azure.py](./cloud/02_azure.py) | Azure Blob Storage + SharePoint |
+| [cloud/02_azure.py](./cloud/02_azure.py) | Azure Blob Storage |
 | [cloud/03_gcp.py](./cloud/03_gcp.py) | Google Cloud Storage |
+| [cloud/04_sharepoint.py](./cloud/04_sharepoint.py) | SharePoint |
 
 ## Vector Databases
 
