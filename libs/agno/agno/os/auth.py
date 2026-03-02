@@ -382,9 +382,12 @@ def require_approval_resolved(db: Any) -> Any:
                 )
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:
             # DB doesn't support approvals or another transient error — let the
             # run continue so non-approval setups are unaffected.
+            from agno.utils.log import log_warning
+
+            log_warning(f"Approval resolution check skipped due to error: {exc}")
             return
 
     return dependency
