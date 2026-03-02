@@ -50,14 +50,7 @@ class DailyDigest(BaseModel):
 agent = Agent(
     name="Daily Digest Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        GmailTools(
-            include_tools=[
-                "get_emails_by_date",
-                "get_unread_emails",
-            ]
-        )
-    ],
+    tools=[GmailTools()],
     instructions=[
         "Categorize each email as action_required, fyi, newsletter, personal, or other.",
         "Assign priority: high for urgent/time-sensitive, medium for important, low for routine.",

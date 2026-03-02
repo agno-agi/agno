@@ -44,14 +44,7 @@ class InvoiceReport(BaseModel):
 agent = Agent(
     name="Invoice Extractor",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        GmailTools(
-            include_tools=[
-                "search_emails",
-                "get_message",
-            ]
-        )
-    ],
+    tools=[GmailTools(get_message=True)],
     instructions=[
         "Extract: vendor name, total amount (with currency), date, spending category, and description.",
         "If the amount is not explicitly stated, note 'amount not found' rather than guessing.",

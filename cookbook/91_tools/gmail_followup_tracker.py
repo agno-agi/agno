@@ -43,12 +43,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         GmailTools(
-            include_tools=[
-                "search_threads",
-                "get_thread",
-                "get_profile",
-                "draft_email",
-            ]
+            search_threads=True, get_thread=True, get_profile=True, draft_email=True
         )
     ],
     instructions=[

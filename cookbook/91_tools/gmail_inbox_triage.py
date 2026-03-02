@@ -39,17 +39,7 @@ class TriageResult(BaseModel):
 agent = Agent(
     name="Inbox Triage Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        GmailTools(
-            include_tools=[
-                "get_unread_emails",
-                "search_emails",
-                "manage_label",
-                "modify_labels",
-                "batch_modify_labels",
-            ]
-        )
-    ],
+    tools=[GmailTools(manage_label=True, modify_labels=True, batch_modify_labels=True)],
     instructions=[
         "Classify each email into exactly one category: Action-Required, FYI, Newsletter, Scheduling, or Finance.",
         "Create any missing labels before applying them.",
@@ -64,14 +54,7 @@ agent = Agent(
 classify_only_agent = Agent(
     name="Email Classifier",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        GmailTools(
-            include_tools=[
-                "get_unread_emails",
-                "search_emails",
-            ]
-        )
-    ],
+    tools=[GmailTools()],
     instructions=[
         "Classify each unread email into: Action-Required, FYI, Newsletter, Scheduling, or Finance.",
         "Do NOT apply any labels or modify emails -- only report classifications.",
