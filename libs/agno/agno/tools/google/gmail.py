@@ -74,8 +74,6 @@ except ImportError:
     )
 
 
-_BATCH_MAX = 100
-
 
 def authenticate(func):
     """Decorator to ensure authentication before executing a function."""
@@ -210,6 +208,7 @@ class GmailTools(Toolkit):
         manage_label: bool = False,
         trash_message: bool = False,
         download_attachment: bool = False,
+        max_batch_size: int = 10,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
@@ -226,6 +225,7 @@ class GmailTools(Toolkit):
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
             max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
             attachment_dir (Optional[str]): Directory to save downloaded attachments. Defaults to a temp directory.
+            max_batch_size (int): Max items per Gmail API batch request. Maximum 100 (Gmail API limit). Defaults to 10.
             instructions (Optional[str]): Custom instructions for the toolkit. If None, uses DEFAULT_INSTRUCTIONS.
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
@@ -244,6 +244,8 @@ class GmailTools(Toolkit):
         self.include_html = include_html
         self.max_body_length = max_body_length
         self.attachment_dir = attachment_dir
+        # Gmail API allows max 100 items per batch request
+        self.max_batch_size = min(max_batch_size, 100)
         self._temp_dir: Optional[str] = None
 
         # When include_tools is specified, expose the full catalog and let
@@ -1223,8 +1225,8 @@ class GmailTools(Toolkit):
             else:
                 results.append(response)
 
-        for i in range(0, len(ids), _BATCH_MAX):
-            chunk = ids[i : i + _BATCH_MAX]
+        for i in range(0, len(ids), self.max_batch_size):
+            chunk = ids[i : i + self.max_batch_size]
             batch = service.new_batch_http_request(callback=callback)  # type: ignore
             for item_id in chunk:
                 batch.add(request_builder(item_id), request_id=item_id)
@@ -1381,8 +1383,8 @@ class GmailTools(Toolkit):
         """
         try:
             ids = [mid.strip() for mid in message_ids.split(",") if mid.strip()]
-            if len(ids) > _BATCH_MAX:
-                return json.dumps({"error": f"Maximum {_BATCH_MAX} messages per batch request"})
+            if len(ids) > self.max_batch_size:
+                return json.dumps({"error": f"Maximum {self.max_batch_size} messages per batch request"})
 
             service = self.service
             raw_messages = self._batch_get(
@@ -1486,8 +1488,8 @@ class GmailTools(Toolkit):
         """
         try:
             ids = [tid.strip() for tid in thread_ids.split(",") if tid.strip()]
-            if len(ids) > _BATCH_MAX:
-                return json.dumps({"error": f"Maximum {_BATCH_MAX} threads per batch request"})
+            if len(ids) > self.max_batch_size:
+                return json.dumps({"error": f"Maximum {self.max_batch_size} threads per batch request"})
 
             service = self.service
             raw_threads = self._batch_get(ids, lambda tid: service.users().threads().get(userId="me", id=tid))  # type: ignore
