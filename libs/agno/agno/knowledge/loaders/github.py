@@ -5,8 +5,11 @@ Provides methods for loading content from GitHub repositories.
 
 # mypy: disable-error-code="attr-defined"
 
+import asyncio
+import threading
+import time
 from io import BytesIO
-from typing import Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import httpx
 from httpx import AsyncClient
@@ -24,9 +27,173 @@ from agno.utils.string import generate_id
 class GitHubLoader(BaseLoader):
     """Loader for GitHub content."""
 
+    # Cache for GitHub App installation tokens: {cache_key: (token, expires_at_timestamp)}
+    # Uses double-checked locking: lock-free fast path for cache hits,
+    # lock only on cache miss to coordinate token refresh.
+    _github_app_token_cache: Dict[str, tuple] = {}
+    _token_cache_lock = threading.Lock()
+    _async_token_cache_lock: Optional[asyncio.Lock] = None
+
     # ==========================================
     # GITHUB HELPERS (shared between sync/async)
     # ==========================================
+
+    @staticmethod
+    def _check_cached_token(cache: Dict[str, tuple], cache_key: str) -> Optional[str]:
+        """Return a cached token if it is still valid (60s buffer), else None."""
+        cached = cache.get(cache_key)
+        if cached is not None:
+            token, expires_at = cached
+            if time.time() < expires_at - 60:
+                return token
+        return None
+
+    @staticmethod
+    def _build_jwt_and_url(gh_config: GitHubConfig) -> Tuple[str, Dict[str, str]]:
+        """Build a signed JWT and return (exchange_url, headers).
+
+        Raises ImportError if PyJWT is not installed.
+        """
+        try:
+            import jwt
+        except ImportError:
+            raise ImportError(
+                "GitHub App authentication requires PyJWT with cryptography. "
+                "Install via: pip install PyJWT cryptography"
+            )
+
+        now = int(time.time())
+        payload = {
+            "iat": now - 60,
+            "exp": now + 600,
+            "iss": str(gh_config.app_id),
+        }
+        private_key = gh_config.private_key
+        if private_key is None:
+            raise ValueError("private_key is required for GitHub App authentication")
+        app_jwt = jwt.encode(payload, private_key, algorithm="RS256")
+
+        url = f"https://api.github.com/app/installations/{gh_config.installation_id}/access_tokens"
+        jwt_headers = {
+            "Authorization": f"Bearer {app_jwt}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Agno-Knowledge",
+        }
+        return url, jwt_headers
+
+    @staticmethod
+    def _parse_token_response(data: Dict[str, Any]) -> Tuple[str, float]:
+        """Extract the installation token and expiry timestamp from the API response."""
+        installation_token: str = data["token"]
+        expires_at_str = data.get("expires_at", "")
+        now = int(time.time())
+        if expires_at_str:
+            from datetime import datetime
+
+            try:
+                expires_at_ts = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00")).timestamp()
+            except (ValueError, AttributeError):
+                expires_at_ts = float(now + 3600)
+        else:
+            expires_at_ts = float(now + 3600)
+        return installation_token, expires_at_ts
+
+    def _get_github_app_token(self, gh_config: GitHubConfig) -> str:
+        """Generate or retrieve a cached installation access token for GitHub App auth.
+
+        Creates a JWT signed with the app's private key, then exchanges it for
+        an installation access token via the GitHub API.  Tokens are cached
+        until 60 seconds before expiry.
+
+        Uses double-checked locking: the cache is read lock-free first (safe
+        under the GIL since dict.get and tuple reads are atomic).  On a cache
+        miss the lock is acquired for the full token exchange and cache write,
+        preventing duplicate HTTP requests for the same installation.
+
+        Requires ``PyJWT[crypto]``: ``pip install PyJWT cryptography``
+        """
+        cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
+
+        # Fast path: lock-free cache read
+        cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        # Slow path: acquire lock, re-check, then fetch + cache write
+        with self._token_cache_lock:
+            cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+            if cached is not None:
+                return cached
+
+            url, jwt_headers = self._build_jwt_and_url(gh_config)
+
+            try:
+                with httpx.Client() as client:
+                    response = client.post(url, headers=jwt_headers, timeout=30.0)
+                    response.raise_for_status()
+                    data = response.json()
+            except httpx.HTTPStatusError as e:
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+                raise
+            except httpx.HTTPError as e:
+                log_error(f"GitHub App token exchange request failed: {e}")
+                raise
+
+            installation_token, expires_at_ts = self._parse_token_response(data)
+            self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
+            return installation_token
+
+    async def _aget_github_app_token(self, gh_config: GitHubConfig) -> str:
+        """Generate or retrieve a cached installation access token for GitHub App auth (async).
+
+        Async variant of ``_get_github_app_token``.  Uses ``httpx.AsyncClient``
+        so the event loop is not blocked during the token exchange.
+
+        Uses double-checked locking: the cache is read without the async lock
+        first (safe because no ``await`` is involved, so no coroutine can
+        interleave).  On a cache miss the lock is held for the full token
+        exchange and cache write, preventing duplicate HTTP requests.
+
+        Requires ``PyJWT[crypto]``: ``pip install PyJWT cryptography``
+        """
+        cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
+
+        # Fast path: lock-free cache read (no await, so no interleaving)
+        cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        # Ensure the async lock exists (sync lock guards initialization)
+        with self._token_cache_lock:
+            if self._async_token_cache_lock is None:
+                self.__class__._async_token_cache_lock = asyncio.Lock()
+
+        lock = self._async_token_cache_lock
+        assert lock is not None
+
+        # Slow path: acquire async lock, re-check, then fetch + cache write
+        async with lock:
+            cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+            if cached is not None:
+                return cached
+
+            url, jwt_headers = self._build_jwt_and_url(gh_config)
+
+            try:
+                async with AsyncClient() as client:
+                    response = await client.post(url, headers=jwt_headers, timeout=30.0)
+                    response.raise_for_status()
+                    data = response.json()
+            except httpx.HTTPStatusError as e:
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+                raise
+            except httpx.HTTPError as e:
+                log_error(f"GitHub App token exchange request failed: {e}")
+                raise
+
+            installation_token, expires_at_ts = self._parse_token_response(data)
+            self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
+            return installation_token
 
     def _validate_github_config(
         self,
@@ -48,12 +215,36 @@ class GitHubLoader(BaseLoader):
         return gh_config
 
     def _build_github_headers(self, gh_config: GitHubConfig) -> Dict[str, str]:
-        """Build headers for GitHub API requests."""
+        """Build headers for GitHub API requests.
+
+        Uses GitHub App authentication when ``app_id`` is configured,
+        otherwise falls back to the personal access token.
+        """
         headers: Dict[str, str] = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "Agno-Knowledge",
         }
-        if gh_config.token:
+        if gh_config.app_id is not None:
+            token = self._get_github_app_token(gh_config)
+            headers["Authorization"] = f"Bearer {token}"
+        elif gh_config.token:
+            headers["Authorization"] = f"Bearer {gh_config.token}"
+        return headers
+
+    async def _abuild_github_headers(self, gh_config: GitHubConfig) -> Dict[str, str]:
+        """Build headers for GitHub API requests (async).
+
+        Async variant of ``_build_github_headers``.  Uses the async token
+        exchange so the event loop is not blocked.
+        """
+        headers: Dict[str, str] = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Agno-Knowledge",
+        }
+        if gh_config.app_id is not None:
+            token = await self._aget_github_app_token(gh_config)
+            headers["Authorization"] = f"Bearer {token}"
+        elif gh_config.token:
             headers["Authorization"] = f"Bearer {gh_config.token}"
         return headers
 
@@ -148,7 +339,7 @@ class GitHubLoader(BaseLoader):
         if gh_config is None:
             return
 
-        headers = self._build_github_headers(gh_config)
+        headers = await self._abuild_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
         path_to_process = self._get_github_path_to_process(remote_content)
 
