@@ -112,11 +112,12 @@ agent = Agent(
     output_schema=FindEmailOutput,
 )
 
-# Example 5: Using boolean flags with new tools (thread-aware draft reply)
+# Example 5: Enable new JSON tools with boolean flags (thread-aware draft reply)
 thread_reply_agent = Agent(
     name="Thread Reply Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools(search_threads=True, get_thread=True, draft_email=True)],
+    description="You are a Gmail agent that finds conversations and drafts threaded replies.",
     instructions=[
         "Search for the requested thread, load full context, then draft a reply.",
         "Always create a draft -- never send directly.",
