@@ -105,6 +105,8 @@ class Team:
     determine_input_for_members: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
     max_iterations: int = 10
+    # If True, the leader creates ALL tasks first before executing any (mode=tasks)
+    plan_first: bool = False
 
     # --- User settings ---
     # Default user ID for this team
@@ -414,6 +416,7 @@ class Team:
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
         max_iterations: int = 10,
+        plan_first: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -526,6 +529,7 @@ class Team:
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
             max_iterations=max_iterations,
+            plan_first=plan_first,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,
