@@ -104,10 +104,11 @@ def filter_expr_to_sqlalchemy(
         elif op == "LTE":
             return col <= value
         elif op == "CONTAINS":
-            # Case-insensitive substring match
-            return func.lower(col).contains(str(value).lower())
+            # Case-insensitive substring match with autoescape to prevent SQL wildcard injection
+            return func.lower(col).contains(str(value).lower(), autoescape=True)
         elif op == "STARTSWITH":
-            return col.startswith(str(value))
+            # Case-insensitive prefix match with autoescape to prevent SQL wildcard injection
+            return func.lower(col).startswith(str(value).lower(), autoescape=True)
 
     elif op == "IN":
         key = filter_dict.get("key")

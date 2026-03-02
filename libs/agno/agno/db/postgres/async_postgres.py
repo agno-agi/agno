@@ -2546,9 +2546,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                         base_stmt = base_stmt.where(
                             filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
                         )
-                    except (ValueError, KeyError, TypeError) as e:
-                        log_error(f"Invalid filter expression: {e}")
-                        return [], 0
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -2646,9 +2648,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                         base_stmt = base_stmt.where(
                             filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
                         )
-                    except (ValueError, KeyError, TypeError) as e:
-                        log_error(f"Invalid filter expression: {e}")
-                        return [], 0
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())

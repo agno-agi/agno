@@ -40,6 +40,9 @@ from __future__ import annotations
 
 from typing import Any, List
 
+# Maximum recursion depth for nested filter expressions (prevents stack overflow attacks)
+MAX_FILTER_DEPTH: int = 10
+
 # ============================================================
 # Base Expression
 # ============================================================
@@ -391,7 +394,7 @@ class NOT(FilterExpr):
 # ============================================================
 
 
-def from_dict(filter_dict: dict) -> FilterExpr:
+def from_dict(filter_dict: dict, _depth: int = 0) -> FilterExpr:
     """Reconstruct a FilterExpr object from its dictionary representation.
 
     This function deserializes filter expressions that were serialized using the
@@ -400,12 +403,14 @@ def from_dict(filter_dict: dict) -> FilterExpr:
 
     Args:
         filter_dict: Dictionary representation of a filter expression with an "op" key
+        _depth: Internal parameter tracking recursion depth. Do not pass manually.
 
     Returns:
         FilterExpr: The reconstructed filter expression object
 
     Raises:
-        ValueError: If the filter dictionary has an invalid structure or unknown operator
+        ValueError: If the filter dictionary has an invalid structure, unknown operator,
+            or exceeds max recursion depth.
 
     Example:
         >>> # Serialize and deserialize a simple filter
@@ -425,6 +430,10 @@ def from_dict(filter_dict: dict) -> FilterExpr:
         >>> filter_dict = json.loads(json_str)
         >>> filter_expr = from_dict(filter_dict)
     """
+    # Check recursion depth limit
+    if _depth > MAX_FILTER_DEPTH:
+        raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
+
     if not isinstance(filter_dict, dict) or "op" not in filter_dict:
         raise ValueError(f"Invalid filter dictionary: must contain 'op' key. Got: {filter_dict}")
 
@@ -480,19 +489,19 @@ def from_dict(filter_dict: dict) -> FilterExpr:
     elif op == "AND":
         if "conditions" not in filter_dict:
             raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
-        conditions = [from_dict(cond) for cond in filter_dict["conditions"]]
+        conditions = [from_dict(cond, _depth + 1) for cond in filter_dict["conditions"]]
         return AND(*conditions)
 
     elif op == "OR":
         if "conditions" not in filter_dict:
             raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
-        conditions = [from_dict(cond) for cond in filter_dict["conditions"]]
+        conditions = [from_dict(cond, _depth + 1) for cond in filter_dict["conditions"]]
         return OR(*conditions)
 
     elif op == "NOT":
         if "condition" not in filter_dict:
             raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
-        return NOT(from_dict(filter_dict["condition"]))
+        return NOT(from_dict(filter_dict["condition"], _depth + 1))
 
     else:
         raise ValueError(f"Unknown filter operator: {op}")

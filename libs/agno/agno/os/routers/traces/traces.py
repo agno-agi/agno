@@ -571,6 +571,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.post(
         "/traces/search",
+        response_model=Union[PaginatedResponse[TraceDetail], PaginatedResponse[TraceSessionStats]],
         response_model_exclude_none=True,
         tags=["Traces"],
         operation_id="search_traces",
