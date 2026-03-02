@@ -33,7 +33,7 @@ class GitHubConfig(BaseStorageConfig):
 
     @model_validator(mode="after")
     def _validate_app_auth_fields(self) -> "GitHubConfig":
-        """Ensure all three GitHub App fields are set together."""
+        """Ensure all three GitHub App fields are set together and private_key is PEM-formatted."""
         app_fields = [self.app_id, self.installation_id, self.private_key]
         provided = [f for f in app_fields if f is not None]
         if 0 < len(provided) < 3:
@@ -47,6 +47,11 @@ class GitHubConfig(BaseStorageConfig):
             raise ValueError(
                 f"GitHub App authentication requires all three fields: app_id, installation_id, private_key. "
                 f"Missing: {', '.join(missing)}"
+            )
+        if self.private_key is not None and not self.private_key.strip().startswith("-----BEGIN"):
+            raise ValueError(
+                "private_key must be a PEM-formatted RSA private key "
+                "(starting with '-----BEGIN RSA PRIVATE KEY-----' or '-----BEGIN PRIVATE KEY-----')"
             )
         return self
 

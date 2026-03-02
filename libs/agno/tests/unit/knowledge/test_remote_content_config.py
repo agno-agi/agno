@@ -420,6 +420,19 @@ def test_github_config_app_auth_string_ids():
     assert config.installation_id == "67890"
 
 
+def test_github_config_invalid_private_key_format():
+    """Test that a non-PEM private_key raises ValueError."""
+    with pytest.raises(ValidationError, match="PEM-formatted"):
+        GitHubConfig(
+            id="gh",
+            name="GH",
+            repo="owner/repo",
+            app_id=123,
+            installation_id=456,
+            private_key="not-a-pem-key",
+        )
+
+
 # =============================================================================
 # AzureBlobConfig Tests
 # =============================================================================
