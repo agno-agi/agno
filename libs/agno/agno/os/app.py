@@ -723,20 +723,19 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
-        # Routes that require a database
+        # Components require a sync db (BaseDb)
         if self.db is not None and isinstance(self.db, BaseDb):
             routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        else:
+            log_debug("Components router not enabled: requires a sync db (BaseDb) to be provided to AgentOS")
+            routers.append(_get_disabled_feature_router("/components", "Components", "db"))
+        # Schedules and approvals work with both sync and async db
+        if self.db is not None:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            log_debug(
-                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
-            )
-            for prefix, tag in [
-                ("/components", "Components"),
-                ("/schedules", "Schedules"),
-                ("/approvals", "Approvals"),
-            ]:
+            log_debug("Scheduler and Approval routers not enabled: requires a db to be provided to AgentOS")
+            for prefix, tag in [("/schedules", "Schedules"), ("/approvals", "Approvals")]:
                 routers.append(_get_disabled_feature_router(prefix, tag, "db"))
 
         # Registry router
