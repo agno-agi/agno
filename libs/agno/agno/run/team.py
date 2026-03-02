@@ -178,6 +178,8 @@ class TeamRunEvent(str, Enum):
     task_iteration_started = "TeamTaskIterationStarted"
     task_iteration_completed = "TeamTaskIterationCompleted"
     task_state_updated = "TeamTaskStateUpdated"
+    task_created = "TeamTaskCreated"
+    task_updated = "TeamTaskUpdated"
 
     custom_event = "CustomEvent"
 
@@ -509,12 +511,90 @@ class TaskIterationCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class TaskData:
+    """Structured task data for frontend rendering"""
+
+    id: str = ""
+    title: str = ""
+    description: str = ""
+    status: str = "pending"  # pending, in_progress, completed, failed, blocked
+    assignee: Optional[str] = None
+    dependencies: List[str] = field(default_factory=list)
+    result: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "status": self.status,
+            "assignee": self.assignee,
+            "dependencies": self.dependencies,
+            "result": self.result,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TaskData":
+        return cls(
+            id=data.get("id", ""),
+            title=data.get("title", ""),
+            description=data.get("description", ""),
+            status=data.get("status", "pending"),
+            assignee=data.get("assignee"),
+            dependencies=data.get("dependencies", []),
+            result=data.get("result"),
+        )
+
+
+@dataclass
 class TaskStateUpdatedEvent(BaseTeamRunEvent):
-    """Event sent when the task state is updated in tasks mode"""
+    """Event sent when the task state is updated in tasks mode.
+
+    Contains the full structured task list for frontend rendering.
+    The frontend can use the `tasks` field to render a task list UI
+    with checkboxes that update in real-time.
+    """
 
     event: str = TeamRunEvent.task_state_updated.value
     task_summary: Optional[str] = None
     goal_complete: bool = False
+    # Full structured task list for frontend rendering
+    tasks: List[TaskData] = field(default_factory=list)
+    completion_summary: Optional[str] = None
+
+
+@dataclass
+class TaskCreatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task is created in tasks mode.
+
+    This allows the frontend to show tasks as they are created,
+    before waiting for the iteration to complete.
+    """
+
+    event: str = TeamRunEvent.task_created.value
+    task_id: str = ""
+    title: str = ""
+    description: str = ""
+    assignee: Optional[str] = None
+    status: str = "pending"
+    dependencies: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TaskUpdatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task status changes in tasks mode.
+
+    This allows the frontend to update task status in real-time
+    (e.g., mark as in_progress when execution starts, completed when done).
+    """
+
+    event: str = TeamRunEvent.task_updated.value
+    task_id: str = ""
+    title: str = ""
+    status: str = ""  # pending, in_progress, completed, failed, blocked
+    previous_status: Optional[str] = None
+    result: Optional[str] = None
+    assignee: Optional[str] = None
 
 
 @dataclass
@@ -561,6 +641,8 @@ TeamRunOutputEvent = Union[
     TaskIterationStartedEvent,
     TaskIterationCompletedEvent,
     TaskStateUpdatedEvent,
+    TaskCreatedEvent,
+    TaskUpdatedEvent,
     CustomEvent,
 ]
 
@@ -601,6 +683,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
     TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
     TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
+    TeamRunEvent.task_created.value: TaskCreatedEvent,
+    TeamRunEvent.task_updated.value: TaskUpdatedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 
