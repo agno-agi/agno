@@ -10,7 +10,6 @@ Key concepts:
 - output_schema: Forces structured JSON output matching DailyDigest model
 - add_datetime_to_context: Agent knows today's date for time-aware queries
 
-Compare with: gmail_inbox_triage.py for classification that applies labels.
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)

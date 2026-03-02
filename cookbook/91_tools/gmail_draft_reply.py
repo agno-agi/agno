@@ -6,9 +6,6 @@ The agent never sends -- it only creates drafts for human review.
 
 Key concepts:
 - Thread-aware drafting: thread_id + message_id link the draft to the conversation
-- No output_schema: output is a Gmail draft + conversational summary
-
-Compare with: gmail_followup_tracker.py for automated follow-up detection.
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)

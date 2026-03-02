@@ -8,7 +8,6 @@ Key concepts:
 - add_datetime_to_context: agent calculates days_waiting from message dates
 - output_schema: structured report of pending follow-ups
 
-Compare with: gmail_draft_reply.py for single-thread reply drafting.
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)

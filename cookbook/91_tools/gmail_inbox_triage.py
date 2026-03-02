@@ -11,7 +11,6 @@ Key concepts:
 - Two agents: full triage (applies labels) vs classify-only (read-only)
 - output_schema: Structured classification results
 
-Compare with: gmail_daily_digest.py for read-only summarization.
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)
