@@ -145,6 +145,38 @@ async def test_openai_like_embedder_async_get_embedding():
     assert result == [0.4, 0.5, 0.6]
 
 
+@pytest.mark.asyncio
+async def test_openai_like_embedder_async_get_embedding_and_usage():
+    """Test that async_get_embedding_and_usage returns both embedding and usage."""
+    from agno.knowledge.embedder.openai_like import OpenAILikeEmbedder
+
+    mock_usage = MagicMock()
+    mock_usage.model_dump.return_value = {"prompt_tokens": 5, "total_tokens": 5}
+
+    mock_response = MagicMock()
+    mock_response.data = [MagicMock(embedding=[0.4, 0.5, 0.6])]
+    mock_response.usage = mock_usage
+
+    mock_aclient = MagicMock()
+
+    async def mock_create(**kwargs):
+        return mock_response
+
+    mock_aclient.embeddings.create = mock_create
+
+    embedder = OpenAILikeEmbedder(
+        id="my-model",
+        api_key="test-key",
+        base_url="http://localhost:8000/v1",
+        dimensions=3,
+        async_client=mock_aclient,
+    )
+
+    embedding, usage = await embedder.async_get_embedding_and_usage("test text")
+    assert embedding == [0.4, 0.5, 0.6]
+    assert usage == {"prompt_tokens": 5, "total_tokens": 5}
+
+
 def test_openai_like_embedder_is_subclass_of_openai_embedder():
     """Test that OpenAILikeEmbedder properly inherits from OpenAIEmbedder."""
     from agno.knowledge.embedder.openai import OpenAIEmbedder
