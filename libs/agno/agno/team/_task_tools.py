@@ -233,7 +233,7 @@ def _get_task_management_tools(
     # ------------------------------------------------------------------
     # Tool: mark_all_complete
     # ------------------------------------------------------------------
-    def mark_all_complete(summary: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
+    def mark_all_complete(summary: str) -> str:
         """Signal that the overall goal has been achieved. Call this when all tasks are done.
 
         Args:
@@ -241,8 +241,6 @@ def _get_task_management_tools(
         Returns:
             str: Confirmation.
         """
-        # Note: **kwargs is used to gracefully handle any extra arguments
-        # that the model might hallucinate (e.g., 'post', 'outcome', etc.)
         task_list.goal_complete = True
         task_list.completion_summary = summary
         save_task_list(run_context.session_state, task_list)
