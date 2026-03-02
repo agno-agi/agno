@@ -58,7 +58,6 @@ team = Team(
     mode=TeamMode.tasks,
     model=OpenAIChat(id="gpt-5-mini"),
     members=[researcher, summarizer],
-    plan_first=True,
     db=db,
     instructions=[
         "You are a research team leader. Follow these steps exactly:",
