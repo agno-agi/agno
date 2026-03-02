@@ -13,8 +13,10 @@ Test:
 from agents.scout import scout
 from agents.seek import seek
 from agno.models.openai import OpenAIResponses
+from agno.team.mode import TeamMode
 from agno.team.team import Team
 from db import get_postgres_db
+
 
 # ---------------------------------------------------------------------------
 # Team
@@ -23,6 +25,7 @@ research_team = Team(
     id="research-team",
     name="Research Team",
     model=OpenAIResponses(id="gpt-5.2"),
+    mode=TeamMode.tasks,
     db=get_postgres_db(contents_table="research_team_contents"),
     members=[seek, scout],
     instructions=[
@@ -45,6 +48,7 @@ research_team = Team(
     show_members_responses=True,
     markdown=True,
     add_datetime_to_context=True,
+    max_iterations=3,
 )
 
 if __name__ == "__main__":
