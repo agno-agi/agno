@@ -16,7 +16,7 @@ import pytest
 
 Credentials = pytest.importorskip("google.oauth2.credentials").Credentials
 
-from agno.tools.googleslides import GoogleSlidesTools 
+from agno.tools.google.slides import GoogleSlidesTools  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,7 +44,7 @@ def mock_slides_service():
                             "text": {
                                 "textElements": [
                                     {"textRun": {"content": "Hello World"}},
-                                    {"textRun": {"content": "  "}},  
+                                    {"textRun": {"content": "  "}},
                                 ]
                             }
                         }
@@ -125,7 +125,7 @@ def mock_creds():
 @pytest.fixture
 def tools(mock_creds, mock_slides_service, mock_drive_service):
     with (
-        patch("agno.tools.googleslides.build"),
+        patch("agno.tools.google.slides.build"),
         patch.object(GoogleSlidesTools, "_auth", return_value=None),
     ):
         toolkit = GoogleSlidesTools(creds=mock_creds)

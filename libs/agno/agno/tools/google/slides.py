@@ -102,7 +102,7 @@ class GoogleSlidesTools(Toolkit):
     _VALID_BATCH_REQUEST_TYPES: frozenset = frozenset(
         {
             "createSlide",
-            "deleteObject",  
+            "deleteObject",
             "duplicateObject",
             "updateSlidesPosition",
             "createShape",
@@ -231,7 +231,7 @@ class GoogleSlidesTools(Toolkit):
                     os.chmod(str(tmp_path), stat.S_IRUSR | stat.S_IWUSR)
                     tmp_path.rename(token_file)
                 except Exception as e:
-                        # Fallback if atomic move fails
+                    # Fallback if atomic move fails
                     if hasattr(self.creds, "to_json"):
                         token_file.write_text(self.creds.to_json())  # type: ignore
                     os.chmod(str(token_file), stat.S_IRUSR | stat.S_IWUSR)

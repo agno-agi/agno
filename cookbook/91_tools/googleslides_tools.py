@@ -9,7 +9,7 @@ Requirements:
 """
 
 from agno.agent import Agent
-from agno.tools.googleslides import GoogleSlidesTools
+from agno.tools.google.slides import GoogleSlidesTools
 
 agent = Agent(
     tools=[GoogleSlidesTools()],
