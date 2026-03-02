@@ -23,6 +23,9 @@ Usage:
 
 from typing import Any, Dict, Optional, Set
 
+# Maximum recursion depth for nested filter expressions (prevents stack overflow attacks)
+MAX_FILTER_DEPTH: int = 10
+
 # Valid column names per entity type (for field validation)
 TRACE_COLUMNS: Set[str] = {
     "trace_id",
@@ -45,6 +48,7 @@ def filter_expr_to_sqlalchemy(
     filter_dict: Dict[str, Any],
     table: Any,
     allowed_columns: Optional[Set[str]] = None,
+    _depth: int = 0,
 ) -> Any:
     """Convert a FilterExpr dict to a SQLAlchemy WHERE clause on named table columns.
 
@@ -53,15 +57,20 @@ def filter_expr_to_sqlalchemy(
         table: SQLAlchemy Table object.
         allowed_columns: Set of allowed column names for validation.
             If provided, raises ValueError for unknown columns.
+        _depth: Internal parameter tracking recursion depth. Do not pass manually.
 
     Returns:
         SQLAlchemy ColumnElement that can be passed to .where().
 
     Raises:
         ValueError: If filter_dict has invalid structure, unknown operator,
-            or references a column not in allowed_columns.
+            references a column not in allowed_columns, or exceeds max recursion depth.
     """
     from sqlalchemy import and_, func, not_, or_
+
+    # Check recursion depth limit
+    if _depth > MAX_FILTER_DEPTH:
+        raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
 
     if not isinstance(filter_dict, dict) or "op" not in filter_dict:
         raise ValueError(f"Invalid filter: must be a dict with 'op' key. Got: {filter_dict}")
@@ -95,10 +104,11 @@ def filter_expr_to_sqlalchemy(
         elif op == "LTE":
             return col <= value
         elif op == "CONTAINS":
-            # Case-insensitive substring match
-            return func.lower(col).contains(str(value).lower())
+            # Case-insensitive substring match with autoescape to prevent SQL wildcard injection
+            return func.lower(col).contains(str(value).lower(), autoescape=True)
         elif op == "STARTSWITH":
-            return col.startswith(str(value))
+            # Case-insensitive prefix match with autoescape to prevent SQL wildcard injection
+            return func.lower(col).startswith(str(value).lower(), autoescape=True)
 
     elif op == "IN":
         key = filter_dict.get("key")
@@ -116,19 +126,19 @@ def filter_expr_to_sqlalchemy(
         conditions = filter_dict.get("conditions")
         if not conditions:
             raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
-        return and_(*[filter_expr_to_sqlalchemy(c, table, allowed_columns) for c in conditions])
+        return and_(*[filter_expr_to_sqlalchemy(c, table, allowed_columns, _depth + 1) for c in conditions])
 
     elif op == "OR":
         conditions = filter_dict.get("conditions")
         if not conditions:
             raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
-        return or_(*[filter_expr_to_sqlalchemy(c, table, allowed_columns) for c in conditions])
+        return or_(*[filter_expr_to_sqlalchemy(c, table, allowed_columns, _depth + 1) for c in conditions])
 
     elif op == "NOT":
         condition = filter_dict.get("condition")
         if not condition:
             raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
-        return not_(filter_expr_to_sqlalchemy(condition, table, allowed_columns))
+        return not_(filter_expr_to_sqlalchemy(condition, table, allowed_columns, _depth + 1))
 
     else:
         raise ValueError(f"Unknown filter operator: {op}")

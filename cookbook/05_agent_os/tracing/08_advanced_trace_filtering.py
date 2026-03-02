@@ -41,7 +41,7 @@ setup_tracing(db=db)
 
 news_agent = Agent(
     name="HackerNews Agent",
-    agent_id="hackernews-agent",
+    id="hackernews-agent",
     model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
@@ -52,9 +52,9 @@ news_agent = Agent(
 
 stock_agent = Agent(
     name="Stock Agent",
-    agent_id="stock-agent",
+    id="stock-agent",
     model=OpenAIChat(id="gpt-5.2"),
-    tools=[YFinanceTools(stock_price=True)],
+    tools=[YFinanceTools(enable_stock_price=True)],
     instructions="You are a stock analyst. Answer questions concisely.",
     markdown=True,
     user_id="trader_user",

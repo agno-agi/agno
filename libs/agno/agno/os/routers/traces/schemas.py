@@ -460,7 +460,7 @@ class TraceSearchRequest(BaseModel):
         description="Grouping mode: 'run' returns individual TraceDetail, 'session' returns aggregated TraceSessionStats.",
     )
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
-    limit: int = Field(default=20, ge=1, description="Number of traces per page")
+    limit: int = Field(default=20, ge=1, le=100, description="Number of traces per page (max 100)")
 
 
 class FilterFieldSchema(BaseModel):
