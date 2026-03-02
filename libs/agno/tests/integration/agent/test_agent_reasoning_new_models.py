@@ -268,7 +268,7 @@ def test_agent_openai_reasoning_non_streaming():
     # Create an Agent with OpenAI reasoning model
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        reasoning_model=OpenAIChat(id="o1-mini"),
+        reasoning_model=OpenAIChat(id="o4-mini"),
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
@@ -298,7 +298,7 @@ def test_agent_openai_reasoning_streaming(shared_db):
     # Create an Agent with OpenAI reasoning model
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        reasoning_model=OpenAIChat(id="o1-mini"),
+        reasoning_model=OpenAIChat(id="o4-mini"),
         db=shared_db,
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
@@ -540,7 +540,7 @@ def test_agent_azure_ai_foundry_reasoning_non_streaming():
     # Create an Agent with Azure AI Foundry reasoning model
     agent = Agent(
         model=AzureAIFoundry(id="gpt-4o"),
-        reasoning_model=AzureAIFoundry(id="o1-mini"),
+        reasoning_model=AzureAIFoundry(id="o4-mini"),
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
@@ -570,7 +570,7 @@ def test_agent_azure_ai_foundry_reasoning_streaming(shared_db):
     # Create an Agent with Azure AI Foundry reasoning model
     agent = Agent(
         model=AzureAIFoundry(id="gpt-4o"),
-        reasoning_model=AzureAIFoundry(id="o1-mini"),
+        reasoning_model=AzureAIFoundry(id="o4-mini"),
         db=shared_db,
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
@@ -652,10 +652,10 @@ def test_agent_accepts_openai_reasoning_model():
     try:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
-            reasoning_model=OpenAIChat(id="o1-mini"),
+            reasoning_model=OpenAIChat(id="o4-mini"),
         )
         assert agent.reasoning_model is not None
-        assert agent.reasoning_model.id == "o1-mini"
+        assert agent.reasoning_model.id == "o4-mini"
     except Exception as e:
         pytest.fail(f"Failed to create Agent with OpenAI reasoning model: {e}")
 
@@ -704,9 +704,9 @@ def test_agent_accepts_azure_ai_foundry_reasoning_model():
     try:
         agent = Agent(
             model=AzureAIFoundry(id="gpt-4o"),
-            reasoning_model=AzureAIFoundry(id="o1-mini"),
+            reasoning_model=AzureAIFoundry(id="o4-mini"),
         )
         assert agent.reasoning_model is not None
-        assert agent.reasoning_model.id == "o1-mini"
+        assert agent.reasoning_model.id == "o4-mini"
     except Exception as e:
         pytest.fail(f"Failed to create Agent with Azure AI Foundry reasoning model: {e}")

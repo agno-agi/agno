@@ -19,7 +19,7 @@ from google.generativeai.types import file_types
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-flash-latest"),
     tools=[WebSearchTools()],
     markdown=True,
 )

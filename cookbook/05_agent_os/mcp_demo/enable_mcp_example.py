@@ -21,7 +21,7 @@ db = SqliteDb(db_file="tmp/agentos.db")
 web_research_agent = Agent(
     id="web-research-agent",
     name="Web Research Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,

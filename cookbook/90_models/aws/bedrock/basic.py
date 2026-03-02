@@ -14,7 +14,7 @@ import asyncio
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0"), markdown=True
+    model=AwsBedrock(id="us.anthropic.claude-haiku-4-5-20251001-v1:0"), markdown=True
 )
 
 # Get the response in a variable

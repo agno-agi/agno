@@ -113,7 +113,7 @@ knowledge = Knowledge(
 agno_assist = Agent(
     name="Agno Assist",
     id="agno-assist",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     description=description,
     instructions=instructions,
     db=db,

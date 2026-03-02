@@ -51,7 +51,7 @@ def sample_eval_run_team() -> EvalRunRecord:
     return EvalRunRecord(
         run_id="test_eval_run_team_1",
         team_id="test_team_1",
-        model_id="gpt-4-turbo",
+        model_id="gpt-4o",
         model_provider="openai",
         name="Team Performance Test",
         evaluated_component_name="Test Team",
@@ -76,7 +76,7 @@ def sample_eval_run_workflow() -> EvalRunRecord:
     return EvalRunRecord(
         run_id="test_eval_run_workflow_1",
         workflow_id="test_workflow_1",
-        model_id="claude-3-opus",
+        model_id="claude-sonnet-4-6",
         model_provider="anthropic",
         name="Workflow Reliability Test",
         evaluated_component_name="Test Workflow",

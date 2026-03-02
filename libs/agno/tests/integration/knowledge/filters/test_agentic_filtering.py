@@ -165,7 +165,7 @@ async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
 
 
 async def test_agentic_filtering_gemini(knowledge_base):
-    agent = Agent(model=Gemini("gemini-2.0-flash-001"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
+    agent = Agent(model=Gemini("gemini-flash-latest"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
         markdown=True,
@@ -193,7 +193,7 @@ async def test_agentic_filtering_gemini(knowledge_base):
 
 
 async def test_agentic_filtering_claude(knowledge_base):
-    agent = Agent(model=Claude("claude-sonnet-4-0"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
+    agent = Agent(model=Claude("claude-sonnet-4-6"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
         markdown=True,

@@ -43,7 +43,7 @@ brave_mcp_tools = MCPTools(
 ai_framework_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     tools=[brave_mcp_tools, agno_mcp_tools],
     add_history_to_context=True,

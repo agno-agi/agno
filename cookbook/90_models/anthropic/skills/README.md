@@ -198,7 +198,7 @@ See `test_with_file_download.py` for a complete example.
 
 ### Model Requirements
 - Recommended: `claude-sonnet-4-5-20250929` or later
-- Minimum: `claude-3-5-sonnet-20241022`
+- Minimum: `claude-sonnet-4-6`
 - Skills require models with code execution capability
 
 ### Beta Version

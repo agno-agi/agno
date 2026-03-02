@@ -201,7 +201,7 @@ def get_base_router(
                     "application/json": {
                         "example": [
                             {"id": "gpt-4", "provider": "openai"},
-                            {"id": "claude-3-sonnet", "provider": "anthropic"},
+                            {"id": "claude-sonnet-4-6", "provider": "anthropic"},
                         ]
                     }
                 },

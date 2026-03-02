@@ -25,7 +25,7 @@ Alternatively, you can use an AWS profile:
 import boto3
 session = boto3.Session(profile_name='MY-PROFILE')
 agent = Agent(
-    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0", session=session),
+    model=Claude(id="anthropic.claude-sonnet-4-6", session=session),
     markdown=True
 )
 ```

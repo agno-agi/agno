@@ -24,7 +24,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 web_research_agent = Agent(
     id="web-research-agent",
     name="Web Research Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,

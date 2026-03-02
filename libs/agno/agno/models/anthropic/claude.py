@@ -106,7 +106,7 @@ class Claude(Model):
         # (Add any Opus 4.x models released before 4.1/4.5 if they exist)
     }
 
-    id: str = "claude-sonnet-4-5-20250929"
+    id: str = "claude-sonnet-4-6"
     name: str = "Claude"
     provider: str = "Anthropic"
 

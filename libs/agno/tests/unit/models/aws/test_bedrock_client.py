@@ -29,7 +29,7 @@ def _make_mock_session(access_key="ASIATEMP", secret_key="secret", token="token"
 class TestSessionClientNotCached:
     def test_sync_client_recreated_each_call(self):
         mock_session, _, _ = _make_mock_session()
-        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         model.get_client()
         model.get_client()
@@ -38,7 +38,7 @@ class TestSessionClientNotCached:
 
     def test_sync_client_passes_region(self):
         mock_session, _, _ = _make_mock_session(region="eu-west-1")
-        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         model.get_client()
 
@@ -48,7 +48,7 @@ class TestSessionClientNotCached:
 class TestStaticKeyClientCached:
     def test_sync_client_cached(self):
         model = AwsBedrock(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key_id="AKIA_STATIC",
             aws_secret_access_key="secret",
             aws_region="us-east-1",
@@ -72,7 +72,7 @@ class TestSessionTokenEnv:
         monkeypatch.setenv("AWS_SESSION_TOKEN", "my-session-token")
         monkeypatch.setenv("AWS_REGION", "us-west-2")
 
-        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
         with patch("agno.models.aws.bedrock.AwsClient") as MockClient:
             MockClient.return_value = MagicMock()
@@ -84,7 +84,7 @@ class TestSessionTokenEnv:
 
     def test_session_token_explicit_param(self):
         model = AwsBedrock(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key_id="ASIATEMP",
             aws_secret_access_key="secret",
             aws_session_token="explicit-token",
@@ -104,7 +104,7 @@ class TestSessionTokenEnv:
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
 
-        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
         with patch("agno.models.aws.bedrock.AwsClient") as MockClient:
             MockClient.return_value = MagicMock()
@@ -125,7 +125,7 @@ class TestSessionNullCredentials:
         mock_session.region_name = "us-east-1"
         mock_session.get_credentials.return_value = None
 
-        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         with pytest.raises(ValueError, match="boto3 session has no credentials"):
             model.get_async_client()

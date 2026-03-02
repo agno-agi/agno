@@ -21,7 +21,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agno_support_agent = Agent(
     id="example-agent",
     name="Example Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     markdown=True,
 )
