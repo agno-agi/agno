@@ -27,15 +27,12 @@ class GitlabTools(Toolkit):
         enable_list_merge_requests: bool = True,
         enable_get_merge_request: bool = True,
         enable_list_issues: bool = True,
-        gitlab_client: Optional[Gitlab] = None,
-        httpx_client: Optional[httpx.AsyncClient] = None,
         **kwargs,
     ):
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout
-        self.client: Gitlab = gitlab_client or self._create_client()
-        self.httpx_client = httpx_client
+        self.client: Gitlab = self._create_client()
 
         tools: List[Any] = []
         async_tools: List[tuple[Any, str]] = []
@@ -123,11 +120,8 @@ class GitlabTools(Toolkit):
     async def _aget(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = self._build_api_url(endpoint)
         headers = self._build_headers()
-        if self.httpx_client is not None:
-            response = await self.httpx_client.get(url, params=params, headers=headers)
-        else:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(url, params=params, headers=headers)
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(url, params=params, headers=headers)
         response.raise_for_status()
         return response.json()
 
