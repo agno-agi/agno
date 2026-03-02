@@ -56,7 +56,7 @@ agent = Agent(
 
 
 agent_os = AgentOS(
-    description="Example app for tracing with multiple models, agents, teams, and workflows",
+    description="Example app for approvals with basic tool",
     agents=[
         agent,
     ],

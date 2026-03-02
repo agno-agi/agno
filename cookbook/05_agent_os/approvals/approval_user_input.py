@@ -66,7 +66,7 @@ if __name__ == "__main__":
         db=db,
     )
 agent_os = AgentOS(
-    description="Example app for tracing with multiple models, agents, teams, and workflows",
+    description="Example app for approvals with user input",
     agents=[
         agent,
     ],
