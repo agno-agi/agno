@@ -40,6 +40,7 @@ db = SqliteDb(
     db_file=DB_FILE, session_table="agent_sessions", approvals_table="approvals"
 )
 agent = Agent(
+    name="Approval User Input Agent",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[send_money],
     markdown=True,
