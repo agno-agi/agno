@@ -545,6 +545,20 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def get_spans_batch(
+        self,
+        trace_ids: List[str],
+    ) -> Dict[str, List]:
+        """Get spans for multiple traces in a single query.
+
+        Args:
+            trace_ids: List of trace IDs to fetch spans for.
+
+        Returns:
+            Dict mapping trace_id -> List[Span].
+        """
+        raise NotImplementedError
+
     # --- Cultural Knowledge ---
     @abstractmethod
     def clear_cultural_knowledge(self) -> None:
@@ -1531,6 +1545,20 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List[Span]: List of matching spans.
+        """
+        raise NotImplementedError
+
+    async def get_spans_batch(
+        self,
+        trace_ids: List[str],
+    ) -> Dict[str, List]:
+        """Get spans for multiple traces in a single query.
+
+        Args:
+            trace_ids: List of trace IDs to fetch spans for.
+
+        Returns:
+            Dict mapping trace_id -> List[Span].
         """
         raise NotImplementedError
 

@@ -201,17 +201,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Calculate total pages
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
-            trace_inputs = {}
-            for trace in traces:
-                if isinstance(db, AsyncBaseDb):
-                    spans = await db.get_spans(trace_id=trace.trace_id)
-                else:
-                    spans = db.get_spans(trace_id=trace.trace_id)
+            # Batch fetch all spans in a single query instead of N+1
+            trace_ids = [trace.trace_id for trace in traces]
+            if isinstance(db, AsyncBaseDb):
+                spans_by_trace = await db.get_spans_batch(trace_ids)
+            else:
+                spans_by_trace = db.get_spans_batch(trace_ids)
 
-                # Find root span and extract input
+            trace_inputs = {}
+            for trace_id, spans in spans_by_trace.items():
                 root_span = next((s for s in spans if not s.parent_span_id), None)
                 if root_span and hasattr(root_span, "attributes"):
-                    trace_inputs[trace.trace_id] = root_span.attributes.get("input.value")
+                    trace_inputs[trace_id] = root_span.attributes.get("input.value")
 
             # Build response
             trace_summaries = [
@@ -718,15 +719,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 # Calculate total pages
                 total_pages = (total_count + body.limit - 1) // body.limit if body.limit > 0 else 0
 
-                # Build full TraceDetail (with span tree) for each trace
-                trace_details = []
-                for trace in traces:
-                    if isinstance(db, AsyncBaseDb):
-                        spans = await db.get_spans(trace_id=trace.trace_id)
-                    else:
-                        spans = db.get_spans(trace_id=trace.trace_id)
+                # Batch fetch all spans in a single query instead of N+1
+                trace_ids = [trace.trace_id for trace in traces]
+                if isinstance(db, AsyncBaseDb):
+                    spans_by_trace = await db.get_spans_batch(trace_ids)
+                else:
+                    spans_by_trace = db.get_spans_batch(trace_ids)
 
-                    trace_details.append(TraceDetail.from_trace_and_spans(trace, spans))
+                trace_details = [
+                    TraceDetail.from_trace_and_spans(trace, spans_by_trace.get(trace.trace_id, []))
+                    for trace in traces
+                ]
 
                 return PaginatedResponse(
                     data=trace_details,
