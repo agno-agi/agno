@@ -13,6 +13,10 @@ Steps:
 3. From raw text
 4. From topics (Wikipedia, ArXiv)
 5. Batch loading from multiple sources
+
+Note: Every method has an async equivalent:
+    knowledge.insert()      -> await knowledge.ainsert()
+    knowledge.insert_many() -> await knowledge.ainsert_many()
 """
 
 from agno.agent import Agent
@@ -102,6 +106,10 @@ if __name__ == "__main__":
     agent.print_response("What is RAG?", stream=True)
 
     # --- 5. Batch loading from multiple sources ---
+
+Note: Every method has an async equivalent:
+    knowledge.insert()      -> await knowledge.ainsert()
+    knowledge.insert_many() -> await knowledge.ainsert_many()
     print("\n" + "=" * 60)
     print("SOURCE 5: Batch loading (insert_many)")
     print("=" * 60 + "\n")
