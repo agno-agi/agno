@@ -193,6 +193,12 @@ async def _enrich_requirements_from_session(
                             req.confirmation_note = getattr(incoming, "confirmation_note", None)
                             if req.tool_execution:
                                 req.tool_execution.confirmed = incoming.confirmed
+
+                        if req.member_run_id and req._member_run_response is None:
+                            member_run = team_session.get_run(req.member_run_id)
+                            if member_run is not None:
+                                req._member_run_response = member_run
+
                     return list(stored_run.requirements)
         except Exception:
             pass
