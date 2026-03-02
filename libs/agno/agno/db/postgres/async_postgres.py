@@ -2540,11 +2540,15 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 # Apply advanced filter expression
                 if filter_expr:
-                    from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
 
-                    base_stmt = base_stmt.where(
-                        filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
-                    )
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except (ValueError, KeyError, TypeError) as e:
+                        log_error(f"Invalid filter expression: {e}")
+                        return [], 0
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -2636,11 +2640,15 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 # Apply advanced filter expression
                 if filter_expr:
-                    from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
 
-                    base_stmt = base_stmt.where(
-                        filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
-                    )
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except (ValueError, KeyError, TypeError) as e:
+                        log_error(f"Invalid filter expression: {e}")
+                        return [], 0
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
