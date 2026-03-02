@@ -193,8 +193,8 @@ def handle_agent_run_paused(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
-    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunOutput:
     run_response.status = RunStatus.paused
     if not run_response.content:
@@ -217,8 +217,8 @@ def handle_agent_run_paused_stream(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
-    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
+    run_context: Optional[RunContext] = None,
     yield_run_output: bool = False,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
     run_response.status = RunStatus.paused
@@ -257,8 +257,8 @@ async def ahandle_agent_run_paused(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
-    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunOutput:
     run_response.status = RunStatus.paused
     if not run_response.content:
@@ -282,8 +282,8 @@ async def ahandle_agent_run_paused_stream(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
-    run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
+    run_context: Optional[RunContext] = None,
     yield_run_output: bool = False,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     run_response.status = RunStatus.paused

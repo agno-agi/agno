@@ -48,6 +48,7 @@ db = SqliteDb(
     db_file=DB_FILE, session_table="agent_sessions", approvals_table="approvals"
 )
 agent = Agent(
+    name="Approval Basic Agent",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[get_top_hackernews_stories],
     markdown=True,
