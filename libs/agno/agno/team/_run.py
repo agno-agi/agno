@@ -3918,7 +3918,7 @@ def _cleanup_and_store(
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
-        update_approval_run_status(team.db, run_response.run_id, run_response.status.value)
+        update_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 async def _acleanup_and_store(
@@ -3960,7 +3960,7 @@ async def _acleanup_and_store(
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
-        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status.value)
+        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:

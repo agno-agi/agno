@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agno.run.base import RunStatus
+
 
 class ApprovalResolve(BaseModel):
     """Request body for resolving (approve/reject) an approval."""
@@ -42,8 +44,7 @@ class ApprovalResponse(BaseModel):
     updated_at: Optional[int] = None
     # Run status from the associated run, fetched at response time (not stored in DB).
     # Used by the UI to determine if the run has already been continued.
-    # Values: "PAUSED", "COMPLETED", "RUNNING", "ERROR", "CANCELLED", or None if not found.
-    run_status: Optional[str] = None
+    run_status: Optional[RunStatus] = None
 
 
 class ApprovalListResponse(BaseModel):
