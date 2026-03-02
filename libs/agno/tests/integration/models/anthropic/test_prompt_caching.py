@@ -223,7 +223,8 @@ def test_string_system_message_backward_compat():
 
 
 def test_agent_no_auto_blocks():
-    """Test that Agent does not auto-generate system_prompt_blocks (users pass them explicitly)."""
+    """Agent never auto-generates system_prompt_blocks. Users who want multi-block
+    caching must pass List[SystemPromptBlock] as system_message explicitly."""
     agent = Agent(
         model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
         description="Test agent",
@@ -235,7 +236,6 @@ def test_agent_no_auto_blocks():
     msg = agent.get_system_message(session=session)
 
     assert msg is not None
-    # Agent-built prompts don't carry system_prompt_blocks; users opt in via List[SystemPromptBlock]
     assert msg.system_prompt_blocks is None
     assert "Test agent" in msg.content
     assert "The current time is" in msg.content
