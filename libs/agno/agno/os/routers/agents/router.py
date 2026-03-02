@@ -157,6 +157,35 @@ async def agent_continue_response_streamer(
         return
 
 
+async def _team_continue_streamer(
+    team,
+    run_id: str,
+    requirements: List,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> AsyncGenerator:
+    from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+
+    try:
+        continue_response = team.acontinue_run(
+            run_id=run_id,
+            requirements=requirements,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background_tasks=background_tasks,
+        )
+        async for chunk in continue_response:
+            yield format_sse_event(chunk)
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        yield format_sse_event(TeamRunErrorEvent(content=str(e)))
+
+
 def get_agent_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -510,6 +539,47 @@ def get_agent_router(
 
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
+            from agno.models.response import ToolExecution
+            from agno.os.utils import get_team_by_id
+            from agno.run.requirement import RunRequirement
+
+            team = get_team_by_id(team_id=agent_id, teams=os.teams, db=os.db, registry=os.registry, create_fresh=True)
+            if team is not None:
+                try:
+                    tools_data_for_team = json.loads(tools) if tools else []
+                except json.JSONDecodeError:
+                    raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+                requirements = []
+                for tool_data in tools_data_for_team:
+                    tool_exec = ToolExecution.from_dict(tool_data)
+                    req = RunRequirement(tool_execution=tool_exec)
+                    req.confirmation = tool_exec.confirmed
+                    req.confirmation_note = getattr(tool_exec, "confirmation_note", None)
+                    requirements.append(req)
+
+                if stream:
+                    return StreamingResponse(
+                        _team_continue_streamer(
+                            team,
+                            run_id=run_id,
+                            requirements=requirements,
+                            session_id=session_id,
+                            user_id=user_id,
+                            background_tasks=background_tasks,
+                        ),
+                        media_type="text/event-stream",
+                    )
+                run_response_obj = await team.acontinue_run(
+                    run_id=run_id,
+                    requirements=requirements,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                    background_tasks=background_tasks,
+                )
+                return run_response_obj.to_dict()
+
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
