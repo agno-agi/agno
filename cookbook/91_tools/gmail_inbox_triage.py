@@ -9,7 +9,7 @@ for efficiency. Includes a read-only variant that classifies without
 modifying the inbox.
 
 Key concepts:
-- Boolean flags: manage_label, modify_labels, batch_modify_labels opt into new tools
+- Boolean flags: modify_labels opts into per-message label modification
 - Two agents: full triage (applies labels) vs classify-only (read-only)
 - output_schema: Structured classification results
 
@@ -56,10 +56,10 @@ class TriageResult(BaseModel):
 agent = Agent(
     name="Inbox Triage Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(manage_label=True, modify_labels=True, batch_modify_labels=True)],
+    tools=[GmailTools(modify_labels=True)],
     instructions=[
         "Classify each email into exactly one category: Action-Required, FYI, Newsletter, Scheduling, or Finance.",
-        "Create any missing labels before applying them.",
+        "Use modify_labels to apply the category label to each classified email by message_id.",
         "Only add the new category label -- do NOT remove existing labels.",
         "Return the classification results in the output schema.",
     ],

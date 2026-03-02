@@ -74,7 +74,6 @@ except ImportError:
     )
 
 
-
 def authenticate(func):
     """Decorator to ensure authentication before executing a function."""
 
@@ -169,18 +168,13 @@ class GmailTools(Toolkit):
         delete_custom_label: bool = True,
         # New tools (opt-in, default False)
         get_message: bool = False,
-        get_messages_batch: bool = False,
-        get_profile: bool = False,
         get_thread: bool = False,
         search_threads: bool = False,
-        get_threads_batch: bool = False,
         modify_thread_labels: bool = False,
         trash_thread: bool = False,
         draft_email: bool = False,
         list_labels: bool = False,
         modify_labels: bool = False,
-        batch_modify_labels: bool = False,
-        manage_label: bool = False,
         trash_message: bool = False,
         download_attachment: bool = False,
         max_batch_size: int = 10,
@@ -270,16 +264,10 @@ class GmailTools(Toolkit):
             # New tools
             if get_message:
                 tools.append(self.get_message)
-            if get_messages_batch:
-                tools.append(self.get_messages_batch)
-            if get_profile:
-                tools.append(self.get_profile)
             if get_thread:
                 tools.append(self.get_thread)
             if search_threads:
                 tools.append(self.search_threads)
-            if get_threads_batch:
-                tools.append(self.get_threads_batch)
             if modify_thread_labels:
                 tools.append(self.modify_thread_labels)
             if trash_thread:
@@ -290,10 +278,6 @@ class GmailTools(Toolkit):
                 tools.append(self.list_labels)
             if modify_labels:
                 tools.append(self.modify_labels)
-            if batch_modify_labels:
-                tools.append(self.batch_modify_labels)
-            if manage_label:
-                tools.append(self.manage_label)
             if trash_message:
                 tools.append(self.trash_message)
             if download_attachment:
@@ -326,12 +310,9 @@ class GmailTools(Toolkit):
             "search_emails",
             "list_custom_labels",
             "get_message",
-            "get_messages_batch",
             "get_thread",
             "search_threads",
-            "get_threads_batch",
             "list_labels",
-            "get_profile",
             "download_attachment",
         }
         if any(op in self.functions for op in read_operations):
@@ -347,9 +328,7 @@ class GmailTools(Toolkit):
             "remove_label",
             "delete_custom_label",
             "modify_labels",
-            "batch_modify_labels",
             "modify_thread_labels",
-            "manage_label",
             "trash_message",
             "trash_thread",
         }
@@ -378,18 +357,13 @@ class GmailTools(Toolkit):
             self.remove_label,
             self.delete_custom_label,
             self.get_message,
-            self.get_messages_batch,
-            self.get_profile,
             self.get_thread,
             self.search_threads,
-            self.get_threads_batch,
             self.modify_thread_labels,
             self.trash_thread,
             self.draft_email,
             self.list_labels,
             self.modify_labels,
-            self.batch_modify_labels,
-            self.manage_label,
             self.trash_message,
             self.download_attachment,
         ]
@@ -1332,72 +1306,15 @@ class GmailTools(Toolkit):
             service = self.service
             raw = service.users().messages().get(userId="me", id=message_id, format="full").execute()  # type: ignore
             result = self._format_message(raw)
-
             if download_attachments and result.get("attachments"):
                 for att in result["attachments"]:
                     if att.get("attachmentId"):
                         att["localPath"] = self._download_attachment_file(
                             message_id, att["attachmentId"], att["filename"]
                         )
-
             return json.dumps(result)
         except HttpError as e:
             log_error(f"Failed to get message {message_id}: {e}")
-            return json.dumps({"error": f"Gmail API error: {e}"})
-
-    @authenticate
-    def get_messages_batch(self, message_ids: str, download_attachments: bool = False) -> str:
-        """Get multiple email messages by their IDs in a single batch request. Much faster than fetching one at a time.
-
-        Args:
-            message_ids: Comma-separated list of Gmail message IDs (max 100).
-            download_attachments: If True, download attachments to disk.
-
-        Returns:
-            JSON string with list of messages.
-        """
-        try:
-            ids = [mid.strip() for mid in message_ids.split(",") if mid.strip()]
-            if len(ids) > self.max_batch_size:
-                return json.dumps({"error": f"Maximum {self.max_batch_size} messages per batch request"})
-
-            service = self.service
-            raw_messages = self._batch_get(
-                ids,
-                lambda msg_id: service.users().messages().get(userId="me", id=msg_id, format="full"),  # type: ignore
-            )
-            messages = []
-            for m in raw_messages:
-                if "error" in m:
-                    messages.append(m)
-                    continue
-                formatted = self._format_message(m)
-                if download_attachments and formatted.get("attachments"):
-                    for att in formatted["attachments"]:
-                        if att.get("attachmentId"):
-                            att["localPath"] = self._download_attachment_file(
-                                m["id"], att["attachmentId"], att["filename"]
-                            )
-                messages.append(formatted)
-
-            return json.dumps({"messages": messages})
-        except HttpError as e:
-            log_error(f"Batch get messages failed: {e}")
-            return json.dumps({"error": f"Gmail API error: {e}"})
-
-    @authenticate
-    def get_profile(self) -> str:
-        """Get the authenticated user's Gmail profile including email address, total messages, and history ID.
-
-        Returns:
-            JSON string with profile details: emailAddress, messagesTotal, threadsTotal, historyId.
-        """
-        try:
-            service = self.service
-            profile = service.users().getProfile(userId="me").execute()  # type: ignore
-            return json.dumps(profile)
-        except HttpError as e:
-            log_error(f"Failed to get profile: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
 
     @authenticate
@@ -1449,41 +1366,6 @@ class GmailTools(Toolkit):
             )
         except HttpError as e:
             log_error(f"Thread search failed: {e}")
-            return json.dumps({"error": f"Gmail API error: {e}"})
-
-    @authenticate
-    def get_threads_batch(self, thread_ids: str) -> str:
-        """Get multiple threads by their IDs in a single batch request. Each thread includes all its messages.
-
-        Args:
-            thread_ids: Comma-separated list of Gmail thread IDs (max 100).
-
-        Returns:
-            JSON string with list of threads, each containing all their messages.
-        """
-        try:
-            ids = [tid.strip() for tid in thread_ids.split(",") if tid.strip()]
-            if len(ids) > self.max_batch_size:
-                return json.dumps({"error": f"Maximum {self.max_batch_size} threads per batch request"})
-
-            service = self.service
-            raw_threads = self._batch_get(ids, lambda tid: service.users().threads().get(userId="me", id=tid))  # type: ignore
-            threads = []
-            for t in raw_threads:
-                if "error" in t:
-                    threads.append(t)
-                    continue
-                messages = [self._format_message(m) for m in t.get("messages", [])]
-                threads.append(
-                    {
-                        "threadId": t["id"],
-                        "messages": messages,
-                        "messageCount": len(messages),
-                    }
-                )
-            return json.dumps({"threads": threads})
-        except HttpError as e:
-            log_error(f"Batch get threads failed: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
 
     @authenticate
@@ -1727,126 +1609,6 @@ class GmailTools(Toolkit):
             return json.dumps({"id": result["id"], "labelIds": result.get("labelIds", [])})
         except HttpError as e:
             log_error(f"Failed to modify labels on message {message_id}: {e}")
-            return json.dumps({"error": f"Gmail API error: {e}"})
-
-    @authenticate
-    def batch_modify_labels(
-        self,
-        message_ids: str,
-        add_labels: Optional[str] = None,
-        remove_labels: Optional[str] = None,
-    ) -> str:
-        """Apply label changes to multiple messages at once. Much more efficient than modifying one at a time.
-
-        Args:
-            message_ids: Comma-separated list of Gmail message IDs (max 1000).
-            add_labels: Comma-separated label names to add.
-            remove_labels: Comma-separated label names to remove.
-
-        Returns:
-            JSON string confirming the batch operation.
-        """
-        try:
-            ids = [mid.strip() for mid in message_ids.split(",") if mid.strip()]
-            if len(ids) > 1000:
-                return json.dumps({"error": "Maximum 1000 messages per batch modify"})
-
-            body: Dict[str, Any] = {"ids": ids}
-            if add_labels:
-                names = [n.strip() for n in add_labels.split(",") if n.strip()]
-                body["addLabelIds"] = self._resolve_label_ids(names)
-            if remove_labels:
-                names = [n.strip() for n in remove_labels.split(",") if n.strip()]
-                body["removeLabelIds"] = self._resolve_label_ids(names)
-
-            if "addLabelIds" not in body and "removeLabelIds" not in body:
-                return json.dumps({"error": "Must specify add_labels or remove_labels"})
-
-            service = self.service
-            service.users().messages().batchModify(userId="me", body=body).execute()  # type: ignore
-            return json.dumps(
-                {
-                    "modified": len(ids),
-                    "addedLabels": body.get("addLabelIds", []),
-                    "removedLabels": body.get("removeLabelIds", []),
-                }
-            )
-        except HttpError as e:
-            log_error(f"Batch modify labels failed: {e}")
-            return json.dumps({"error": f"Gmail API error: {e}"})
-
-    @authenticate
-    def manage_label(
-        self,
-        action: str,
-        name: str,
-        new_name: Optional[str] = None,
-        confirm: bool = False,
-    ) -> str:
-        """Create, rename, or delete a custom label.
-
-        Args:
-            action: One of "create", "rename", "delete".
-            name: Label name (target label for all actions).
-            new_name: New label name (required for rename).
-            confirm: Must be True to delete (safety guard).
-
-        Returns:
-            JSON string with label operation result.
-        """
-        try:
-            service = self.service
-
-            if action == "create":
-                label = (
-                    service.users()  # type: ignore
-                    .labels()
-                    .create(
-                        userId="me",
-                        body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
-                    )
-                    .execute()
-                )
-                return json.dumps({"id": label["id"], "name": label["name"], "action": "created"})
-
-            if action == "rename":
-                if not new_name:
-                    return json.dumps({"error": "new_name is required for rename action"})
-                labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-                lower = name.lower()
-                label_id = next((lbl["id"] for lbl in labels if lbl["name"].lower() == lower), None)
-                if not label_id:
-                    return json.dumps({"error": f"Label '{name}' not found"})
-                result = service.users().labels().update(userId="me", id=label_id, body={"name": new_name}).execute()  # type: ignore
-                return json.dumps({"id": result["id"], "name": result["name"], "action": "renamed"})
-
-            if action == "delete":
-                if not confirm:
-                    return json.dumps(
-                        {
-                            "warning": f"This will permanently delete the label '{name}' from all emails.",
-                            "action_required": "Set confirm=True to proceed.",
-                        }
-                    )
-                labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-                lower = name.lower()
-                target = None
-                for label in labels:
-                    if label["name"].lower() == lower:
-                        target = label
-                        break
-                if not target:
-                    return json.dumps({"error": f"Label '{name}' not found"})
-                if target.get("type") != "user":
-                    return json.dumps(
-                        {"error": f"Cannot delete system label '{name}'. Only custom labels can be deleted."}
-                    )
-                service.users().labels().delete(userId="me", id=target["id"]).execute()  # type: ignore
-                return json.dumps({"label": name, "action": "deleted"})
-
-            return json.dumps({"error": f"Invalid action: {action}. Must be one of: create, rename, delete"})
-        except HttpError as e:
-            log_error(f"Label operation '{action}' failed: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
 
     @authenticate

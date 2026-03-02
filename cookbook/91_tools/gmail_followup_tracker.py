@@ -3,13 +3,12 @@ Gmail Follow-Up Tracker
 =======================
 Finds sent emails that never received a reply and drafts follow-ups.
 
-The agent chains: get_profile (identify user's email) -> search_threads
-(find sent threads) -> get_thread (check for replies) -> draft_email
-(create follow-up drafts for unanswered messages).
+The agent chains: search_threads (find sent threads with from:me) ->
+get_thread (check for replies) -> draft_email (create follow-up drafts
+for unanswered messages).
 
 Key concepts:
 - Multi-step reasoning: agent must compare sender vs user email per thread
-- get_profile: resolves user identity so the agent knows which messages are "sent"
 - add_datetime_to_context: agent calculates days_waiting from message dates
 - output_schema: structured report of pending follow-ups
 
@@ -57,14 +56,10 @@ class FollowUpReport(BaseModel):
 agent = Agent(
     name="Follow-Up Tracker",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        GmailTools(
-            search_threads=True, get_thread=True, get_profile=True, draft_email=True
-        )
-    ],
+    tools=[GmailTools(search_threads=True, get_thread=True, draft_email=True)],
     instructions=[
-        "First call get_profile to learn the user's email address so you can identify sent messages.",
-        "A thread needs follow-up if the LAST message is FROM the user's email (no reply received).",
+        "Use search_threads with 'from:me' to find sent threads, then check if the last message is from you.",
+        "A thread needs follow-up if the LAST message is FROM the user (no reply received).",
         "Compare the date of the last message against today to calculate days_waiting.",
         "Keep follow-up drafts short: reference the original subject and ask if they had a chance to review.",
         "Report all findings in the output schema.",
