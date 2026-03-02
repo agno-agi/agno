@@ -111,6 +111,11 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Start and stop the scheduler poller."""
     from agno.scheduler import ScheduleExecutor, SchedulePoller
 
+    if agent_os._scheduler_base_url is None:
+        log_info(
+            "scheduler_base_url not set, using default http://127.0.0.1:7777. "
+            "If your server is running on a different port, set scheduler_base_url to match."
+        )
     base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
     internal_token = agent_os._internal_service_token
     if internal_token is None:
@@ -709,12 +714,16 @@ class AgentOS:
         # Component routes require sync database operations
         if self.db is not None and isinstance(self.db, BaseDb):
             routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        else:
+            log_debug("Components router not enabled: requires a db to be provided to AgentOS")
         if self.registry is not None:
             routers.append(get_registry_router(registry=self.registry))
         # Add schedule and approval routers if a db is available
         if self.db is not None:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+        else:
+            log_debug("Scheduler and Approval routers not enabled: requires a db to be provided to AgentOS")
 
         for router in routers:
             self._add_router(fastapi_app, router)
