@@ -171,8 +171,8 @@ def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRou
     for path in [prefix, f"{prefix}/{{path:path}}"]:
 
         @router.api_route(path, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-        async def _disabled(_detail: str = detail) -> None:
-            raise HTTPException(status_code=503, detail=_detail)
+        async def _disabled() -> None:
+            raise HTTPException(status_code=503, detail=detail)
 
     return router
 
@@ -390,16 +390,22 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
-        # Add component and registry routers only if a sync db (BaseDb) is available
-        # Component routes require sync database operations
-        if self.db is not None and isinstance(self.db, BaseDb):
-            updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
-        if self.registry is not None:
-            updated_routers.append(get_registry_router(registry=self.registry))
-        # Add schedule and approval routers if a db is available
+        # Routes that require a database
         if self.db is not None:
+            if isinstance(self.db, BaseDb):
+                updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
+            else:
+                updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+        else:
+            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+                updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
+        # Registry router
+        if self.registry is not None:
+            updated_routers.append(get_registry_router(registry=self.registry))
+        else:
+            updated_routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
         # Clear all previously existing routes
         app.router.routes = [
