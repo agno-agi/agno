@@ -16,8 +16,11 @@ Key concepts:
 
 Compare with: gmail_followup_tracker.py for automated follow-up detection.
 
-Setup: See gmail_tools.py for Google OAuth credential setup.
-Run: pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
+Setup:
+1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)
+2. Export GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID env vars
+3. pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
+4. First run opens browser for OAuth consent, saves token.json for reuse
 """
 
 from agno.agent import Agent
