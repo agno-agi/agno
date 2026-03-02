@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -1356,7 +1357,7 @@ class Agent:
         debug_mode: Optional[bool] = None,
         background: bool = False,
         **kwargs: Any,
-    ) -> RunOutput: ...
+    ) -> Coroutine[Any, Any, RunOutput]: ...
 
     @overload
     def arun(
@@ -1532,7 +1533,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> RunOutput: ...
+    ) -> Coroutine[Any, Any, RunOutput]: ...
 
     @overload
     def acontinue_run(
