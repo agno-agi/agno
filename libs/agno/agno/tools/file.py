@@ -5,6 +5,54 @@ from typing import Any, List, Optional, Tuple
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
+TEXT_EXTENSIONS = {
+    ".md",
+    ".txt",
+    ".csv",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".py",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".sql",
+    ".sh",
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".log",
+    ".rst",
+}
+
+
+def _format_size(size: int) -> str:
+    """Format a file size in bytes to a human-readable string."""
+    for unit in ("B", "KB", "MB"):
+        if size < 1024:
+            return f"{size:.1f}{unit}" if unit != "B" else f"{size}{unit}"
+        size /= 1024  # type: ignore
+    return f"{size:.1f}GB"
+
+
+def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
+    """Extract a snippet of content around the first occurrence of query."""
+    lower_content = content.lower()
+    lower_query = query.lower()
+    idx = lower_content.find(lower_query)
+    if idx == -1:
+        return ""
+    start = max(0, idx - context_chars)
+    end = min(len(content), idx + len(query) + context_chars)
+    snippet = content[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(content):
+        snippet = snippet + "..."
+    return snippet
+
 
 class FileTools(Toolkit):
     def __init__(
@@ -17,6 +65,7 @@ class FileTools(Toolkit):
         enable_search_files: bool = True,
         enable_read_file_chunk: bool = True,
         enable_replace_file_chunk: bool = True,
+        enable_search_content: bool = True,
         expose_base_directory: bool = False,
         max_file_length: int = 10000000,
         max_file_lines: int = 100000,
@@ -45,6 +94,8 @@ class FileTools(Toolkit):
             tools.append(self.read_file_chunk)
         if all or enable_replace_file_chunk:
             tools.append(self.replace_file_chunk)
+        if all or enable_search_content:
+            tools.append(self.search_content)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
 
@@ -237,5 +288,73 @@ class FileTools(Toolkit):
 
         except Exception as e:
             error_msg = f"Error searching files with pattern '{pattern}': {e}"
+            log_error(error_msg)
+            return error_msg
+
+    def search_content(self, query: str, directory: Optional[str] = None, limit: int = 10) -> str:
+        """Search file contents within the base directory for a query string (case-insensitive).
+
+        Only text files (by extension) under 500KB are searched.
+
+        :param query: The text to search for in file contents.
+        :param directory: Optional subdirectory to scope the search to.
+        :param limit: Maximum number of matching files to return (default 10).
+        :return: JSON formatted results with file paths, sizes, and content snippets.
+        """
+        try:
+            if not query or not query.strip():
+                return "Error: Query cannot be empty"
+
+            search_dir = self.base_dir
+            if directory:
+                safe, search_dir = self.check_escape(directory)
+                if not safe:
+                    log_error(f"Attempted to search outside base directory: {directory}")
+                    return "Error: Directory is outside the allowed base directory"
+
+            if not search_dir.is_dir():
+                return f"Error: '{directory}' is not a directory"
+
+            log_debug(f"Searching file contents in {search_dir} for '{query}'")
+            lower_query = query.lower()
+            matches: List[dict] = []
+            max_file_size = 500 * 1024  # 500KB
+
+            for file_path in search_dir.rglob("*"):
+                if len(matches) >= limit:
+                    break
+                if not file_path.is_file():
+                    continue
+                if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+                    continue
+                if file_path.stat().st_size > max_file_size:
+                    continue
+
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+
+                if lower_query in content.lower():
+                    rel_path = str(file_path.relative_to(self.base_dir))
+                    snippet = _extract_snippet(content, query)
+                    matches.append(
+                        {
+                            "file": rel_path,
+                            "size": _format_size(file_path.stat().st_size),
+                            "snippet": snippet,
+                        }
+                    )
+
+            result = {
+                "query": query,
+                "matches_found": len(matches),
+                "files": matches,
+            }
+            log_debug(f"Found {len(matches)} files containing '{query}'")
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            error_msg = f"Error searching content for '{query}': {e}"
             log_error(error_msg)
             return error_msg
