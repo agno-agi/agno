@@ -1024,6 +1024,7 @@ class GmailTools(Toolkit):
         message_id: Optional[str] = None,
         attachments: Optional[List[str]] = None,
     ) -> dict:
+        """Build a base64-encoded MIME message dict ready for the Gmail API send/draft endpoints."""
         body = body.replace("\\n", "\n")
 
         # Create multipart message if attachments exist, otherwise simple text message
@@ -1143,6 +1144,7 @@ class GmailTools(Toolkit):
         return body
 
     def _decode_body_data(self, data: str) -> str:
+        """Decode a base64url-encoded Gmail body part to text."""
         try:
             raw_bytes = base64.urlsafe_b64decode(data)
         except Exception:
@@ -1153,6 +1155,7 @@ class GmailTools(Toolkit):
             return raw_bytes.decode("latin-1")
 
     def _resolve_label_ids(self, label_names: List[str]) -> List[str]:
+        """Convert label names to Gmail label IDs. Falls back to raw name for system labels like INBOX."""
         service = self.service
         labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
         lookup = {lbl["name"].lower(): lbl["id"] for lbl in labels}
@@ -1164,6 +1167,15 @@ class GmailTools(Toolkit):
         ids: List[str],
         request_builder: Callable,
     ) -> List[Dict]:
+        """Execute multiple Gmail API requests in batched HTTP calls.
+
+        Args:
+            ids: List of resource IDs to fetch.
+            request_builder: Callable that takes an ID and returns a Gmail API request object.
+
+        Returns:
+            List of API response dicts (or error dicts for failed requests).
+        """
         service = self.service
         results: List[Dict] = []
 
@@ -1183,6 +1195,7 @@ class GmailTools(Toolkit):
         return results
 
     def _download_attachment_file(self, message_id: str, attachment_id: str, filename: str) -> str:
+        """Download a Gmail attachment to disk and return the local file path."""
         service = self.service
         att = (
             service.users().messages().attachments().get(userId="me", messageId=message_id, id=attachment_id).execute()  # type: ignore
@@ -1201,6 +1214,7 @@ class GmailTools(Toolkit):
         return str(file_path)
 
     def _format_message(self, msg_data: Dict, include_body: bool = True) -> Dict[str, Any]:
+        """Convert a raw Gmail API message into a clean dict with id, subject, from, to, date, body, and attachments."""
         raw_headers = msg_data.get("payload", {}).get("headers", [])
         headers = {h["name"].lower(): h["value"] for h in raw_headers}
         result: Dict[str, Any] = {
@@ -1224,6 +1238,14 @@ class GmailTools(Toolkit):
         return result
 
     def _extract_body(self, payload: Dict) -> Tuple[str, List[Dict]]:
+        """Extract text body and attachment metadata from a Gmail message payload.
+
+        Handles multipart MIME, prefers text/plain over text/html, strips HTML tags
+        unless include_html is set, and truncates to max_body_length.
+
+        Returns:
+            Tuple of (body_text, list_of_attachment_dicts).
+        """
         mime_type = payload.get("mimeType", "")
 
         if "parts" not in payload:
