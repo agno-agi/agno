@@ -112,7 +112,7 @@ agent = Agent(
     output_schema=FindEmailOutput,
 )
 
-# Example 5: Thread-aware draft reply using new tools
+# Example 5: Draft a reply to a conversation thread
 thread_reply_agent = Agent(
     name="Thread Reply Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -184,7 +184,7 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # Example 5: Thread-aware draft reply using new tools
+    # Example 5: Draft a reply to a conversation thread
     # thread_reply_agent.print_response(
     #     "Find the latest thread about 'project update' and draft a reply asking about next steps",
     #     stream=True,
