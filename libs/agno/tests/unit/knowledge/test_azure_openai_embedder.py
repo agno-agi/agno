@@ -42,9 +42,7 @@ class TestAzureOpenAIEmbedderInputFormat:
         embedder.get_embedding("hello world")
 
         call_kwargs = mock_client.embeddings.create.call_args[1]
-        assert isinstance(call_kwargs["input"], list), (
-            "input must be a list for Azure API compatibility"
-        )
+        assert isinstance(call_kwargs["input"], list), "input must be a list for Azure API compatibility"
         assert call_kwargs["input"] == ["hello world"]
 
     def test_response_wraps_input_for_non_default_model(self, _mock_openai):
@@ -86,6 +84,25 @@ class TestAzureOpenAIEmbedderInputFormat:
 
         call_kwargs = mock_client.embeddings.create.call_args[1]
         assert call_kwargs["dimensions"] == 1024
+
+    def test_dimensions_not_sent_for_custom_model_without_explicit_dimensions(self, _mock_openai):
+        """When using a custom model without setting dimensions, dimensions should NOT be in the request."""
+        mock_client, _ = _mock_openai
+
+        from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
+
+        embedder = AzureOpenAIEmbedder(
+            id="Cohere-embed-v3-multilingual",
+            api_key="test-key",
+            azure_endpoint="https://test.openai.azure.com/",
+            azure_deployment="Cohere-embed-v3-multilingual",
+            openai_client=mock_client,
+        )
+
+        embedder.get_embedding("test")
+
+        call_kwargs = mock_client.embeddings.create.call_args[1]
+        assert "dimensions" not in call_kwargs
 
     @pytest.mark.asyncio()
     async def test_aresponse_wraps_input_as_list(self, _mock_openai):
