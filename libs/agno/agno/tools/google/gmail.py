@@ -44,15 +44,18 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import base64
+import json
 import mimetypes
 import re
+import tempfile
 from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
+from agno.utils.log import log_debug, log_error
 
 try:
     from email.mime.application import MIMEApplication
@@ -70,15 +73,21 @@ except ImportError:
     )
 
 
+_BATCH_MAX = 100
+
+
 def authenticate(func):
     """Decorator to ensure authentication before executing a function."""
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        if not self.creds or not self.creds.valid:
-            self._auth()
-        if not self.service:
-            self.service = build("gmail", "v1", credentials=self.creds)
+        try:
+            if not self.creds or not self.creds.valid:
+                self._auth()
+            if not self.service:
+                self.service = build("gmail", "v1", credentials=self.creds)
+        except Exception as e:
+            return json.dumps({"error": f"Gmail authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -106,6 +115,10 @@ class GmailTools(Toolkit):
         token_path: Optional[str] = None,
         scopes: Optional[List[str]] = None,
         port: Optional[int] = None,
+        login_hint: Optional[str] = None,
+        include_html: bool = False,
+        max_body_length: Optional[int] = None,
+        attachment_dir: Optional[str] = None,
         # Reading
         get_latest_emails: bool = True,
         get_emails_from_user: bool = True,
@@ -127,6 +140,22 @@ class GmailTools(Toolkit):
         apply_label: bool = True,
         remove_label: bool = True,
         delete_custom_label: bool = True,
+        # New tools (opt-in, default False)
+        get_message: bool = False,
+        get_messages_batch: bool = False,
+        get_profile: bool = False,
+        get_thread: bool = False,
+        search_threads: bool = False,
+        get_threads_batch: bool = False,
+        modify_thread_labels: bool = False,
+        trash_thread: bool = False,
+        draft_email: bool = False,
+        list_labels: bool = False,
+        modify_labels: bool = False,
+        batch_modify_labels: bool = False,
+        manage_label: bool = False,
+        trash_message: bool = False,
+        download_attachment: bool = False,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
@@ -137,6 +166,10 @@ class GmailTools(Toolkit):
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
             port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
+            login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
+            include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
+            max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
+            attachment_dir (Optional[str]): Directory to save downloaded attachments. Defaults to a temp directory.
         """
         self.creds = creds
         self.credentials_path = credentials_path
@@ -144,57 +177,99 @@ class GmailTools(Toolkit):
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.port = port
+        self.login_hint = login_hint
+        self.include_html = include_html
+        self.max_body_length = max_body_length
+        self.attachment_dir = attachment_dir
+        self._temp_dir: Optional[str] = None
 
-        tools: List[Any] = []
-        # Reading emails
-        if get_latest_emails:
-            tools.append(self.get_latest_emails)
-        if get_emails_from_user:
-            tools.append(self.get_emails_from_user)
-        if get_unread_emails:
-            tools.append(self.get_unread_emails)
-        if get_starred_emails:
-            tools.append(self.get_starred_emails)
-        if get_emails_by_context:
-            tools.append(self.get_emails_by_context)
-        if get_emails_by_date:
-            tools.append(self.get_emails_by_date)
-        if get_emails_by_thread:
-            tools.append(self.get_emails_by_thread)
-        if search_emails:
-            tools.append(self.search_emails)
-        # Email management
-        if mark_email_as_read:
-            tools.append(self.mark_email_as_read)
-        if mark_email_as_unread:
-            tools.append(self.mark_email_as_unread)
-        # Composing emails
-        if create_draft_email:
-            tools.append(self.create_draft_email)
-        if send_email:
-            tools.append(self.send_email)
-        if send_email_reply:
-            tools.append(self.send_email_reply)
-        # Label management
-        if list_custom_labels:
-            tools.append(self.list_custom_labels)
-        if apply_label:
-            tools.append(self.apply_label)
-        if remove_label:
-            tools.append(self.remove_label)
-        if delete_custom_label:
-            tools.append(self.delete_custom_label)
+        # When include_tools is specified, expose the full catalog and let
+        # Toolkit's whitelist filter select the requested tools.
+        if kwargs.get("include_tools"):
+            tools = self._all_tools()
+        else:
+            tools: List[Any] = []  # type: ignore
+            # Reading emails
+            if get_latest_emails:
+                tools.append(self.get_latest_emails)
+            if get_emails_from_user:
+                tools.append(self.get_emails_from_user)
+            if get_unread_emails:
+                tools.append(self.get_unread_emails)
+            if get_starred_emails:
+                tools.append(self.get_starred_emails)
+            if get_emails_by_context:
+                tools.append(self.get_emails_by_context)
+            if get_emails_by_date:
+                tools.append(self.get_emails_by_date)
+            if get_emails_by_thread:
+                tools.append(self.get_emails_by_thread)
+            if search_emails:
+                tools.append(self.search_emails)
+            # Email management
+            if mark_email_as_read:
+                tools.append(self.mark_email_as_read)
+            if mark_email_as_unread:
+                tools.append(self.mark_email_as_unread)
+            # Composing emails
+            if create_draft_email:
+                tools.append(self.create_draft_email)
+            if send_email:
+                tools.append(self.send_email)
+            if send_email_reply:
+                tools.append(self.send_email_reply)
+            # Label management
+            if list_custom_labels:
+                tools.append(self.list_custom_labels)
+            if apply_label:
+                tools.append(self.apply_label)
+            if remove_label:
+                tools.append(self.remove_label)
+            if delete_custom_label:
+                tools.append(self.delete_custom_label)
+            # New tools
+            if get_message:
+                tools.append(self.get_message)
+            if get_messages_batch:
+                tools.append(self.get_messages_batch)
+            if get_profile:
+                tools.append(self.get_profile)
+            if get_thread:
+                tools.append(self.get_thread)
+            if search_threads:
+                tools.append(self.search_threads)
+            if get_threads_batch:
+                tools.append(self.get_threads_batch)
+            if modify_thread_labels:
+                tools.append(self.modify_thread_labels)
+            if trash_thread:
+                tools.append(self.trash_thread)
+            if draft_email:
+                tools.append(self.draft_email)
+            if list_labels:
+                tools.append(self.list_labels)
+            if modify_labels:
+                tools.append(self.modify_labels)
+            if batch_modify_labels:
+                tools.append(self.batch_modify_labels)
+            if manage_label:
+                tools.append(self.manage_label)
+            if trash_message:
+                tools.append(self.trash_message)
+            if download_attachment:
+                tools.append(self.download_attachment)
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
 
         # Validate that required scopes are present for requested operations (only check registered functions)
-        if (
-            "create_draft_email" in self.functions or "send_email" in self.functions
-        ) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
-            raise ValueError(
-                "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
-            )
-        read_operations = [
+        compose_tools = {"create_draft_email", "send_email", "send_email_reply", "draft_email"}
+        if any(t in self.functions for t in compose_tools):
+            if "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
+                raise ValueError(
+                    "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
+                )
+
+        read_operations = {
             "get_latest_emails",
             "get_emails_from_user",
             "get_unread_emails",
@@ -204,18 +279,74 @@ class GmailTools(Toolkit):
             "get_emails_by_thread",
             "search_emails",
             "list_custom_labels",
-        ]
-        modify_operations = ["mark_email_as_read", "mark_email_as_unread"]
-        if any(read_operation in self.functions for read_operation in read_operations):
+            "get_message",
+            "get_messages_batch",
+            "get_thread",
+            "search_threads",
+            "get_threads_batch",
+            "list_labels",
+            "get_profile",
+            "download_attachment",
+        }
+        if any(op in self.functions for op in read_operations):
             read_scope = "https://www.googleapis.com/auth/gmail.readonly"
             write_scope = "https://www.googleapis.com/auth/gmail.modify"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for email reading operations")
 
-        if any(modify_operation in self.functions for modify_operation in modify_operations):
+        modify_operations = {
+            "mark_email_as_read",
+            "mark_email_as_unread",
+            "apply_label",
+            "remove_label",
+            "delete_custom_label",
+            "modify_labels",
+            "batch_modify_labels",
+            "modify_thread_labels",
+            "manage_label",
+            "trash_message",
+            "trash_thread",
+        }
+        if any(op in self.functions for op in modify_operations):
             modify_scope = "https://www.googleapis.com/auth/gmail.modify"
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
+
+    def _all_tools(self) -> list:
+        return [
+            self.get_latest_emails,
+            self.get_emails_from_user,
+            self.get_unread_emails,
+            self.get_starred_emails,
+            self.get_emails_by_context,
+            self.get_emails_by_date,
+            self.get_emails_by_thread,
+            self.search_emails,
+            self.send_email,
+            self.send_email_reply,
+            self.create_draft_email,
+            self.mark_email_as_read,
+            self.mark_email_as_unread,
+            self.list_custom_labels,
+            self.apply_label,
+            self.remove_label,
+            self.delete_custom_label,
+            self.get_message,
+            self.get_messages_batch,
+            self.get_profile,
+            self.get_thread,
+            self.search_threads,
+            self.get_threads_batch,
+            self.modify_thread_labels,
+            self.trash_thread,
+            self.draft_email,
+            self.list_labels,
+            self.modify_labels,
+            self.batch_modify_labels,
+            self.manage_label,
+            self.trash_message,
+            self.download_attachment,
+        ]
 
     def _auth(self) -> None:
         """Authenticate with Gmail API"""
@@ -223,32 +354,44 @@ class GmailTools(Toolkit):
         creds_file = Path(self.credentials_path or "credentials.json")
 
         if token_file.exists():
-            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            try:
+                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            except ValueError:
+                # Token file missing refresh_token — fall through to re-auth
+                self.creds = None
+
+        if self.creds and self.creds.expired and self.creds.refresh_token:
+            try:
+                self.creds.refresh(Request())
+            except Exception:
+                # Refresh token revoked or expired — fall through to re-auth
+                self.creds = None
 
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:
-                self.creds.refresh(Request())
-            else:
-                client_config = {
-                    "installed": {
-                        "client_id": getenv("GOOGLE_CLIENT_ID"),
-                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                        "project_id": getenv("GOOGLE_PROJECT_ID"),
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                    }
+            client_config = {
+                "installed": {
+                    "client_id": getenv("GOOGLE_CLIENT_ID"),
+                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                    "project_id": getenv("GOOGLE_PROJECT_ID"),
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                 }
-                if creds_file.exists():
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-                else:
-                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                self.creds = flow.run_local_server(port=self.port)
+            }
+            if creds_file.exists():
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+            else:
+                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+            # prompt=consent forces Google to return a refresh_token every time
+            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+            if self.login_hint:
+                oauth_kwargs["login_hint"] = self.login_hint
+            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
 
-            # Save the credentials for future use
-            if self.creds and self.creds.valid:
-                token_file.write_text(self.creds.to_json())
+        if self.creds and self.creds.valid:
+            token_file.write_text(self.creds.to_json())
+            log_debug("Gmail credentials saved")
 
     def _format_emails(self, emails: List[dict]) -> str:
         """Format list of email dictionaries into a readable string"""
@@ -477,16 +620,24 @@ class GmailTools(Toolkit):
         subject: str,
         body: str,
         cc: Optional[str] = None,
+        bcc: Optional[str] = None,
         attachments: Optional[Union[str, List[str]]] = None,
+        thread_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> str:
         """
-        Send an email immediately. to and cc are comma separated string of email ids
+        Send an email immediately. To reply to a thread, provide thread_id and message_id.
+        to, cc and bcc are comma separated string of email ids.
+
         Args:
             to (str): Comma separated string of recipient email addresses
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
+            bcc (Optional[str]): Comma separated string of BCC email addresses (optional)
             attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
+            thread_id (Optional[str]): Thread ID to reply to (optional, makes this a reply)
+            message_id (Optional[str]): Message ID being replied to (optional, used with thread_id)
 
         Returns:
             str: Stringified dictionary containing sent email details including id
@@ -506,9 +657,19 @@ class GmailTools(Toolkit):
                 if not Path(file_path).exists():
                     raise ValueError(f"Attachment file not found: {file_path}")
 
+        if thread_id and not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+
         body = body.replace("\n", "<br>")
         message = self._create_message(
-            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+            to.split(","),
+            subject,
+            body,
+            cc.split(",") if cc else None,
+            bcc=bcc.split(",") if bcc else None,
+            thread_id=thread_id,
+            message_id=message_id,
+            attachments=attachment_files,
         )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
@@ -564,7 +725,7 @@ class GmailTools(Toolkit):
             subject,
             body,
             cc.split(",") if cc else None,
-            thread_id,
+            thread_id,  # type: ignore
             message_id,
             attachments=attachment_files,
         )
@@ -838,6 +999,7 @@ class GmailTools(Toolkit):
         subject: str,
         body: str,
         cc: Optional[List[str]] = None,
+        bcc: Optional[List[str]] = None,
         thread_id: Optional[str] = None,
         message_id: Optional[str] = None,
         attachments: Optional[List[str]] = None,
@@ -883,6 +1045,8 @@ class GmailTools(Toolkit):
 
         if cc:
             message["Cc"] = ", ".join(cc)
+        if bcc:
+            message["Bcc"] = ", ".join(bcc)
 
         # Add reply headers if this is a response
         if thread_id and message_id:
@@ -957,3 +1121,716 @@ class GmailTools(Toolkit):
         if attachments:
             return f"{body}\n\nAttachments: {', '.join(attachments)}"
         return body
+
+    def _decode_body_data(self, data: str) -> str:
+        try:
+            raw_bytes = base64.urlsafe_b64decode(data)
+        except Exception:
+            return ""
+        try:
+            return raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return raw_bytes.decode("latin-1")
+
+    def _resolve_label_ids(self, label_names: List[str]) -> List[str]:
+        service = self.service
+        labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+        lookup = {lbl["name"].lower(): lbl["id"] for lbl in labels}
+        # Fall back to the raw name (allows system label IDs like INBOX, UNREAD)
+        return [lookup.get(name.lower(), name) for name in label_names]
+
+    def _batch_get(
+        self,
+        ids: List[str],
+        request_builder: Callable,
+    ) -> List[Dict]:
+        service = self.service
+        results: List[Dict] = []
+
+        def callback(request_id: str, response: Any, exception: Any) -> None:
+            if exception:
+                log_error(f"Batch request {request_id} failed: {exception}")
+                results.append({"id": request_id, "error": str(exception)})
+            else:
+                results.append(response)
+
+        for i in range(0, len(ids), _BATCH_MAX):
+            chunk = ids[i : i + _BATCH_MAX]
+            batch = service.new_batch_http_request(callback=callback)  # type: ignore
+            for item_id in chunk:
+                batch.add(request_builder(item_id), request_id=item_id)
+            batch.execute()
+        return results
+
+    def _download_attachment_file(self, message_id: str, attachment_id: str, filename: str) -> str:
+        service = self.service
+        att = (
+            service.users().messages().attachments().get(userId="me", messageId=message_id, id=attachment_id).execute()  # type: ignore
+        )
+        data = base64.urlsafe_b64decode(att["data"])
+        if self.attachment_dir:
+            dest_dir = Path(self.attachment_dir)
+        else:
+            if self._temp_dir is None:
+                self._temp_dir = tempfile.mkdtemp()
+            dest_dir = Path(self._temp_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        file_path = dest_dir / filename
+        file_path.write_bytes(data)
+        log_debug(f"Downloaded attachment: {file_path}")
+        return str(file_path)
+
+    def _format_message(self, msg_data: Dict, include_body: bool = True) -> Dict[str, Any]:
+        raw_headers = msg_data.get("payload", {}).get("headers", [])
+        headers = {h["name"].lower(): h["value"] for h in raw_headers}
+        result: Dict[str, Any] = {
+            "id": msg_data["id"],
+            "threadId": msg_data.get("threadId"),
+            "labelIds": msg_data.get("labelIds", []),
+            "snippet": msg_data.get("snippet", ""),
+            "subject": headers.get("subject"),
+            "from": headers.get("from"),
+            "to": headers.get("to"),
+            "date": headers.get("date"),
+            "cc": headers.get("cc"),
+            "inReplyTo": headers.get("in-reply-to"),
+            "references": headers.get("references"),
+        }
+        if include_body and "payload" in msg_data:
+            body, attachments = self._extract_body(msg_data["payload"])
+            result["body"] = body
+            if attachments:
+                result["attachments"] = attachments
+        return result
+
+    def _extract_body(self, payload: Dict) -> Tuple[str, List[Dict]]:
+        mime_type = payload.get("mimeType", "")
+
+        if "parts" not in payload:
+            data = payload.get("body", {}).get("data")
+            if not data:
+                return "", []
+            text = self._decode_body_data(data)
+            if "html" in mime_type and not self.include_html:
+                text = re.sub(r"<[^>]+>", "", text)
+                text = "\n".join(s for s in (line.strip() for line in text.splitlines()) if s)
+            if self.max_body_length and len(text) > self.max_body_length:
+                text = text[: self.max_body_length] + "... [truncated]"
+            return text, []
+
+        plain_parts: List[str] = []
+        html_parts: List[str] = []
+        attachments: List[Dict] = []
+
+        for part in payload["parts"]:
+            part_mime = part.get("mimeType", "")
+
+            if part_mime.startswith("multipart/"):
+                sub_body, sub_att = self._extract_body(part)
+                if sub_body:
+                    plain_parts.append(sub_body)
+                attachments.extend(sub_att)
+                continue
+
+            part_body = part.get("body", {})
+            if part_body.get("attachmentId"):
+                attachments.append(
+                    {
+                        "filename": part.get("filename", "unknown"),
+                        "mimeType": part_mime,
+                        "size": part_body.get("size", 0),
+                        "attachmentId": part_body["attachmentId"],
+                    }
+                )
+                continue
+
+            data = part_body.get("data")
+            if not data:
+                continue
+
+            if part_mime == "text/plain":
+                plain_parts.append(self._decode_body_data(data))
+            elif part_mime == "text/html":
+                html_parts.append(self._decode_body_data(data))
+
+        if plain_parts:
+            body = "\n".join(plain_parts)
+        elif html_parts:
+            html = "\n".join(html_parts)
+            if self.include_html:
+                body = html
+            else:
+                body = re.sub(r"<[^>]+>", "", html)
+                body = "\n".join(s for s in (line.strip() for line in body.splitlines()) if s)
+        else:
+            body = ""
+
+        if self.max_body_length and len(body) > self.max_body_length:
+            body = body[: self.max_body_length] + "... [truncated]"
+        return body, attachments
+
+    # -- New tools ----------------------------------------------------------------
+
+    @authenticate
+    def get_message(self, message_id: str, download_attachments: bool = False) -> str:
+        """Get a single email message by its ID with full content including headers, body, and attachment metadata.
+
+        Args:
+            message_id: The Gmail message ID.
+            download_attachments: If True, download attachments to disk and include file paths in the response.
+
+        Returns:
+            JSON string with message content including id, threadId, subject, from, to, date, body, and attachments.
+        """
+        try:
+            service = self.service
+            raw = service.users().messages().get(userId="me", id=message_id, format="full").execute()  # type: ignore
+            result = self._format_message(raw)
+
+            if download_attachments and result.get("attachments"):
+                for att in result["attachments"]:
+                    if att.get("attachmentId"):
+                        att["localPath"] = self._download_attachment_file(
+                            message_id, att["attachmentId"], att["filename"]
+                        )
+
+            return json.dumps(result)
+        except HttpError as e:
+            log_error(f"Failed to get message {message_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def get_messages_batch(self, message_ids: str, download_attachments: bool = False) -> str:
+        """Get multiple email messages by their IDs in a single batch request. Much faster than fetching one at a time.
+
+        Args:
+            message_ids: Comma-separated list of Gmail message IDs (max 100).
+            download_attachments: If True, download attachments to disk.
+
+        Returns:
+            JSON string with list of messages.
+        """
+        try:
+            ids = [mid.strip() for mid in message_ids.split(",") if mid.strip()]
+            if len(ids) > _BATCH_MAX:
+                return json.dumps({"error": f"Maximum {_BATCH_MAX} messages per batch request"})
+
+            service = self.service
+            raw_messages = self._batch_get(
+                ids,
+                lambda msg_id: service.users().messages().get(userId="me", id=msg_id, format="full"),  # type: ignore
+            )
+            messages = []
+            for m in raw_messages:
+                if "error" in m:
+                    messages.append(m)
+                    continue
+                formatted = self._format_message(m)
+                if download_attachments and formatted.get("attachments"):
+                    for att in formatted["attachments"]:
+                        if att.get("attachmentId"):
+                            att["localPath"] = self._download_attachment_file(
+                                m["id"], att["attachmentId"], att["filename"]
+                            )
+                messages.append(formatted)
+
+            return json.dumps({"messages": messages})
+        except HttpError as e:
+            log_error(f"Batch get messages failed: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def get_profile(self) -> str:
+        """Get the authenticated user's Gmail profile including email address, total messages, and history ID.
+
+        Returns:
+            JSON string with profile details: emailAddress, messagesTotal, threadsTotal, historyId.
+        """
+        try:
+            service = self.service
+            profile = service.users().getProfile(userId="me").execute()  # type: ignore
+            return json.dumps(profile)
+        except HttpError as e:
+            log_error(f"Failed to get profile: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def get_thread(self, thread_id: str) -> str:
+        """Get all messages in a Gmail thread as structured JSON.
+
+        Args:
+            thread_id: The Gmail thread ID.
+
+        Returns:
+            JSON string with thread metadata and all messages in chronological order.
+        """
+        try:
+            service = self.service
+            thread = service.users().threads().get(userId="me", id=thread_id).execute()  # type: ignore
+            messages = [self._format_message(m) for m in thread.get("messages", [])]
+            return json.dumps(
+                {
+                    "threadId": thread_id,
+                    "messages": messages,
+                    "messageCount": len(messages),
+                }
+            )
+        except HttpError as e:
+            log_error(f"Failed to get thread {thread_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def search_threads(self, query: str, count: int = 10) -> str:
+        """Search Gmail threads using Gmail query syntax. Returns thread IDs and snippets, not full message content.
+
+        Args:
+            query: Gmail search query string. Supports all Gmail operators like from:, to:, subject:, is:unread, etc.
+            count: Maximum number of threads to return (default 10, max 500).
+
+        Returns:
+            JSON string with list of matching threads with their IDs and snippets.
+        """
+        try:
+            service = self.service
+            max_results = min(count, 500)
+            results = service.users().threads().list(userId="me", q=query, maxResults=max_results).execute()  # type: ignore
+            threads = results.get("threads", [])
+            return json.dumps(
+                {
+                    "threads": threads,
+                    "resultSizeEstimate": results.get("resultSizeEstimate", len(threads)),
+                }
+            )
+        except HttpError as e:
+            log_error(f"Thread search failed: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def get_threads_batch(self, thread_ids: str) -> str:
+        """Get multiple threads by their IDs in a single batch request. Each thread includes all its messages.
+
+        Args:
+            thread_ids: Comma-separated list of Gmail thread IDs (max 100).
+
+        Returns:
+            JSON string with list of threads, each containing all their messages.
+        """
+        try:
+            ids = [tid.strip() for tid in thread_ids.split(",") if tid.strip()]
+            if len(ids) > _BATCH_MAX:
+                return json.dumps({"error": f"Maximum {_BATCH_MAX} threads per batch request"})
+
+            service = self.service
+            raw_threads = self._batch_get(ids, lambda tid: service.users().threads().get(userId="me", id=tid))  # type: ignore
+            threads = []
+            for t in raw_threads:
+                if "error" in t:
+                    threads.append(t)
+                    continue
+                messages = [self._format_message(m) for m in t.get("messages", [])]
+                threads.append(
+                    {
+                        "threadId": t["id"],
+                        "messages": messages,
+                        "messageCount": len(messages),
+                    }
+                )
+            return json.dumps({"threads": threads})
+        except HttpError as e:
+            log_error(f"Batch get threads failed: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def modify_thread_labels(
+        self,
+        thread_id: str,
+        add_labels: Optional[str] = None,
+        remove_labels: Optional[str] = None,
+    ) -> str:
+        """Add or remove labels from an entire thread (all messages in the conversation).
+
+        Args:
+            thread_id: The Gmail thread ID.
+            add_labels: Comma-separated label names to add (e.g. 'STARRED,Important').
+            remove_labels: Comma-separated label names to remove (e.g. 'UNREAD,INBOX').
+
+        Returns:
+            JSON string with updated thread label state.
+        """
+        try:
+            body: Dict[str, List[str]] = {}
+            if add_labels:
+                names = [n.strip() for n in add_labels.split(",") if n.strip()]
+                body["addLabelIds"] = self._resolve_label_ids(names)
+            if remove_labels:
+                names = [n.strip() for n in remove_labels.split(",") if n.strip()]
+                body["removeLabelIds"] = self._resolve_label_ids(names)
+
+            if not body:
+                return json.dumps({"error": "Must specify add_labels or remove_labels"})
+
+            service = self.service
+            result = service.users().threads().modify(userId="me", id=thread_id, body=body).execute()  # type: ignore
+            return json.dumps({"threadId": result["id"], "labelIds": result.get("labelIds", [])})
+        except HttpError as e:
+            log_error(f"Failed to modify labels on thread {thread_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def trash_thread(self, thread_id: str) -> str:
+        """Move an entire thread to the trash. All messages in the conversation will be trashed.
+
+        Args:
+            thread_id: The Gmail thread ID to trash.
+
+        Returns:
+            JSON string confirming the thread was trashed.
+        """
+        try:
+            service = self.service
+            service.users().threads().trash(userId="me", id=thread_id).execute()  # type: ignore
+            return json.dumps({"threadId": thread_id, "action": "trashed"})
+        except HttpError as e:
+            log_error(f"Failed to trash thread {thread_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def draft_email(
+        self,
+        action: str,
+        to: Optional[str] = None,
+        subject: Optional[str] = None,
+        body: Optional[str] = None,
+        cc: Optional[str] = None,
+        bcc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
+        draft_id: Optional[str] = None,
+        count: int = 20,
+    ) -> str:
+        """Manage email drafts: create, update, send, get, or list.
+        to, cc, and bcc are comma-separated email addresses.
+
+        Args:
+            action: One of "create", "update", "send", "get", "list".
+            to: Comma-separated recipient emails (required for create/update).
+            subject: Email subject (required for create/update).
+            body: Email body content (required for create/update).
+            cc: Comma-separated CC emails (optional, for create/update).
+            bcc: Comma-separated BCC emails (optional, for create/update).
+            attachments: File path(s) for attachments (optional, for create/update).
+            draft_id: Draft ID (required for update, send, get).
+            count: Maximum drafts to return for list action (default 20, max 500).
+
+        Returns:
+            JSON string with draft details or list of drafts.
+        """
+        try:
+            service = self.service
+
+            if action == "list":
+                max_results = min(count, 500)
+                results = service.users().drafts().list(userId="me", maxResults=max_results).execute()  # type: ignore
+                drafts = results.get("drafts", [])
+                return json.dumps(
+                    {"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))}
+                )
+
+            if action == "get":
+                if not draft_id:
+                    return json.dumps({"error": "draft_id is required for get action"})
+                draft = service.users().drafts().get(userId="me", id=draft_id, format="full").execute()  # type: ignore
+                msg_data = draft.get("message", {})
+                return json.dumps(
+                    {
+                        "draftId": draft["id"],
+                        "message": self._format_message(msg_data) if msg_data else {},
+                    }
+                )
+
+            if action == "send":
+                if not draft_id:
+                    return json.dumps({"error": "draft_id is required for send action"})
+                result = service.users().drafts().send(userId="me", body={"id": draft_id}).execute()  # type: ignore
+                return json.dumps(
+                    {
+                        "id": result.get("id"),
+                        "threadId": result.get("threadId"),
+                        "labelIds": result.get("labelIds", []),
+                        "action": "sent",
+                    }
+                )
+
+            if action in ("create", "update"):
+                if not to or not subject or body is None:
+                    return json.dumps({"error": "to, subject, and body are required for create/update"})
+                if action == "update" and not draft_id:
+                    return json.dumps({"error": "draft_id is required for update action"})
+                self._validate_email_params(to, subject, body)
+                attachment_files: List[str] = []
+                if attachments:
+                    attachment_files = [attachments] if isinstance(attachments, str) else list(attachments)
+                    for fp in attachment_files:
+                        p = Path(fp)
+                        try:
+                            size = p.stat().st_size
+                        except FileNotFoundError:
+                            raise ValueError(f"Attachment file not found: {fp}")
+                        if size > 25 * 1024 * 1024:
+                            raise ValueError(f"Attachment exceeds 25MB limit: {fp}")
+
+                mime = self._create_message(
+                    to=[t.strip() for t in to.split(",")],
+                    subject=subject,
+                    body=body.replace("\n", "<br>"),
+                    cc=[c.strip() for c in cc.split(",")] if cc else None,
+                    bcc=[b.strip() for b in bcc.split(",")] if bcc else None,
+                    attachments=attachment_files or None,
+                )
+
+                if action == "update":
+                    result = service.users().drafts().update(userId="me", id=draft_id, body={"message": mime}).execute()  # type: ignore
+                    return json.dumps({"draftId": result["id"], "action": "updated"})
+                else:
+                    draft = service.users().drafts().create(userId="me", body={"message": mime}).execute()  # type: ignore
+                    return json.dumps({"draftId": draft["id"], "action": "created"})
+
+            return json.dumps({"error": f"Invalid action: {action}. Must be one of: create, update, send, get, list"})
+        except HttpError as e:
+            log_error(f"Draft operation '{action}' failed: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
+
+    @authenticate
+    def list_labels(self) -> str:
+        """List all Gmail labels (system and custom) with message and thread counts.
+
+        Returns:
+            JSON string with list of label objects including name, type, and message/thread counts.
+        """
+        try:
+            service = self.service
+            results = service.users().labels().list(userId="me").execute()  # type: ignore
+            labels = results.get("labels", [])
+
+            label_ids = [lbl["id"] for lbl in labels]
+            detailed_labels = self._batch_get(label_ids, lambda lid: service.users().labels().get(userId="me", id=lid))  # type: ignore
+            formatted = []
+            for detail in detailed_labels:
+                if "error" in detail:
+                    continue
+                formatted.append(
+                    {
+                        "id": detail["id"],
+                        "name": detail["name"],
+                        "type": detail.get("type", "system"),
+                        "messagesTotal": detail.get("messagesTotal", 0),
+                        "messagesUnread": detail.get("messagesUnread", 0),
+                        "threadsTotal": detail.get("threadsTotal", 0),
+                        "threadsUnread": detail.get("threadsUnread", 0),
+                    }
+                )
+            return json.dumps({"labels": formatted, "count": len(formatted)})
+        except HttpError as e:
+            log_error(f"Failed to list labels: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def modify_labels(
+        self,
+        message_id: str,
+        add_labels: Optional[str] = None,
+        remove_labels: Optional[str] = None,
+    ) -> str:
+        """Add or remove labels from a single message. Use for marking read/unread, starring, categorizing, etc.
+        For example: add_labels="STARRED" or remove_labels="UNREAD" to mark as read.
+
+        Args:
+            message_id: The Gmail message ID.
+            add_labels: Comma-separated label names to add (e.g. 'STARRED,Work').
+            remove_labels: Comma-separated label names to remove (e.g. 'UNREAD,INBOX').
+
+        Returns:
+            JSON string with updated message label state.
+        """
+        try:
+            body: Dict[str, List[str]] = {}
+            if add_labels:
+                names = [n.strip() for n in add_labels.split(",") if n.strip()]
+                body["addLabelIds"] = self._resolve_label_ids(names)
+            if remove_labels:
+                names = [n.strip() for n in remove_labels.split(",") if n.strip()]
+                body["removeLabelIds"] = self._resolve_label_ids(names)
+
+            if not body:
+                return json.dumps({"error": "Must specify add_labels or remove_labels"})
+
+            service = self.service
+            result = service.users().messages().modify(userId="me", id=message_id, body=body).execute()  # type: ignore
+            return json.dumps({"id": result["id"], "labelIds": result.get("labelIds", [])})
+        except HttpError as e:
+            log_error(f"Failed to modify labels on message {message_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def batch_modify_labels(
+        self,
+        message_ids: str,
+        add_labels: Optional[str] = None,
+        remove_labels: Optional[str] = None,
+    ) -> str:
+        """Apply label changes to multiple messages at once. Much more efficient than modifying one at a time.
+
+        Args:
+            message_ids: Comma-separated list of Gmail message IDs (max 1000).
+            add_labels: Comma-separated label names to add.
+            remove_labels: Comma-separated label names to remove.
+
+        Returns:
+            JSON string confirming the batch operation.
+        """
+        try:
+            ids = [mid.strip() for mid in message_ids.split(",") if mid.strip()]
+            if len(ids) > 1000:
+                return json.dumps({"error": "Maximum 1000 messages per batch modify"})
+
+            body: Dict[str, Any] = {"ids": ids}
+            if add_labels:
+                names = [n.strip() for n in add_labels.split(",") if n.strip()]
+                body["addLabelIds"] = self._resolve_label_ids(names)
+            if remove_labels:
+                names = [n.strip() for n in remove_labels.split(",") if n.strip()]
+                body["removeLabelIds"] = self._resolve_label_ids(names)
+
+            if "addLabelIds" not in body and "removeLabelIds" not in body:
+                return json.dumps({"error": "Must specify add_labels or remove_labels"})
+
+            service = self.service
+            service.users().messages().batchModify(userId="me", body=body).execute()  # type: ignore
+            return json.dumps(
+                {
+                    "modified": len(ids),
+                    "addedLabels": body.get("addLabelIds", []),
+                    "removedLabels": body.get("removeLabelIds", []),
+                }
+            )
+        except HttpError as e:
+            log_error(f"Batch modify labels failed: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def manage_label(
+        self,
+        action: str,
+        name: str,
+        new_name: Optional[str] = None,
+        confirm: bool = False,
+    ) -> str:
+        """Create, rename, or delete a custom label.
+
+        Args:
+            action: One of "create", "rename", "delete".
+            name: Label name (target label for all actions).
+            new_name: New label name (required for rename).
+            confirm: Must be True to delete (safety guard).
+
+        Returns:
+            JSON string with label operation result.
+        """
+        try:
+            service = self.service
+
+            if action == "create":
+                label = (
+                    service.users()  # type: ignore
+                    .labels()
+                    .create(
+                        userId="me",
+                        body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+                    )
+                    .execute()
+                )
+                return json.dumps({"id": label["id"], "name": label["name"], "action": "created"})
+
+            if action == "rename":
+                if not new_name:
+                    return json.dumps({"error": "new_name is required for rename action"})
+                labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+                lower = name.lower()
+                label_id = next((lbl["id"] for lbl in labels if lbl["name"].lower() == lower), None)
+                if not label_id:
+                    return json.dumps({"error": f"Label '{name}' not found"})
+                result = service.users().labels().update(userId="me", id=label_id, body={"name": new_name}).execute()  # type: ignore
+                return json.dumps({"id": result["id"], "name": result["name"], "action": "renamed"})
+
+            if action == "delete":
+                if not confirm:
+                    return json.dumps(
+                        {
+                            "warning": f"This will permanently delete the label '{name}' from all emails.",
+                            "action_required": "Set confirm=True to proceed.",
+                        }
+                    )
+                labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+                lower = name.lower()
+                target = None
+                for label in labels:
+                    if label["name"].lower() == lower:
+                        target = label
+                        break
+                if not target:
+                    return json.dumps({"error": f"Label '{name}' not found"})
+                if target.get("type") != "user":
+                    return json.dumps(
+                        {"error": f"Cannot delete system label '{name}'. Only custom labels can be deleted."}
+                    )
+                service.users().labels().delete(userId="me", id=target["id"]).execute()  # type: ignore
+                return json.dumps({"label": name, "action": "deleted"})
+
+            return json.dumps({"error": f"Invalid action: {action}. Must be one of: create, rename, delete"})
+        except HttpError as e:
+            log_error(f"Label operation '{action}' failed: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def trash_message(self, message_id: str, undo: bool = False) -> str:
+        """Move a message to trash, or restore it from trash with undo=True.
+
+        Args:
+            message_id: The Gmail message ID.
+            undo: If True, restore the message from trash instead of trashing it.
+
+        Returns:
+            JSON string confirming the action.
+        """
+        try:
+            service = self.service
+            if undo:
+                service.users().messages().untrash(userId="me", id=message_id).execute()  # type: ignore
+                return json.dumps({"id": message_id, "action": "untrashed"})
+            else:
+                service.users().messages().trash(userId="me", id=message_id).execute()  # type: ignore
+                return json.dumps({"id": message_id, "action": "trashed"})
+        except HttpError as e:
+            action_name = "untrash" if undo else "trash"
+            log_error(f"Failed to {action_name} message {message_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def download_attachment(self, message_id: str, attachment_id: str, filename: str) -> str:
+        """Download an email attachment to disk. Use get_message first to find attachment IDs.
+
+        Args:
+            message_id: The Gmail message ID containing the attachment.
+            attachment_id: The attachment ID from the message's attachment metadata.
+            filename: The filename to save the attachment as.
+
+        Returns:
+            JSON string with the local file path where the attachment was saved.
+        """
+        try:
+            local_path = self._download_attachment_file(message_id, attachment_id, filename)
+            return json.dumps({"localPath": local_path, "filename": filename, "messageId": message_id})
+        except HttpError as e:
+            log_error(f"Failed to download attachment from {message_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
