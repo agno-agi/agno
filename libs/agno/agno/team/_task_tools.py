@@ -29,7 +29,7 @@ from agno.run.team import (
     TaskCreatedEvent,
     TaskUpdatedEvent,
     TeamRunOutput,
-    TeamRunOutputEvent,
+    TeamRunOutputEvent
 )
 from agno.session import TeamSession
 from agno.team.task import TaskList, TaskStatus, save_task_list
@@ -93,7 +93,7 @@ def _get_task_management_tools(
         description: str = "",
         assignee: str = "",
         depends_on: Optional[List[str]] = None,
-    ) -> Iterator[Union[TeamRunOutputEvent, str]]:
+    ) -> Iterator[Union[TaskCreatedEvent, str]]:
         """Create a new task for the team to work on.
 
         Args:
@@ -145,7 +145,7 @@ def _get_task_management_tools(
         task_id: str,
         status: str,
         result: Optional[str] = None,
-    ) -> Iterator[Union[TeamRunOutputEvent, str]]:
+    ) -> Iterator[Union[TaskUpdatedEvent, str]]:
         """Update the status of a task. Use this to mark tasks you handle yourself as completed.
 
         Args:

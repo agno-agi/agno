@@ -723,22 +723,21 @@ def _run_tasks_stream(
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
 
-            # Convert task list to TaskData for frontend
-            task_data_list = [
-                TaskData(
-                    id=t.id,
-                    title=t.title,
-                    description=t.description,
-                    status=t.status.value,
-                    assignee=t.assignee,
-                    dependencies=t.dependencies,
-                    result=t.result,
-                )
-                for t in task_list.tasks
-            ]
-
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for frontend
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
@@ -2520,22 +2519,21 @@ async def _arun_tasks_stream(
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
 
-            # Convert task list to TaskData for frontend
-            task_data_list = [
-                TaskData(
-                    id=t.id,
-                    title=t.title,
-                    description=t.description,
-                    status=t.status.value,
-                    assignee=t.assignee,
-                    dependencies=t.dependencies,
-                    result=t.result,
-                )
-                for t in task_list.tasks
-            ]
-
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for creating detailed events
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
