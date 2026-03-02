@@ -251,7 +251,9 @@ def build_system_blocks(
         b: Dict[str, Any] = {"text": prompt_block.text, "type": "text"}
         if cache_system_prompt and prompt_block.cache:
             # Explicit block-level ttl wins; None falls back to model-level extended_cache_time
-            effective_ttl = prompt_block.ttl if prompt_block.ttl is not None else ("1h" if extended_cache_time else "5m")
+            effective_ttl = (
+                prompt_block.ttl if prompt_block.ttl is not None else ("1h" if extended_cache_time else "5m")
+            )
             cc = {"type": "ephemeral"}
             if effective_ttl == "1h":
                 cc["ttl"] = "1h"

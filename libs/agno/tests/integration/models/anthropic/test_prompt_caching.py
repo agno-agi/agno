@@ -14,9 +14,9 @@ from unittest.mock import Mock
 import pytest
 
 from agno.agent import Agent, RunOutput
-from agno.session.agent import AgentSession
 from agno.models.anthropic import Claude
 from agno.models.message import Message, SystemPromptBlock
+from agno.session.agent import AgentSession
 from agno.utils.media import download_file
 
 
@@ -323,8 +323,22 @@ def test_cache_tools_flag():
     """Test that cache_tools=True adds cache_control to the last tool."""
     claude = Claude(cache_system_prompt=True, cache_tools=True)
     tools = [
-        {"type": "function", "function": {"name": "tool_a", "description": "A", "parameters": {"type": "object", "properties": {}, "required": []}}},
-        {"type": "function", "function": {"name": "tool_b", "description": "B", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_a",
+                "description": "A",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_b",
+                "description": "B",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
     ]
     kwargs = claude._prepare_request_kwargs("System.", tools=tools)
 
@@ -339,7 +353,14 @@ def test_cache_tools_disabled():
     """Test that cache_tools=False leaves tools untouched."""
     claude = Claude(cache_system_prompt=True, cache_tools=False)
     tools = [
-        {"type": "function", "function": {"name": "tool_a", "description": "A", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_a",
+                "description": "A",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
     ]
     kwargs = claude._prepare_request_kwargs("System.", tools=tools)
 
@@ -364,7 +385,14 @@ def test_cache_tools_single_tool():
     """cache_tools=True with a single tool should add cache_control to that tool."""
     claude = Claude(cache_system_prompt=True, cache_tools=True)
     tools = [
-        {"type": "function", "function": {"name": "only_tool", "description": "Solo", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {
+            "type": "function",
+            "function": {
+                "name": "only_tool",
+                "description": "Solo",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
     ]
     kwargs = claude._prepare_request_kwargs("System.", tools=tools)
 
@@ -423,8 +451,22 @@ def test_vertexai_cache_tools():
 
     claude = VertexClaude(cache_system_prompt=True, cache_tools=True)
     tools = [
-        {"type": "function", "function": {"name": "tool_a", "description": "A", "parameters": {"type": "object", "properties": {}, "required": []}}},
-        {"type": "function", "function": {"name": "tool_b", "description": "B", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_a",
+                "description": "A",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_b",
+                "description": "B",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
     ]
     kwargs = claude._prepare_request_kwargs("System.", tools=tools)
 
@@ -438,8 +480,22 @@ def test_aws_cache_tools():
 
     claude = AwsClaude(cache_system_prompt=True, cache_tools=True)
     tools = [
-        {"type": "function", "function": {"name": "tool_a", "description": "A", "parameters": {"type": "object", "properties": {}, "required": []}}},
-        {"type": "function", "function": {"name": "tool_b", "description": "B", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_a",
+                "description": "A",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_b",
+                "description": "B",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
     ]
     kwargs = claude._prepare_request_kwargs("System.", tools=tools)
 

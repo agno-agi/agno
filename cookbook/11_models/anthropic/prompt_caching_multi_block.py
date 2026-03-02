@@ -51,9 +51,13 @@ agent = Agent(
 # First run creates the cache
 response = agent.run("What's the best way to structure a large FastAPI project?")
 if response and response.metrics:
-    print(f"Run 1 - cache write: {response.metrics.cache_write_tokens}, cache read: {response.metrics.cache_read_tokens}")
+    print(
+        f"Run 1 - cache write: {response.metrics.cache_write_tokens}, cache read: {response.metrics.cache_read_tokens}"
+    )
 
 # Second run reads from cache
 response = agent.run("How should I handle database migrations in that setup?")
 if response and response.metrics:
-    print(f"Run 2 - cache write: {response.metrics.cache_write_tokens}, cache read: {response.metrics.cache_read_tokens}")
+    print(
+        f"Run 2 - cache write: {response.metrics.cache_write_tokens}, cache read: {response.metrics.cache_read_tokens}"
+    )
