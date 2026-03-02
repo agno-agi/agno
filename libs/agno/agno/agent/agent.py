@@ -315,8 +315,8 @@ class Agent:
     store_history_messages: bool = True
 
     # --- System message settings ---
-    # Provide the system message as a string or function
-    system_message: Optional[Union[str, Callable, Message]] = None
+    # Provide the system message as a string, function, Message, or List[SystemPromptBlock]
+    system_message: Optional[Union[str, List[SystemPromptBlock], Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
     # Provide the introduction as the first message from the Agent
@@ -7384,7 +7384,8 @@ class Agent:
                     metadata=metadata,
                 )
 
-            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
+            # type: ignore
+            return Message(role=self.system_message_role, content=sys_message_content)
 
         # 2. If build_context is False, return None.
         if not self.build_context:
@@ -7413,13 +7414,12 @@ class Agent:
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
-        # 3.2 Build lists of additional information, split into static and dynamic
-        static_additional_info: List[str] = []
-        dynamic_additional_info: List[str] = []
-        # 3.2.1 Add instructions for using markdown (static)
+        # 3.2 Build a list of additional information for the system message
+        additional_information: List[str] = []
+        # 3.2.1 Add instructions for using markdown
         if self.markdown and output_schema is None:
-            static_additional_info.append("Use markdown to format your answers.")
-        # 3.2.2 Add the current datetime (dynamic)
+            additional_information.append("Use markdown to format your answers.")
+        # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
             from datetime import datetime
 
@@ -7435,9 +7435,9 @@ class Agent:
 
             time = datetime.now(tz) if tz else datetime.now()
 
-            dynamic_additional_info.append(f"The current time is {time}.")
+            additional_information.append(f"The current time is {time}.")
 
-        # 3.2.3 Add the current location (dynamic)
+        # 3.2.3 Add the current location
         if self.add_location_to_context:
             from agno.utils.location import get_location
 
@@ -7454,18 +7454,18 @@ class Agent:
                     )
                 )
                 if location_str:
-                    dynamic_additional_info.append(f"Your approximate location is: {location_str}.")
+                    additional_information.append(f"Your approximate location is: {location_str}.")
 
-        # 3.2.4 Add agent name if provided (static)
+        # 3.2.4 Add agent name if provided
         if self.name is not None and self.add_name_to_context:
-            static_additional_info.append(f"Your name is: {self.name}.")
+            additional_information.append(f"Your name is: {self.name}.")
 
-        # 3.2.5 Add information about agentic filters if enabled (static)
+        # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = self.knowledge.get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
-                static_additional_info.append(
+                additional_information.append(
                     dedent(
                         f"""
                     The knowledge base contains documents with these metadata filters: {valid_filters_str}.
@@ -7488,11 +7488,7 @@ class Agent:
                 )
 
         # 3.3 Build the default system message for the Agent.
-        # Static content comes first (cacheable), then dynamic content (per-request).
         system_message_content: str = ""
-
-        # -- STATIC SECTION --
-
         # 3.3.1 First add the Agent description if provided
         if self.description is not None:
             system_message_content += f"{self.description}\n"
@@ -7508,10 +7504,10 @@ class Agent:
             else:
                 system_message_content += "\n" + instructions[0]
             system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add static additional information
-        if len(static_additional_info) > 0:
+        # 3.3.6 Add additional information
+        if len(additional_information) > 0:
             system_message_content += "<additional_information>"
-            for _ai in static_additional_info:
+            for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
         # 3.3.7 Then add instructions for the tools
@@ -7529,48 +7525,13 @@ class Agent:
                 metadata=metadata,
             )
 
-        # 3.3.8 Then add the expected output
+        # 3.3.7 Then add the expected output
         if self.expected_output is not None:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.9 Then add additional context
+        # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
-
-        # 3.3.10 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(tools)
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-
-        # 3.3.11 Add the JSON output prompt if output_schema is provided and the model does not support
-        # native structured outputs or JSON schema outputs, or if use_json_mode is True
-        if (
-            output_schema is not None
-            and self.parser_model is None
-            and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
-            )
-        ):
-            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
-
-        # 3.3.12 Add the response model format prompt if output_schema is provided (Pydantic only)
-        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
-            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
-
-        # Snapshot the static content before appending dynamic sections
-        static_content = system_message_content
-
-        # -- DYNAMIC SECTION --
-        # Everything below changes between requests and should NOT be cached.
-
-        # 3.3.13 Add dynamic additional information (datetime, location)
-        if len(dynamic_additional_info) > 0:
-            system_message_content += "<dynamic_context>"
-            for _ai in dynamic_additional_info:
-                system_message_content += f"\n- {_ai}"
-            system_message_content += "\n</dynamic_context>\n\n"
-
-        # 3.3.14 Then add memories to the system prompt
+        # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
             if not user_id:
@@ -7611,7 +7572,7 @@ class Agent:
                     "</updating_user_memories>\n\n"
                 )
 
-        # 3.3.15 Then add cultural knowledge to the system prompt
+        # 3.3.10 Then add cultural knowledge to the system prompt
         if self.add_culture_to_context:
             _culture_manager_not_set = None
             if not self.culture_manager:
@@ -7672,7 +7633,7 @@ class Agent:
                     "</contributing_to_culture>\n\n"
                 )
 
-        # 3.3.16 Then add a summary of the interaction to the system prompt
+        # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
             system_message_content += "Here is a brief summary of your previous interactions:\n\n"
             system_message_content += "<summary_of_previous_interactions>\n"
@@ -7683,26 +7644,36 @@ class Agent:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        # 3.3.17 Add the session state to the system message
+        # 3.3.12 Add the system message from the Model
+        system_message_from_model = self.model.get_system_message_for_model(tools)
+        if system_message_from_model is not None:
+            system_message_content += system_message_from_model
+
+        # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # or if use_json_mode is True
+        if (
+            output_schema is not None
+            and self.parser_model is None
+            and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and (not self.use_json_mode or self.structured_outputs is True)
+            )
+        ):
+            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+
+        # 3.3.14 Add the response model format prompt if output_schema is provided (Pydantic only)
+        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
+            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
+
+        # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
-        # Build system_prompt_blocks when there's a meaningful static/dynamic split
-        dynamic_content = system_message_content[len(static_content):]
-        system_blocks: Optional[List[SystemPromptBlock]] = None
-        if static_content.strip() and dynamic_content.strip():
-            system_blocks = [
-                SystemPromptBlock(text=static_content.strip(), cache=True),
-                SystemPromptBlock(text=dynamic_content.strip(), cache=False),
-            ]
-
         # Return the system message
-        if not system_message_content:
-            return None
-        return Message(
-            role=self.system_message_role,  # type: ignore
-            content=system_message_content.strip(),
-            system_prompt_blocks=system_blocks,
+        return (
+            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
+            if system_message_content
+            else None
         )
 
     async def aget_system_message(
@@ -7767,7 +7738,8 @@ class Agent:
                     session_state=session_state,
                 )
 
-            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
+            # type: ignore
+            return Message(role=self.system_message_role, content=sys_message_content)
 
         # 2. If build_context is False, return None.
         if not self.build_context:
@@ -7796,13 +7768,12 @@ class Agent:
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
-        # 3.2 Build lists of additional information, split into static and dynamic
-        static_additional_info: List[str] = []
-        dynamic_additional_info: List[str] = []
-        # 3.2.1 Add instructions for using markdown (static)
+        # 3.2 Build a list of additional information for the system message
+        additional_information: List[str] = []
+        # 3.2.1 Add instructions for using markdown
         if self.markdown and output_schema is None:
-            static_additional_info.append("Use markdown to format your answers.")
-        # 3.2.2 Add the current datetime (dynamic)
+            additional_information.append("Use markdown to format your answers.")
+        # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
             from datetime import datetime
 
@@ -7818,9 +7789,9 @@ class Agent:
 
             time = datetime.now(tz) if tz else datetime.now()
 
-            dynamic_additional_info.append(f"The current time is {time}.")
+            additional_information.append(f"The current time is {time}.")
 
-        # 3.2.3 Add the current location (dynamic)
+        # 3.2.3 Add the current location
         if self.add_location_to_context:
             from agno.utils.location import get_location
 
@@ -7837,18 +7808,18 @@ class Agent:
                     )
                 )
                 if location_str:
-                    dynamic_additional_info.append(f"Your approximate location is: {location_str}.")
+                    additional_information.append(f"Your approximate location is: {location_str}.")
 
-        # 3.2.4 Add agent name if provided (static)
+        # 3.2.4 Add agent name if provided
         if self.name is not None and self.add_name_to_context:
-            static_additional_info.append(f"Your name is: {self.name}.")
+            additional_information.append(f"Your name is: {self.name}.")
 
-        # 3.2.5 Add information about agentic filters if enabled (static)
+        # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = await self.knowledge.async_get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
-                static_additional_info.append(
+                additional_information.append(
                     dedent(
                         f"""
                     The knowledge base contains documents with these metadata filters: {valid_filters_str}.
@@ -7871,11 +7842,7 @@ class Agent:
                 )
 
         # 3.3 Build the default system message for the Agent.
-        # Static content comes first (cacheable), then dynamic content (per-request).
         system_message_content: str = ""
-
-        # -- STATIC SECTION --
-
         # 3.3.1 First add the Agent description if provided
         if self.description is not None:
             system_message_content += f"{self.description}\n"
@@ -7891,10 +7858,10 @@ class Agent:
             else:
                 system_message_content += "\n" + instructions[0]
             system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add static additional information
-        if len(static_additional_info) > 0:
+        # 3.3.6 Add additional information
+        if len(additional_information) > 0:
             system_message_content += "<additional_information>"
-            for _ai in static_additional_info:
+            for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
         # 3.3.7 Then add instructions for the tools
@@ -7912,48 +7879,13 @@ class Agent:
                 metadata=metadata,
             )
 
-        # 3.3.8 Then add the expected output
+        # 3.3.7 Then add the expected output
         if self.expected_output is not None:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.9 Then add additional context
+        # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
-
-        # 3.3.10 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(tools)
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-
-        # 3.3.11 Add the JSON output prompt if output_schema is provided and the model does not support
-        # native structured outputs or JSON schema outputs, or if use_json_mode is True
-        if (
-            output_schema is not None
-            and self.parser_model is None
-            and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
-            )
-        ):
-            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
-
-        # 3.3.12 Add the response model format prompt if output_schema is provided (Pydantic only)
-        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
-            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
-
-        # Snapshot the static content before appending dynamic sections
-        static_content = system_message_content
-
-        # -- DYNAMIC SECTION --
-        # Everything below changes between requests and should NOT be cached.
-
-        # 3.3.13 Add dynamic additional information (datetime, location)
-        if len(dynamic_additional_info) > 0:
-            system_message_content += "<dynamic_context>"
-            for _ai in dynamic_additional_info:
-                system_message_content += f"\n- {_ai}"
-            system_message_content += "\n</dynamic_context>\n\n"
-
-        # 3.3.14 Then add memories to the system prompt
+        # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
             if not user_id:
@@ -7997,7 +7929,7 @@ class Agent:
                     "</updating_user_memories>\n\n"
                 )
 
-        # 3.3.15 Then add cultural knowledge to the system prompt
+        # 3.3.10 Then add cultural knowledge to the system prompt
         if self.add_culture_to_context:
             _culture_manager_not_set = None
             if not self.culture_manager:
@@ -8058,7 +7990,7 @@ class Agent:
                     "</contributing_to_culture>\n\n"
                 )
 
-        # 3.3.16 Then add a summary of the interaction to the system prompt
+        # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
             system_message_content += "Here is a brief summary of your previous interactions:\n\n"
             system_message_content += "<summary_of_previous_interactions>\n"
@@ -8069,26 +8001,36 @@ class Agent:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        # 3.3.17 Add the session state to the system message
+        # 3.3.12 Add the system message from the Model
+        system_message_from_model = self.model.get_system_message_for_model(tools)
+        if system_message_from_model is not None:
+            system_message_content += system_message_from_model
+
+        # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # or if use_json_mode is True
+        if (
+            output_schema is not None
+            and self.parser_model is None
+            and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and (not self.use_json_mode or self.structured_outputs is True)
+            )
+        ):
+            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+
+        # 3.3.14 Add the response model format prompt if output_schema is provided (Pydantic only)
+        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
+            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
+
+        # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
-        # Build system_prompt_blocks when there's a meaningful static/dynamic split
-        dynamic_content = system_message_content[len(static_content):]
-        system_blocks: Optional[List[SystemPromptBlock]] = None
-        if static_content.strip() and dynamic_content.strip():
-            system_blocks = [
-                SystemPromptBlock(text=static_content.strip(), cache=True),
-                SystemPromptBlock(text=dynamic_content.strip(), cache=False),
-            ]
-
         # Return the system message
-        if not system_message_content:
-            return None
-        return Message(
-            role=self.system_message_role,  # type: ignore
-            content=system_message_content.strip(),
-            system_prompt_blocks=system_blocks,
+        return (
+            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
+            if system_message_content
+            else None
         )
 
     def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:

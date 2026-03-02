@@ -16,7 +16,7 @@ import pytest
 from agno.agent import Agent, RunOutput
 from agno.session.agent import AgentSession
 from agno.models.anthropic import Claude
-from agno.models.message import SystemPromptBlock
+from agno.models.message import Message, SystemPromptBlock
 from agno.utils.media import download_file
 
 
@@ -222,8 +222,8 @@ def test_string_system_message_backward_compat():
     assert kwargs["system"][0]["text"] == "You are helpful."
 
 
-def test_agent_produces_blocks_with_datetime():
-    """Test that Agent inserts system_prompt_blocks when datetime context is enabled."""
+def test_agent_no_auto_blocks():
+    """Test that Agent does not auto-generate system_prompt_blocks (users pass them explicitly)."""
     agent = Agent(
         model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
         description="Test agent",
@@ -235,30 +235,10 @@ def test_agent_produces_blocks_with_datetime():
     msg = agent.get_system_message(session=session)
 
     assert msg is not None
-    assert msg.system_prompt_blocks is not None
-    assert len(msg.system_prompt_blocks) == 2
-    assert msg.system_prompt_blocks[0].cache is True
-    assert msg.system_prompt_blocks[1].cache is False
-    assert "The current time is" in msg.system_prompt_blocks[1].text
-    # The full content string should contain both parts
-    assert "Test agent" in msg.content
-    assert "The current time is" in msg.content
-
-
-def test_agent_no_blocks_without_dynamic_content():
-    """Test that Agent does not produce blocks when no dynamic content is configured."""
-    agent = Agent(
-        model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
-        description="Test agent",
-        instructions=["Be helpful"],
-        telemetry=False,
-    )
-    session = AgentSession(session_id="test")
-    msg = agent.get_system_message(session=session)
-
-    assert msg is not None
+    # Agent-built prompts don't carry system_prompt_blocks; users opt in via List[SystemPromptBlock]
     assert msg.system_prompt_blocks is None
     assert "Test agent" in msg.content
+    assert "The current time is" in msg.content
 
 
 def test_agent_manual_system_prompt_blocks():
@@ -366,3 +346,102 @@ def test_cache_tools_disabled():
     assert "tools" in kwargs
     for tool in kwargs["tools"]:
         assert "cache_control" not in tool
+
+
+def test_cache_false_ignores_ttl():
+    """Block with cache=False should produce no cache_control, even if ttl is set."""
+    claude = Claude(cache_system_prompt=True)
+    blocks = [
+        SystemPromptBlock(text="Not cached.", cache=False, ttl="1h"),
+    ]
+    kwargs = claude._prepare_request_kwargs(blocks)
+
+    assert len(kwargs["system"]) == 1
+    assert "cache_control" not in kwargs["system"][0]
+
+
+def test_cache_tools_single_tool():
+    """cache_tools=True with a single tool should add cache_control to that tool."""
+    claude = Claude(cache_system_prompt=True, cache_tools=True)
+    tools = [
+        {"type": "function", "function": {"name": "only_tool", "description": "Solo", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    ]
+    kwargs = claude._prepare_request_kwargs("System.", tools=tools)
+
+    assert len(kwargs["tools"]) == 1
+    assert kwargs["tools"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_cache_tools_no_tools():
+    """cache_tools=True with no tools should not error."""
+    claude = Claude(cache_system_prompt=True, cache_tools=True)
+    kwargs = claude._prepare_request_kwargs("System.", tools=None)
+
+    assert "tools" not in kwargs
+
+
+def test_explicit_5m_with_no_extended_cache():
+    """Explicit ttl='5m' with extended_cache_time=False should produce ephemeral without ttl key."""
+    claude = Claude(cache_system_prompt=True, extended_cache_time=False)
+    blocks = [
+        SystemPromptBlock(text="Explicit 5m.", cache=True, ttl="5m"),
+        SystemPromptBlock(text="Default None.", cache=True),
+    ]
+    kwargs = claude._prepare_request_kwargs(blocks)
+
+    # Both should be plain ephemeral (no "ttl" key)
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert kwargs["system"][1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_format_messages_preserves_blocks():
+    """system_prompt_blocks on a Message flow through format_messages and come back as List[SystemPromptBlock]."""
+    from agno.utils.models.claude import format_messages
+
+    blocks = [
+        SystemPromptBlock(text="Static part.", cache=True, ttl="1h"),
+        SystemPromptBlock(text="Dynamic part.", cache=False),
+    ]
+    msg = Message(
+        role="system",
+        content="Static part.\nDynamic part.",
+        system_prompt_blocks=blocks,
+    )
+    chat_messages, system_message = format_messages([msg])
+
+    # system_message should be the blocks, not the joined string
+    assert isinstance(system_message, list)
+    assert len(system_message) == 2
+    assert system_message[0].text == "Static part."
+    assert system_message[0].ttl == "1h"
+    assert system_message[1].cache is False
+
+
+def test_vertexai_cache_tools():
+    """VertexAI Claude should also add cache_control to the last tool."""
+    from agno.models.vertexai.claude import Claude as VertexClaude
+
+    claude = VertexClaude(cache_system_prompt=True, cache_tools=True)
+    tools = [
+        {"type": "function", "function": {"name": "tool_a", "description": "A", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {"type": "function", "function": {"name": "tool_b", "description": "B", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    ]
+    kwargs = claude._prepare_request_kwargs("System.", tools=tools)
+
+    assert "cache_control" not in kwargs["tools"][0]
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_aws_cache_tools():
+    """AWS Bedrock Claude should also add cache_control to the last tool."""
+    from agno.models.aws.claude import Claude as AwsClaude
+
+    claude = AwsClaude(cache_system_prompt=True, cache_tools=True)
+    tools = [
+        {"type": "function", "function": {"name": "tool_a", "description": "A", "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {"type": "function", "function": {"name": "tool_b", "description": "B", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    ]
+    kwargs = claude._prepare_request_kwargs("System.", tools=tools)
+
+    assert "cache_control" not in kwargs["tools"][0]
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
