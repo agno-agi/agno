@@ -31,43 +31,38 @@ Run this cookbook:
 
 from os import getenv
 
-from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GitHubConfig
-from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
 
 # ---------------------------------------------------------------------------
 # Option 1: Personal Access Token authentication
 # ---------------------------------------------------------------------------
 # For private repos, set GITHUB_TOKEN env var to a fine-grained PAT with "Contents: read"
-# github_config = GitHubConfig(
-#     id="my-repo",
-#     name="My Repository",
-#     repo="private/repo",  # Format: owner/repo
-#     token=getenv("GITHUB_TOKEN"),  # Optional for public repos
-#     branch="main",  # Default branch
-# )
+github_config = GitHubConfig(
+    id="my-repo",
+    name="My Repository",
+    repo="owner/repo",  # Format: owner/repo
+    token=getenv("GITHUB_TOKEN"),  # Optional for public repos
+    branch="main",  # Default branch
+)
 
 # ---------------------------------------------------------------------------
 # Option 2: GitHub App authentication
 # ---------------------------------------------------------------------------
 # For organizations using GitHub Apps instead of personal tokens.
 # Requires: pip install PyJWT cryptography
-github_app_config = GitHubConfig(
-    id="github-app",
-    name="CNC Sender",
-    repo="willemcdejongh/cnc-sender",
-    app_id=getenv("GITHUB_APP_ID"),
-    installation_id=getenv("GITHUB_INSTALLATION_ID"),
-    private_key=getenv("GITHUB_APP_PRIVATE_KEY"),
-    branch="main",
-)
+#
+# github_app_config = GitHubConfig(
+#     id="org-repo",
+#     name="Org Repository",
+#     repo="my-org/private-repo",
+#     app_id=getenv("GITHUB_APP_ID"),
+#     installation_id=getenv("GITHUB_INSTALLATION_ID"),
+#     private_key=getenv("GITHUB_APP_PRIVATE_KEY"),
+#     branch="main",
+# )
 
-contents_db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
-)
 # Create Knowledge with GitHub as a content source
 knowledge = Knowledge(
     name="GitHub Knowledge",
@@ -75,54 +70,27 @@ knowledge = Knowledge(
         table_name="github_knowledge",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-    content_sources=[github_app_config],
-    contents_db=contents_db,
+    content_sources=[github_config],
 )
 
-# if __name__ == "__main__":
-#     # Insert a single file
-#     print("Inserting single file from GitHub...")
-#     knowledge.insert(
-#         name="README",
-#         remote_content=github_app_config.file("README.md"),
-#     )
-
-#     # Insert an entire folder (recursive)
-#     # Use trailing slash or just the folder name - both work
-#     print("Inserting folder from GitHub...")
-#     knowledge.insert(
-#         name="Cookbook Examples",
-#         remote_content=github_app_config.folder(".github"),
-#     )
-
-#     # # Insert from a different branch
-#     # print("Inserting from specific branch...")
-#     # knowledge.insert(
-#     #     name="Dev Docs",
-#     #     remote_content=github_app_config.file("docs/index.md", branch="dev"),
-#     # )
-
-
-agent_os = AgentOS(
-    knowledge=[knowledge],
-)
-app = agent_os.get_app()
-
-# ============================================================================
-# Run AgentOS
-# ============================================================================
 if __name__ == "__main__":
+    # Insert a single file
+    print("Inserting single file from GitHub...")
     knowledge.insert(
         name="README",
-        remote_content=github_app_config.file("README.md"),
+        remote_content=github_config.file("README.md"),
     )
 
     # Insert an entire folder (recursive)
-    # Use trailing slash or just the folder name - both work
     print("Inserting folder from GitHub...")
     knowledge.insert(
         name="Cookbook Examples",
-        remote_content=github_app_config.folder(".github"),
+        remote_content=github_config.folder("cookbook/01_basics"),
     )
-    # Serves a FastAPI app exposed by AgentOS. Use reload=True for local dev.
-    agent_os.serve(app="github:app", reload=True)
+
+    # Insert from a different branch
+    print("Inserting from specific branch...")
+    knowledge.insert(
+        name="Dev Docs",
+        remote_content=github_config.file("docs/index.md", branch="dev"),
+    )
