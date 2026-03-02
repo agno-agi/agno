@@ -150,8 +150,28 @@ def parse_inbound_message(message: dict) -> ParsedMessage:
         image_file_id = message["photo"][-1]["file_id"]
         message_text = message.get("caption", "Describe the image")
     elif message.get("sticker"):
-        image_file_id = message["sticker"]["file_id"]
-        message_text = "Describe this sticker"
+        sticker = message["sticker"]
+        is_animated = sticker.get("is_animated", False)
+        is_video = sticker.get("is_video", False)
+        emoji = sticker.get("emoji", "")
+        set_name = sticker.get("set_name", "")
+
+        if is_animated or is_video:
+            # Animated (.tgs) and video (.webm) stickers are not valid image
+            # formats for model APIs.  Use the JPEG thumbnail instead.
+            thumbnail = sticker.get("thumbnail") or sticker.get("thumb")
+            if thumbnail:
+                image_file_id = thumbnail["file_id"]
+        else:
+            # Static .webp stickers are natively supported.
+            image_file_id = sticker["file_id"]
+
+        desc = "Describe this sticker"
+        if emoji:
+            desc += f" (emoji: {emoji})"
+        if set_name:
+            desc += f" from set '{set_name}'"
+        message_text = desc
     elif message.get("voice"):
         audio_file_id = message["voice"]["file_id"]
         message_text = message.get("caption", "Transcribe or describe this audio")

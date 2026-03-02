@@ -369,7 +369,7 @@ def attach_routes(
 
             # -- Parse and handle commands --
             text = message.get("text", "")
-            cmd_token = text.split()[0] if text else ""
+            cmd_token = text.split()[0] if text.strip() else ""
             cmd = cmd_token.split("@")[0]
 
             # In groups, ignore commands addressed to other bots
