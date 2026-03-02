@@ -142,6 +142,7 @@ class RemoteTeam(BaseRemote):
             return config.description
         return ""
 
+    @property
     def role(self) -> Optional[str]:
         if self._team_config is not None:
             return self._team_config.role
