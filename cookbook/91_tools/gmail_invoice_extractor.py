@@ -46,6 +46,8 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools(get_message=True)],
     instructions=[
+        "Search for invoices using queries like: subject:(invoice OR receipt OR payment) has:attachment.",
+        "Use get_message to read the full content of each matching email.",
         "Extract: vendor name, total amount (with currency), date, spending category, and description.",
         "If the amount is not explicitly stated, note 'amount not found' rather than guessing.",
         "Categorize spending into: Software, Travel, Office, Subscriptions, Food, or Other.",
