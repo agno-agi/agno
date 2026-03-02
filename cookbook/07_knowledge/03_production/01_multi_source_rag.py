@@ -10,6 +10,8 @@ knowledge base, demonstrating insert_many with mixed sources.
 See also: 02_knowledge_lifecycle.py for managing content over time.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -44,36 +46,40 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Load multiple sources in a single batch call
-    knowledge.insert_many(
-        [
-            {
-                "name": "Candidate Resume",
-                "path": "cookbook/07_knowledge/testing_resources/cv_1.pdf",
-                "metadata": {"source": "resume", "department": "engineering"},
-            },
-            {
-                "name": "Thai Recipes",
-                "url": "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-                "metadata": {"source": "web", "topic": "cooking"},
-            },
-            {
-                "name": "Company Policy",
-                "text_content": "All employees must complete security training annually. "
-                "Remote work requires VPN access. Expenses over $500 need manager approval.",
-                "metadata": {"source": "internal", "topic": "policy"},
-            },
-        ]
-    )
 
-    print("\n" + "=" * 60)
-    print("Query across multiple sources")
-    print("=" * 60 + "\n")
+    async def main():
+        # Load multiple sources in a single batch call
+        await knowledge.ainsert_many(
+            [
+                {
+                    "name": "Candidate Resume",
+                    "path": "cookbook/07_knowledge/testing_resources/cv_1.pdf",
+                    "metadata": {"source": "resume", "department": "engineering"},
+                },
+                {
+                    "name": "Thai Recipes",
+                    "url": "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+                    "metadata": {"source": "web", "topic": "cooking"},
+                },
+                {
+                    "name": "Company Policy",
+                    "text_content": "All employees must complete security training annually. "
+                    "Remote work requires VPN access. Expenses over $500 need manager approval.",
+                    "metadata": {"source": "internal", "topic": "policy"},
+                },
+            ]
+        )
 
-    agent.print_response("What skills does Jordan Mitchell have?", stream=True)
+        print("\n" + "=" * 60)
+        print("Query across multiple sources")
+        print("=" * 60 + "\n")
 
-    print("\n" + "=" * 60)
-    print("Agent searches the same knowledge base for different topics")
-    print("=" * 60 + "\n")
+        agent.print_response("What skills does Jordan Mitchell have?", stream=True)
 
-    agent.print_response("What is the expense approval policy?", stream=True)
+        print("\n" + "=" * 60)
+        print("Agent searches the same knowledge base for different topics")
+        print("=" * 60 + "\n")
+
+        agent.print_response("What is the expense approval policy?", stream=True)
+
+    asyncio.run(main())

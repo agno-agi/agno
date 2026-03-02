@@ -11,6 +11,8 @@ Knowledge supports three search types. Each has different strengths:
 See also: 03_reranking.py for improving search results with reranking.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -42,28 +44,32 @@ def create_knowledge(search_type: SearchType) -> Knowledge:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    search_types = [
-        (SearchType.vector, "Vector (semantic similarity)"),
-        (SearchType.keyword, "Keyword (full-text search)"),
-        (SearchType.hybrid, "Hybrid (vector + keyword)"),
-    ]
 
-    for search_type, description in search_types:
-        print("\n" + "=" * 60)
-        print("SEARCH TYPE: %s" % description)
-        print("=" * 60 + "\n")
+    async def main():
+        search_types = [
+            (SearchType.vector, "Vector (semantic similarity)"),
+            (SearchType.keyword, "Keyword (full-text search)"),
+            (SearchType.hybrid, "Hybrid (vector + keyword)"),
+        ]
 
-        knowledge = create_knowledge(search_type)
-        # skip_if_exists=True avoids re-processing if run multiple times
-        knowledge.insert(url=pdf_url, skip_if_exists=True)
+        for search_type, description in search_types:
+            print("\n" + "=" * 60)
+            print("SEARCH TYPE: %s" % description)
+            print("=" * 60 + "\n")
 
-        agent = Agent(
-            model=OpenAIResponses(id="gpt-5.2"),
-            knowledge=knowledge,
-            search_knowledge=True,
-            markdown=True,
-        )
-        agent.print_response(
-            "How do I make pad thai?",
-            stream=True,
-        )
+            knowledge = create_knowledge(search_type)
+            # skip_if_exists=True avoids re-processing if run multiple times
+            await knowledge.ainsert(url=pdf_url, skip_if_exists=True)
+
+            agent = Agent(
+                model=OpenAIResponses(id="gpt-5.2"),
+                knowledge=knowledge,
+                search_knowledge=True,
+                markdown=True,
+            )
+            agent.print_response(
+                "How do I make pad thai?",
+                stream=True,
+            )
+
+    asyncio.run(main())

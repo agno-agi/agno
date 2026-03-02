@@ -12,6 +12,8 @@ Supported data formats:
 See also: 01_documents.py for PDF/DOCX, 03_web.py for web sources.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -48,27 +50,31 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # --- CSV: structured tabular data ---
-    print("\n" + "=" * 60)
-    print("READER: CSV")
-    print("=" * 60 + "\n")
 
-    # CSVReader reads each row as a separate document
-    knowledge.insert(
-        name="Sample Data",
-        text_content="name,role,department\nAlice,Engineer,Platform\nBob,Designer,Product\nCarol,Manager,Engineering",
-        reader=CSVReader(),
-    )
-    agent.print_response("Who works in engineering?", stream=True)
+    async def main():
+        # --- CSV: structured tabular data ---
+        print("\n" + "=" * 60)
+        print("READER: CSV")
+        print("=" * 60 + "\n")
 
-    # --- JSON: structured data ---
-    print("\n" + "=" * 60)
-    print("READER: JSON")
-    print("=" * 60 + "\n")
+        # CSVReader reads each row as a separate document
+        await knowledge.ainsert(
+            name="Sample Data",
+            text_content="name,role,department\nAlice,Engineer,Platform\nBob,Designer,Product\nCarol,Manager,Engineering",
+            reader=CSVReader(),
+        )
+        agent.print_response("Who works in engineering?", stream=True)
 
-    knowledge.insert(
-        name="Config",
-        text_content='{"app": "acme", "version": "2.0", "features": ["auth", "billing", "analytics"]}',
-        reader=JSONReader(),
-    )
-    agent.print_response("What features does the app have?", stream=True)
+        # --- JSON: structured data ---
+        print("\n" + "=" * 60)
+        print("READER: JSON")
+        print("=" * 60 + "\n")
+
+        await knowledge.ainsert(
+            name="Config",
+            text_content='{"app": "acme", "version": "2.0", "features": ["auth", "billing", "analytics"]}',
+            reader=JSONReader(),
+        )
+        agent.print_response("What features does the app have?", stream=True)
+
+    asyncio.run(main())

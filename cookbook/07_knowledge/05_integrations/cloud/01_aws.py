@@ -19,6 +19,7 @@ Environment Variables:
     AWS_REGION            - AWS region (default: us-east-1)
 """
 
+import asyncio
 from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
@@ -51,27 +52,31 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Insert a single file from S3
-    print("\n" + "=" * 60)
-    print("Loading single file from S3")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="Report",
-        remote_content=s3_config.file("reports/quarterly-report.pdf"),
-    )
+    async def main():
+        # Insert a single file from S3
+        print("\n" + "=" * 60)
+        print("Loading single file from S3")
+        print("=" * 60 + "\n")
 
-    # Insert an entire folder (prefix)
-    print("\n" + "=" * 60)
-    print("Loading folder from S3")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Report",
+            remote_content=s3_config.file("reports/quarterly-report.pdf"),
+        )
 
-    knowledge.insert(
-        name="All Reports",
-        remote_content=s3_config.folder("reports/"),
-    )
+        # Insert an entire folder (prefix)
+        print("\n" + "=" * 60)
+        print("Loading folder from S3")
+        print("=" * 60 + "\n")
 
-    # Search
-    results = knowledge.search("What were the quarterly results?")
-    for doc in results:
-        print("- %s" % doc.name)
+        await knowledge.ainsert(
+            name="All Reports",
+            remote_content=s3_config.folder("reports/"),
+        )
+
+        # Search
+        results = knowledge.search("What were the quarterly results?")
+        for doc in results:
+            print("- %s" % doc.name)
+
+    asyncio.run(main())

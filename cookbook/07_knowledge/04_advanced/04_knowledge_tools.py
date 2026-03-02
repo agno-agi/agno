@@ -11,6 +11,8 @@ beyond basic search:
 This gives agents more sophisticated reasoning over knowledge.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -57,13 +59,17 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    knowledge.insert(url="https://docs.agno.com/llms-full.txt")
 
-    print("\n" + "=" * 60)
-    print("KnowledgeTools: think + search + analyze")
-    print("=" * 60 + "\n")
+    async def main():
+        await knowledge.ainsert(url="https://docs.agno.com/llms-full.txt")
 
-    agent.print_response(
-        "How do I build a team of agents in Agno?",
-        stream=True,
-    )
+        print("\n" + "=" * 60)
+        print("KnowledgeTools: think + search + analyze")
+        print("=" * 60 + "\n")
+
+        agent.print_response(
+            "How do I build a team of agents in Agno?",
+            stream=True,
+        )
+
+    asyncio.run(main())

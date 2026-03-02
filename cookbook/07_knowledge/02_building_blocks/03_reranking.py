@@ -16,6 +16,8 @@ Supported rerankers:
 See also: 02_hybrid_search.py for search type options.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -61,13 +63,17 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-    print("\n" + "=" * 60)
-    print("Hybrid search + Cohere reranking")
-    print("=" * 60 + "\n")
+    async def main():
+        await knowledge.ainsert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-    agent.print_response(
-        "What are some good Thai dessert recipes?",
-        stream=True,
-    )
+        print("\n" + "=" * 60)
+        print("Hybrid search + Cohere reranking")
+        print("=" * 60 + "\n")
+
+        agent.print_response(
+            "What are some good Thai dessert recipes?",
+            stream=True,
+        )
+
+    asyncio.run(main())

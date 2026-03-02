@@ -13,6 +13,8 @@ Supported document formats:
 See also: 02_data.py for CSV/JSON, 03_web.py for web sources.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -53,36 +55,40 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # --- PDF: auto-detected by file extension ---
-    print("\n" + "=" * 60)
-    print("READER: PDF (auto-detected)")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="CV",
-        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
-    )
-    agent.print_response("What skills does Jordan Mitchell have?", stream=True)
+    async def main():
+        # --- PDF: auto-detected by file extension ---
+        print("\n" + "=" * 60)
+        print("READER: PDF (auto-detected)")
+        print("=" * 60 + "\n")
 
-    # --- Excel: explicit reader for more control ---
-    print("\n" + "=" * 60)
-    print("READER: Excel (explicit reader)")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="CV",
+            path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
+        )
+        agent.print_response("What skills does Jordan Mitchell have?", stream=True)
 
-    knowledge.insert(
-        name="Products",
-        path="cookbook/07_knowledge/testing_resources/sample_products.xlsx",
-        reader=ExcelReader(),
-    )
-    agent.print_response("What products are listed?", stream=True)
+        # --- Excel: explicit reader for more control ---
+        print("\n" + "=" * 60)
+        print("READER: Excel (explicit reader)")
+        print("=" * 60 + "\n")
 
-    # --- PDF from URL: auto-detected ---
-    print("\n" + "=" * 60)
-    print("READER: PDF from URL")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Products",
+            path="cookbook/07_knowledge/testing_resources/sample_products.xlsx",
+            reader=ExcelReader(),
+        )
+        agent.print_response("What products are listed?", stream=True)
 
-    knowledge.insert(
-        name="Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    )
-    agent.print_response("What Thai recipes are available?", stream=True)
+        # --- PDF from URL: auto-detected ---
+        print("\n" + "=" * 60)
+        print("READER: PDF from URL")
+        print("=" * 60 + "\n")
+
+        await knowledge.ainsert(
+            name="Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        )
+        agent.print_response("What Thai recipes are available?", stream=True)
+
+    asyncio.run(main())

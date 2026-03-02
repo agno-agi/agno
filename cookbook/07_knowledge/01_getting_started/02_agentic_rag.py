@@ -16,6 +16,8 @@ Steps:
 See also: 01_basic_rag.py for automatic context injection.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -56,23 +58,27 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-    print("\n" + "=" * 60)
-    print("Agentic RAG: Agent decides when to search")
-    print("=" * 60 + "\n")
+    async def main():
+        await knowledge.ainsert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-    agent.print_response(
-        "How do I make chicken and galangal in coconut milk soup",
-        stream=True,
-    )
+        print("\n" + "=" * 60)
+        print("Agentic RAG: Agent decides when to search")
+        print("=" * 60 + "\n")
 
-    print("\n" + "=" * 60)
-    print("Multi-part question: agent may search multiple times")
-    print("=" * 60 + "\n")
+        agent.print_response(
+            "How do I make chicken and galangal in coconut milk soup",
+            stream=True,
+        )
 
-    agent.print_response(
-        "I want to make a 3 course Thai meal. Can you recommend a soup, "
-        "a curry for the main course, and a dessert?",
-        stream=True,
-    )
+        print("\n" + "=" * 60)
+        print("Multi-part question: agent may search multiple times")
+        print("=" * 60 + "\n")
+
+        agent.print_response(
+            "I want to make a 3 course Thai meal. Can you recommend a soup, "
+            "a curry for the main course, and a dessert?",
+            stream=True,
+        )
+
+    asyncio.run(main())

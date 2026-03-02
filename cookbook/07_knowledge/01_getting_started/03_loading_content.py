@@ -14,10 +14,11 @@ Steps:
 4. From topics (Wikipedia, ArXiv)
 5. Batch loading from multiple sources
 
-Note: Every method has an async equivalent:
-    knowledge.insert()      -> await knowledge.ainsert()
-    knowledge.insert_many() -> await knowledge.ainsert_many()
+Note: All examples use async methods (ainsert, ainsert_many).
+Sync equivalents (insert, insert_many) are also available.
 """
+
+import asyncio
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -56,72 +57,75 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # --- 1. From a local file path ---
-    print("\n" + "=" * 60)
-    print("SOURCE 1: Local file")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="CV",
-        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
-        metadata={"source": "local_file"},
-    )
-    # Async equivalent: await knowledge.ainsert(name="CV", path="...", metadata={...})
+    async def main():
+        # --- 1. From a local file path ---
+        print("\n" + "=" * 60)
+        print("SOURCE 1: Local file")
+        print("=" * 60 + "\n")
 
-    agent.print_response("What skills does Jordan Mitchell have?", stream=True)
+        await knowledge.ainsert(
+            name="CV",
+            path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
+            metadata={"source": "local_file"},
+        )
 
-    # --- 2. From a URL ---
-    print("\n" + "=" * 60)
-    print("SOURCE 2: URL")
-    print("=" * 60 + "\n")
+        agent.print_response("What skills does Jordan Mitchell have?", stream=True)
 
-    knowledge.insert(
-        name="Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        metadata={"source": "url"},
-    )
-    agent.print_response("What Thai recipes do you know about?", stream=True)
+        # --- 2. From a URL ---
+        print("\n" + "=" * 60)
+        print("SOURCE 2: URL")
+        print("=" * 60 + "\n")
 
-    # --- 3. From raw text ---
-    print("\n" + "=" * 60)
-    print("SOURCE 3: Raw text")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            metadata={"source": "url"},
+        )
+        agent.print_response("What Thai recipes do you know about?", stream=True)
 
-    knowledge.insert(
-        name="Company Info",
-        text_content="Acme Corp was founded in 2020. They build AI tools for developers.",
-        metadata={"source": "text"},
-    )
-    agent.print_response("What does Acme Corp do?", stream=True)
+        # --- 3. From raw text ---
+        print("\n" + "=" * 60)
+        print("SOURCE 3: Raw text")
+        print("=" * 60 + "\n")
 
-    # --- 4. From topics (Wikipedia + ArXiv) ---
-    print("\n" + "=" * 60)
-    print("SOURCE 4: Topics (Wikipedia)")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Company Info",
+            text_content="Acme Corp was founded in 2020. They build AI tools for developers.",
+            metadata={"source": "text"},
+        )
+        agent.print_response("What does Acme Corp do?", stream=True)
 
-    knowledge.insert(
-        topics=["Retrieval-Augmented Generation"],
-        reader=WikipediaReader(),
-    )
-    agent.print_response("What is RAG?", stream=True)
+        # --- 4. From topics (Wikipedia + ArXiv) ---
+        print("\n" + "=" * 60)
+        print("SOURCE 4: Topics (Wikipedia)")
+        print("=" * 60 + "\n")
 
-    # --- 5. Batch loading from multiple sources ---
-    print("\n" + "=" * 60)
-    print("SOURCE 5: Batch loading (insert_many)")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            topics=["Retrieval-Augmented Generation"],
+            reader=WikipediaReader(),
+        )
+        agent.print_response("What is RAG?", stream=True)
 
-    knowledge.insert_many(
-        [
-            {
-                "name": "Doc 1",
-                "text_content": "Python is a programming language.",
-                "metadata": {"topic": "programming"},
-            },
-            {
-                "name": "Doc 2",
-                "text_content": "TypeScript adds types to JavaScript.",
-                "metadata": {"topic": "programming"},
-            },
-        ]
-    )
-    agent.print_response("Compare Python and TypeScript", stream=True)
+        # --- 5. Batch loading from multiple sources ---
+        print("\n" + "=" * 60)
+        print("SOURCE 5: Batch loading (insert_many)")
+        print("=" * 60 + "\n")
+
+        await knowledge.ainsert_many(
+            [
+                {
+                    "name": "Doc 1",
+                    "text_content": "Python is a programming language.",
+                    "metadata": {"topic": "programming"},
+                },
+                {
+                    "name": "Doc 2",
+                    "text_content": "TypeScript adds types to JavaScript.",
+                    "metadata": {"topic": "programming"},
+                },
+            ]
+        )
+        agent.print_response("Compare Python and TypeScript", stream=True)
+
+    asyncio.run(main())

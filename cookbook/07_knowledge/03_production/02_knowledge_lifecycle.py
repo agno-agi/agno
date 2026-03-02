@@ -13,6 +13,8 @@ for tracking what has been ingested and its current status.
 See also: 03_multi_tenant.py for isolating knowledge per tenant.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -53,33 +55,37 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # --- 1. Initial insert ---
-    print("\n" + "=" * 60)
-    print("STEP 1: Initial insert")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    )
-    agent.print_response("What recipes do you know?", stream=True)
+    async def main():
+        # --- 1. Initial insert ---
+        print("\n" + "=" * 60)
+        print("STEP 1: Initial insert")
+        print("=" * 60 + "\n")
 
-    # --- 2. Skip if exists ---
-    print("\n" + "=" * 60)
-    print("STEP 2: Skip if already exists (no re-processing)")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        )
+        agent.print_response("What recipes do you know?", stream=True)
 
-    knowledge.insert(
-        name="Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        skip_if_exists=True,  # Won't re-process since content hash matches
-    )
-    print("Content was skipped (already exists)")
+        # --- 2. Skip if exists ---
+        print("\n" + "=" * 60)
+        print("STEP 2: Skip if already exists (no re-processing)")
+        print("=" * 60 + "\n")
 
-    # --- 3. Remove content ---
-    print("\n" + "=" * 60)
-    print("STEP 3: Remove vectors by name")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            skip_if_exists=True,  # Won't re-process since content hash matches
+        )
+        print("Content was skipped (already exists)")
 
-    knowledge.remove_vectors_by_name("Recipes")
-    print("Vectors for 'Recipes' removed from the vector database")
+        # --- 3. Remove content ---
+        print("\n" + "=" * 60)
+        print("STEP 3: Remove vectors by name")
+        print("=" * 60 + "\n")
+
+        await knowledge.aremove_vectors_by_name("Recipes")
+        print("Vectors for 'Recipes' removed from the vector database")
+
+    asyncio.run(main())

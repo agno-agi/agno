@@ -17,8 +17,9 @@ isolation is enabled. You'll need to re-index to add the metadata.
 See also: ../02_building_blocks/04_filtering.py for metadata-based filtering.
 """
 
+import asyncio
+
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -39,14 +40,10 @@ vector_db = Qdrant(
     embedder=OpenAIEmbedder(id="text-embedding-3-small"),
 )
 
-# Shared contents database tracks what each tenant has ingested
-contents_db = SqliteDb(db_file="tmp/multi_tenant.db")
-
 # Tenant A: only sees its own data
 tenant_a_knowledge = Knowledge(
     name="Tenant A",
     vector_db=vector_db,
-    contents_db=contents_db,
     isolate_vector_search=True,
 )
 
@@ -54,7 +51,6 @@ tenant_a_knowledge = Knowledge(
 tenant_b_knowledge = Knowledge(
     name="Tenant B",
     vector_db=vector_db,
-    contents_db=contents_db,
     isolate_vector_search=True,
 )
 
@@ -81,24 +77,28 @@ agent_b = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Insert different content for each tenant
-    tenant_a_knowledge.insert(
-        name="Tenant A Docs",
-        text_content="Tenant A uses PostgreSQL for their primary database.",
-    )
-    tenant_b_knowledge.insert(
-        name="Tenant B Docs",
-        text_content="Tenant B runs their workloads on AWS with DynamoDB.",
-    )
 
-    print("\n" + "=" * 60)
-    print("TENANT A: Only sees its own data")
-    print("=" * 60 + "\n")
+    async def main():
+        # Insert different content for each tenant
+        await tenant_a_knowledge.ainsert(
+            name="Tenant A Docs",
+            text_content="Tenant A uses PostgreSQL for their primary database.",
+        )
+        await tenant_b_knowledge.ainsert(
+            name="Tenant B Docs",
+            text_content="Tenant B runs their workloads on AWS with DynamoDB.",
+        )
 
-    agent_a.print_response("What database do we use?", stream=True)
+        print("\n" + "=" * 60)
+        print("TENANT A: Only sees its own data")
+        print("=" * 60 + "\n")
 
-    print("\n" + "=" * 60)
-    print("TENANT B: Only sees its own data")
-    print("=" * 60 + "\n")
+        agent_a.print_response("What database do we use?", stream=True)
 
-    agent_b.print_response("What cloud provider do we use?", stream=True)
+        print("\n" + "=" * 60)
+        print("TENANT B: Only sees its own data")
+        print("=" * 60 + "\n")
+
+        agent_b.print_response("What cloud provider do we use?", stream=True)
+
+    asyncio.run(main())

@@ -15,6 +15,8 @@ Steps:
 See also: 04_filtering.py for static (predefined) filters.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -56,28 +58,32 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Load documents with rich metadata
-    knowledge.insert(
-        name="Thai Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        metadata={"cuisine": "thai", "category": "recipes"},
-    )
-    knowledge.insert(
-        name="CV",
-        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
-        metadata={"category": "resume", "department": "engineering"},
-    )
 
-    print("\n" + "=" * 60)
-    print("Agentic filtering: agent builds filters from query")
-    print("=" * 60 + "\n")
+    async def main():
+        # Load documents with rich metadata
+        await knowledge.ainsert(
+            name="Thai Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            metadata={"cuisine": "thai", "category": "recipes"},
+        )
+        await knowledge.ainsert(
+            name="CV",
+            path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
+            metadata={"category": "resume", "department": "engineering"},
+        )
 
-    # The agent will automatically filter by cuisine=thai
-    agent.print_response("What Thai recipes do you have?", stream=True)
+        print("\n" + "=" * 60)
+        print("Agentic filtering: agent builds filters from query")
+        print("=" * 60 + "\n")
 
-    print("\n" + "=" * 60)
-    print("Different query triggers different filters")
-    print("=" * 60 + "\n")
+        # The agent will automatically filter by cuisine=thai
+        agent.print_response("What Thai recipes do you have?", stream=True)
 
-    # The agent will automatically filter by category=resume
-    agent.print_response("What engineering candidates do you have?", stream=True)
+        print("\n" + "=" * 60)
+        print("Different query triggers different filters")
+        print("=" * 60 + "\n")
+
+        # The agent will automatically filter by category=resume
+        agent.print_response("What engineering candidates do you have?", stream=True)
+
+    asyncio.run(main())

@@ -17,6 +17,7 @@ Environment Variables:
     GCS_BUCKET_NAME               - GCS bucket name
 """
 
+import asyncio
 from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
@@ -47,26 +48,30 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Single file
-    print("\n" + "=" * 60)
-    print("GCS: single file")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="Report",
-        remote_content=gcs_config.file("reports/quarterly.pdf"),
-    )
+    async def main():
+        # Single file
+        print("\n" + "=" * 60)
+        print("GCS: single file")
+        print("=" * 60 + "\n")
 
-    # Folder
-    print("\n" + "=" * 60)
-    print("GCS: folder")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Report",
+            remote_content=gcs_config.file("reports/quarterly.pdf"),
+        )
 
-    knowledge.insert(
-        name="All Reports",
-        remote_content=gcs_config.folder("reports/"),
-    )
+        # Folder
+        print("\n" + "=" * 60)
+        print("GCS: folder")
+        print("=" * 60 + "\n")
 
-    results = knowledge.search("What were the results?")
-    for doc in results:
-        print("- %s" % doc.name)
+        await knowledge.ainsert(
+            name="All Reports",
+            remote_content=gcs_config.folder("reports/"),
+        )
+
+        results = knowledge.search("What were the results?")
+        for doc in results:
+            print("- %s" % doc.name)
+
+    asyncio.run(main())

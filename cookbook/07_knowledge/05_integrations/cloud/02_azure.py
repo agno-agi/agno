@@ -19,6 +19,7 @@ Environment Variables:
     AZURE_CONTAINER_NAME       - Container name
 """
 
+import asyncio
 from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
@@ -53,26 +54,30 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Single file
-    print("\n" + "=" * 60)
-    print("Azure Blob Storage: single file")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="Report",
-        remote_content=azure_blob.file("reports/annual-report.pdf"),
-    )
+    async def main():
+        # Single file
+        print("\n" + "=" * 60)
+        print("Azure Blob Storage: single file")
+        print("=" * 60 + "\n")
 
-    # Folder
-    print("\n" + "=" * 60)
-    print("Azure Blob Storage: folder")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Report",
+            remote_content=azure_blob.file("reports/annual-report.pdf"),
+        )
 
-    knowledge.insert(
-        name="All Docs",
-        remote_content=azure_blob.folder("documents/"),
-    )
+        # Folder
+        print("\n" + "=" * 60)
+        print("Azure Blob Storage: folder")
+        print("=" * 60 + "\n")
 
-    results = knowledge.search("What were the annual results?")
-    for doc in results:
-        print("- %s" % doc.name)
+        await knowledge.ainsert(
+            name="All Docs",
+            remote_content=azure_blob.folder("documents/"),
+        )
+
+        results = knowledge.search("What were the annual results?")
+        for doc in results:
+            print("- %s" % doc.name)
+
+    asyncio.run(main())

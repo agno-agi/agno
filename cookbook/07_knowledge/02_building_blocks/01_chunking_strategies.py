@@ -16,6 +16,8 @@ Strategies compared:
 See also: ../reference/chunking_decision_guide.md
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.knowledge.chunking.document import DocumentChunking
@@ -84,28 +86,32 @@ agentic_reader = PDFReader(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    strategies = [
-        ("fixed_chunking", "Fixed Size", fixed_reader),
-        ("recursive_chunking", "Recursive", recursive_reader),
-        ("semantic_chunking", "Semantic", semantic_reader),
-        ("document_chunking", "Document", document_reader),
-    ]
 
-    for table_name, name, reader in strategies:
-        print("\n" + "=" * 60)
-        print("STRATEGY: %s" % name)
-        print("=" * 60 + "\n")
+    async def main():
+        strategies = [
+            ("fixed_chunking", "Fixed Size", fixed_reader),
+            ("recursive_chunking", "Recursive", recursive_reader),
+            ("semantic_chunking", "Semantic", semantic_reader),
+            ("document_chunking", "Document", document_reader),
+        ]
 
-        knowledge = create_knowledge(table_name)
-        knowledge.insert(url=pdf_url, reader=reader)
+        for table_name, name, reader in strategies:
+            print("\n" + "=" * 60)
+            print("STRATEGY: %s" % name)
+            print("=" * 60 + "\n")
 
-        agent = Agent(
-            model=OpenAIResponses(id="gpt-5.2"),
-            knowledge=knowledge,
-            search_knowledge=True,
-            markdown=True,
-        )
-        agent.print_response(
-            "How do I make pad thai?",
-            stream=True,
-        )
+            knowledge = create_knowledge(table_name)
+            await knowledge.ainsert(url=pdf_url, reader=reader)
+
+            agent = Agent(
+                model=OpenAIResponses(id="gpt-5.2"),
+                knowledge=knowledge,
+                search_knowledge=True,
+                markdown=True,
+            )
+            agent.print_response(
+                "How do I make pad thai?",
+                stream=True,
+            )
+
+    asyncio.run(main())

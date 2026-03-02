@@ -16,6 +16,8 @@ Steps:
 See also: 02_agentic_rag.py for agent-driven search decisions.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -57,13 +59,17 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-    print("\n" + "=" * 60)
-    print("Basic RAG: Context injected into prompt automatically")
-    print("=" * 60 + "\n")
+    async def main():
+        await knowledge.ainsert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-    agent.print_response(
-        "How do I make chicken and galangal in coconut milk soup",
-        stream=True,
-    )
+        print("\n" + "=" * 60)
+        print("Basic RAG: Context injected into prompt automatically")
+        print("=" * 60 + "\n")
+
+        agent.print_response(
+            "How do I make chicken and galangal in coconut milk soup",
+            stream=True,
+        )
+
+    asyncio.run(main())

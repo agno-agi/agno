@@ -18,6 +18,7 @@ Environment Variables:
     SHAREPOINT_HOSTNAME - SharePoint hostname (e.g. contoso.sharepoint.com)
 """
 
+import asyncio
 from os import getenv
 
 from agno.knowledge.knowledge import Knowledge
@@ -51,26 +52,30 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Single file
-    print("\n" + "=" * 60)
-    print("SharePoint: single file")
-    print("=" * 60 + "\n")
 
-    knowledge.insert(
-        name="Policy Doc",
-        remote_content=sharepoint.file("Shared Documents/policy.pdf"),
-    )
+    async def main():
+        # Single file
+        print("\n" + "=" * 60)
+        print("SharePoint: single file")
+        print("=" * 60 + "\n")
 
-    # Folder
-    print("\n" + "=" * 60)
-    print("SharePoint: folder")
-    print("=" * 60 + "\n")
+        await knowledge.ainsert(
+            name="Policy Doc",
+            remote_content=sharepoint.file("Shared Documents/policy.pdf"),
+        )
 
-    knowledge.insert(
-        name="All Shared Docs",
-        remote_content=sharepoint.folder("Shared Documents/"),
-    )
+        # Folder
+        print("\n" + "=" * 60)
+        print("SharePoint: folder")
+        print("=" * 60 + "\n")
 
-    results = knowledge.search("What is the policy?")
-    for doc in results:
-        print("- %s" % doc.name)
+        await knowledge.ainsert(
+            name="All Shared Docs",
+            remote_content=sharepoint.folder("Shared Documents/"),
+        )
+
+        results = knowledge.search("What is the policy?")
+        for doc in results:
+            print("- %s" % doc.name)
+
+    asyncio.run(main())

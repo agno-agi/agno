@@ -13,6 +13,8 @@ Unlike standard vector-based RAG, LightRAG:
 Requirements: pip install lightrag-agno
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -47,16 +49,20 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if knowledge and agent:
-        knowledge.insert(
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-        )
 
-        print("\n" + "=" * 60)
-        print("Graph RAG: knowledge graph-based retrieval")
-        print("=" * 60 + "\n")
+    async def main():
+        if knowledge and agent:
+            await knowledge.ainsert(
+                url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+            )
 
-        agent.print_response(
-            "What ingredients are commonly shared across Thai recipes?",
-            stream=True,
-        )
+            print("\n" + "=" * 60)
+            print("Graph RAG: knowledge graph-based retrieval")
+            print("=" * 60 + "\n")
+
+            agent.print_response(
+                "What ingredients are commonly shared across Thai recipes?",
+                stream=True,
+            )
+
+    asyncio.run(main())

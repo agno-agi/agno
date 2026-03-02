@@ -14,6 +14,8 @@ Use cases:
 See also: ../02_building_blocks/01_chunking_strategies.py for built-in strategies.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document import Document
@@ -89,13 +91,17 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    knowledge.insert(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        reader=reader,
-    )
 
-    print("\n" + "=" * 60)
-    print("Custom paragraph-based chunking")
-    print("=" * 60 + "\n")
+    async def main():
+        await knowledge.ainsert(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            reader=reader,
+        )
 
-    agent.print_response("What Thai recipes do you know about?", stream=True)
+        print("\n" + "=" * 60)
+        print("Custom paragraph-based chunking")
+        print("=" * 60 + "\n")
+
+        agent.print_response("What Thai recipes do you know about?", stream=True)
+
+    asyncio.run(main())
