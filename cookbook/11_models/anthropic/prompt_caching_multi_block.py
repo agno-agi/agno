@@ -1,0 +1,59 @@
+"""
+Multi-block prompt caching with per-block TTL and tool caching.
+
+Demonstrates two Anthropic caching features:
+1. Per-block TTL: Split system prompts into static (cached) and dynamic (uncached)
+   blocks with independent TTLs. The static block uses a 1h extended TTL so it
+   survives across longer conversations, while the dynamic block is never cached.
+2. Tool caching: Opt in to caching tool definitions by setting cache_tools=True.
+   Anthropic caches all tools as a prefix when cache_control is on the last tool.
+
+Docs: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+"""
+
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.models.message import SystemPromptBlock
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+# -- Manual multi-block approach --
+
+blocks = [
+    # Static instructions, cached for 1 hour (2x cost but survives much longer)
+    SystemPromptBlock(
+        text=(
+            "You are a senior software architect. You give concise, opinionated "
+            "advice grounded in real-world experience. Prefer battle-tested "
+            "patterns over trendy abstractions. When recommending tools or "
+            "libraries, explain the trade-offs honestly."
+        ),
+        cache=True,
+        ttl="1h",
+    ),
+    # Dynamic per-user context, never cached (changes every request)
+    SystemPromptBlock(
+        text="The user is on the Enterprise plan and prefers Python examples. It's currently 5:15.35am EST",
+        cache=False,
+    ),
+]
+
+agent = Agent(
+    model=Claude(
+        id="claude-sonnet-4-5-20250929",
+        cache_system_prompt=True,
+        cache_tools=True,
+    ),
+    system_message=blocks,
+    tools=[DuckDuckGoTools()],
+    markdown=True,
+)
+
+# First run creates the cache
+response = agent.run("What's the best way to structure a large FastAPI project?")
+if response and response.metrics:
+    print(f"Run 1 - cache write: {response.metrics.cache_write_tokens}, cache read: {response.metrics.cache_read_tokens}")
+
+# Second run reads from cache
+response = agent.run("How should I handle database migrations in that setup?")
+if response and response.metrics:
+    print(f"Run 2 - cache write: {response.metrics.cache_write_tokens}, cache read: {response.metrics.cache_read_tokens}")

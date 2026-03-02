@@ -6,9 +6,10 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
+from agno.models.message import SystemPromptBlock
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model
+from agno.utils.models.claude import build_system_blocks, format_tools_for_model
 
 try:
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
@@ -198,7 +199,7 @@ class Claude(AnthropicClaude):
 
     def _prepare_request_kwargs(
         self,
-        system_message: str,
+        system_message: Union[str, List[SystemPromptBlock]],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
@@ -206,7 +207,7 @@ class Claude(AnthropicClaude):
         Prepare the request keyword arguments for the API call.
 
         Args:
-            system_message (str): The concatenated system messages.
+            system_message: The system messages, either as a plain string or structured blocks.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
 
@@ -216,19 +217,19 @@ class Claude(AnthropicClaude):
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+            request_kwargs["system"] = build_system_blocks(
+                system_message,
+                cache_system_prompt=bool(self.cache_system_prompt),
+                extended_cache_time=bool(self.extended_cache_time),
+            )
 
         # Format tools (this will handle strict mode)
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        # Cache the last tool definition so preceding tools are cached as a prefix
+        if self.cache_tools and request_kwargs.get("tools"):
+            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

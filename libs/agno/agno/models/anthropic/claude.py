@@ -9,14 +9,14 @@ from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
-from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
+from agno.models.message import Citations, DocumentCitation, Message, SystemPromptBlock, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.models.claude import MCPServerConfiguration, build_system_blocks, format_messages, format_tools_for_model
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -119,6 +119,7 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
+    cache_tools: Optional[bool] = False
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
@@ -502,7 +503,7 @@ class Claude(Model):
 
     def _prepare_request_kwargs(
         self,
-        system_message: str,
+        system_message: Union[str, List[SystemPromptBlock]],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
@@ -510,7 +511,7 @@ class Claude(Model):
         Prepare the request keyword arguments for the API call.
 
         Args:
-            system_message (str): The concatenated system messages.
+            system_message: The system messages, either as a plain string or structured blocks.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
 
@@ -523,15 +524,11 @@ class Claude(Model):
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+            request_kwargs["system"] = build_system_blocks(
+                system_message,
+                cache_system_prompt=bool(self.cache_system_prompt),
+                extended_cache_time=bool(self.extended_cache_time),
+            )
 
         # Add code execution tool if skills are enabled
         if self.skills:
@@ -545,6 +542,10 @@ class Claude(Model):
         # Format tools (this will handle strict mode)
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        # Cache the last tool definition so preceding tools are cached as a prefix
+        if self.cache_tools and request_kwargs.get("tools"):
+            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
 
         # Build output_format if response_format is provided
         output_format = self._build_output_format(response_format)

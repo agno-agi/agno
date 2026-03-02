@@ -1,6 +1,6 @@
 import json
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +8,25 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+
+
+class SystemPromptBlock(BaseModel):
+    """A block of system prompt content with cache control metadata.
+
+    Used to split system prompts into static (cacheable) and dynamic (uncacheable) parts.
+    Providers that support multi-block caching (like Claude) use these to set independent
+    cache_control on each block.
+
+    Example:
+        >>> blocks = [
+        ...     SystemPromptBlock(text="You are a helpful assistant.", cache=True),
+        ...     SystemPromptBlock(text="The current time is 2024-01-01.", cache=False),
+        ... ]
+    """
+
+    text: str
+    cache: bool = True
+    ttl: Literal["5m", "1h"] = "5m"
 
 
 class MessageReferences(BaseModel):
@@ -62,6 +81,9 @@ class Message(BaseModel):
     role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
+    # Structured system prompt blocks for providers that support multi-block caching.
+    # When set on system messages, providers like Claude use these instead of plain content.
+    system_prompt_blocks: Optional[List[SystemPromptBlock]] = None
     # Compressed content of the message
     compressed_content: Optional[str] = None
 
