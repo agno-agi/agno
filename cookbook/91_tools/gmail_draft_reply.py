@@ -2,15 +2,9 @@
 Gmail Draft Reply Agent
 =======================
 Reads a conversation thread and drafts a contextual reply.
-
-The agent chains: search_threads (find the conversation) -> get_thread
-(load full context) -> draft_email (create a reply draft with thread_id
-so it appears threaded in Gmail).
-
 The agent never sends -- it only creates drafts for human review.
 
 Key concepts:
-- Boolean flags: search_threads, get_thread, draft_email opt into new JSON tools
 - Thread-aware drafting: thread_id + message_id link the draft to the conversation
 - No output_schema: output is a Gmail draft + conversational summary
 

@@ -4,12 +4,10 @@ Gmail Inbox Triage
 Classifies unread emails and applies labels to organize the inbox.
 
 The agent reads unread emails, classifies each into a category,
-creates any missing labels, and applies them. Uses batch operations
-for efficiency. Includes a read-only variant that classifies without
-modifying the inbox.
+and applies labels. Includes a read-only variant that classifies
+without modifying the inbox.
 
 Key concepts:
-- Boolean flags: modify_labels opts into per-message label modification
 - Two agents: full triage (applies labels) vs classify-only (read-only)
 - output_schema: Structured classification results
 

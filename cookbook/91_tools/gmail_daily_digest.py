@@ -9,7 +9,6 @@ and returns a structured report.
 Key concepts:
 - output_schema: Forces structured JSON output matching DailyDigest model
 - add_datetime_to_context: Agent knows today's date for time-aware queries
-- GmailTools(): Default tools only (read, draft, send, labels)
 
 Compare with: gmail_inbox_triage.py for classification that applies labels.
 

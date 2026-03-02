@@ -3,10 +3,6 @@ Gmail Follow-Up Tracker
 =======================
 Finds sent emails that never received a reply and drafts follow-ups.
 
-The agent chains: search_threads (find sent threads with from:me) ->
-get_thread (check for replies) -> draft_email (create follow-up drafts
-for unanswered messages).
-
 Key concepts:
 - Multi-step reasoning: agent must compare sender vs user email per thread
 - add_datetime_to_context: agent calculates days_waiting from message dates
