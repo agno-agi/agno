@@ -60,7 +60,6 @@ agent_os = AgentOS(
     agents=[
         agent,
     ],
-    tracing=True,
     db=db,
 )
 app = agent_os.get_app()
