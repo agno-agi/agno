@@ -277,6 +277,8 @@ def get_agent_router(
                     "image/tiff",
                     "image/tif",
                     "image/avif",
+                    "image/heic",
+                    "image/heif",
                 ]:
                     try:
                         base64_image = process_image(file)
