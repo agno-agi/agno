@@ -3,7 +3,11 @@ GitHub Content Source for Knowledge
 ====================================
 
 Load files and folders from GitHub repositories into your Knowledge base.
-Supports both public and private repositories using fine-grained personal access tokens.
+Supports both public and private repositories.
+
+Authentication methods:
+- Personal Access Token (PAT): simple, set ``token``
+- GitHub App: enterprise-grade, set ``app_id``, ``installation_id``, ``private_key``
 
 Features:
 - Load single files or entire folders recursively
@@ -12,10 +16,11 @@ Features:
 - Rich metadata stored for each file (repo, branch, path)
 
 Requirements:
-- For private repos: GitHub fine-grained PAT with "Contents: read" permission
+- For private repos with PAT: GitHub fine-grained PAT with "Contents: read" permission
+- For GitHub App auth: ``pip install PyJWT cryptography``
 
 Usage:
-    1. Configure GitHubConfig with repo and optional token
+    1. Configure GitHubConfig with repo and auth credentials
     2. Register the config on Knowledge via content_sources
     3. Use .file() or .folder() to create content references
     4. Insert into knowledge with knowledge.insert()
@@ -26,20 +31,43 @@ Run this cookbook:
 
 from os import getenv
 
+from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import GitHubConfig
+from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
 
-# Configure GitHub content source
+# ---------------------------------------------------------------------------
+# Option 1: Personal Access Token authentication
+# ---------------------------------------------------------------------------
 # For private repos, set GITHUB_TOKEN env var to a fine-grained PAT with "Contents: read"
-github_config = GitHubConfig(
-    id="my-repo",
-    name="My Repository",
-    repo="private/repo",  # Format: owner/repo
-    token=getenv("GITHUB_TOKEN"),  # Optional for public repos
-    branch="main",  # Default branch
+# github_config = GitHubConfig(
+#     id="my-repo",
+#     name="My Repository",
+#     repo="private/repo",  # Format: owner/repo
+#     token=getenv("GITHUB_TOKEN"),  # Optional for public repos
+#     branch="main",  # Default branch
+# )
+
+# ---------------------------------------------------------------------------
+# Option 2: GitHub App authentication
+# ---------------------------------------------------------------------------
+# For organizations using GitHub Apps instead of personal tokens.
+# Requires: pip install PyJWT cryptography
+github_app_config = GitHubConfig(
+    id="github-app",
+    name="CNC Sender",
+    repo="willemcdejongh/cnc-sender",
+    app_id=getenv("GITHUB_APP_ID"),
+    installation_id=getenv("GITHUB_INSTALLATION_ID"),
+    private_key=getenv("GITHUB_APP_PRIVATE_KEY"),
+    branch="main",
 )
 
+contents_db = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
+)
 # Create Knowledge with GitHub as a content source
 knowledge = Knowledge(
     name="GitHub Knowledge",
@@ -47,15 +75,46 @@ knowledge = Knowledge(
         table_name="github_knowledge",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-    content_sources=[github_config],
+    content_sources=[github_app_config],
+    contents_db=contents_db,
 )
 
+# if __name__ == "__main__":
+#     # Insert a single file
+#     print("Inserting single file from GitHub...")
+#     knowledge.insert(
+#         name="README",
+#         remote_content=github_app_config.file("README.md"),
+#     )
+
+#     # Insert an entire folder (recursive)
+#     # Use trailing slash or just the folder name - both work
+#     print("Inserting folder from GitHub...")
+#     knowledge.insert(
+#         name="Cookbook Examples",
+#         remote_content=github_app_config.folder(".github"),
+#     )
+
+#     # # Insert from a different branch
+#     # print("Inserting from specific branch...")
+#     # knowledge.insert(
+#     #     name="Dev Docs",
+#     #     remote_content=github_app_config.file("docs/index.md", branch="dev"),
+#     # )
+
+
+agent_os = AgentOS(
+    knowledge=[knowledge],
+)
+app = agent_os.get_app()
+
+# ============================================================================
+# Run AgentOS
+# ============================================================================
 if __name__ == "__main__":
-    # Insert a single file
-    print("Inserting single file from GitHub...")
     knowledge.insert(
         name="README",
-        remote_content=github_config.file("README.md"),
+        remote_content=github_app_config.file("README.md"),
     )
 
     # Insert an entire folder (recursive)
@@ -63,12 +122,7 @@ if __name__ == "__main__":
     print("Inserting folder from GitHub...")
     knowledge.insert(
         name="Cookbook Examples",
-        remote_content=github_config.folder("cookbook/01_basics"),
+        remote_content=github_app_config.folder(".github"),
     )
-
-    # Insert from a different branch
-    print("Inserting from specific branch...")
-    knowledge.insert(
-        name="Dev Docs",
-        remote_content=github_config.file("docs/index.md", branch="dev"),
-    )
+    # Serves a FastAPI app exposed by AgentOS. Use reload=True for local dev.
+    agent_os.serve(app="github:app", reload=True)
