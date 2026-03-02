@@ -53,6 +53,7 @@ class MCPTools(Toolkit):
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        max_concurrent_calls: int = 10,
         **kwargs,
     ):
         """
@@ -74,6 +75,8 @@ class MCPTools(Toolkit):
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
+            max_concurrent_calls: Maximum number of concurrent MCP tool calls allowed
+                over the shared transport. Defaults to 10.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -180,10 +183,10 @@ class MCPTools(Toolkit):
         self._session_context = None
 
         # Semaphore to limit concurrent MCP method calls over a shared
-        # transport (e.g. SSE).  Allows up to 10 concurrent calls instead
+        # transport (e.g. SSE).  Allows up to N concurrent calls instead
         # of fully serializing them, preventing transport overload while
         # still enabling parallelism.
-        self._call_semaphore: asyncio.Semaphore = asyncio.Semaphore(10)
+        self._call_semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent_calls)
 
         # Session management for per-agent-run sessions with dynamic headers
         # Maps run_id to (session, timestamp) for TTL-based cleanup

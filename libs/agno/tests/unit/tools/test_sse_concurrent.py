@@ -66,11 +66,14 @@ async def test_mcp_tools_has_call_semaphore():
 
 
 @pytest.mark.asyncio
-async def test_multi_mcp_tools_has_call_semaphore():
-    """MultiMCPTools should have a _call_semaphore attribute for concurrency control."""
+async def test_multi_mcp_tools_has_per_server_semaphores():
+    """MultiMCPTools should have per-server semaphores for concurrency control."""
     tools = MultiMCPTools(urls=["http://localhost:8080/sse"], urls_transports=["sse"])
-    assert hasattr(tools, "_call_semaphore")
-    assert isinstance(tools._call_semaphore, asyncio.Semaphore)
+    assert hasattr(tools, "_call_semaphores")
+    assert isinstance(tools._call_semaphores, dict)
+    # Semaphore is created lazily per server index
+    sem = tools.get_semaphore_for_server(0)
+    assert isinstance(sem, asyncio.Semaphore)
 
 
 @pytest.mark.asyncio
