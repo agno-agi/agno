@@ -14,7 +14,7 @@ class SentenceTransformerReranker(Reranker):
     model: str = "BAAI/bge-reranker-v2-m3"
     model_kwargs: Optional[Dict[str, Any]] = None
     top_n: Optional[int] = None
-    _cross_encoder: Optional[Any] = None
+    _cross_encoder: Optional[CrossEncoder] = None
 
     @property
     def client(self) -> CrossEncoder:
