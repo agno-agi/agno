@@ -5,7 +5,15 @@ Classifies unread emails and applies labels to organize the inbox.
 
 The agent reads unread emails, classifies each into a category,
 creates any missing labels, and applies them. Uses batch operations
-for efficiency.
+for efficiency. Includes a read-only variant that classifies without
+modifying the inbox.
+
+Key concepts:
+- Boolean flags: manage_label, modify_labels, batch_modify_labels opt into new tools
+- Two agents: full triage (applies labels) vs classify-only (read-only)
+- output_schema: Structured classification results
+
+Compare with: gmail_daily_digest.py for read-only summarization.
 
 Setup: See gmail_tools.py for Google OAuth credential setup.
 Run: pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
@@ -17,6 +25,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Output Schema
+# ---------------------------------------------------------------------------
 
 
 class TriagedEmail(BaseModel):
@@ -36,6 +48,11 @@ class TriageResult(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+# Full triage: classifies AND applies labels (modifies mailbox)
 agent = Agent(
     name="Inbox Triage Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -63,6 +80,9 @@ classify_only_agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Safe: classify only, no labels applied

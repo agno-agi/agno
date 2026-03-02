@@ -6,6 +6,13 @@ Summarizes recent emails into a structured daily digest grouped by priority.
 The agent fetches today's emails, classifies each by category and urgency,
 and returns a structured report.
 
+Key concepts:
+- output_schema: Forces structured JSON output matching DailyDigest model
+- add_datetime_to_context: Agent knows today's date for time-aware queries
+- GmailTools(): Default tools only (read, draft, send, labels)
+
+Compare with: gmail_inbox_triage.py for classification that applies labels.
+
 Setup: See gmail_tools.py for Google OAuth credential setup.
 Run: pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
 """
@@ -16,6 +23,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Output Schema
+# ---------------------------------------------------------------------------
 
 
 class EmailDigestItem(BaseModel):
@@ -47,6 +58,10 @@ class DailyDigest(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     name="Daily Digest Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -62,6 +77,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response(

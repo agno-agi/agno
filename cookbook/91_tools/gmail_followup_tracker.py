@@ -7,6 +7,14 @@ The agent chains: get_profile (identify user's email) -> search_threads
 (find sent threads) -> get_thread (check for replies) -> draft_email
 (create follow-up drafts for unanswered messages).
 
+Key concepts:
+- Multi-step reasoning: agent must compare sender vs user email per thread
+- get_profile: resolves user identity so the agent knows which messages are "sent"
+- add_datetime_to_context: agent calculates days_waiting from message dates
+- output_schema: structured report of pending follow-ups
+
+Compare with: gmail_draft_reply.py for single-thread reply drafting.
+
 Setup: See gmail_tools.py for Google OAuth credential setup.
 Run: pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
 """
@@ -17,6 +25,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Output Schema
+# ---------------------------------------------------------------------------
 
 
 class PendingFollowUp(BaseModel):
@@ -38,6 +50,10 @@ class FollowUpReport(BaseModel):
     summary: str = Field(..., description="Brief summary of findings")
 
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     name="Follow-Up Tracker",
     model=OpenAIChat(id="gpt-4o"),
@@ -58,6 +74,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response(

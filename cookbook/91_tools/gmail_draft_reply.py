@@ -9,6 +9,13 @@ so it appears threaded in Gmail).
 
 The agent never sends -- it only creates drafts for human review.
 
+Key concepts:
+- Boolean flags: search_threads, get_thread, draft_email opt into new JSON tools
+- Thread-aware drafting: thread_id + message_id link the draft to the conversation
+- No output_schema: output is a Gmail draft + conversational summary
+
+Compare with: gmail_followup_tracker.py for automated follow-up detection.
+
 Setup: See gmail_tools.py for Google OAuth credential setup.
 Run: pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
 """
@@ -16,6 +23,10 @@ Run: pip install openai google-api-python-client google-auth-httplib2 google-aut
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     name="Draft Reply Agent",
@@ -30,6 +41,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response(
