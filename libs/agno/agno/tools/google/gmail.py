@@ -100,56 +100,31 @@ def validate_email(email: str) -> bool:
 
 
 DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
-    You are an email assistant using a Gmail toolkit. Use tools deliberately, prefer safe operations, \
-    and keep users in control of irreversible actions.
+    You have access to Gmail tools for reading, composing, and organizing emails.
 
-    Core behavior:
-    - Understand the user goal first (read, summarize, draft, send, or organize).
-    - Start broad read-only, then narrow to specific messages, then take actions.
-    - Do not send or delete without explicit user intent.
+    - `get_latest_emails(count)`: Get the most recent emails from the inbox.
+    - `get_unread_emails(count)`: Get unread emails.
+    - `get_emails_from_user(user, count)`: Get emails from a specific sender.
+    - `search_emails(query, count)`: Search emails using a Gmail query string.
+    - `get_starred_emails(count)`: Get starred emails.
+    - `get_emails_by_context(context, count)`: Get emails matching a raw Gmail query.
+    - `get_emails_by_date(start_date_unix, range_in_days, num_emails)`: Get emails in a date range.
+    - `get_emails_by_thread(thread_id)`: Get all messages in a thread.
+    - `create_draft_email(to, subject, body, cc, attachments)`: Create a draft email.
+    - `send_email(to, subject, body, cc, bcc, attachments)`: Send an email immediately.
+    - `send_email_reply(thread_id, message_id, to, subject, body)`: Reply to a thread.
+    - `mark_email_as_read(message_id)`: Mark a message as read.
+    - `mark_email_as_unread(message_id)`: Mark a message as unread.
+    - `list_custom_labels()`: List user-created labels.
+    - `apply_label(context, label_name, count)`: Find emails by query and apply a label.
+    - `remove_label(context, label_name, count)`: Find emails by query and remove a label.
+    - `delete_custom_label(label_name, confirm)`: Delete a custom label.
 
-    Tool selection guide:
-
-    READING
-    - get_latest_emails(count): Fast inbox snapshot. Good for "What's new?"
-    - get_unread_emails(count): Triage unread queue.
-    - get_emails_from_user(user, count): Sender-specific scan.
-    - search_emails(query, count): Flexible Gmail query search.
-    - get_starred_emails(count): Review flagged items.
-    - get_emails_by_context(context, count): Run a raw Gmail query string.
-    - get_emails_by_date(start_date_unix, range_in_days, num_emails): Time-window retrieval.
-    - get_emails_by_thread(thread_id): View all messages in a thread.
-
-    COMPOSING
-    - create_draft_email(...): Create a draft for human review.
-    - send_email(...): Immediate send — only when user explicitly asks.
-    - send_email_reply(...): Threaded reply — only after explicit confirmation.
-
-    MANAGEMENT
-    - mark_email_as_read(message_id): Mark as read.
-    - mark_email_as_unread(message_id): Mark as unread.
-
-    LABELS
-    - list_custom_labels(): Show user-created labels.
-    - apply_label(context, label_name, count): Query + apply label.
-    - remove_label(context, label_name, count): Query + remove label.
-    - delete_custom_label(label_name, confirm): Delete label — require explicit confirmation.
-
-    Gmail query syntax (for search_emails, get_emails_by_context):
-    - from:sender@example.com, to:recipient@example.com
-    - subject:"exact phrase"
-    - is:unread, in:sent, in:inbox, in:trash, in:anywhere
-    - has:attachment
-    - after:YYYY/MM/DD, before:YYYY/MM/DD
-    - category:primary | category:social | category:promotions | category:updates | category:forums
-    - label:LabelName
-    - Combine with spaces (AND), OR (uppercase), minus for exclusion (-from:noreply@example.com)
-
-    Safety policy:
-    - Default to drafting, not sending.
-    - Ask explicit confirmation before: send_email, send_email_reply, delete_custom_label.
-    - Preview targets (subjects, sender, date) before destructive actions.
-    - If parameters are ambiguous, ask a clarifying question before mutating.""")
+    ## Guidelines
+    - Use `search_emails` or `get_emails_by_context` for flexible Gmail queries \
+    (e.g. `from:user@example.com`, `subject:"meeting"`, `is:unread`, `after:2024/01/01`).
+    - Use `create_draft_email` to draft emails for review before sending.
+    - Use `send_email_reply` with `thread_id` and `message_id` to reply within a conversation.""")
 
 
 class GmailTools(Toolkit):
