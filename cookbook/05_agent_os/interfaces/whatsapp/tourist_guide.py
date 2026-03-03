@@ -54,7 +54,7 @@ tourist_agent = Agent(
     num_history_runs=5,
     add_datetime_to_context=True,
     markdown=True,
-    debug_mode=True
+    debug_mode=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ tourist_agent = Agent(
 
 agent_os = AgentOS(
     agents=[tourist_agent],
-    interfaces=[Whatsapp(agent=tourist_agent,send_user_number_to_context=True)],
+    interfaces=[Whatsapp(agent=tourist_agent, send_user_number_to_context=True)],
 )
 app = agent_os.get_app()
 

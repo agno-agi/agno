@@ -27,6 +27,7 @@ def _make_agent_mock():
             files=None,
             videos=None,
             audio=None,
+            response_audio=None,
         )
     )
     return agent_mock
@@ -87,7 +88,6 @@ def test_webhook_verification():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools", return_value=Mock()),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
         app = _build_app(agent_mock)
@@ -108,7 +108,6 @@ def test_webhook_verification_invalid_token():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools", return_value=Mock()),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
         app = _build_app(agent_mock)
@@ -131,7 +130,6 @@ def test_webhook_signature_invalid():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=False),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools", return_value=Mock()),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
         app = _build_app(agent_mock)
@@ -149,14 +147,10 @@ async def test_text_message_processing():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_tools = Mock()
-        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
-        mock_tools_cls.return_value = mock_tools
-
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook("text", text={"body": "hello world"})
@@ -177,14 +171,11 @@ async def test_image_message_processing():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.get_media_async", new_callable=AsyncMock) as mock_get_media,
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_tools = Mock()
-        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
-        mock_tools_cls.return_value = mock_tools
         mock_get_media.return_value = b"\x89PNG"
 
         app = _build_app(agent_mock)
@@ -207,7 +198,6 @@ def test_non_whatsapp_object_ignored():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools", return_value=Mock()),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
         app = _build_app(agent_mock)
@@ -227,14 +217,10 @@ async def test_button_reply_processing():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_tools = Mock()
-        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
-        mock_tools_cls.return_value = mock_tools
-
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook(
@@ -257,14 +243,10 @@ async def test_list_reply_processing():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_tools = Mock()
-        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
-        mock_tools_cls.return_value = mock_tools
-
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook(
@@ -289,14 +271,10 @@ async def test_list_reply_without_description():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools") as mock_tools_cls,
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_tools = Mock()
-        mock_tools.send_text_message = Mock(return_value='{"ok": true}')
-        mock_tools_cls.return_value = mock_tools
-
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook(
@@ -317,7 +295,6 @@ def test_empty_messages_no_crash():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
-        patch("agno.os.interfaces.whatsapp.router.WhatsAppTools", return_value=Mock()),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
         app = _build_app(agent_mock)

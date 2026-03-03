@@ -368,3 +368,64 @@ async def typing_indicator_async(message_id: Optional[str] = None):
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
         return {"error": str(e)}
+
+
+async def send_text_message_async(
+    recipient: str,
+    text: str,
+    preview_url: bool = False,
+) -> None:
+    phone_number_id = get_phone_number_id()
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    access_token = get_access_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "text",
+        "text": {"preview_url": preview_url, "body": text},
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp text message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp text message: {str(e)}")
+        raise
+
+
+def send_text_message(
+    recipient: str,
+    text: str,
+    preview_url: bool = False,
+) -> None:
+    phone_number_id = get_phone_number_id()
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    access_token = get_access_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "text",
+        "text": {"preview_url": preview_url, "body": text},
+    }
+
+    try:
+        response = httpx.post(url, headers=headers, json=data)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp text message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp text message: {str(e)}")
+        raise

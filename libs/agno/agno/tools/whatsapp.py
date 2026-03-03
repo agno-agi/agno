@@ -103,7 +103,11 @@ class WhatsAppTools(Toolkit):
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data)
         if response.status_code >= 400:
-            error_body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"raw": response.text}
+            error_body = (
+                response.json()
+                if response.headers.get("content-type", "").startswith("application/json")
+                else {"raw": response.text}
+            )
             raise httpx.HTTPStatusError(
                 f"{response.status_code}: {error_body}",
                 request=response.request,
@@ -271,7 +275,11 @@ class WhatsAppTools(Toolkit):
 
             total_rows = sum(len(s.rows) for s in sections)
             if total_rows > 10:
-                return json.dumps({"error": f"WhatsApp allows a maximum of 10 rows total across all sections (got {total_rows}). Reduce the number of rows."})
+                return json.dumps(
+                    {
+                        "error": f"WhatsApp allows a maximum of 10 rows total across all sections (got {total_rows}). Reduce the number of rows."
+                    }
+                )
 
             interactive: Dict[str, Any] = {
                 "type": "list",

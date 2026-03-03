@@ -57,7 +57,9 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    recipient = "+15551234567"  # replace with a number registered in your test environment
+    recipient = (
+        "+15551234567"  # replace with a number registered in your test environment
+    )
 
     # 1. send_text_message
     print("--- send_text_message ---")
