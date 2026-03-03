@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from google.oauth2.credentials import Credentials
 
-from agno.tools.googlesheets import GoogleSheetsTools
+from agno.tools.google.sheets import GoogleSheetsTools
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def mock_drive_service():
 @pytest.fixture
 def sheets_tools(mock_credentials, mock_sheets_service):
     """Create GoogleSheetsTools instance with mocked dependencies."""
-    with patch("agno.tools.googlesheets.build") as mock_build:
+    with patch("agno.tools.google.sheets.build") as mock_build:
         mock_build.return_value = mock_sheets_service
         tools = GoogleSheetsTools(creds=mock_credentials)
         tools.service = mock_sheets_service
@@ -161,7 +161,7 @@ def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_se
     mock_drive_service.permissions.return_value = permissions_mock
 
     # Setup mock for drive service
-    with patch("agno.tools.googlesheets.build") as mock_build:
+    with patch("agno.tools.google.sheets.build") as mock_build:
         mock_build.return_value = mock_drive_service
 
         # Execute test
@@ -205,7 +205,7 @@ def test_service_account():
     """Test setting service_account_path when instantiating a GoogleSheetsTools."""
     path = "/some/path"
     tool = GoogleSheetsTools(service_account_path=path)
-    with patch("agno.tools.googlesheets.ServiceAccountCredentials") as mock_creds_class:
+    with patch("agno.tools.google.sheets.ServiceAccountCredentials") as mock_creds_class:
         tool._auth()
     mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
 
@@ -215,6 +215,6 @@ def test_service_account_environment_variable(monkeypatch):
     path = "/some/path"
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", path)
     tool = GoogleSheetsTools()
-    with patch("agno.tools.googlesheets.ServiceAccountCredentials") as mock_creds_class:
+    with patch("agno.tools.google.sheets.ServiceAccountCredentials") as mock_creds_class:
         tool._auth()
     mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
