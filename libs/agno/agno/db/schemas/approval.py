@@ -32,6 +32,9 @@ class Approval:
     resolved_at: Optional[int] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+    # Run status from the associated run. Updated when run completes/errors/cancels.
+    # Values: "PAUSED", "COMPLETED", "RUNNING", "ERROR", "CANCELLED", or None.
+    run_status: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.created_at = now_epoch_s() if self.created_at is None else to_epoch_s(self.created_at)
@@ -67,6 +70,7 @@ class Approval:
             "resolved_at": self.resolved_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "run_status": self.run_status,
         }
 
     @classmethod
@@ -97,6 +101,7 @@ class Approval:
             "resolved_at",
             "created_at",
             "updated_at",
+            "run_status",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered)

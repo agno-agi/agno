@@ -219,7 +219,14 @@ def get_team_router(
 
         if files:
             for file in files:
-                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                if file.content_type in [
+                    "image/png",
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/webp",
+                    "image/heic",
+                    "image/heif",
+                ]:
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
@@ -469,16 +476,18 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 teams.append(await team.get_team_config())
             else:
-                team_response = await TeamResponse.from_team(team=team)
+                team_response = await TeamResponse.from_team(team=team, is_component=False)
                 teams.append(team_response)
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            db_teams = get_teams(db=os.db, registry=registry)
+            # Exclude teams whose IDs are owned by the registry
+            exclude_ids = registry.get_team_ids() if registry else None
+            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
             for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team)
+                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                 teams.append(team_response)
 
         return teams

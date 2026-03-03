@@ -2,13 +2,21 @@
 Basic Workflow
 ==============
 
-Demonstrates basic workflow.
+A two-step workflow exposed through Slack: a Research Agent gathers
+information, then a Content Writer turns it into a polished summary.
+
+Key concepts:
+  - ``Workflow`` chains sequential ``Step`` objects.
+  - Each step uses a dedicated agent with its own model and tools.
+  - Uses SQLite for session persistence (no external database required).
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.os import AgentOS
+from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
@@ -55,12 +63,15 @@ writing_step = Step(
 )
 
 # Create the workflow
+workflow_db = SqliteDb(
+    session_table="workflow_sessions", db_file="tmp/basic_workflow.db"
+)
+
 content_workflow = Workflow(
     name="Content Creation Workflow",
     description="Research and create content on any topic via Slack",
-    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+    db=workflow_db,
     steps=[research_step, writing_step],
-    session_id="slack_workflow_session",
 )
 
 # Create AgentOS with Slack interface for the workflow
