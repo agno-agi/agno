@@ -822,9 +822,9 @@ class GmailTools(Toolkit):
             to.split(","),
             subject,
             body,
-            cc.split(",") if cc else None,
-            thread_id,  # type: ignore
-            message_id,
+            cc=cc.split(",") if cc else None,
+            thread_id=thread_id,
+            message_id=message_id,
             attachments=attachment_files,
         )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
@@ -1286,7 +1286,9 @@ class GmailTools(Toolkit):
                 self._temp_dir = tempfile.mkdtemp()
             dest_dir = Path(self._temp_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
-        file_path = dest_dir / filename
+        # Strip directory components to prevent path traversal from sender-controlled filenames
+        safe_name = Path(filename).name or "attachment"
+        file_path = dest_dir / safe_name
         file_path.write_bytes(data)
         log_debug(f"Downloaded attachment: {file_path}")
         return str(file_path)
