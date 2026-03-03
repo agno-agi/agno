@@ -20,24 +20,12 @@ class MockModelWithImage(Model):
         super().__init__(id="test-model", name="test-model", provider="test")
         self.instructions = None
 
-        self._mock_response = Mock()
-        self._mock_response.content = "Here is your generated image"
-        self._mock_response.role = "assistant"
-        self._mock_response.reasoning_content = None
-        self._mock_response.redacted_reasoning_content = None
-        self._mock_response.tool_calls = None
-        self._mock_response.tool_executions = None
-        self._mock_response.images = [Image(url="https://example.com/generated.png", id="img-1")]
-        self._mock_response.videos = None
-        self._mock_response.audios = None
-        self._mock_response.audio = None
-        self._mock_response.files = None
-        self._mock_response.citations = None
-        self._mock_response.references = None
-        self._mock_response.metadata = None
-        self._mock_response.provider_data = None
-        self._mock_response.extra = None
-        self._mock_response.response_usage = MessageMetrics()
+        self._mock_response = ModelResponse(
+            content="Here is your generated image",
+            role="assistant",
+            images=[Image(url="https://example.com/generated.png", id="img-1")],
+            response_usage=MessageMetrics(),
+        )
 
         self.response = Mock(return_value=self._mock_response)
         self.aresponse = AsyncMock(return_value=self._mock_response)
