@@ -478,28 +478,16 @@ def test_invalid_email_parameters():
     with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
-        tools.service = mock_service  # Set service to avoid authentication
+        tools.service = mock_service
 
-        with pytest.raises(ValueError, match="Invalid recipient email format"):
-            tools.send_email(
-                to="invalid-email",  # Invalid email format
-                subject="Test",
-                body="Test body",
-            )
+        result = tools.send_email(to="invalid-email", subject="Test", body="Test body")
+        assert "Invalid recipient email format" in result
 
-        with pytest.raises(ValueError, match="Subject cannot be empty"):
-            tools.send_email(
-                to="valid@email.com",
-                subject="",  # Empty subject
-                body="Test body",
-            )
+        result = tools.send_email(to="valid@email.com", subject="", body="Test body")
+        assert "Subject cannot be empty" in result
 
-        with pytest.raises(ValueError, match="Email body cannot be None"):
-            tools.send_email(
-                to="valid@email.com",
-                subject="Test",
-                body=None,  # None body
-            )
+        result = tools.send_email(to="valid@email.com", subject="Test", body=None)
+        assert "Email body cannot be None" in result
 
 
 def test_service_initialization():
@@ -613,39 +601,38 @@ def test_send_email_reply_with_attachment(gmail_tools, mock_gmail_service):
 def test_send_email_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.send_email(
-                to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
-            )
+        result = gmail_tools.send_email(
+            to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
+        )
+        assert "Attachment file not found" in result
 
 
 def test_create_draft_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when draft attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.create_draft_email(
-                to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
-            )
+        result = gmail_tools.create_draft_email(
+            to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
+        )
+        assert "Attachment file not found" in result
 
 
 def test_send_reply_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when reply attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.send_email_reply(
-                thread_id="thread123",
-                message_id="msg456",
-                to="recipient@test.com",
-                subject="Test",
-                body="Test body",
-                attachments="nonexistent.pdf",
-            )
+        result = gmail_tools.send_email_reply(
+            thread_id="thread123",
+            message_id="msg456",
+            to="recipient@test.com",
+            subject="Test",
+            body="Test body",
+            attachments="nonexistent.pdf",
+        )
+        assert "Attachment file not found" in result
 
 
 def test_send_email_mixed_attachment_existence(gmail_tools, mock_gmail_service):
     """Test error handling when some attachments exist and others don't."""
 
-    # Create a mock Path class
     class MockPath:
         def __init__(self, path):
             self.path = str(path)
@@ -654,10 +641,10 @@ def test_send_email_mixed_attachment_existence(gmail_tools, mock_gmail_service):
             return self.path.endswith("exists.pdf")
 
     with patch("agno.tools.google.gmail.Path", MockPath):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.send_email(
-                to="recipient@test.com", subject="Test", body="Test body", attachments=["exists.pdf", "missing.pdf"]
-            )
+        result = gmail_tools.send_email(
+            to="recipient@test.com", subject="Test", body="Test body", attachments=["exists.pdf", "missing.pdf"]
+        )
+        assert "Attachment file not found" in result
 
 
 def test_attachment_mime_type_guessing(gmail_tools, mock_gmail_service):

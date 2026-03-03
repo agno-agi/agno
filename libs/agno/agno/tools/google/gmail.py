@@ -135,7 +135,6 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `mark_email_as_unread(message_id)`: Mark a message as unread.
     - `star_email(message_id)`: Star an email.
     - `unstar_email(message_id)`: Remove star from an email.
-    - `archive_email(message_id)`: Archive an email (removes from inbox, still searchable).
     - `list_custom_labels()`: List user-created labels.
     - `apply_label(context, label_name, count)`: Find emails by query and apply a label.
     - `remove_label(context, label_name, count)`: Find emails by query and remove a label.
@@ -144,7 +143,6 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `get_message(message_id)`: Get a single email with full body, headers, and attachment metadata.
     - `get_thread(thread_id)`: Get all messages in a conversation thread.
     - `search_threads(query, count)`: Search Gmail threads by query. Returns thread IDs and snippets.
-    - `download_attachment(message_id, attachment_id, filename)`: Download an attachment to disk (requires get_message first to find IDs).
     - `get_draft(draft_id)`: Get a draft email by ID with full content.
     - `list_drafts(count)`: List draft emails in the mailbox.
     - `send_draft(draft_id)`: Send an existing draft email.
@@ -712,27 +710,31 @@ class GmailTools(Toolkit):
         Returns:
             str: Stringified dictionary containing draft email details including id
         """
-        self._validate_email_params(to, subject, body)
+        try:
+            self._validate_email_params(to, subject, body)
 
-        # Process attachments
-        attachment_files = []
-        if attachments:
-            if isinstance(attachments, str):
-                attachment_files = [attachments]
-            else:
-                attachment_files = attachments
+            # Process attachments
+            attachment_files = []
+            if attachments:
+                if isinstance(attachments, str):
+                    attachment_files = [attachments]
+                else:
+                    attachment_files = attachments
 
-            # Validate attachment files
-            for file_path in attachment_files:
-                if not Path(file_path).exists():
-                    raise ValueError(f"Attachment file not found: {file_path}")
+                for file_path in attachment_files:
+                    if not Path(file_path).exists():
+                        return f"Error: Attachment file not found: {file_path}"
 
-        message = self._create_message(
-            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
-        )
-        draft = {"message": message}
-        draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
-        return str(draft)
+            message = self._create_message(
+                to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+            )
+            draft = {"message": message}
+            draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
+            return str(draft)
+        except HttpError as error:
+            return f"HTTP Error creating draft: {error}"
+        except Exception as error:
+            return f"Error creating draft: {type(error).__name__}: {error}"
 
     @authenticate
     def send_email(
@@ -763,37 +765,41 @@ class GmailTools(Toolkit):
         Returns:
             str: Stringified dictionary containing sent email details including id
         """
-        self._validate_email_params(to, subject, body)
+        try:
+            self._validate_email_params(to, subject, body)
 
-        # Process attachments
-        attachment_files = []
-        if attachments:
-            if isinstance(attachments, str):
-                attachment_files = [attachments]
-            else:
-                attachment_files = attachments
+            # Process attachments
+            attachment_files = []
+            if attachments:
+                if isinstance(attachments, str):
+                    attachment_files = [attachments]
+                else:
+                    attachment_files = attachments
 
-            # Validate attachment files
-            for file_path in attachment_files:
-                if not Path(file_path).exists():
-                    raise ValueError(f"Attachment file not found: {file_path}")
+                for file_path in attachment_files:
+                    if not Path(file_path).exists():
+                        return f"Error: Attachment file not found: {file_path}"
 
-        if thread_id and not subject.lower().startswith("re:"):
-            subject = f"Re: {subject}"
+            if thread_id and not subject.lower().startswith("re:"):
+                subject = f"Re: {subject}"
 
-        body = body.replace("\n", "<br>")
-        message = self._create_message(
-            to.split(","),
-            subject,
-            body,
-            cc.split(",") if cc else None,
-            bcc=bcc.split(",") if bcc else None,
-            thread_id=thread_id,
-            message_id=message_id,
-            attachments=attachment_files,
-        )
-        message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
-        return str(message)
+            body = body.replace("\n", "<br>")
+            message = self._create_message(
+                to.split(","),
+                subject,
+                body,
+                cc.split(",") if cc else None,
+                bcc=bcc.split(",") if bcc else None,
+                thread_id=thread_id,
+                message_id=message_id,
+                attachments=attachment_files,
+            )
+            message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
+            return str(message)
+        except HttpError as error:
+            return f"HTTP Error sending email: {error}"
+        except Exception as error:
+            return f"Error sending email: {type(error).__name__}: {error}"
 
     @authenticate
     def send_email_reply(
@@ -821,37 +827,40 @@ class GmailTools(Toolkit):
         Returns:
             str: Stringified dictionary containing sent email details including id.
         """
-        self._validate_email_params(to, subject, body)
+        try:
+            self._validate_email_params(to, subject, body)
 
-        # Ensure subject starts with "Re:" for consistency
-        if not subject.lower().startswith("re:"):
-            subject = f"Re: {subject}"
+            if not subject.lower().startswith("re:"):
+                subject = f"Re: {subject}"
 
-        # Process attachments
-        attachment_files = []
-        if attachments:
-            if isinstance(attachments, str):
-                attachment_files = [attachments]
-            else:
-                attachment_files = attachments
+            # Process attachments
+            attachment_files = []
+            if attachments:
+                if isinstance(attachments, str):
+                    attachment_files = [attachments]
+                else:
+                    attachment_files = attachments
 
-            # Validate attachment files
-            for file_path in attachment_files:
-                if not Path(file_path).exists():
-                    raise ValueError(f"Attachment file not found: {file_path}")
+                for file_path in attachment_files:
+                    if not Path(file_path).exists():
+                        return f"Error: Attachment file not found: {file_path}"
 
-        body = body.replace("\n", "<br>")
-        message = self._create_message(
-            to.split(","),
-            subject,
-            body,
-            cc=cc.split(",") if cc else None,
-            thread_id=thread_id,
-            message_id=message_id,
-            attachments=attachment_files,
-        )
-        message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
-        return str(message)
+            body = body.replace("\n", "<br>")
+            message = self._create_message(
+                to.split(","),
+                subject,
+                body,
+                cc=cc.split(",") if cc else None,
+                thread_id=thread_id,
+                message_id=message_id,
+                attachments=attachment_files,
+            )
+            message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
+            return str(message)
+        except HttpError as error:
+            return f"HTTP Error sending reply: {error}"
+        except Exception as error:
+            return f"Error sending reply: {type(error).__name__}: {error}"
 
     @authenticate
     def search_emails(self, query: str, count: int) -> str:
