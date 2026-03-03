@@ -2,7 +2,7 @@ from dataclasses import asdict, dataclass
 from dataclasses import fields as dc_fields
 from enum import Enum
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.utils.timer import Timer
 
@@ -24,8 +24,6 @@ class ModelType(str, Enum):
 if TYPE_CHECKING:
     from agno.models.base import Model
     from agno.models.response import ModelResponse
-    from agno.run.agent import RunOutput
-    from agno.run.team import TeamRunOutput
 
 
 # ---------------------------------------------------------------------------
@@ -638,25 +636,20 @@ def accumulate_model_metrics(
     model_response: "ModelResponse",
     model: "Model",
     model_type: "Union[ModelType, str]",
-    run_response: "Union[RunOutput, TeamRunOutput]",
+    run_metrics: Optional[RunMetrics] = None,
 ) -> None:
-    """Accumulate metrics from a model response into run_response.metrics.
+    """Accumulate metrics from a model response into run_metrics.
 
     Finds or creates a ModelMetrics entry in details[model_type] by (provider, id).
     Sums tokens into the existing entry if found, otherwise creates a new one.
     Also accumulates top-level token counts and cost.
     """
-    if model_response.response_usage is None:
+    if run_metrics is None or model_response.response_usage is None:
         return
 
     usage = model_response.response_usage
 
-    # Initialize run_response.metrics if None
-    if run_response.metrics is None:
-        run_response.metrics = RunMetrics()
-        run_response.metrics.start_timer()
-
-    metrics = run_response.metrics
+    metrics = run_metrics
 
     if metrics.details is None:
         metrics.details = {}
@@ -722,88 +715,80 @@ def accumulate_model_metrics(
 
 
 def accumulate_eval_metrics(
-    eval_response: "RunOutput",
-    run_response: "Union[RunOutput, TeamRunOutput]",
+    eval_metrics: Optional[RunMetrics] = None,
+    run_metrics: Optional[RunMetrics] = None,
     prefix: str = "eval",
 ) -> None:
-    """Accumulate child agent metrics from a RunOutput into the original run_response.
+    """Accumulate child agent/eval metrics into run_metrics.
 
     Merges a child agent's metrics under "{prefix}_model" keys in details.
     """
-    if eval_response.metrics is None:
+    if run_metrics is None or eval_metrics is None:
         return
 
-    eval_metrics = eval_response.metrics
-
-    if run_response.metrics is None:
-        run_response.metrics = RunMetrics()
-        run_response.metrics.start_timer()
-
-    if run_response.metrics.details is None:
-        run_response.metrics.details = {}
+    if run_metrics.details is None:
+        run_metrics.details = {}
 
     # Copy over model details under "{prefix}_<model_type>" keys
     if eval_metrics.details:
         for model_type, model_metrics_list in eval_metrics.details.items():
             prefixed_key = f"{prefix}_{model_type}" if not model_type.startswith(f"{prefix}_") else model_type
-            if prefixed_key not in run_response.metrics.details:
-                run_response.metrics.details[prefixed_key] = []
+            if prefixed_key not in run_metrics.details:
+                run_metrics.details[prefixed_key] = []
 
             # Find-and-add by (provider, id) into the prefixed list
             for mm in model_metrics_list:
                 found = False
-                for existing in run_response.metrics.details[prefixed_key]:
+                for existing in run_metrics.details[prefixed_key]:
                     if existing.provider == mm.provider and existing.id == mm.id:
                         existing.accumulate(mm)
                         found = True
                         break
                 if not found:
-                    run_response.metrics.details[prefixed_key].append(ModelMetrics.from_dict(mm.to_dict()))
+                    run_metrics.details[prefixed_key].append(ModelMetrics.from_dict(mm.to_dict()))
 
     # Accumulate top-level token counts
-    run_response.metrics.input_tokens += eval_metrics.input_tokens
-    run_response.metrics.output_tokens += eval_metrics.output_tokens
-    run_response.metrics.total_tokens += eval_metrics.total_tokens
-    run_response.metrics.audio_input_tokens += eval_metrics.audio_input_tokens
-    run_response.metrics.audio_output_tokens += eval_metrics.audio_output_tokens
-    run_response.metrics.audio_total_tokens += eval_metrics.audio_total_tokens
-    run_response.metrics.cache_read_tokens += eval_metrics.cache_read_tokens
-    run_response.metrics.cache_write_tokens += eval_metrics.cache_write_tokens
-    run_response.metrics.reasoning_tokens += eval_metrics.reasoning_tokens
+    run_metrics.input_tokens += eval_metrics.input_tokens
+    run_metrics.output_tokens += eval_metrics.output_tokens
+    run_metrics.total_tokens += eval_metrics.total_tokens
+    run_metrics.audio_input_tokens += eval_metrics.audio_input_tokens
+    run_metrics.audio_output_tokens += eval_metrics.audio_output_tokens
+    run_metrics.audio_total_tokens += eval_metrics.audio_total_tokens
+    run_metrics.cache_read_tokens += eval_metrics.cache_read_tokens
+    run_metrics.cache_write_tokens += eval_metrics.cache_write_tokens
+    run_metrics.reasoning_tokens += eval_metrics.reasoning_tokens
 
     # Accumulate cost
     if eval_metrics.cost is not None:
-        run_response.metrics.cost = (
-            run_response.metrics.cost if run_response.metrics.cost is not None else 0
-        ) + eval_metrics.cost
+        run_metrics.cost = (run_metrics.cost if run_metrics.cost is not None else 0) + eval_metrics.cost
 
     # Track eval duration separately
     if prefix == "eval" and eval_metrics.duration is not None:
-        if run_response.metrics.additional_metrics is None:
-            run_response.metrics.additional_metrics = {}
-        existing = run_response.metrics.additional_metrics.get("eval_duration", 0)
-        run_response.metrics.additional_metrics["eval_duration"] = existing + eval_metrics.duration
+        if run_metrics.additional_metrics is None:
+            run_metrics.additional_metrics = {}
+        existing = run_metrics.additional_metrics.get("eval_duration", 0)
+        run_metrics.additional_metrics["eval_duration"] = existing + eval_metrics.duration
 
 
 def merge_background_metrics(
-    run_response: "Union[RunOutput, TeamRunOutput]",
-    background_metrics: "List[RunMetrics]",
+    run_metrics: Optional[RunMetrics],
+    background_metrics: "Sequence[Optional[RunMetrics]]",
 ) -> None:
-    """Merge background task metrics into run_response.metrics on the main thread.
+    """Merge background task metrics into run_metrics on the main thread.
 
     Each background task (memory, culture, learning) accumulates metrics into its
     own isolated RunMetrics collector. After all tasks complete, this function
-    merges those collectors into the real run_response — avoiding concurrent
+    merges those collectors into the real run_metrics — avoiding concurrent
     mutation of shared state.
     """
+    if run_metrics is None:
+        return
+
     for bg_metrics in background_metrics:
         if bg_metrics is None:
             continue
 
-        if run_response.metrics is None:
-            run_response.metrics = RunMetrics()
-
-        metrics = run_response.metrics
+        metrics = run_metrics
 
         # Accumulate top-level token counts
         metrics.input_tokens += bg_metrics.input_tokens

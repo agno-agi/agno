@@ -31,9 +31,9 @@ def make_memories(
     run_messages: RunMessages,
     user_id: Optional[str] = None,
 ) -> Optional[RunMetrics]:
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
         user_message_str is not None
@@ -46,7 +46,7 @@ def make_memories(
             message=user_message_str,
             user_id=user_id,
             agent_id=agent.id,
-            run_response=collector,
+            run_metrics=collector,
         )
 
     if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -72,13 +72,13 @@ def make_memories(
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
                 agent.memory_manager.create_user_memories(
-                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=collector
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_metrics=collector
                 )  # type: ignore
             else:
                 log_warning(
                     "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
                 )
-    return collector.metrics
+    return collector
 
 
 async def amake_memories(
@@ -86,9 +86,9 @@ async def amake_memories(
     run_messages: RunMessages,
     user_id: Optional[str] = None,
 ) -> Optional[RunMetrics]:
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
     if (
         user_message_str is not None
@@ -101,7 +101,7 @@ async def amake_memories(
             message=user_message_str,
             user_id=user_id,
             agent_id=agent.id,
-            run_response=collector,
+            run_metrics=collector,
         )
 
     if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -127,13 +127,13 @@ async def amake_memories(
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
                 await agent.memory_manager.acreate_user_memories(  # type: ignore
-                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_response=collector
+                    messages=non_empty_messages, user_id=user_id, agent_id=agent.id, run_metrics=collector
                 )
             else:
                 log_warning(
                     "Unable to add messages to memory: memory_manager not configured or update_memory_on_run is disabled"
                 )
-    return collector.metrics
+    return collector
 
 
 async def astart_memory_task(
@@ -260,32 +260,32 @@ def make_cultural_knowledge(
     agent: Agent,
     run_messages: RunMessages,
 ) -> Optional[RunMetrics]:
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
         log_debug("Creating cultural knowledge.")
         agent.culture_manager.create_cultural_knowledge(
             message=run_messages.user_message.get_content_string(),
-            run_response=collector,
+            run_metrics=collector,
         )
-    return collector.metrics
+    return collector
 
 
 async def acreate_cultural_knowledge(
     agent: Agent,
     run_messages: RunMessages,
 ) -> Optional[RunMetrics]:
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
         log_debug("Creating cultural knowledge.")
         await agent.culture_manager.acreate_cultural_knowledge(
             message=run_messages.user_message.get_content_string(),
-            run_response=collector,
+            run_metrics=collector,
         )
-    return collector.metrics
+    return collector
 
 
 async def astart_cultural_knowledge_task(
@@ -392,9 +392,9 @@ def process_learnings(
     if agent._learning is None:
         return None
 
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     try:
         # Convert run messages to list format expected by LearningMachine
         messages = run_messages.messages if run_messages else []
@@ -405,12 +405,12 @@ def process_learnings(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             team_id=agent.team_id,
-            run_response=collector,
+            run_metrics=collector,
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
         log_warning(f"Error processing learnings: {e}")
-    return collector.metrics
+    return collector
 
 
 async def aprocess_learnings(
@@ -423,9 +423,9 @@ async def aprocess_learnings(
     if agent._learning is None:
         return None
 
-    from agno.run.agent import RunOutput
+    from agno.metrics import RunMetrics
 
-    collector = RunOutput(content="")
+    collector = RunMetrics()
     try:
         messages = run_messages.messages if run_messages else []
         await agent._learning.aprocess(
@@ -434,12 +434,12 @@ async def aprocess_learnings(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             team_id=agent.team_id,
-            run_response=collector,
+            run_metrics=collector,
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
         log_warning(f"Error processing learnings: {e}")
-    return collector.metrics
+    return collector
 
 
 async def astart_learning_task(

@@ -51,6 +51,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -393,7 +394,7 @@ def _run_tasks(
 
         # Wait for background memory and learning creation
         wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
-        merge_background_metrics(run_response, collect_background_metrics(memory_future, learning_future))
+        merge_background_metrics(run_response.metrics, collect_background_metrics(memory_future, learning_future))
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -401,7 +402,7 @@ def _run_tasks(
         if team.session_summary_manager is not None:
             session.upsert_run(run_response=run_response)
             try:
-                team.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                team.session_summary_manager.create_session_summary(session=session, run_metrics=run_response.metrics)
             except Exception as e:
                 log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -724,11 +725,26 @@ def _run_tasks_stream(
 
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for frontend
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -1161,7 +1177,9 @@ def _run(
 
                 # 11. Wait for background memory creation
                 wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
-                merge_background_metrics(run_response, collect_background_metrics(memory_future, learning_future))
+                merge_background_metrics(
+                    run_response.metrics, collect_background_metrics(memory_future, learning_future)
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1170,7 +1188,9 @@ def _run(
                     # Upsert the RunOutput to Team Session before creating the session summary
                     session.upsert_run(run_response=run_response)
                     try:
-                        team.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -1562,7 +1582,9 @@ def _run_stream(
                     store_events=team.store_events,
                     get_memories_callback=lambda: team.get_user_memories(user_id=user_id),
                 )
-                merge_background_metrics(run_response, collect_background_metrics(memory_future, learning_future))
+                merge_background_metrics(
+                    run_response.metrics, collect_background_metrics(memory_future, learning_future)
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 # 9. Create session summary
@@ -1578,7 +1600,9 @@ def _run_stream(
                             store_events=team.store_events,
                         )
                     try:
-                        team.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -2145,7 +2169,7 @@ async def _arun_tasks(
 
         # Wait for background memory and learning creation
         await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
-        merge_background_metrics(run_response, collect_background_metrics(memory_task, learning_task))
+        merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2154,7 +2178,7 @@ async def _arun_tasks(
             team_session.upsert_run(run_response=run_response)
             try:
                 await team.session_summary_manager.acreate_session_summary(
-                    session=team_session, run_response=run_response
+                    session=team_session, run_metrics=run_response.metrics
                 )
             except Exception as e:
                 log_warning(f"Error in session summary creation: {str(e)}")
@@ -2497,11 +2521,26 @@ async def _arun_tasks_stream(
 
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for creating detailed events
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -2973,7 +3012,7 @@ async def _arun(
 
                 # 11. Wait for background memory creation
                 await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)
-                merge_background_metrics(run_response, collect_background_metrics(memory_task, learning_task))
+                merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 12. Create session summary
@@ -2982,7 +3021,7 @@ async def _arun(
                     team_session.upsert_run(run_response=run_response)
                     try:
                         await team.session_summary_manager.acreate_session_summary(
-                            session=team_session, run_response=run_response
+                            session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -3488,7 +3527,7 @@ async def _arun_stream(
                     get_memories_callback=lambda: team.aget_user_memories(user_id=user_id),
                 ):
                     yield event
-                merge_background_metrics(run_response, collect_background_metrics(memory_task, learning_task))
+                merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3506,7 +3545,7 @@ async def _arun_stream(
                         )
                     try:
                         await team.session_summary_manager.acreate_session_summary(
-                            session=team_session, run_response=run_response
+                            session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -3878,6 +3917,7 @@ def _cleanup_and_store(
     run_context: Optional[RunContext] = None,
 ) -> None:
     #  Scrub the stored run based on storage flags
+    from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
     scrub_run_output_for_storage(team, run_response)
@@ -3906,6 +3946,11 @@ def _cleanup_and_store(
     # Save session to memory
     team.save_session(session=session)
 
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(team.db, run_response.run_id, run_response.status)
+
 
 async def _acleanup_and_store(
     team: "Team",
@@ -3914,6 +3959,7 @@ async def _acleanup_and_store(
     run_context: Optional[RunContext] = None,
 ) -> None:
     #  Scrub the stored run based on storage flags
+    from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
     scrub_run_output_for_storage(team, run_response)
@@ -3941,6 +3987,11 @@ async def _acleanup_and_store(
 
     # Save session to memory
     await team.asave_session(session=session)
+
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
@@ -4939,7 +4990,9 @@ def _continue_run(
                 if team.session_summary_manager is not None:
                     session.upsert_run(run_response=run_response)
                     try:
-                        team.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -5165,7 +5218,9 @@ def _continue_run_stream(
                             store_events=team.store_events,
                         )
                     try:
-                        team.session_summary_manager.create_session_summary(session=session, run_response=run_response)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -5204,6 +5259,7 @@ def _continue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,
@@ -5610,7 +5666,7 @@ async def _acontinue_run(
                     team_session.upsert_run(run_response=run_response)
                     try:
                         await team.session_summary_manager.acreate_session_summary(
-                            session=team_session, run_response=run_response
+                            session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -5629,6 +5685,7 @@ async def _acontinue_run(
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -5639,6 +5696,7 @@ async def _acontinue_run(
                 if run_response.content is None:
                     run_response.content = str(e)
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -5974,7 +6032,7 @@ async def _acontinue_run_stream(
                         )
                     try:
                         await team.session_summary_manager.acreate_session_summary(
-                            session=team_session, run_response=run_response
+                            session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
@@ -6017,6 +6075,7 @@ async def _acontinue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,

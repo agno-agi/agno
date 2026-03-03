@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -833,7 +834,7 @@ class Team:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         background: bool = False,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def arun(
@@ -1009,7 +1010,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def acontinue_run(
@@ -1712,15 +1713,24 @@ def get_team_by_id(
 def get_teams(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
 ) -> List["Team"]:
     """
     Get all teams from the database.
 
-    Sets _version and _stage on each team from the component metadata.
+    Args:
+        db: Database to load teams from
+        registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
+
+    Returns:
+        List of Team instances loaded from the database
     """
     teams: List[Team] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        components, _ = db.list_components(
+            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids
+        )
         for component in components:
             component_id = component["component_id"]
             config = db.get_config(component_id=component_id)

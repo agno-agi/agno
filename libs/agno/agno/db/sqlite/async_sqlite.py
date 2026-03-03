@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 from sqlalchemy import or_
@@ -28,6 +28,7 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -2701,6 +2702,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2716,6 +2718,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2757,6 +2760,20 @@ class AsyncSqliteDb(AsyncBaseDb):
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
 
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
@@ -2785,6 +2802,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2797,6 +2815,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2843,6 +2862,20 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if end_time:
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -3257,6 +3290,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3718,4 +3752,31 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return (await sess.execute(stmt)).scalar() or 0
         except Exception as e:
             log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = (
+                        table.update()
+                        .where(table.c.run_id == run_id)
+                        .values(run_status=run_status.value, updated_at=int(time.time()))
+                    )
+                    result = await sess.execute(stmt)
+                    return result.rowcount or 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
             return 0

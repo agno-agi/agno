@@ -634,6 +634,8 @@ class RegistryResourceType(str, Enum):
     VECTOR_DB = "vector_db"
     SCHEMA = "schema"
     FUNCTION = "function"
+    AGENT = "agent"
+    TEAM = "team"
 
 
 class CallableMetadata(BaseModel):
@@ -724,5 +726,6 @@ RegistryMetadata = Union[
 class RegistryContentResponse(BaseModel):
     name: str
     type: RegistryResourceType
+    id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
