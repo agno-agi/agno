@@ -442,8 +442,8 @@ class GmailTools(Toolkit):
                 scopes=self.scopes,
                 subject=delegated_user,
             )
-            if self.creds and self.creds.expired:
-                self.creds.refresh(Request())
+            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
+            self.creds.refresh(Request())
             return
 
         # OAuth flow
@@ -457,7 +457,7 @@ class GmailTools(Toolkit):
                 # Token file missing refresh_token — fall through to re-auth
                 self.creds = None
 
-        if self.creds and self.creds.expired and self.creds.refresh_token:
+        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
             try:
                 self.creds.refresh(Request())
             except Exception:
@@ -488,7 +488,7 @@ class GmailTools(Toolkit):
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())
+            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
             log_debug("Gmail credentials saved")
 
     def _format_emails(self, emails: List[dict]) -> str:
