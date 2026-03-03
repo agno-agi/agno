@@ -6,6 +6,8 @@ For agentic use-case examples, see:
 - gmail_inbox_triage.py      - Classify unread emails and apply labels
 - gmail_draft_reply.py       - Read thread context and draft replies
 - gmail_followup_tracker.py  - Find unanswered sent emails and draft follow-ups
+- gmail_action_items.py      - Extract action items from email threads
+- gmail_context_agent.py     - Personal agent that learns your email style (Pal pattern)
 """
 
 from agno.agent import Agent
@@ -116,7 +118,7 @@ agent = Agent(
 thread_reply_agent = Agent(
     name="Thread Reply Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(get_thread=True)],
+    tools=[GmailTools()],
     description="You are a Gmail agent that finds conversations and drafts threaded replies.",
     instructions=[
         "Search for the requested thread, load full context, then draft a reply.",

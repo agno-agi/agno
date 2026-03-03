@@ -1,7 +1,6 @@
 """Unit tests for GmailTools class."""
 
 import base64
-from datetime import datetime
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, mock_open, patch
 

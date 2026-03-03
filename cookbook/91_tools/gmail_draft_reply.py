@@ -25,7 +25,7 @@ from agno.tools.google.gmail import GmailTools
 agent = Agent(
     name="Draft Reply Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(get_thread=True)],
+    tools=[GmailTools()],
     instructions=[
         "Match the tone and formality of the existing conversation.",
         "Keep replies concise and professional unless instructed otherwise.",
