@@ -129,17 +129,22 @@ def test_auth_with_expired_credentials():
     mock_creds.expired = True
     mock_creds.refresh_token = True
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
-        mock_service = MagicMock()
-        mock_build.return_value = mock_service
+    # Real Credentials.refresh() sets token + expiry, making valid=True
+    def refresh_side_effect(request):
+        mock_creds.valid = True
+        mock_creds.expired = False
 
+    mock_creds.refresh = Mock(side_effect=refresh_side_effect)
+    mock_creds.to_json.return_value = '{"token": "refreshed"}'
+
+    with patch("agno.tools.google.gmail.build") as mock_build:
+        mock_build.return_value = MagicMock()
         tools = GmailTools(creds=mock_creds)
 
-        with patch.object(mock_creds, "refresh") as mock_refresh:
-            with patch("pathlib.Path.exists") as mock_exists:
-                mock_exists.return_value = False  # Force refresh path
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch("pathlib.Path.write_text"):
                 tools._auth()
-                mock_refresh.assert_called_once()
+                mock_creds.refresh.assert_called_once()
 
 
 def test_auth_with_custom_paths():
@@ -147,12 +152,18 @@ def test_auth_with_custom_paths():
     custom_creds_path = "custom_creds.json"
     custom_token_path = "custom_token.json"
 
-    with patch("pathlib.Path.exists") as mock_exists:
-        mock_exists.return_value = True
-        with patch("agno.tools.google.gmail.Credentials.from_authorized_user_file") as mock_from_file:
-            tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
-            tools._auth()
-            mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
+    mock_loaded_creds = MagicMock(spec=Credentials)
+    mock_loaded_creds.valid = True
+    mock_loaded_creds.to_json.return_value = '{"token": "test"}'
+
+    with patch("pathlib.Path.exists", return_value=True):
+        with patch(
+            "agno.tools.google.gmail.Credentials.from_authorized_user_file", return_value=mock_loaded_creds
+        ) as mock_from_file:
+            with patch("pathlib.Path.write_text"):
+                tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
+                tools._auth()
+                mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
 
 
 def test_get_latest_emails(gmail_tools, mock_gmail_service):
