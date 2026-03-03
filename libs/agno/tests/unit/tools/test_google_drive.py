@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.oauth2.credentials import Credentials
 
-from agno.tools.google_drive import GoogleDriveTools
+from agno.tools.google.drive import GoogleDriveTools
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def mock_creds():
 @pytest.fixture
 def drive_tools(mock_creds, mock_service):
     with (
-        patch("agno.tools.google_drive.build") as mock_build,
+        patch("agno.tools.google.drive.build") as mock_build,
         patch.object(GoogleDriveTools, "_auth", return_value=None),
     ):
         mock_build.return_value = mock_service
@@ -84,7 +84,7 @@ def test_download_file_success(tmp_path, drive_tools):
         (MagicMock(progress=lambda: 0.5), False),
         (MagicMock(progress=lambda: 1.0), True),
     ]
-    with patch("agno.tools.google_drive.MediaIoBaseDownload", return_value=mock_downloader):
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
         result = drive_tools.download_file(file_id, dest_path)
     assert result == dest_path
     assert dest_path.exists()
@@ -95,6 +95,6 @@ def test_download_file_error(tmp_path, drive_tools):
     dest_path = tmp_path / "downloaded.txt"
     mock_get_media = drive_tools.service.files.return_value.get_media
     mock_get_media.side_effect = Exception("Download error")
-    with patch("agno.tools.google_drive.MediaIoBaseDownload", return_value=MagicMock()):
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=MagicMock()):
         result = drive_tools.download_file(file_id, dest_path)
     assert result is None
