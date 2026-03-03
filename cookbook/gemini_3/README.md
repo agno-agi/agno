@@ -116,7 +116,7 @@ Agent OS provides a web interface for interacting with all your agents. Step 21 
 python cookbook/gemini_3/21_agent_os.py
 ```
 
-Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
+Then visit [os.agno.com](https://os.agno.com/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-3&utm_term=gemini-3) and add `http://localhost:7777` as an endpoint.
 
 ## Troubleshooting
 
@@ -129,6 +129,6 @@ Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as
 
 ## Learn More
 
-- [Agno Documentation](https://docs.agno.com)
-- [Agent OS Overview](https://docs.agno.com/agent-os/introduction)
+- [Agno Documentation](https://docs.agno.com?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-3&utm_term=docs)
+- [Agent OS Overview](https://docs.agno.com/agent-os/introduction?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-3&utm_term=agentos-docs)
 - [Gemini API Reference](https://ai.google.dev/docs)

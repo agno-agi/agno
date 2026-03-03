@@ -39,6 +39,7 @@ from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
     TraceNode,
+    TraceSearchGroupBy,
     TraceSessionStats,
     TraceSummary,
 )
@@ -2624,6 +2625,51 @@ class AgentOSClient:
 
         data = await self._aget("/trace_session_stats", params=params, headers=headers)
         return PaginatedResponse[TraceSessionStats].model_validate(data)
+
+    async def search_traces(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: TraceSearchGroupBy = TraceSearchGroupBy.RUN,
+        page: int = 1,
+        limit: int = 20,
+        db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Union[PaginatedResponse[TraceDetail], PaginatedResponse[TraceSessionStats]]:
+        """Search traces using the FilterExpr DSL for composable queries.
+
+        Supports operators: EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH,
+        AND, OR, NOT.
+
+        Args:
+            filter_expr: FilterExpr DSL as a dict (e.g., {"op": "EQ", "key": "status", "value": "OK"})
+            group_by: Grouping mode - TraceSearchGroupBy.RUN (default) returns TraceDetail,
+                TraceSearchGroupBy.SESSION returns TraceSessionStats
+            page: Page number (1-indexed)
+            limit: Number of traces per page (max 100)
+            db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[TraceDetail] if group_by=RUN, PaginatedResponse[TraceSessionStats] if group_by=SESSION
+
+        Raises:
+            HTTPStatusError: On HTTP errors (400 for invalid filter)
+        """
+        body: Dict[str, Any] = {
+            "filter": filter_expr,
+            "group_by": group_by.value,
+            "page": page,
+            "limit": limit,
+        }
+        params: Dict[str, Any] = {}
+        if db_id is not None:
+            params["db_id"] = db_id
+
+        data = await self._apost("/traces/search", data=body, params=params if params else None, headers=headers)
+
+        if group_by == TraceSearchGroupBy.SESSION:
+            return PaginatedResponse[TraceSessionStats].model_validate(data)
+        return PaginatedResponse[TraceDetail].model_validate(data)
 
     # Metrics Operations
     async def get_metrics(
