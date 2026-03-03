@@ -1,7 +1,18 @@
+"""
+Anthropic Image Input Url
+=========================
+
+Cookbook example for `anthropic/image_input_url.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.anthropic import Claude
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -18,3 +29,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

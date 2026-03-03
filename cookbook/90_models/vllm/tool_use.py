@@ -1,8 +1,14 @@
 """Build a Web Search Agent using xAI."""
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.vllm import VLLM
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=VLLM(
@@ -11,4 +17,16 @@ agent = Agent(
     tools=[WebSearchTools()],
     markdown=True,
 )
-agent.print_response("Whats happening in France?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("Whats happening in France?")
+
+    # --- Sync + Streaming ---
+    agent.print_response("Whats happening in France?", stream=True)
+
+    # --- Async + Streaming ---
+    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))

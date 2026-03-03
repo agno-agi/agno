@@ -1,6 +1,18 @@
+"""
+Lumalabs Tools
+=============================
+
+Demonstrates lumalabs tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.lumalab import LumaLabTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """Create an agent specialized for Luma AI video generation"""
 
@@ -33,11 +45,15 @@ luma_agent = Agent(
     ),
 )
 
-luma_agent.run("Generate a video of a car in a sky")
-# luma_agent.run("Transform this image into a video of a tiger walking: https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Walking_tiger_female.jpg/1920px-Walking_tiger_female.jpg")
-# luma_agent.run("""
-# Create a transition video between these two images:
-# Start: https://img.freepik.com/premium-photo/car-driving-dark-forest-generative-ai_634053-6661.jpg?w=1380
-# End: https://img.freepik.com/free-photo/front-view-black-luxury-sedan-road_114579-5030.jpg?t=st=1733821884~exp=1733825484~hmac=735ca584a9b985c53875fc1ad343c3fd394e1de4db49e5ab1a9ab37ac5f91a36&w=1380
-# Make it a smooth, natural movement
-# """)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    luma_agent.run("Generate a video of a car in a sky")
+    # luma_agent.run("Transform this image into a video of a tiger walking: https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Walking_tiger_female.jpg/1920px-Walking_tiger_female.jpg")
+    # luma_agent.run("""
+    # Create a transition video between these two images:
+    # Start: https://img.freepik.com/premium-photo/car-driving-dark-forest-generative-ai_634053-6661.jpg?w=1380
+    # End: https://img.freepik.com/free-photo/front-view-black-luxury-sedan-road_114579-5030.jpg?t=st=1733821884~exp=1733825484~hmac=735ca584a9b985c53875fc1ad343c3fd394e1de4db49e5ab1a9ab37ac5f91a36&w=1380
+    # Make it a smooth, natural movement
+    # """)

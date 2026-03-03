@@ -9,7 +9,7 @@ import pytest
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
 
-from agno.tools.gmail import GmailTools
+from agno.tools.google.gmail import GmailTools
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_tools(mock_credentials, mock_gmail_service):
     """Create GmailTools instance with mocked dependencies."""
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_build.return_value = mock_gmail_service
         tools = GmailTools(creds=mock_credentials)
         tools.service = mock_gmail_service
@@ -111,7 +111,7 @@ def test_authentication_decorator():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = False
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -129,7 +129,7 @@ def test_auth_with_expired_credentials():
     mock_creds.expired = True
     mock_creds.refresh_token = True
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -149,7 +149,7 @@ def test_auth_with_custom_paths():
 
     with patch("pathlib.Path.exists") as mock_exists:
         mock_exists.return_value = True
-        with patch("agno.tools.gmail.Credentials.from_authorized_user_file") as mock_from_file:
+        with patch("agno.tools.google.gmail.Credentials.from_authorized_user_file") as mock_from_file:
             tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
             tools._auth()
             mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
@@ -464,7 +464,7 @@ def test_invalid_email_parameters():
     """Test handling of invalid email parameters."""
     tools = GmailTools(creds=Mock(spec=Credentials, valid=True))
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
         tools.service = mock_service  # Set service to avoid authentication
@@ -496,7 +496,7 @@ def test_service_initialization():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -642,7 +642,7 @@ def test_send_email_mixed_attachment_existence(gmail_tools, mock_gmail_service):
         def exists(self):
             return self.path.endswith("exists.pdf")
 
-    with patch("agno.tools.gmail.Path", MockPath):
+    with patch("agno.tools.google.gmail.Path", MockPath):
         with pytest.raises(ValueError, match="Attachment file not found"):
             gmail_tools.send_email(
                 to="recipient@test.com", subject="Test", body="Test body", attachments=["exists.pdf", "missing.pdf"]

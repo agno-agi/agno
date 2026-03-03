@@ -35,9 +35,16 @@ class AgentResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_component: bool = False
+    current_version: Optional[int] = None
+    stage: Optional[str] = None
 
     @classmethod
-    async def from_agent(cls, agent: Agent) -> "AgentResponse":
+    async def from_agent(
+        cls,
+        agent: Agent,
+        is_component: bool = False,
+    ) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -156,7 +163,11 @@ class AgentResponse(BaseModel):
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
-            "knowledge_filters": agent.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in agent.knowledge_filters]
+                if isinstance(agent.knowledge_filters, list)
+                else agent.knowledge_filters
+            ),
             "references_format": agent.references_format,
         }
 
@@ -285,4 +296,7 @@ class AgentResponse(BaseModel):
             introduction=agent.introduction,
             metadata=agent.metadata,
             input_schema=input_schema_dict,
+            is_component=is_component,
+            current_version=getattr(agent, "_version", None),
+            stage=getattr(agent, "_stage", None),
         )

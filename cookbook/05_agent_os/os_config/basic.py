@@ -1,3 +1,10 @@
+"""
+Basic
+=====
+
+Demonstrates basic.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
@@ -17,7 +24,9 @@ from agno.workflow.workflow import Workflow
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="db-0001")
 db2 = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai2", id="db-0002")
 
-# Setup basic agents, teams and workflows
+# ---------------------------------------------------------------------------
+# Create Agent, Team, And Workflow
+# ---------------------------------------------------------------------------
 basic_agent = Agent(
     name="Marketing Agent",
     db=db,
@@ -82,6 +91,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

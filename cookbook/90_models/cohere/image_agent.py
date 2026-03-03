@@ -1,6 +1,17 @@
+"""
+Cohere Image Agent
+==================
+
+Cookbook example for `cohere/image_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.cohere import Cohere
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Cohere(id="c4ai-aya-vision-8b"),
@@ -16,3 +27,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass
