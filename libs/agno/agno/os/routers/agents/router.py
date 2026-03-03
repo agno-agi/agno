@@ -408,7 +408,7 @@ async def _agent_continue_run_producer(
 async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
-    updated_tools: List,
+    updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -455,7 +455,7 @@ async def agent_continue_response_streamer(
 async def agent_resumable_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
-    updated_tools: List,
+    updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
