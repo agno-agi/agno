@@ -141,7 +141,10 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `remove_label(context, label_name, count)`: Find emails by query and remove a label.
     - `delete_custom_label(label_name, confirm)`: Delete a custom label.
 
+    - `get_message(message_id)`: Get a single email with full body, headers, and attachment metadata.
+    - `get_thread(thread_id)`: Get all messages in a conversation thread.
     - `search_threads(query, count)`: Search Gmail threads by query. Returns thread IDs and snippets.
+    - `download_attachment(message_id, attachment_id, filename)`: Download an attachment to disk (requires get_message first to find IDs).
     - `get_draft(draft_id)`: Get a draft email by ID with full content.
     - `list_drafts(count)`: List draft emails in the mailbox.
     - `send_draft(draft_id)`: Send an existing draft email.
@@ -160,7 +163,9 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - Combine with spaces (AND): `from:me newer_than:7d has:attachment`
 
     ## Guidelines
+    - Use `get_message(message_id)` to read a specific email's full content.
     - Use `search_threads` to find conversations, then `get_thread` for full content.
+    - To download attachments: call `get_message` first to get attachment IDs, then `download_attachment`.
     - Use `create_draft_email` to draft emails for review before sending.
     - Use `send_email_reply` with `thread_id` and `message_id` to reply within a conversation.""")
 
@@ -210,9 +215,9 @@ class GmailTools(Toolkit):
         apply_label: bool = True,
         remove_label: bool = True,
         delete_custom_label: bool = True,
-        # New tools (opt-in, default False)
-        get_message: bool = False,
-        get_thread: bool = False,
+        # Thread & message tools
+        get_message: bool = True,
+        get_thread: bool = True,
         search_threads: bool = True,
         modify_thread_labels: bool = False,
         trash_thread: bool = False,
