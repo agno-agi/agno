@@ -39,6 +39,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    format_sse_event,
     format_sse_event_with_index,
     get_agent_by_id,
     get_request_kwargs,
@@ -70,12 +71,68 @@ async def agent_response_streamer(
     auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
-    """SSE generator that reads from the agent's event queue.
+    """Default SSE generator. Agent runs inline — if client disconnects, agent is cancelled."""
+    try:
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
 
-    The actual agent execution runs in a detached asyncio.Task (_agent_run_producer)
-    so it survives client disconnections. This generator simply subscribes to the
-    run's event queue and yields SSE data. When the client disconnects, only this
-    generator is cancelled -- the producer keeps running.
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
+        if auth_token and isinstance(agent, RemoteAgent):
+            kwargs["auth_token"] = auth_token
+
+        run_response = agent.arun(
+            input=message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_events=stream_events,
+            **kwargs,
+        )
+        async for run_response_chunk in run_response:
+            yield format_sse_event(run_response_chunk)  # type: ignore
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
+
+
+async def agent_resumable_response_streamer(
+    agent: Union[Agent, RemoteAgent],
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+    **kwargs: Any,
+) -> AsyncGenerator:
+    """Resumable SSE generator for background=True, stream=True.
+
+    The actual agent execution runs in a detached asyncio.Task so it survives
+    client disconnections. Events are buffered for reconnection via /resume.
     """
     # Create a queue that the producer will publish to via SSESubscriberManager
     # We need a pre-run queue since run_id isn't known yet. Use a dedicated queue
@@ -357,7 +414,54 @@ async def agent_continue_response_streamer(
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
 ) -> AsyncGenerator:
-    """SSE generator for continue_run. Decoupled from agent execution via background task."""
+    """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
+    try:
+        extra_kwargs: dict = {}
+        if auth_token and isinstance(agent, RemoteAgent):
+            extra_kwargs["auth_token"] = auth_token
+
+        continue_response = agent.acontinue_run(
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background_tasks=background_tasks,
+            **extra_kwargs,
+        )
+        async for run_response_chunk in continue_response:
+            yield format_sse_event(run_response_chunk)  # type: ignore
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+
+
+async def agent_resumable_continue_response_streamer(
+    agent: Union[Agent, RemoteAgent],
+    run_id: str,
+    updated_tools: List,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Resumable SSE generator for continue_run (background=True). Decoupled from agent execution."""
     primary_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
     asyncio.create_task(
@@ -743,10 +847,33 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
-        # Background execution: return 202 immediately with run metadata
+        # Background execution
         if background:
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+
+            if stream:
+                # background=True, stream=True: resumable SSE streaming
+                # Agent runs in a detached asyncio.Task that survives client disconnections.
+                # Events are buffered for reconnection via /resume endpoint.
+                return StreamingResponse(
+                    agent_resumable_response_streamer(
+                        agent,
+                        message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        background_tasks=background_tasks,
+                        auth_token=auth_token,
+                        **kwargs,
+                    ),
+                    media_type="text/event-stream",
+                )
+
+            # background=True, stream=False: return 202 immediately with run metadata
             if not agent.db:
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the agent"
@@ -895,6 +1022,7 @@ def get_agent_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
+        background: bool = Form(False),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -956,8 +1084,10 @@ def get_agent_router(
         auth_token = get_auth_token_from_request(request)
 
         if stream:
+            # Use resumable streamer when background=True (agent survives client disconnect)
+            streamer = agent_resumable_continue_response_streamer if background else agent_continue_response_streamer
             return StreamingResponse(
-                agent_continue_response_streamer(
+                streamer(
                     agent,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,

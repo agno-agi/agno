@@ -2,8 +2,14 @@
 SSE Reconnection Test
 =====================
 
-Tests SSE stream reconnection for agent runs: start a streaming run, disconnect
-mid-stream, then reconnect via the /resume endpoint and catch up on missed events.
+Tests SSE stream reconnection for agent runs using background=True, stream=True.
+When background=True, the agent runs in a detached task that survives client
+disconnections. Events are buffered so the client can reconnect via /resume.
+
+Steps:
+1. Start a streaming run with background=true
+2. Disconnect after a few events
+3. Reconnect via /resume and catch up on missed events
 
 Prerequisites:
 1. Start the AgentOS server: python cookbook/05_agent_os/basic.py
@@ -72,6 +78,7 @@ async def test_sse_reconnection():
         form_data = {
             "message": "Tell me a detailed story about a brave knight who goes on a quest. Make it at least 5 paragraphs long.",
             "stream": "true",
+            "background": "true",
         }
         async with client.stream(
             "POST", f"/agents/{agent_id}/runs", data=form_data
