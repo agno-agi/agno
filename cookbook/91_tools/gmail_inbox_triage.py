@@ -1,98 +1,100 @@
 """
 Gmail Inbox Triage
 ==================
-Classifies unread emails and applies labels to organize the inbox.
+A personal inbox triage agent that learns your preferences across sessions.
 
-The agent reads unread emails, classifies each into a category,
-and applies labels. Includes a read-only variant that classifies
-without modifying the inbox.
+Combines Gmail tools with the Learning Machine to build persistent memory:
+- Learns your communication tone and style
+- Remembers frequent contacts and relationships
+- Adapts drafts to match your writing patterns
+- Uses date awareness for time-relative queries ("last week", "this month")
 
 Key concepts:
-- Two agents: full triage (applies labels) vs classify-only (read-only)
-- output_schema: Structured classification results
-
+- LearningMachine with UserMemoryConfig: Persistent preference storage
+- add_datetime_to_context: Date-aware email queries without unix timestamps
+- get_thread + get_message: Full context before drafting
+- Multi-session learning: Agent improves with each interaction
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)
 2. Export GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID env vars
-3. pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
-4. First run opens browser for OAuth consent, saves token.json for reuse
+3. pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+4. Start PostgreSQL: cookbook/scripts/run_pgvector.sh
+5. First run opens browser for OAuth consent, saves token.json for reuse
 """
 
-from typing import List, Literal
-
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.learn import LearningMachine, LearningMode, UserMemoryConfig
 from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
-from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# Output Schema
-# ---------------------------------------------------------------------------
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-
-class TriagedEmail(BaseModel):
-    message_id: str = Field(..., description="Gmail message ID")
-    subject: str = Field(..., description="Email subject")
-    sender: str = Field(..., description="Sender email")
-    label: Literal["Action-Required", "FYI", "Newsletter", "Scheduling", "Finance"] = (
-        Field(..., description="Category label to apply")
-    )
-    reason: str = Field(..., description="Brief reason for classification")
-
-
-class TriageResult(BaseModel):
-    processed: int = Field(..., description="Number of emails processed")
-    emails: List[TriagedEmail] = Field(
-        default_factory=list, description="Classification results"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Create Agent
-# ---------------------------------------------------------------------------
-
-# Full triage: classifies AND applies labels (modifies mailbox)
 agent = Agent(
     name="Inbox Triage Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(modify_message_labels=True)],
+    tools=[GmailTools(download_attachment=True, archive_email=True)],
+    db=db,
+    learning=LearningMachine(
+        user_memory=UserMemoryConfig(
+            mode=LearningMode.ALWAYS,
+        ),
+    ),
     instructions=[
-        "Classify each email into exactly one category: Action-Required, FYI, Newsletter, Scheduling, or Finance.",
-        "Use modify_message_labels to apply the category label to each classified email by message_id.",
-        "Only add the new category label -- do NOT remove existing labels.",
-        "Return the classification results in the output schema.",
+        "You are a personal email assistant that learns the user's preferences over time.",
+        "Before drafting any reply, read the full thread with get_thread to understand context.",
+        "Match the user's tone: if they write casually, draft casually. If formal, match it.",
+        "When the user corrects a draft or gives style feedback, remember it for next time.",
+        "For date-based queries, use get_emails_by_date with YYYY/MM/DD format.",
+        "When asked about attachments, use get_message to find attachment IDs, then download_attachment.",
     ],
-    output_schema=TriageResult,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
-# Read-only variant that classifies without modifying the inbox
-classify_only_agent = Agent(
-    name="Email Classifier",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools()],
-    instructions=[
-        "Classify each unread email into: Action-Required, FYI, Newsletter, Scheduling, or Finance.",
-        "Do NOT apply any labels or modify emails -- only report classifications.",
-    ],
-    output_schema=TriageResult,
-    markdown=True,
-)
-
-# ---------------------------------------------------------------------------
-# Run Demo
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Safe: classify only, no labels applied
-    classify_only_agent.print_response(
-        "Classify my 10 most recent unread emails by category",
+    user_id = "user@example.com"
+
+    # Session 1: The agent learns your style
+    print("\n" + "=" * 60)
+    print("SESSION 1: Agent learns your communication style")
+    print("=" * 60 + "\n")
+
+    agent.print_response(
+        "Find my most recent email thread and draft a reply. "
+        "Keep it short and direct -- I don't like fluffy language.",
+        user_id=user_id,
+        session_id="session_1",
         stream=True,
     )
 
-    # Full triage: classifies AND applies labels (modifies mailbox)
-    # agent.print_response(
-    #     "Triage my 10 most recent unread emails and label them by category",
-    #     stream=True,
-    # )
+    # Show what the agent learned
+    if agent.learning_machine and agent.learning_machine.user_memory_store:
+        print("\n--- Learned memories ---")
+        agent.learning_machine.user_memory_store.print(user_id=user_id)
+
+    # Session 2: Agent recalls preferences in a new session
+    print("\n" + "=" * 60)
+    print("SESSION 2: Agent recalls preferences")
+    print("=" * 60 + "\n")
+
+    agent.print_response(
+        "Draft a follow-up to my last sent email that hasn't gotten a reply yet",
+        user_id=user_id,
+        session_id="session_2",
+        stream=True,
+    )
+
+    # Session 3: Date-aware queries
+    print("\n" + "=" * 60)
+    print("SESSION 3: Date-aware email queries")
+    print("=" * 60 + "\n")
+
+    agent.print_response(
+        "Show me a summary of emails I received this week",
+        user_id=user_id,
+        session_id="session_3",
+        stream=True,
+    )

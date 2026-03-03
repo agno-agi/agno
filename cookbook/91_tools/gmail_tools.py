@@ -1,13 +1,5 @@
 """
 Gmail Agent that can read, draft and send emails using the Gmail.
-
-For agentic use-case examples, see:
-- gmail_daily_digest.py      - Summarize today's emails into a structured digest
-- gmail_inbox_triage.py      - Classify unread emails and apply labels
-- gmail_draft_reply.py       - Read thread context and draft replies
-- gmail_followup_tracker.py  - Find unanswered sent emails and draft follow-ups
-- gmail_action_items.py      - Extract action items from email threads
-- gmail_context_agent.py     - Personal agent that learns your email style (Pal pattern)
 """
 
 from agno.agent import Agent
