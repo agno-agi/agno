@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, List, Optional, Union
@@ -21,6 +22,14 @@ if TYPE_CHECKING:
 
 # Minimum seconds between Telegram message edits to avoid 429 rate limits
 TG_STREAM_EDIT_INTERVAL = 1.0
+
+# Draft mode uses a dedicated streaming API with less aggressive rate limits.
+TG_DRAFT_EDIT_INTERVAL = 0.3
+
+
+def _generate_draft_id() -> int:
+    """Generate a unique non-zero draft_id for sendMessageDraft."""
+    return random.randint(1, 2**31 - 1)
 
 
 # =============================================================================
@@ -276,6 +285,7 @@ class StreamState:
         is_team: bool,
         is_workflow: bool,
         error_message: str,
+        use_draft: bool = False,
     ):
         self.bot = bot
         self.chat_id = chat_id
@@ -286,6 +296,9 @@ class StreamState:
         self.is_team = is_team
         self.is_workflow = is_workflow
         self.error_message = error_message
+        # Draft mode: use sendMessageDraft for native animated streaming (DMs only).
+        self.use_draft = use_draft
+        self.draft_id: int = 0
 
         self.sent_message_id: Optional[int] = None
         self.accumulated_content: str = ""
@@ -330,6 +343,9 @@ class StreamState:
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
             return
+        if self.use_draft:
+            await self._send_draft(html)
+            return
         display = html[:TG_MAX_MESSAGE_LENGTH]
         if self.sent_message_id is None:
             try:
@@ -359,6 +375,31 @@ class StreamState:
                         pass
         self.last_edit_time = time.monotonic()
 
+    async def _send_draft(self, html: str) -> None:
+        """Stream a partial message via sendMessageDraft (private chats only)."""
+        display = html[:TG_MAX_MESSAGE_LENGTH]
+        if self.draft_id == 0:
+            self.draft_id = _generate_draft_id()
+        try:
+            await self.bot.send_message_draft(
+                chat_id=self.chat_id,
+                draft_id=self.draft_id,
+                text=display,
+                parse_mode="HTML",
+                message_thread_id=self.message_thread_id,
+            )
+        except Exception:
+            try:
+                await self.bot.send_message_draft(
+                    chat_id=self.chat_id,
+                    draft_id=self.draft_id,
+                    text=display,
+                    message_thread_id=self.message_thread_id,
+                )
+            except Exception:
+                pass
+        self.last_edit_time = time.monotonic()
+
     async def flush(self) -> None:
         try:
             await self.send_or_edit(self.build_display_html())
@@ -370,11 +411,16 @@ class StreamState:
 
         Resolves pending status lines, then either edits the existing
         message or sends a new chunked message if content overflows.
+        In draft mode, sends a real message to replace the draft bubble.
         """
         self.resolve_all_pending()
         final_html = self.build_display_html()
 
         if not final_html:
+            return
+
+        if self.use_draft:
+            await self._finalize_draft(final_html)
             return
 
         if self.sent_message_id:
@@ -406,6 +452,38 @@ class StreamState:
                 self.bot,
                 self.chat_id,
                 self.accumulated_content or final_html,
+                reply_to_message_id=self.reply_to,
+                message_thread_id=self.message_thread_id,
+            )
+
+    async def _finalize_draft(self, final_html: str) -> None:
+        """Finalize a draft-mode stream by sending the real message.
+
+        Sending a real message replaces the draft bubble in the client.
+        For overflow content, fall through to chunked plain messages.
+        """
+        if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
+            try:
+                msg = await self.bot.send_message(
+                    self.chat_id,
+                    final_html,
+                    parse_mode="HTML",
+                    reply_to_message_id=self.reply_to,
+                    message_thread_id=self.message_thread_id,
+                )
+            except Exception:
+                msg = await self.bot.send_message(
+                    self.chat_id,
+                    final_html,
+                    reply_to_message_id=self.reply_to,
+                    message_thread_id=self.message_thread_id,
+                )
+            self.sent_message_id = msg.message_id
+        else:
+            await send_chunked(
+                self.bot,
+                self.chat_id,
+                self.accumulated_content,
                 reply_to_message_id=self.reply_to,
                 message_thread_id=self.message_thread_id,
             )

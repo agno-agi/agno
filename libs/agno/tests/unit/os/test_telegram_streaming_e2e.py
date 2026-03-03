@@ -800,8 +800,12 @@ class TestRouterStreaming:
         assert call_kwargs["stream_events"] is True
         assert call_kwargs["yield_run_output"] is True
 
-        # Verify status lines were sent
-        all_calls = mock_bot.send_message.call_args_list + mock_bot.edit_message_text.call_args_list
+        # Verify status lines were sent (may be via send, edit, or draft)
+        all_calls = (
+            mock_bot.send_message.call_args_list
+            + mock_bot.edit_message_text.call_args_list
+            + mock_bot.send_message_draft.call_args_list
+        )
         all_text = " ".join(str(c) for c in all_calls)
         assert "Reasoning" in all_text
         assert "calculator" in all_text

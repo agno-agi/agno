@@ -214,6 +214,7 @@ def attach_routes(
         reply_to: Optional[int],
         forum_thread_id: Optional[int],
         base_key: str,
+        is_private: bool = False,
     ) -> None:
         bot = bot_state.bot
         is_wf = entity_type == "workflow"
@@ -232,6 +233,7 @@ def attach_routes(
             is_team=entity_type == "team",
             is_workflow=is_wf,
             error_message=error_message,
+            use_draft=is_private,
         )
 
         async for event in event_stream:
@@ -441,7 +443,9 @@ def attach_routes(
 
             # -- Dispatch to streaming or sync path --
             if stream:
-                await _stream_response(message_text, run_kwargs, chat_id, reply_to, forum_thread_id, base_key)
+                await _stream_response(
+                    message_text, run_kwargs, chat_id, reply_to, forum_thread_id, base_key, is_private=not is_group
+                )
             else:
                 await _sync_response(message_text, run_kwargs, chat_id, reply_to, forum_thread_id, base_key)
 

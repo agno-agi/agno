@@ -16,7 +16,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
 
 from agno.agent import RunEvent
-from agno.os.interfaces.telegram.state import TG_STREAM_EDIT_INTERVAL, StreamState
+from agno.os.interfaces.telegram.state import TG_DRAFT_EDIT_INTERVAL, TG_STREAM_EDIT_INTERVAL, StreamState
 from agno.run.workflow import WorkflowRunEvent
 from agno.utils.log import log_error, log_warning
 
@@ -151,7 +151,8 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
     if content is not None:
         state.accumulated_content += str(content)
         now = time.monotonic()
-        if now - state.last_edit_time >= TG_STREAM_EDIT_INTERVAL:
+        interval = TG_DRAFT_EDIT_INTERVAL if state.use_draft else TG_STREAM_EDIT_INTERVAL
+        if now - state.last_edit_time >= interval:
             try:
                 await state.send_or_edit(state.build_display_html())
             except Exception as e:
