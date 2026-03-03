@@ -384,7 +384,7 @@ class SlackTools(Toolkit):
         Args:
             channel (str): The channel ID where the thread exists.
             thread_ts (str): The timestamp of the parent message.
-            limit (int): The maximum number of replies to fetch. Defaults to 100.
+            limit (int): The maximum number of replies to fetch. Defaults to 100. Capped by thread_message_limit.
 
         Returns:
             str: A JSON string containing the thread timestamp, reply count, and list of messages.
