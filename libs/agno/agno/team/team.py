@@ -136,6 +136,8 @@ class Team:
     search_session_history: Optional[bool] = False
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
+    # Max sessions to search across (default 20 when None)
+    search_past_sessions_limit: Optional[int] = None
 
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False

@@ -142,8 +142,17 @@ def get_tools(
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
     if agent.search_session_history:
         agent_tools.append(
-            _default_tools.get_previous_sessions_messages_function(
-                agent, num_history_sessions=agent.num_history_sessions, user_id=user_id
+            _default_tools.get_search_past_sessions_function(
+                agent,
+                search_past_sessions_limit=agent.search_past_sessions_limit,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+            )
+        )
+        agent_tools.append(
+            _default_tools.get_read_past_session_function(
+                agent,
+                user_id=user_id,
             )
         )
 
@@ -264,8 +273,17 @@ async def aget_tools(
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
     if agent.search_session_history:
         agent_tools.append(
-            await _default_tools.aget_previous_sessions_messages_function(
-                agent, num_history_sessions=agent.num_history_sessions, user_id=user_id
+            await _default_tools.aget_search_past_sessions_function(
+                agent,
+                search_past_sessions_limit=agent.search_past_sessions_limit,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+            )
+        )
+        agent_tools.append(
+            await _default_tools.aget_read_past_session_function(
+                agent,
+                user_id=user_id,
             )
         )
 

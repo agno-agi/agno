@@ -82,6 +82,7 @@ def __init__(
     num_team_history_runs: int = 3,
     search_session_history: Optional[bool] = False,
     num_history_sessions: Optional[int] = None,
+    search_past_sessions_limit: Optional[int] = None,
     description: Optional[str] = None,
     instructions: Optional[Union[str, List[str], Callable]] = None,
     use_instruction_tags: bool = False,
@@ -232,6 +233,7 @@ def __init__(
     team.num_team_history_runs = num_team_history_runs
     team.search_session_history = search_session_history
     team.num_history_sessions = num_history_sessions
+    team.search_past_sessions_limit = search_past_sessions_limit
 
     team.description = description
     team.instructions = instructions

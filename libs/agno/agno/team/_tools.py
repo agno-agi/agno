@@ -121,8 +121,9 @@ def _determine_tools_for_model(
     from agno.team._default_tools import (
         _get_chat_history_function,
         _get_delegate_task_function,
-        _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
+        _read_past_session_function,
+        _search_past_sessions_function,
         _update_session_state_tool,
         create_knowledge_search_tool,
     )
@@ -186,8 +187,19 @@ def _determine_tools_for_model(
 
     if team.search_session_history:
         _tools.append(
-            _get_previous_sessions_messages_function(
-                team, num_history_sessions=team.num_history_sessions, user_id=user_id, async_mode=async_mode
+            _search_past_sessions_function(
+                team,
+                search_past_sessions_limit=team.search_past_sessions_limit,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+                async_mode=async_mode,
+            )
+        )
+        _tools.append(
+            _read_past_session_function(
+                team,
+                user_id=user_id,
+                async_mode=async_mode,
             )
         )
 

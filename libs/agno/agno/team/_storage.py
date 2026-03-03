@@ -470,6 +470,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["search_session_history"] = team.search_session_history
     if team.num_history_sessions is not None:
         config["num_history_sessions"] = team.num_history_sessions
+    if team.search_past_sessions_limit is not None:
+        config["search_past_sessions_limit"] = team.search_past_sessions_limit
     if team.read_chat_history:
         config["read_chat_history"] = team.read_chat_history
 
@@ -901,6 +903,7 @@ def from_dict(
             share_member_interactions=config.get("share_member_interactions", False),
             search_session_history=config.get("search_session_history", False),
             num_history_sessions=config.get("num_history_sessions"),
+            search_past_sessions_limit=config.get("search_past_sessions_limit"),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
