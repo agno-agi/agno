@@ -311,3 +311,117 @@ class TestFormatFunctionCallResultsMixedTools:
         assert len(outputs) == 1
         assert outputs[0]["call_id"] == "call_regular"
         assert outputs[0]["output"] == "August 1st, 2024"
+
+    def test_multi_turn_conversation_maps_correctly(self):
+        """In a multi-turn conversation, tool_call_id mapping should use the correct
+        assistant message's tool_calls without collisions across turns.
+        """
+        model = OpenAIResponses(id="gpt-4o")
+
+        # Turn 1: assistant called get_date
+        turn1_assistant = _make_assistant_message_with_tool_calls(
+            [
+                {
+                    "id": "fc_turn1_date",
+                    "call_id": "call_turn1_date",
+                    "type": "function",
+                    "function": {"name": "get_date", "arguments": "{}"},
+                },
+            ]
+        )
+        turn1_result = Message(role="tool", tool_call_id="call_turn1_date", content="August 1st, 2024")
+
+        # Turn 2: assistant calls both external + regular
+        turn2_assistant = _make_assistant_message_with_tool_calls(
+            [
+                {
+                    "id": "fc_external",
+                    "call_id": "call_external",
+                    "type": "function",
+                    "function": {"name": "get_user_location", "arguments": "{}"},
+                },
+                {
+                    "id": "fc_regular",
+                    "call_id": "call_regular",
+                    "type": "function",
+                    "function": {"name": "get_time", "arguments": "{}"},
+                },
+            ]
+        )
+
+        messages: List[Message] = [
+            Message(role="user", content="What date is it?"),
+            turn1_assistant,
+            turn1_result,
+            Message(role="assistant", content="Today is August 1st, 2024."),
+            Message(role="user", content="What time is it in my location?"),
+            turn2_assistant,
+        ]
+
+        # Only the regular tool from turn 2 was executed
+        regular_result = Message(role="tool", tool_call_id="fc_regular", content="14:30 UTC")
+
+        model.format_function_call_results(
+            messages=messages,
+            function_call_results=[regular_result],
+            tool_call_ids=["call_external", "call_regular"],
+        )
+
+        # Should map to turn 2's regular call_id, not confused by turn 1's IDs
+        assert regular_result.tool_call_id == "call_regular"
+
+
+class TestBuildFcIdToCallIdMap:
+    """Tests for the _build_fc_id_to_call_id_map helper method."""
+
+    def test_builds_mapping_from_assistant_tool_calls(self):
+        """Should extract fc_id -> call_id pairs from assistant messages."""
+        model = OpenAIResponses(id="gpt-4o")
+
+        messages = [
+            Message(role="user", content="test"),
+            _make_assistant_message_with_tool_calls(
+                [
+                    {
+                        "id": "fc_abc",
+                        "call_id": "call_abc",
+                        "type": "function",
+                        "function": {"name": "t", "arguments": "{}"},
+                    },
+                    {
+                        "id": "fc_def",
+                        "call_id": "call_def",
+                        "type": "function",
+                        "function": {"name": "t", "arguments": "{}"},
+                    },
+                ]
+            ),
+        ]
+
+        mapping = model._build_fc_id_to_call_id_map(messages)
+
+        assert mapping == {"fc_abc": "call_abc", "fc_def": "call_def"}
+
+    def test_empty_messages_returns_empty_map(self):
+        """No messages should produce an empty mapping."""
+        model = OpenAIResponses(id="gpt-4o")
+        assert model._build_fc_id_to_call_id_map([]) == {}
+
+    def test_messages_without_tool_calls_returns_empty_map(self):
+        """Messages with no tool_calls should produce an empty mapping."""
+        model = OpenAIResponses(id="gpt-4o")
+        messages = [Message(role="user", content="hello"), Message(role="assistant", content="hi")]
+        assert model._build_fc_id_to_call_id_map(messages) == {}
+
+    def test_falls_back_to_fc_id_when_no_call_id(self):
+        """When call_id is missing, fc_id should map to itself."""
+        model = OpenAIResponses(id="gpt-4o")
+
+        messages = [
+            _make_assistant_message_with_tool_calls(
+                [{"id": "fc_abc", "type": "function", "function": {"name": "t", "arguments": "{}"}}]
+            ),
+        ]
+
+        mapping = model._build_fc_id_to_call_id_map(messages)
+        assert mapping == {"fc_abc": "fc_abc"}
