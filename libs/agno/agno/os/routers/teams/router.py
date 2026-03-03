@@ -219,7 +219,14 @@ def get_team_router(
 
         if files:
             for file in files:
-                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                if file.content_type in [
+                    "image/png",
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/webp",
+                    "image/heic",
+                    "image/heif",
+                ]:
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
