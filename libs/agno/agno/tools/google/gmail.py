@@ -41,6 +41,24 @@ How to Get These Credentials:
 
 Note: The first time you run the application, it will open a browser window for OAuth authentication.
 A token.json file will be created to store the authentication credentials for future use.
+
+Service Account Authentication (Alternative):
+---------------------------------------------
+For server/bot deployments where no browser is available, use a Google service account
+with domain-wide delegation instead of OAuth.
+
+1. Create a service account in Google Cloud Console > "IAM & Admin" > "Service Accounts"
+2. Download the JSON key file
+3. In Google Workspace Admin Console, go to Security > API Controls > Domain-wide Delegation
+4. Add the service account's client_id with the Gmail scopes your agent needs
+5. Set environment variables:
+   ```
+   export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
+   export GOOGLE_DELEGATED_USER=user@yourdomain.com
+   ```
+
+When service_account_path (or GOOGLE_SERVICE_ACCOUNT_FILE) is set, OAuth is skipped entirely.
+The delegated_user specifies which mailbox the service account will access.
 """
 
 import base64
@@ -65,6 +83,7 @@ try:
 
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
+    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
@@ -153,9 +172,11 @@ class GmailTools(Toolkit):
 
     def __init__(
         self,
-        creds: Optional[Credentials] = None,
+        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
+        service_account_path: Optional[str] = None,
+        delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
         port: Optional[int] = None,
         login_hint: Optional[str] = None,
@@ -205,9 +226,11 @@ class GmailTools(Toolkit):
         """Initialize GmailTools and authenticate with Gmail API
 
         Args:
-            creds (Optional[Credentials]): Pre-fetched OAuth credentials. Use this to skip a new auth flow. Defaults to None.
+            creds (Optional[Union[Credentials, ServiceAccountCredentials]]): Pre-fetched credentials. Use this to skip a new auth flow. Defaults to None.
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
+            service_account_path (Optional[str]): Path to a service account JSON key file. When provided (or GOOGLE_SERVICE_ACCOUNT_FILE env var is set), service account auth is used instead of OAuth. Requires delegated_user for Gmail.
+            delegated_user (Optional[str]): Email of the user to impersonate via domain-wide delegation. Required when using service account auth. Can also be set via GOOGLE_DELEGATED_USER env var.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
             port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
             login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
@@ -226,6 +249,8 @@ class GmailTools(Toolkit):
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
+        self.service_account_path = service_account_path
+        self.delegated_user = delegated_user
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.port = port
@@ -398,7 +423,30 @@ class GmailTools(Toolkit):
         ]
 
     def _auth(self) -> None:
-        """Authenticate with Gmail API"""
+        """Authenticate with Gmail API using service account (priority) or OAuth flow."""
+        if self.creds and self.creds.valid:
+            return
+
+        # Service account authentication takes priority over OAuth
+        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        if service_account_path:
+            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
+            if not delegated_user:
+                raise ValueError(
+                    "delegated_user is required for Gmail service account authentication. "
+                    "Gmail service accounts must impersonate a user via domain-wide delegation. "
+                    "Provide delegated_user as a parameter or set GOOGLE_DELEGATED_USER env var."
+                )
+            self.creds = ServiceAccountCredentials.from_service_account_file(
+                service_account_path,
+                scopes=self.scopes,
+                subject=delegated_user,
+            )
+            if self.creds and self.creds.expired:
+                self.creds.refresh(Request())
+            return
+
+        # OAuth flow
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
@@ -1513,9 +1561,7 @@ class GmailTools(Toolkit):
             max_results = min(count, 500)
             results = service.users().drafts().list(userId="me", maxResults=max_results).execute()  # type: ignore
             drafts = results.get("drafts", [])
-            return json.dumps(
-                {"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))}
-            )
+            return json.dumps({"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))})
         except HttpError as e:
             log_error(f"Failed to list drafts: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
