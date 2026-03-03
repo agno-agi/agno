@@ -1,5 +1,5 @@
 """
-SSE Reconnection Test
+SSE Reconnection
 =====================
 
 Tests SSE stream reconnection for agent runs using background=True, stream=True.
