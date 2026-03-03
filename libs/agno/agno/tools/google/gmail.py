@@ -119,9 +119,26 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `remove_label(context, label_name, count)`: Find emails by query and remove a label.
     - `delete_custom_label(label_name, confirm)`: Delete a custom label.
 
+    - `search_threads(query, count)`: Search Gmail threads by query. Returns thread IDs and snippets.
+    - `get_draft(draft_id)`: Get a draft email by ID with full content.
+    - `list_drafts(count)`: List draft emails in the mailbox.
+    - `send_draft(draft_id)`: Send an existing draft email.
+    - `update_draft(draft_id, to, subject, body, ...)`: Replace content of an existing draft.
+
+    ## Gmail Query Syntax
+    Combine these operators in `search_emails`, `search_threads`, or `get_emails_by_context`:
+    - `from:user@example.com` / `to:user@example.com` — filter by sender/recipient
+    - `subject:"meeting notes"` — filter by subject
+    - `is:unread` / `is:starred` / `is:important` — filter by status
+    - `has:attachment` — emails with attachments
+    - `newer_than:7d` / `older_than:1m` — relative date (d=days, m=months, y=years)
+    - `after:2024/01/01` / `before:2024/12/31` — absolute date range
+    - `label:work` — filter by label
+    - `from:me` — emails sent by the user
+    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`
+
     ## Guidelines
-    - Use `search_emails` or `get_emails_by_context` for flexible Gmail queries \
-    (e.g. `from:user@example.com`, `subject:"meeting"`, `is:unread`, `after:2024/01/01`).
+    - Use `search_threads` to find conversations, then `get_thread` for full content.
     - Use `create_draft_email` to draft emails for review before sending.
     - Use `send_email_reply` with `thread_id` and `message_id` to reply within a conversation.""")
 
@@ -169,12 +186,15 @@ class GmailTools(Toolkit):
         # New tools (opt-in, default False)
         get_message: bool = False,
         get_thread: bool = False,
-        search_threads: bool = False,
+        search_threads: bool = True,
         modify_thread_labels: bool = False,
         trash_thread: bool = False,
-        draft_email: bool = False,
+        get_draft: bool = True,
+        list_drafts: bool = True,
+        send_draft: bool = True,
+        update_draft: bool = True,
         list_labels: bool = False,
-        modify_labels: bool = False,
+        modify_message_labels: bool = False,
         trash_message: bool = False,
         download_attachment: bool = False,
         max_batch_size: int = 10,
@@ -272,12 +292,18 @@ class GmailTools(Toolkit):
                 tools.append(self.modify_thread_labels)
             if trash_thread:
                 tools.append(self.trash_thread)
-            if draft_email:
-                tools.append(self.draft_email)
+            if get_draft:
+                tools.append(self.get_draft)
+            if list_drafts:
+                tools.append(self.list_drafts)
+            if send_draft:
+                tools.append(self.send_draft)
+            if update_draft:
+                tools.append(self.update_draft)
             if list_labels:
                 tools.append(self.list_labels)
-            if modify_labels:
-                tools.append(self.modify_labels)
+            if modify_message_labels:
+                tools.append(self.modify_message_labels)
             if trash_message:
                 tools.append(self.trash_message)
             if download_attachment:
@@ -292,7 +318,7 @@ class GmailTools(Toolkit):
         )
 
         # Validate that required scopes are present for requested operations (only check registered functions)
-        compose_tools = {"create_draft_email", "send_email", "send_email_reply", "draft_email"}
+        compose_tools = {"create_draft_email", "send_email", "send_email_reply", "send_draft", "update_draft"}
         if any(t in self.functions for t in compose_tools):
             if "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
                 raise ValueError(
@@ -327,7 +353,7 @@ class GmailTools(Toolkit):
             "apply_label",
             "remove_label",
             "delete_custom_label",
-            "modify_labels",
+            "modify_message_labels",
             "modify_thread_labels",
             "trash_message",
             "trash_thread",
@@ -361,9 +387,12 @@ class GmailTools(Toolkit):
             self.search_threads,
             self.modify_thread_labels,
             self.trash_thread,
-            self.draft_email,
+            self.get_draft,
+            self.list_drafts,
+            self.send_draft,
+            self.update_draft,
             self.list_labels,
-            self.modify_labels,
+            self.modify_message_labels,
             self.trash_message,
             self.download_attachment,
         ]
@@ -1446,119 +1475,137 @@ class GmailTools(Toolkit):
             return json.dumps({"error": f"Gmail API error: {e}"})
 
     @authenticate
-    def draft_email(
-        self,
-        action: str,
-        to: Optional[str] = None,
-        subject: Optional[str] = None,
-        body: Optional[str] = None,
-        cc: Optional[str] = None,
-        bcc: Optional[str] = None,
-        attachments: Optional[Union[str, List[str]]] = None,
-        draft_id: Optional[str] = None,
-        thread_id: Optional[str] = None,
-        message_id: Optional[str] = None,
-        count: int = 20,
-    ) -> str:
-        """Manage email drafts: create, update, send, get, or list.
-        to, cc, and bcc are comma-separated email addresses.
-        To create a reply draft, provide thread_id and message_id from the original message.
+    def get_draft(self, draft_id: str) -> str:
+        """Get a draft email by its ID with full message content.
 
         Args:
-            action: One of "create", "update", "send", "get", "list".
-            to: Comma-separated recipient emails (required for create/update).
-            subject: Email subject (required for create/update).
-            body: Email body content (required for create/update).
-            cc: Comma-separated CC emails (optional, for create/update).
-            bcc: Comma-separated BCC emails (optional, for create/update).
-            attachments: File path(s) for attachments (optional, for create/update).
-            draft_id: Draft ID (required for update, send, get).
-            thread_id: Thread ID to create a reply draft in (optional, for create/update).
-            message_id: Message ID being replied to (optional, used with thread_id for proper threading).
-            count: Maximum drafts to return for list action (default 20, max 500).
+            draft_id: The Gmail draft ID.
 
         Returns:
-            JSON string with draft details or list of drafts.
+            JSON string with draft ID and full message details.
         """
         try:
             service = self.service
-
-            if action == "list":
-                max_results = min(count, 500)
-                results = service.users().drafts().list(userId="me", maxResults=max_results).execute()  # type: ignore
-                drafts = results.get("drafts", [])
-                return json.dumps(
-                    {"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))}
-                )
-
-            if action == "get":
-                if not draft_id:
-                    return json.dumps({"error": "draft_id is required for get action"})
-                draft = service.users().drafts().get(userId="me", id=draft_id, format="full").execute()  # type: ignore
-                msg_data = draft.get("message", {})
-                return json.dumps(
-                    {
-                        "draftId": draft["id"],
-                        "message": self._format_message(msg_data) if msg_data else {},
-                    }
-                )
-
-            if action == "send":
-                if not draft_id:
-                    return json.dumps({"error": "draft_id is required for send action"})
-                result = service.users().drafts().send(userId="me", body={"id": draft_id}).execute()  # type: ignore
-                return json.dumps(
-                    {
-                        "id": result.get("id"),
-                        "threadId": result.get("threadId"),
-                        "labelIds": result.get("labelIds", []),
-                        "action": "sent",
-                    }
-                )
-
-            if action in ("create", "update"):
-                if not to or not subject or body is None:
-                    return json.dumps({"error": "to, subject, and body are required for create/update"})
-                if action == "update" and not draft_id:
-                    return json.dumps({"error": "draft_id is required for update action"})
-                self._validate_email_params(to, subject, body)
-                attachment_files: List[str] = []
-                if attachments:
-                    attachment_files = [attachments] if isinstance(attachments, str) else list(attachments)
-                    for fp in attachment_files:
-                        p = Path(fp)
-                        try:
-                            size = p.stat().st_size
-                        except FileNotFoundError:
-                            raise ValueError(f"Attachment file not found: {fp}")
-                        if size > 25 * 1024 * 1024:
-                            raise ValueError(f"Attachment exceeds 25MB limit: {fp}")
-
-                # Prefix subject with Re: for reply drafts
-                if thread_id and not subject.lower().startswith("re:"):
-                    subject = f"Re: {subject}"
-
-                mime = self._create_message(
-                    to=[t.strip() for t in to.split(",")],
-                    subject=subject,
-                    body=body.replace("\n", "<br>"),
-                    cc=[c.strip() for c in cc.split(",")] if cc else None,
-                    bcc=[b.strip() for b in bcc.split(",")] if bcc else None,
-                    thread_id=thread_id,
-                    message_id=message_id,
-                    attachments=attachment_files or None,
-                )
-
-                if action == "update":
-                    result = service.users().drafts().update(userId="me", id=draft_id, body={"message": mime}).execute()  # type: ignore
-                    return json.dumps({"draftId": result["id"], "action": "updated"})
-                else:
-                    draft = service.users().drafts().create(userId="me", body={"message": mime}).execute()  # type: ignore
-                    return json.dumps({"draftId": draft["id"], "action": "created"})
-
-            return json.dumps({"error": f"Invalid action: {action}. Must be one of: create, update, send, get, list"})
+            draft = service.users().drafts().get(userId="me", id=draft_id, format="full").execute()  # type: ignore
+            msg_data = draft.get("message", {})
+            return json.dumps(
+                {
+                    "draftId": draft["id"],
+                    "message": self._format_message(msg_data) if msg_data else {},
+                }
+            )
         except HttpError as e:
-            log_error(f"Draft operation '{action}' failed: {e}")
+            log_error(f"Failed to get draft {draft_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def list_drafts(self, count: int = 20) -> str:
+        """List draft emails in the mailbox.
+
+        Args:
+            count: Maximum number of drafts to return (default 20, max 500).
+
+        Returns:
+            JSON string with list of draft IDs and estimated total count.
+        """
+        try:
+            service = self.service
+            max_results = min(count, 500)
+            results = service.users().drafts().list(userId="me", maxResults=max_results).execute()  # type: ignore
+            drafts = results.get("drafts", [])
+            return json.dumps(
+                {"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))}
+            )
+        except HttpError as e:
+            log_error(f"Failed to list drafts: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def send_draft(self, draft_id: str) -> str:
+        """Send an existing draft email.
+
+        Args:
+            draft_id: The Gmail draft ID to send.
+
+        Returns:
+            JSON string with sent message ID, thread ID, and labels.
+        """
+        try:
+            service = self.service
+            result = service.users().drafts().send(userId="me", body={"id": draft_id}).execute()  # type: ignore
+            return json.dumps(
+                {
+                    "id": result.get("id"),
+                    "threadId": result.get("threadId"),
+                    "labelIds": result.get("labelIds", []),
+                }
+            )
+        except HttpError as e:
+            log_error(f"Failed to send draft {draft_id}: {e}")
+            return json.dumps({"error": f"Gmail API error: {e}"})
+
+    @authenticate
+    def update_draft(
+        self,
+        draft_id: str,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        bcc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
+        thread_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+    ) -> str:
+        """Replace the content of an existing draft email.
+
+        Args:
+            draft_id: The Gmail draft ID to update.
+            to: Comma-separated recipient email addresses.
+            subject: Email subject line.
+            body: Email body content.
+            cc: Comma-separated CC email addresses (optional).
+            bcc: Comma-separated BCC email addresses (optional).
+            attachments: File path(s) for attachments (optional).
+            thread_id: Thread ID for reply drafts (optional).
+            message_id: Message ID being replied to, used with thread_id (optional).
+
+        Returns:
+            JSON string with updated draft ID.
+        """
+        try:
+            self._validate_email_params(to, subject, body)
+            attachment_files: List[str] = []
+            if attachments:
+                attachment_files = [attachments] if isinstance(attachments, str) else list(attachments)
+                for fp in attachment_files:
+                    p = Path(fp)
+                    try:
+                        size = p.stat().st_size
+                    except FileNotFoundError:
+                        raise ValueError(f"Attachment file not found: {fp}")
+                    if size > 25 * 1024 * 1024:
+                        raise ValueError(f"Attachment exceeds 25MB limit: {fp}")
+
+            if thread_id and not subject.lower().startswith("re:"):
+                subject = f"Re: {subject}"
+
+            mime = self._create_message(
+                to=[t.strip() for t in to.split(",")],
+                subject=subject,
+                body=body.replace("\n", "<br>"),
+                cc=[c.strip() for c in cc.split(",")] if cc else None,
+                bcc=[b.strip() for b in bcc.split(",")] if bcc else None,
+                thread_id=thread_id,
+                message_id=message_id,
+                attachments=attachment_files or None,
+            )
+
+            service = self.service
+            result = service.users().drafts().update(userId="me", id=draft_id, body={"message": mime}).execute()  # type: ignore
+            return json.dumps({"draftId": result["id"]})
+        except HttpError as e:
+            log_error(f"Failed to update draft {draft_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except ValueError as e:
             return json.dumps({"error": str(e)})
@@ -1598,7 +1645,7 @@ class GmailTools(Toolkit):
             return json.dumps({"error": f"Gmail API error: {e}"})
 
     @authenticate
-    def modify_labels(
+    def modify_message_labels(
         self,
         message_id: str,
         add_labels: Optional[str] = None,

@@ -56,10 +56,10 @@ class TriageResult(BaseModel):
 agent = Agent(
     name="Inbox Triage Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(modify_labels=True)],
+    tools=[GmailTools(modify_message_labels=True)],
     instructions=[
         "Classify each email into exactly one category: Action-Required, FYI, Newsletter, Scheduling, or Finance.",
-        "Use modify_labels to apply the category label to each classified email by message_id.",
+        "Use modify_message_labels to apply the category label to each classified email by message_id.",
         "Only add the new category label -- do NOT remove existing labels.",
         "Return the classification results in the output schema.",
     ],

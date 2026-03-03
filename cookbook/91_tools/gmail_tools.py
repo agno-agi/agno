@@ -116,7 +116,7 @@ agent = Agent(
 thread_reply_agent = Agent(
     name="Thread Reply Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(search_threads=True, get_thread=True, draft_email=True)],
+    tools=[GmailTools(get_thread=True)],
     description="You are a Gmail agent that finds conversations and drafts threaded replies.",
     instructions=[
         "Search for the requested thread, load full context, then draft a reply.",

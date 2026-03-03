@@ -54,7 +54,7 @@ class FollowUpReport(BaseModel):
 agent = Agent(
     name="Follow-Up Tracker",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(search_threads=True, get_thread=True, draft_email=True)],
+    tools=[GmailTools(get_thread=True)],
     instructions=[
         "Use search_threads with 'from:me' to find sent threads, then check if the last message is from you.",
         "A thread needs follow-up if the LAST message is FROM the user (no reply received).",
