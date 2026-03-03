@@ -133,6 +133,9 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `send_email_reply(thread_id, message_id, to, subject, body)`: Reply to a thread.
     - `mark_email_as_read(message_id)`: Mark a message as read.
     - `mark_email_as_unread(message_id)`: Mark a message as unread.
+    - `star_email(message_id)`: Star an email.
+    - `unstar_email(message_id)`: Remove star from an email.
+    - `archive_email(message_id)`: Archive an email (removes from inbox, still searchable).
     - `list_custom_labels()`: List user-created labels.
     - `apply_label(context, label_name, count)`: Find emails by query and apply a label.
     - `remove_label(context, label_name, count)`: Find emails by query and remove a label.
@@ -195,6 +198,9 @@ class GmailTools(Toolkit):
         # Management
         mark_email_as_read: bool = True,
         mark_email_as_unread: bool = True,
+        star_email: bool = True,
+        unstar_email: bool = True,
+        archive_email: bool = False,
         # Composing
         create_draft_email: bool = True,
         send_email: bool = True,
@@ -290,6 +296,12 @@ class GmailTools(Toolkit):
                 tools.append(self.mark_email_as_read)
             if mark_email_as_unread:
                 tools.append(self.mark_email_as_unread)
+            if star_email:
+                tools.append(self.star_email)
+            if unstar_email:
+                tools.append(self.unstar_email)
+            if archive_email:
+                tools.append(self.archive_email)
             # Composing emails
             if create_draft_email:
                 tools.append(self.create_draft_email)
@@ -375,6 +387,9 @@ class GmailTools(Toolkit):
         modify_operations = {
             "mark_email_as_read",
             "mark_email_as_unread",
+            "star_email",
+            "unstar_email",
+            "archive_email",
             "apply_label",
             "remove_label",
             "delete_custom_label",
@@ -403,6 +418,9 @@ class GmailTools(Toolkit):
             self.create_draft_email,
             self.mark_email_as_read,
             self.mark_email_as_unread,
+            self.star_email,
+            self.unstar_email,
+            self.archive_email,
             self.list_custom_labels,
             self.apply_label,
             self.remove_label,
@@ -901,6 +919,63 @@ class GmailTools(Toolkit):
             return f"HTTP Error marking email {message_id} as unread: {error}"
         except Exception as error:
             return f"Error marking email {message_id} as unread: {type(error).__name__}: {error}"
+
+    @authenticate
+    def star_email(self, message_id: str) -> str:
+        """Add a star to an email message.
+
+        Args:
+            message_id (str): The ID of the message to star.
+
+        Returns:
+            str: Success message or error description.
+        """
+        try:
+            modify_request = {"addLabelIds": ["STARRED"]}
+            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute()  # type: ignore
+            return f"Successfully starred email {message_id}"
+        except HttpError as error:
+            return f"HTTP Error starring email {message_id}: {error}"
+        except Exception as error:
+            return f"Error starring email {message_id}: {type(error).__name__}: {error}"
+
+    @authenticate
+    def unstar_email(self, message_id: str) -> str:
+        """Remove the star from an email message.
+
+        Args:
+            message_id (str): The ID of the message to unstar.
+
+        Returns:
+            str: Success message or error description.
+        """
+        try:
+            modify_request = {"removeLabelIds": ["STARRED"]}
+            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute()  # type: ignore
+            return f"Successfully unstarred email {message_id}"
+        except HttpError as error:
+            return f"HTTP Error unstarring email {message_id}: {error}"
+        except Exception as error:
+            return f"Error unstarring email {message_id}: {type(error).__name__}: {error}"
+
+    @authenticate
+    def archive_email(self, message_id: str) -> str:
+        """Archive an email by removing it from the inbox. The email is NOT deleted and can still be found via search.
+
+        Args:
+            message_id (str): The ID of the message to archive.
+
+        Returns:
+            str: Success message or error description.
+        """
+        try:
+            modify_request = {"removeLabelIds": ["INBOX"]}
+            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute()  # type: ignore
+            return f"Successfully archived email {message_id}"
+        except HttpError as error:
+            return f"HTTP Error archiving email {message_id}: {error}"
+        except Exception as error:
+            return f"Error archiving email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
     def list_custom_labels(self) -> str:
