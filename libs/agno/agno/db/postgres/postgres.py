@@ -1018,7 +1018,7 @@ class PostgresDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "session_type"],
                         set_=dict(
                             agent_id=session_dict.get("agent_id"),
                             user_id=session_dict.get("user_id"),
@@ -1057,7 +1057,7 @@ class PostgresDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "session_type"],
                         set_=dict(
                             team_id=session_dict.get("team_id"),
                             user_id=session_dict.get("user_id"),
@@ -1096,7 +1096,7 @@ class PostgresDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "session_type"],
                         set_=dict(
                             workflow_id=session_dict.get("workflow_id"),
                             user_id=session_dict.get("user_id"),
@@ -1198,10 +1198,10 @@ class PostgresDb(BaseDb):
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
+                        if col.name not in ["id", "session_id", "session_type", "created_at"]
                     }
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "session_type"],
                         set_=update_columns,
                         where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                     ).returning(table)
@@ -1257,10 +1257,10 @@ class PostgresDb(BaseDb):
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
+                        if col.name not in ["id", "session_id", "session_type", "created_at"]
                     }
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "session_type"],
                         set_=update_columns,
                         where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                     ).returning(table)
@@ -1316,10 +1316,10 @@ class PostgresDb(BaseDb):
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
+                        if col.name not in ["id", "session_id", "session_type", "created_at"]
                     }
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "session_type"],
                         set_=update_columns,
                         where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                     ).returning(table)

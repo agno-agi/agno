@@ -3,7 +3,7 @@
 from typing import Any, Dict, List
 
 SESSION_COLLECTION_SCHEMA = [
-    {"key": "session_id", "unique": True},
+    {"key": [("session_id", 1), ("session_type", 1)], "unique": True},
     {"key": "user_id"},
     {"key": "session_type"},
     {"key": "agent_id"},

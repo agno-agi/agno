@@ -383,7 +383,8 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            query = {"session_id": session_id}
+            session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+            query = {"session_id": session_id, "session_type": session_type_value}
             if user_id is not None:
                 query["user_id"] = user_id
 
@@ -608,14 +609,28 @@ class MongoDb(BaseDb):
 
             session_dict = session.to_dict()
 
-            existing = collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            # Determine session_type from session class
+            if isinstance(session, AgentSession):
+                session_type_value = SessionType.AGENT.value
+            elif isinstance(session, TeamSession):
+                session_type_value = SessionType.TEAM.value
+            else:
+                session_type_value = SessionType.WORKFLOW.value
+
+            existing = collection.find_one(
+                {"session_id": session_dict.get("session_id"), "session_type": session_type_value},
+                {"user_id": 1},
+            )
             if existing:
                 existing_uid = existing.get("user_id")
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                     return None
 
             incoming_uid = session_dict.get("user_id")
-            upsert_filter: Dict[str, Any] = {"session_id": session_dict.get("session_id")}
+            upsert_filter: Dict[str, Any] = {
+                "session_id": session_dict.get("session_id"),
+                "session_type": session_type_value,
+            }
             if incoming_uid is not None:
                 upsert_filter["$or"] = [{"user_id": incoming_uid}, {"user_id": None}, {"user_id": {"$exists": False}}]
             else:
