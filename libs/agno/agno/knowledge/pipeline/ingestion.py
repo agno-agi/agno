@@ -21,6 +21,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader_registry import ReaderRegistry
 from agno.knowledge.store.content_store import ContentStore
+from agno.knowledge.utils import set_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -281,6 +282,10 @@ class IngestionPipeline:
         if not content.url:
             raise ValueError("No url provided")
 
+        # Store URL source metadata in _agno for source tracking
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
+
         if not content.name and content.url:
             from urllib.parse import urlparse
 
@@ -407,6 +412,10 @@ class IngestionPipeline:
 
         if not content.url:
             raise ValueError("No url provided")
+
+        # Store URL source metadata in _agno for source tracking
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         if not content.name and content.url:
             from urllib.parse import urlparse

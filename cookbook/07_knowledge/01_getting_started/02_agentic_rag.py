@@ -60,7 +60,9 @@ agent = Agent(
 if __name__ == "__main__":
 
     async def main():
-        await knowledge.ainsert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
+        await knowledge.ainsert(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
 
         print("\n" + "=" * 60)
         print("Agentic RAG: Agent decides when to search")
