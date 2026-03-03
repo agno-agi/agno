@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -833,7 +834,7 @@ class Team:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         background: bool = False,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def arun(
@@ -1009,7 +1010,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def acontinue_run(
