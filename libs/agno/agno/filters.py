@@ -4,8 +4,10 @@ This module provides a set of filter operators for constructing complex search q
 that can be applied to knowledge bases, vector databases, and other searchable content.
 
 Filter Types:
-    - Comparison: EQ (equals), GT (greater than), LT (less than)
+    - Comparison: EQ (equals), NEQ (not equals), GT (greater than), GTE (greater than or equal),
+      LT (less than), LTE (less than or equal)
     - Inclusion: IN (value in list)
+    - String: CONTAINS (substring match), STARTSWITH (prefix match)
     - Logical: AND, OR, NOT
 
 Example:
@@ -37,6 +39,9 @@ Example:
 from __future__ import annotations
 
 from typing import Any, List
+
+# Maximum recursion depth for nested filter expressions (prevents stack overflow attacks)
+MAX_FILTER_DEPTH: int = 10
 
 # ============================================================
 # Base Expression
@@ -181,6 +186,123 @@ class LT(FilterExpr):
         return {"op": "LT", "key": self.key, "value": self.value}
 
 
+class NEQ(FilterExpr):
+    """Not-equal filter - matches documents where a field does not equal a specific value.
+
+    Args:
+        key: The field name to compare
+        value: The value to compare against
+
+    Example:
+        >>> # Match documents where status is not "archived"
+        >>> filter = NEQ("status", "archived")
+    """
+
+    def __init__(self, key: str, value: Any):
+        self.key = key
+        self.value = value
+
+    def to_dict(self) -> dict:
+        return {"op": "NEQ", "key": self.key, "value": self.value}
+
+
+class GTE(FilterExpr):
+    """Greater than or equal filter - matches documents where a field's value is >= a threshold.
+
+    Args:
+        key: The field name to compare
+        value: The threshold value
+
+    Example:
+        >>> # Match documents where age is 18 or older
+        >>> filter = GTE("age", 18)
+        >>>
+        >>> # Match documents created on or after a certain timestamp
+        >>> filter = GTE("created_at", "2025-01-01T00:00:00Z")
+    """
+
+    def __init__(self, key: str, value: Any):
+        self.key = key
+        self.value = value
+
+    def to_dict(self) -> dict:
+        return {"op": "GTE", "key": self.key, "value": self.value}
+
+
+class LTE(FilterExpr):
+    """Less than or equal filter - matches documents where a field's value is <= a threshold.
+
+    Args:
+        key: The field name to compare
+        value: The threshold value
+
+    Example:
+        >>> # Match documents where age is 65 or younger
+        >>> filter = LTE("age", 65)
+        >>>
+        >>> # Match documents created on or before a certain timestamp
+        >>> filter = LTE("created_at", "2025-12-31T23:59:59Z")
+    """
+
+    def __init__(self, key: str, value: Any):
+        self.key = key
+        self.value = value
+
+    def to_dict(self) -> dict:
+        return {"op": "LTE", "key": self.key, "value": self.value}
+
+
+# ============================================================
+# String Matching Filters
+# ============================================================
+
+
+class CONTAINS(FilterExpr):
+    """Substring match filter - matches documents where a field contains a substring (case-insensitive).
+
+    Args:
+        key: The field name to search
+        value: The substring to search for
+
+    Example:
+        >>> # Match documents where user_id contains "admin"
+        >>> filter = CONTAINS("user_id", "admin")
+        >>>
+        >>> # Match documents where name contains "john"
+        >>> filter = CONTAINS("name", "john")
+    """
+
+    def __init__(self, key: str, value: str):
+        self.key = key
+        self.value = value
+
+    def to_dict(self) -> dict:
+        return {"op": "CONTAINS", "key": self.key, "value": self.value}
+
+
+class STARTSWITH(FilterExpr):
+    """Prefix match filter - matches documents where a field starts with a given string.
+
+    Args:
+        key: The field name to search
+        value: The prefix to match
+
+    Example:
+        >>> # Match documents where name starts with "Agent"
+        >>> filter = STARTSWITH("name", "Agent")
+        >>>
+        >>> # Match documents where session_id starts with "sess_"
+        >>> filter = STARTSWITH("session_id", "sess_")
+    """
+
+    def __init__(self, key: str, value: str):
+        self.key = key
+        self.value = value
+
+    def to_dict(self) -> dict:
+        return {"op": "STARTSWITH", "key": self.key, "value": self.value}
+
+
 # ============================================================
 # Logical Operators
 # ============================================================
@@ -272,7 +394,7 @@ class NOT(FilterExpr):
 # ============================================================
 
 
-def from_dict(filter_dict: dict) -> FilterExpr:
+def from_dict(filter_dict: dict, _depth: int = 0) -> FilterExpr:
     """Reconstruct a FilterExpr object from its dictionary representation.
 
     This function deserializes filter expressions that were serialized using the
@@ -281,12 +403,14 @@ def from_dict(filter_dict: dict) -> FilterExpr:
 
     Args:
         filter_dict: Dictionary representation of a filter expression with an "op" key
+        _depth: Internal parameter tracking recursion depth. Do not pass manually.
 
     Returns:
         FilterExpr: The reconstructed filter expression object
 
     Raises:
-        ValueError: If the filter dictionary has an invalid structure or unknown operator
+        ValueError: If the filter dictionary has an invalid structure, unknown operator,
+            or exceeds max recursion depth.
 
     Example:
         >>> # Serialize and deserialize a simple filter
@@ -306,6 +430,10 @@ def from_dict(filter_dict: dict) -> FilterExpr:
         >>> filter_dict = json.loads(json_str)
         >>> filter_expr = from_dict(filter_dict)
     """
+    # Check recursion depth limit
+    if _depth > MAX_FILTER_DEPTH:
+        raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
+
     if not isinstance(filter_dict, dict) or "op" not in filter_dict:
         raise ValueError(f"Invalid filter dictionary: must contain 'op' key. Got: {filter_dict}")
 
@@ -332,23 +460,48 @@ def from_dict(filter_dict: dict) -> FilterExpr:
             raise ValueError(f"LT filter requires 'key' and 'value' fields. Got: {filter_dict}")
         return LT(filter_dict["key"], filter_dict["value"])
 
+    elif op == "NEQ":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"NEQ filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return NEQ(filter_dict["key"], filter_dict["value"])
+
+    elif op == "GTE":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"GTE filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return GTE(filter_dict["key"], filter_dict["value"])
+
+    elif op == "LTE":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"LTE filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return LTE(filter_dict["key"], filter_dict["value"])
+
+    elif op == "CONTAINS":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"CONTAINS filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return CONTAINS(filter_dict["key"], filter_dict["value"])
+
+    elif op == "STARTSWITH":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"STARTSWITH filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return STARTSWITH(filter_dict["key"], filter_dict["value"])
+
     # Logical operators
     elif op == "AND":
         if "conditions" not in filter_dict:
             raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
-        conditions = [from_dict(cond) for cond in filter_dict["conditions"]]
+        conditions = [from_dict(cond, _depth + 1) for cond in filter_dict["conditions"]]
         return AND(*conditions)
 
     elif op == "OR":
         if "conditions" not in filter_dict:
             raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
-        conditions = [from_dict(cond) for cond in filter_dict["conditions"]]
+        conditions = [from_dict(cond, _depth + 1) for cond in filter_dict["conditions"]]
         return OR(*conditions)
 
     elif op == "NOT":
         if "condition" not in filter_dict:
             raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
-        return NOT(from_dict(filter_dict["condition"]))
+        return NOT(from_dict(filter_dict["condition"], _depth + 1))
 
     else:
         raise ValueError(f"Unknown filter operator: {op}")
