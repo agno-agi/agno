@@ -378,13 +378,13 @@ class SlackTools(Toolkit):
             logger.error(f"Error searching messages: {e}")
             return json.dumps({"error": str(e)})
 
-    def get_thread(self, channel: str, thread_ts: str, limit: int = 100) -> str:
+    def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
         """Get all messages in a thread by the parent message's timestamp.
 
         Args:
             channel (str): The channel ID where the thread exists.
             thread_ts (str): The timestamp of the parent message.
-            limit (int): The maximum number of replies to fetch. Defaults to 100. Capped by thread_message_limit.
+            limit (int): The maximum number of replies to fetch. Defaults to 20. Capped by thread_message_limit.
 
         Returns:
             str: A JSON string containing the thread timestamp, reply count, and list of messages.
