@@ -57,44 +57,28 @@ agent = Agent(
 if __name__ == "__main__":
     user_id = "user@example.com"
 
-    # Session 1: The agent learns your style
-    print("\n" + "=" * 60)
-    print("SESSION 1: Agent learns your communication style")
-    print("=" * 60 + "\n")
+    # # Session 1: Triage inbox and learn preferences
+    # print("\n--- Session 1: Triage inbox, agent learns your style ---\n")
 
-    agent.print_response(
-        "Find my most recent email thread and draft a reply. "
-        "Keep it short and direct -- I don't like fluffy language.",
-        user_id=user_id,
-        session_id="session_1",
-        stream=True,
-    )
+    # agent.print_response(
+    #     "Summarize my 5 most recent unread emails. Keep it short and direct.",
+    #     user_id=user_id,
+    #     session_id="session_1",
+    #     stream=True,
+    # )
 
-    # Show what the agent learned
-    if agent.learning_machine and agent.learning_machine.user_memory_store:
-        print("\n--- Learned memories ---")
-        agent.learning_machine.user_memory_store.print(user_id=user_id)
+    # # Show what the agent learned
+    # lm = agent.learning_machine
+    # if lm and lm.user_memory_store:
+    #     print("\n--- Learned memories ---")
+    #     lm.user_memory_store.print(user_id=user_id)
 
-    # Session 2: Agent recalls preferences in a new session
-    print("\n" + "=" * 60)
-    print("SESSION 2: Agent recalls preferences")
-    print("=" * 60 + "\n")
+    # # Session 2: Agent recalls preferences in a new session
+    # print("\n--- Session 2: Agent remembers your preferences ---\n")
 
-    agent.print_response(
-        "Draft a follow-up to my last sent email that hasn't gotten a reply yet",
-        user_id=user_id,
-        session_id="session_2",
-        stream=True,
-    )
-
-    # Session 3: Date-aware queries
-    print("\n" + "=" * 60)
-    print("SESSION 3: Date-aware email queries")
-    print("=" * 60 + "\n")
-
-    agent.print_response(
-        "Show me a summary of emails I received this week",
-        user_id=user_id,
-        session_id="session_3",
-        stream=True,
-    )
+    # agent.print_response(
+    #     "Draft a reply to the most recent email thread I received.",
+    #     user_id=user_id,
+    #     session_id="session_2",
+    #     stream=True,
+    # )
