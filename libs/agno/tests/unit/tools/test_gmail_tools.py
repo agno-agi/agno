@@ -251,8 +251,7 @@ def test_get_emails_by_date(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
 
-    start_date = int(datetime(2024, 1, 1).timestamp())
-    result = gmail_tools.get_emails_by_date(start_date, range_in_days=1)
+    result = gmail_tools.get_emails_by_date("2024/01/01", range_in_days=1)
 
     assert "Date Email" in result
     assert "Date-specific content" in result

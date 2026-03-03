@@ -126,7 +126,7 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `search_emails(query, count)`: Search emails using a Gmail query string.
     - `get_starred_emails(count)`: Get starred emails.
     - `get_emails_by_context(context, count)`: Get emails matching a raw Gmail query.
-    - `get_emails_by_date(start_date_unix, range_in_days, num_emails)`: Get emails in a date range.
+    - `get_emails_by_date(start_date, range_in_days, num_emails)`: Get emails in a date range (start_date is YYYY/MM/DD format).
     - `get_emails_by_thread(thread_id)`: Get all messages in a thread.
     - `create_draft_email(to, subject, body, cc, attachments)`: Create a draft email.
     - `send_email(to, subject, body, cc, bcc, attachments)`: Send an email immediately.
@@ -660,26 +660,25 @@ class GmailTools(Toolkit):
 
     @authenticate
     def get_emails_by_date(
-        self, start_date: int, range_in_days: Optional[int] = None, num_emails: Optional[int] = 10
+        self, start_date: str, range_in_days: Optional[int] = None, num_emails: Optional[int] = 10
     ) -> str:
-        """
-        Get emails based on date range. start_date is an integer representing a unix timestamp
+        """Get emails from a date or date range.
 
         Args:
-            start_date (datetime): Start date for the query
-            range_in_days (Optional[int]): Number of days to include in the range (default: None)
-            num_emails (Optional[int]): Maximum number of emails to retrieve (default: 10)
+            start_date (str): Start date in YYYY/MM/DD format (e.g. "2026/03/01").
+            range_in_days (Optional[int]): Number of days to include in the range (default: None, meaning all emails after start_date).
+            num_emails (Optional[int]): Maximum number of emails to retrieve (default: 10).
 
         Returns:
-            str: Formatted string containing email details
+            str: Formatted string containing email details.
         """
         try:
-            start_date_dt = datetime.fromtimestamp(start_date)
+            start_date_dt = datetime.strptime(start_date, "%Y/%m/%d")
             if range_in_days:
                 end_date = start_date_dt + timedelta(days=range_in_days)
-                query = f"after:{start_date_dt.strftime('%Y/%m/%d')} before:{end_date.strftime('%Y/%m/%d')}"
+                query = f"after:{start_date} before:{end_date.strftime('%Y/%m/%d')}"
             else:
-                query = f"after:{start_date_dt.strftime('%Y/%m/%d')}"
+                query = f"after:{start_date}"
 
             results = self.service.users().messages().list(userId="me", q=query, maxResults=num_emails).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
@@ -1507,6 +1506,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to get message {message_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def get_thread(self, thread_id: str) -> str:
@@ -1532,6 +1534,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to get thread {thread_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def search_threads(self, query: str, count: int = 10) -> str:
@@ -1558,6 +1563,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Thread search failed: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def modify_thread_labels(
@@ -1594,6 +1602,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to modify labels on thread {thread_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def trash_thread(self, thread_id: str) -> str:
@@ -1612,6 +1623,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to trash thread {thread_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def get_draft(self, draft_id: str) -> str:
@@ -1636,6 +1650,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to get draft {draft_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def list_drafts(self, count: int = 20) -> str:
@@ -1656,6 +1673,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to list drafts: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def send_draft(self, draft_id: str) -> str:
@@ -1680,6 +1700,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to send draft {draft_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def update_draft(
@@ -1744,8 +1767,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to update draft {draft_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
-        except ValueError as e:
-            return json.dumps({"error": str(e)})
+        except Exception as e:
+            log_error(f"Failed to update draft {draft_id}: {e}")
+            return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     @authenticate
     def list_labels(self) -> str:
@@ -1780,6 +1804,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to list labels: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def modify_message_labels(
@@ -1817,6 +1844,9 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to modify labels on message {message_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def trash_message(self, message_id: str, undo: bool = False) -> str:
@@ -1841,6 +1871,9 @@ class GmailTools(Toolkit):
             action_name = "untrash" if undo else "trash"
             log_error(f"Failed to {action_name} message {message_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
     def download_attachment(self, message_id: str, attachment_id: str, filename: str) -> str:
@@ -1860,3 +1893,6 @@ class GmailTools(Toolkit):
         except HttpError as e:
             log_error(f"Failed to download attachment from {message_id}: {e}")
             return json.dumps({"error": f"Gmail API error: {e}"})
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
