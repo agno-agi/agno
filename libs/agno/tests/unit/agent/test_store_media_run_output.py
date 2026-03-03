@@ -13,6 +13,7 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
+from agno.run.agent import RunCompletedEvent, RunOutput
 
 
 class MockModelWithImage(Model):
@@ -119,3 +120,73 @@ def test_store_media_false_without_db():
     assert result.images is not None
     assert len(result.images) == 1
     assert result.images[0].id == "img-1"
+
+
+def test_store_media_false_streaming_with_yield_run_output():
+    agent = Agent(
+        model=MockModelWithImage(),
+        store_media=False,
+    )
+
+    run_output = None
+    for chunk in agent.run("Generate an image", stream=True, yield_run_output=True):
+        if isinstance(chunk, RunOutput):
+            run_output = chunk
+
+    assert run_output is not None
+    assert run_output.images is not None
+    assert len(run_output.images) == 1
+    assert run_output.images[0].url == "https://example.com/generated.png"
+
+
+def test_store_media_false_streaming_with_stream_events():
+    agent = Agent(
+        model=MockModelWithImage(),
+        store_media=False,
+    )
+
+    completed_event = None
+    for chunk in agent.run("Generate an image", stream=True, stream_events=True):
+        if isinstance(chunk, RunCompletedEvent):
+            completed_event = chunk
+
+    assert completed_event is not None
+    assert completed_event.images is not None
+    assert len(completed_event.images) == 1
+    assert completed_event.images[0].url == "https://example.com/generated.png"
+
+
+@pytest.mark.asyncio
+async def test_store_media_false_async_streaming_with_yield_run_output():
+    agent = Agent(
+        model=MockModelWithImage(),
+        store_media=False,
+    )
+
+    run_output = None
+    async for chunk in agent.arun("Generate an image", stream=True, yield_run_output=True):
+        if isinstance(chunk, RunOutput):
+            run_output = chunk
+
+    assert run_output is not None
+    assert run_output.images is not None
+    assert len(run_output.images) == 1
+    assert run_output.images[0].url == "https://example.com/generated.png"
+
+
+@pytest.mark.asyncio
+async def test_store_media_false_async_streaming_with_stream_events():
+    agent = Agent(
+        model=MockModelWithImage(),
+        store_media=False,
+    )
+
+    completed_event = None
+    async for chunk in agent.arun("Generate an image", stream=True, stream_events=True):
+        if isinstance(chunk, RunCompletedEvent):
+            completed_event = chunk
+
+    assert completed_event is not None
+    assert completed_event.images is not None
+    assert len(completed_event.images) == 1
+    assert completed_event.images[0].url == "https://example.com/generated.png"
