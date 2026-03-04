@@ -16,7 +16,7 @@ DEFAULT_SERVER_URL = "http://localhost:9621"
 
 
 class LightRagBackend:
-    """Managed backend that talks to a LightRAG HTTP server."""
+    """External knowledge provider that talks to a LightRAG HTTP server."""
 
     def __init__(
         self,

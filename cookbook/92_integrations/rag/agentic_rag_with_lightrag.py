@@ -16,12 +16,12 @@ from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-backend = LightRagBackend(api_key=getenv("LIGHTRAG_API_KEY"))
+provider = LightRagBackend(api_key=getenv("LIGHTRAG_API_KEY"))
 
 knowledge = Knowledge(
     name="My LightRag Knowledge Base",
     description="Knowledge base using LightRAG as an external provider",
-    external_provider=backend,
+    external_provider=provider,
 )
 
 # ---------------------------------------------------------------------------

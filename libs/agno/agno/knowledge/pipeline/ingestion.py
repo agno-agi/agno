@@ -1092,52 +1092,52 @@ class IngestionPipeline:
         return chunked_documents
 
     # ==========================================
-    # MANAGED BACKEND INGESTION
+    # EXTERNAL PROVIDER INGESTION
     # ==========================================
 
     def _ingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Route content to the managed backend (sync). Handles PATH, URL, CONTENT, and TOPIC origins."""
+        """Route content to the external provider (sync). Handles PATH, URL, CONTENT, and TOPIC origins."""
         self.content_store.insert(content)  # type: ignore[union-attr]
         try:
-            result = self._do_managed_ingest(content, content_type)
+            result = self._do_external_ingest(content, content_type)
             content.external_id = result
             content.status = ContentStatus.COMPLETED
         except Exception as e:
-            log_error(f"Error ingesting via managed backend: {e}")
+            log_error(f"Error ingesting via external provider: {e}")
             content.status = ContentStatus.FAILED
-            content.status_message = f"Managed backend ingestion failed: {str(e)}"
+            content.status_message = f"External provider ingestion failed: {str(e)}"
         self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
     async def _aingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Route content to the managed backend (async). Handles PATH, URL, CONTENT, and TOPIC origins."""
+        """Route content to the external provider (async). Handles PATH, URL, CONTENT, and TOPIC origins."""
         await self.content_store.ainsert(content)  # type: ignore[union-attr]
         try:
-            result = await self._ado_managed_ingest(content, content_type)
+            result = await self._ado_external_ingest(content, content_type)
             content.external_id = result
             content.status = ContentStatus.COMPLETED
         except Exception as e:
-            log_error(f"Error ingesting via managed backend: {e}")
+            log_error(f"Error ingesting via external provider: {e}")
             content.status = ContentStatus.FAILED
-            content.status_message = f"Managed backend ingestion failed: {str(e)}"
+            content.status_message = f"External provider ingestion failed: {str(e)}"
         await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
-    def _do_managed_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
-        """Dispatch to the appropriate managed backend ingestion method (sync)."""
-        backend = self.external_provider
-        assert backend is not None
+    def _do_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
+        """Dispatch to the appropriate external provider ingestion method (sync)."""
+        provider = self.external_provider
+        assert provider is not None
 
         if content_type == KnowledgeContentOrigin.PATH:
             if content.path is None:
                 raise ValueError("No path provided for content")
             path = Path(content.path)
-            log_info(f"Ingesting file via managed backend from path: {path}")
+            log_info(f"Ingesting file via external provider from path: {path}")
             with open(path, "rb") as f:
                 file_content = f.read()
             file_type = content.file_type or path.suffix
-            return backend.ingest_file(file_content=file_content, filename=path.name, content_type=file_type)
+            return provider.ingest_file(file_content=file_content, filename=path.name, content_type=file_type)
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Ingesting content via managed backend from URL: {content.url}")
+            log_info(f"Ingesting content via external provider from URL: {content.url}")
             reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
             if reader is None:
                 raise ValueError("No URL reader available")
@@ -1148,55 +1148,55 @@ class IngestionPipeline:
             self.prepare_documents_for_insert(read_documents, content.id)
             if not read_documents:
                 raise ValueError("No documents read from URL")
-            return backend.ingest_text(text=read_documents[0].content, source_name=content.url)
+            return provider.ingest_text(text=read_documents[0].content, source_name=content.url)
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
             filename = (
                 content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
             )
-            log_info(f"Ingesting file via managed backend: {filename}")
+            log_info(f"Ingesting file via external provider: {filename}")
             if content.file_data and content.file_data.content:
-                return backend.ingest_file(
+                return provider.ingest_file(
                     file_content=content.file_data.content,
                     filename=filename,
                     content_type=content.file_data.type,
                 )
             else:
-                log_warning(f"No file data available for managed backend upload: {content.name}")
+                log_warning(f"No file data available for external provider upload: {content.name}")
                 return None
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Ingesting topic via managed backend: {content.name}")
+            log_info(f"Ingesting topic via external provider: {content.name}")
             if content.reader is None:
                 raise ValueError("No reader available for topic content")
             if not content.topics:
                 raise ValueError("No topics available for content")
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                return backend.ingest_text(text=read_documents[0].content, source_name=content.topics[0])
+                return provider.ingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for managed backend upload: {content.name}")
+                log_warning(f"No documents found for external provider upload: {content.name}")
                 return None
 
         return None
 
-    async def _ado_managed_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
-        """Dispatch to the appropriate managed backend ingestion method (async)."""
-        backend = self.external_provider
-        assert backend is not None
+    async def _ado_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
+        """Dispatch to the appropriate external provider ingestion method (async)."""
+        provider = self.external_provider
+        assert provider is not None
 
         if content_type == KnowledgeContentOrigin.PATH:
             if content.path is None:
                 raise ValueError("No path provided for content")
             path = Path(content.path)
-            log_info(f"Ingesting file via managed backend from path: {path}")
+            log_info(f"Ingesting file via external provider from path: {path}")
             with open(path, "rb") as f:
                 file_content = f.read()
             file_type = content.file_type or path.suffix
-            return await backend.aingest_file(file_content=file_content, filename=path.name, content_type=file_type)
+            return await provider.aingest_file(file_content=file_content, filename=path.name, content_type=file_type)
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Ingesting content via managed backend from URL: {content.url}")
+            log_info(f"Ingesting content via external provider from URL: {content.url}")
             reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
             if reader is None:
                 raise ValueError("No URL reader available")
@@ -1207,34 +1207,34 @@ class IngestionPipeline:
             self.prepare_documents_for_insert(read_documents, content.id)
             if not read_documents:
                 raise ValueError("No documents read from URL")
-            return await backend.aingest_text(text=read_documents[0].content, source_name=content.url)
+            return await provider.aingest_text(text=read_documents[0].content, source_name=content.url)
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
             filename = (
                 content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
             )
-            log_info(f"Ingesting file via managed backend: {filename}")
+            log_info(f"Ingesting file via external provider: {filename}")
             if content.file_data and content.file_data.content:
-                return await backend.aingest_file(
+                return await provider.aingest_file(
                     file_content=content.file_data.content,
                     filename=filename,
                     content_type=content.file_data.type,
                 )
             else:
-                log_warning(f"No file data available for managed backend upload: {content.name}")
+                log_warning(f"No file data available for external provider upload: {content.name}")
                 return None
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Ingesting topic via managed backend: {content.name}")
+            log_info(f"Ingesting topic via external provider: {content.name}")
             if content.reader is None:
                 raise ValueError("No reader available for topic content")
             if not content.topics:
                 raise ValueError("No topics available for content")
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                return await backend.aingest_text(text=read_documents[0].content, source_name=content.topics[0])
+                return await provider.aingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for managed backend upload: {content.name}")
+                log_warning(f"No documents found for external provider upload: {content.name}")
                 return None
 
         return None

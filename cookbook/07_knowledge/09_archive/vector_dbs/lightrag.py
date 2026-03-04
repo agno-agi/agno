@@ -17,7 +17,7 @@ from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-backend = LightRagBackend(
+provider = LightRagBackend(
     server_url=getenv("LIGHTRAG_SERVER_URL", "http://localhost:9621"),
     api_key=getenv("LIGHTRAG_API_KEY"),
 )
@@ -29,7 +29,7 @@ backend = LightRagBackend(
 knowledge = Knowledge(
     name="LightRAG Knowledge Base",
     description="Knowledge base using LightRAG for graph-based retrieval",
-    external_provider=backend,
+    external_provider=provider,
 )
 
 
@@ -70,7 +70,7 @@ async def main() -> None:
         markdown=True,
     )
 
-    results = await backend.aquery("What skills does Jordan Mitchell have?")
+    results = await provider.aquery("What skills does Jordan Mitchell have?")
     if results:
         doc = results[0]
         print(f"References: {doc.meta_data.get('references', [])}")

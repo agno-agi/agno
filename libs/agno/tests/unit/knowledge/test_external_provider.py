@@ -177,9 +177,9 @@ class TestProtocolDetection:
         provider = MockExternalProvider()
         assert isinstance(provider, ExternalKnowledgeProvider)
 
-    def test_lightrag_backend_satisfies_protocol(self):
-        backend = LightRagBackend()
-        assert isinstance(backend, ExternalKnowledgeProvider)
+    def test_lightrag_provider_satisfies_protocol(self):
+        provider = LightRagBackend()
+        assert isinstance(provider, ExternalKnowledgeProvider)
 
     def test_regular_vectordb_does_not_satisfy_protocol(self):
         vdb = MockVectorDb()

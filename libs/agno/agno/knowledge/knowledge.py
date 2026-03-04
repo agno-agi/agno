@@ -474,13 +474,13 @@ class Knowledge:
         """Returns relevant documents matching a query"""
         _max_results = max_results or self.max_results
 
-        # Route through managed backend if detected
+        # Route through external provider if detected
         if self.external_provider is not None:
             try:
-                log_debug(f"Getting {_max_results} relevant documents via managed backend for query: {query}")
+                log_debug(f"Getting {_max_results} relevant documents via external provider for query: {query}")
                 return self.external_provider.query(query=query, limit=_max_results)
             except Exception as e:
-                log_warning(f"Error searching managed backend: {e}")
+                log_warning(f"Error searching external provider: {e}")
                 return []
 
         from agno.vectordb import VectorDb
@@ -526,13 +526,13 @@ class Knowledge:
         """Returns relevant documents matching a query"""
         _max_results = max_results or self.max_results
 
-        # Route through managed backend if detected
+        # Route through external provider if detected
         if self.external_provider is not None:
             try:
-                log_debug(f"Getting {_max_results} relevant documents via managed backend for query: {query}")
+                log_debug(f"Getting {_max_results} relevant documents via external provider for query: {query}")
                 return await self.external_provider.aquery(query=query, limit=_max_results)
             except Exception as e:
-                log_warning(f"Error searching managed backend: {e}")
+                log_warning(f"Error searching external provider: {e}")
                 return []
 
         from agno.vectordb import VectorDb
@@ -621,7 +621,7 @@ class Knowledge:
                 if content and content.external_id:
                     self.external_provider.delete_content(content.external_id)
                 else:
-                    log_warning(f"No external_id found for content {content_id}, cannot delete from managed backend")
+                    log_warning(f"No external_id found for content {content_id}, cannot delete from external provider")
             else:
                 self.vector_db.delete_by_content_id(content_id)
 
@@ -635,7 +635,7 @@ class Knowledge:
                 if content and content.external_id:
                     await self.external_provider.adelete_content(content.external_id)
                 else:
-                    log_warning(f"No external_id found for content {content_id}, cannot delete from managed backend")
+                    log_warning(f"No external_id found for content {content_id}, cannot delete from external provider")
             else:
                 self.vector_db.delete_by_content_id(content_id)
 
