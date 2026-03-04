@@ -6,8 +6,13 @@ Provides common helpers for:
 - Building metadata dictionaries
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from agno.knowledge.pipeline.ingestion import IngestionPipeline
 
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.utils import RESERVED_AGNO_KEY, strip_agno_metadata
@@ -35,7 +40,7 @@ class BaseLoader:
     and vector_db for content operations.
     """
 
-    def __init__(self, pipeline: Any = None):
+    def __init__(self, pipeline: Optional[IngestionPipeline] = None):
         self.pipeline = pipeline
 
     RESERVED_METADATA_KEY = RESERVED_AGNO_KEY

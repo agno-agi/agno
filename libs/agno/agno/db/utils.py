@@ -5,8 +5,8 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import UUID
 
+from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.isoformat()
         elif isinstance(obj, Message):
             return obj.to_dict()
-        elif isinstance(obj, Metrics):
+        elif isinstance(obj, (RunMetrics, SessionMetrics, ModelMetrics)):
             return obj.to_dict()
         elif isinstance(obj, type):
             return str(obj)

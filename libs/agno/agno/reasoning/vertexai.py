@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
@@ -18,15 +21,23 @@ def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
     return is_vertexai_provider and has_thinking
 
 
-def get_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+def get_vertexai_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     """Get reasoning from a VertexAI Claude model."""
-    from agno.run.agent import RunOutput
-
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
+        reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
@@ -47,15 +58,23 @@ def get_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
     )
 
 
-async def aget_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+async def aget_vertexai_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     """Get reasoning from a VertexAI Claude model asynchronously."""
-    from agno.run.agent import RunOutput
-
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
+        reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
