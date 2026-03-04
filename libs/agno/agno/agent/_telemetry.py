@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
@@ -56,6 +57,40 @@ def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = N
         )
     except Exception as e:
         log_debug(f"Could not create Agent run telemetry event: {e}")
+
+
+def set_tracing_metadata(agent: Agent) -> None:
+    """Propagate agent metadata to the active OpenTelemetry span.
+
+    When OpenInference instrumentation wraps the agent run functions, it creates
+    a span and makes it the active span via ``trace_api.use_span``.  The
+    instrumentation already extracts several agent attributes (name, tools, etc.)
+    but does **not** read ``agent.metadata``.  This helper bridges the gap by
+    writing the metadata dict to the current span so that it appears in
+    observability backends such as Langfuse.
+
+    The function is a no-op when:
+    - ``agent.metadata`` is empty/None
+    - OpenTelemetry is not installed
+    - There is no active valid span (i.e. the agent is not being traced)
+    """
+    if not agent.metadata:
+        return
+
+    try:
+        from opentelemetry import trace as trace_api  # type: ignore[import-not-found]
+    except ImportError:
+        return
+
+    span = trace_api.get_current_span()
+    if span is None or not span.is_recording():
+        return
+
+    try:
+        span.set_attribute("metadata", json.dumps(agent.metadata, ensure_ascii=False))
+    except Exception:
+        # Never let tracing metadata propagation break the agent run.
+        pass
 
 
 async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = None) -> None:

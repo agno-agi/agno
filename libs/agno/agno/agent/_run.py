@@ -366,11 +366,15 @@ def _run(
         update_run_response,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
-    from agno.agent._telemetry import log_agent_telemetry
+    from agno.agent._telemetry import log_agent_telemetry, set_tracing_metadata
     from agno.agent._tools import determine_tools_for_model
 
     register_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+    # Propagate agent metadata to the active OpenTelemetry span so that
+    # observability backends (e.g. Langfuse via OpenInference) can display it.
+    set_tracing_metadata(agent)
 
     memory_future = None
     learning_future = None
@@ -750,11 +754,15 @@ def _run_stream(
         parse_response_with_parser_model_stream,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
-    from agno.agent._telemetry import log_agent_telemetry
+    from agno.agent._telemetry import log_agent_telemetry, set_tracing_metadata
     from agno.agent._tools import determine_tools_for_model
 
     register_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+    # Propagate agent metadata to the active OpenTelemetry span so that
+    # observability backends (e.g. Langfuse via OpenInference) can display it.
+    set_tracing_metadata(agent)
 
     memory_future = None
     learning_future = None
@@ -1430,11 +1438,15 @@ async def _arun(
         update_run_response,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
-    from agno.agent._telemetry import alog_agent_telemetry
+    from agno.agent._telemetry import alog_agent_telemetry, set_tracing_metadata
     from agno.agent._tools import determine_tools_for_model
 
     await aregister_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+    # Propagate agent metadata to the active OpenTelemetry span so that
+    # observability backends (e.g. Langfuse via OpenInference) can display it.
+    set_tracing_metadata(agent)
 
     memory_task = None
     learning_task = None
@@ -1928,11 +1940,15 @@ async def _arun_stream(
         aparse_response_with_parser_model_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
-    from agno.agent._telemetry import alog_agent_telemetry
+    from agno.agent._telemetry import alog_agent_telemetry, set_tracing_metadata
     from agno.agent._tools import determine_tools_for_model
 
     await aregister_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+    # Propagate agent metadata to the active OpenTelemetry span so that
+    # observability backends (e.g. Langfuse via OpenInference) can display it.
+    set_tracing_metadata(agent)
 
     memory_task = None
     cultural_knowledge_task = None
