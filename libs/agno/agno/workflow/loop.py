@@ -412,6 +412,12 @@ class Loop:
                 )
 
             all_results.append(iteration_results)
+
+            # Carry forward the last iteration's output so the next iteration
+            # sees it via get_last_step_content() instead of the pre-loop input.
+            if iteration_results:
+                step_input = self._update_step_input_from_outputs(step_input, iteration_results[-1], loop_step_outputs)
+
             iteration += 1
 
             # Check end condition
@@ -571,6 +577,12 @@ class Loop:
                         )
 
             all_results.append(iteration_results)
+
+            # Carry forward the last iteration's output so the next iteration
+            # sees it via get_last_step_content() instead of the pre-loop input.
+            if iteration_results:
+                step_input = self._update_step_input_from_outputs(step_input, iteration_results[-1], loop_step_outputs)
+
             iteration += 1
 
             # Check end condition
@@ -713,6 +725,12 @@ class Loop:
                 )
 
             all_results.append(iteration_results)
+
+            # Carry forward the last iteration's output so the next iteration
+            # sees it via get_last_step_content() instead of the pre-loop input.
+            if iteration_results:
+                step_input = self._update_step_input_from_outputs(step_input, iteration_results[-1], loop_step_outputs)
+
             iteration += 1
 
             # Check end condition
@@ -872,6 +890,12 @@ class Loop:
                         )
 
             all_results.append(iteration_results)
+
+            # Carry forward the last iteration's output so the next iteration
+            # sees it via get_last_step_content() instead of the pre-loop input.
+            if iteration_results:
+                step_input = self._update_step_input_from_outputs(step_input, iteration_results[-1], loop_step_outputs)
+
             iteration += 1
 
             # Check end condition
