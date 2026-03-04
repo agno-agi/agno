@@ -10,14 +10,14 @@ import time
 from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge.external_provider import LightRagBackend
+from agno.knowledge.external_provider import LightRagProvider
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-provider = LightRagBackend(
+provider = LightRagProvider(
     server_url=getenv("LIGHTRAG_SERVER_URL", "http://localhost:9621"),
     api_key=getenv("LIGHTRAG_API_KEY"),
 )

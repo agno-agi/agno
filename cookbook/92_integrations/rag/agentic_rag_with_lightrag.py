@@ -9,14 +9,14 @@ import asyncio
 from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge.external_provider import LightRagBackend
+from agno.knowledge.external_provider import LightRagProvider
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-provider = LightRagBackend(api_key=getenv("LIGHTRAG_API_KEY"))
+provider = LightRagProvider(api_key=getenv("LIGHTRAG_API_KEY"))
 
 knowledge = Knowledge(
     name="My LightRag Knowledge Base",

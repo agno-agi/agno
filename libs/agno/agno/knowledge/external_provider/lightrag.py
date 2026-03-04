@@ -1,7 +1,7 @@
-"""LightRagBackend — ExternalKnowledgeProvider implementation for LightRAG.
+"""LightRagProvider — ExternalKnowledgeProvider implementation for LightRAG.
 
 Encapsulates all HTTP communication with a LightRAG server. Pass directly
-to ``Knowledge(external_provider=LightRagBackend(...))`` for graph-based RAG.
+to ``Knowledge(external_provider=LightRagProvider(...))`` for graph-based RAG.
 """
 
 import asyncio
@@ -15,7 +15,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 DEFAULT_SERVER_URL = "http://localhost:9621"
 
 
-class LightRagBackend:
+class LightRagProvider:
     """External knowledge provider that talks to a LightRAG HTTP server."""
 
     def __init__(

@@ -1,5 +1,5 @@
-from agno.knowledge.external_provider.lightrag import LightRagBackend
+from agno.knowledge.external_provider.lightrag import LightRagProvider
 
 __all__ = [
-    "LightRagBackend",
+    "LightRagProvider",
 ]

@@ -24,10 +24,10 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 
 try:
-    from agno.knowledge.external_provider import LightRagBackend
+    from agno.knowledge.external_provider import LightRagProvider
 
     knowledge = Knowledge(
-        external_provider=LightRagBackend(
+        external_provider=LightRagProvider(
             server_url="http://localhost:9621",
         ),
     )

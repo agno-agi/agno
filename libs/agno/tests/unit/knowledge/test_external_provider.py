@@ -8,7 +8,7 @@ import pytest
 from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.external_provider import ExternalKnowledgeProvider
-from agno.knowledge.external_provider.lightrag import LightRagBackend
+from agno.knowledge.external_provider.lightrag import LightRagProvider
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.pipeline.ingestion import KnowledgeContentOrigin
 from agno.vectordb.base import VectorDb
@@ -178,7 +178,7 @@ class TestProtocolDetection:
         assert isinstance(provider, ExternalKnowledgeProvider)
 
     def test_lightrag_provider_satisfies_protocol(self):
-        provider = LightRagBackend()
+        provider = LightRagProvider()
         assert isinstance(provider, ExternalKnowledgeProvider)
 
     def test_regular_vectordb_does_not_satisfy_protocol(self):

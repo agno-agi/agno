@@ -1,6 +1,6 @@
 import pytest
 
-from agno.knowledge.external_provider.lightrag import LightRagBackend
+from agno.knowledge.external_provider.lightrag import LightRagProvider
 
 TEST_SERVER_URL = "http://localhost:9621"
 TEST_API_KEY = "test_api_key"
@@ -8,8 +8,8 @@ TEST_API_KEY = "test_api_key"
 
 @pytest.fixture
 def lightrag_provider():
-    """Fixture to create a LightRagBackend instance"""
-    provider = LightRagBackend(
+    """Fixture to create a LightRagProvider instance"""
+    provider = LightRagProvider(
         server_url=TEST_SERVER_URL,
         api_key=TEST_API_KEY,
     )
@@ -18,7 +18,7 @@ def lightrag_provider():
 
 def test_initialization():
     """Test basic initialization with defaults"""
-    provider = LightRagBackend()
+    provider = LightRagProvider()
 
     assert provider.server_url == "http://localhost:9621"
     assert provider.api_key is None
@@ -26,7 +26,7 @@ def test_initialization():
 
 def test_initialization_with_params():
     """Test initialization with custom parameters"""
-    provider = LightRagBackend(
+    provider = LightRagProvider(
         server_url="http://custom:8080",
         api_key="secret",
     )
@@ -45,7 +45,7 @@ def test_get_headers_with_api_key(lightrag_provider):
 
 def test_get_headers_without_api_key():
     """Test headers without API key"""
-    provider = LightRagBackend(server_url=TEST_SERVER_URL)
+    provider = LightRagProvider(server_url=TEST_SERVER_URL)
     headers = provider._get_headers()
 
     assert headers["Content-Type"] == "application/json"
@@ -62,7 +62,7 @@ def test_get_auth_headers(lightrag_provider):
 
 def test_custom_auth_header_format():
     """Test custom auth header name and format"""
-    provider = LightRagBackend(
+    provider = LightRagProvider(
         server_url=TEST_SERVER_URL,
         api_key="my_key",
         auth_header_name="Authorization",
