@@ -452,14 +452,14 @@ def _extract_session_preview(session: Union[AgentSession, Any], num_runs: int = 
 
 def get_search_past_sessions_function(
     agent: Agent,
-    num_past_sessions: Optional[int] = None,
+    num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs: Optional[int] = None,
     user_id: Optional[str] = None,
     current_session_id: Optional[str] = None,
 ) -> Callable:
     """Factory for search_past_sessions tool."""
 
-    _limit = num_past_sessions if num_past_sessions is not None else 20
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
     _num_runs = num_past_session_runs if num_past_session_runs is not None else 3
 
     def search_past_sessions() -> str:
@@ -498,7 +498,7 @@ def get_search_past_sessions_function(
 
 async def aget_search_past_sessions_function(
     agent: Agent,
-    num_past_sessions: Optional[int] = None,
+    num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs: Optional[int] = None,
     user_id: Optional[str] = None,
     current_session_id: Optional[str] = None,
@@ -506,7 +506,7 @@ async def aget_search_past_sessions_function(
     """Async factory for search_past_sessions tool."""
     from agno.agent import _init
 
-    _limit = num_past_sessions if num_past_sessions is not None else 20
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
     _num_runs = num_past_session_runs if num_past_session_runs is not None else 3
 
     async def search_past_sessions() -> str:

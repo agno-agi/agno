@@ -9,7 +9,7 @@ The agent gets two tools:
   - read_past_session(session_id) -- full conversation for a specific session
 
 Enable with `search_session_history=True`. Optionally set
-`num_past_sessions` to control how many past sessions are listed (default 20)
+`num_past_sessions_to_search` to control how many past sessions are searched (default 20)
 and `num_past_session_runs` to control how many runs per session appear in
 the preview (default 3).
 """
@@ -37,7 +37,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
     db=db,
     search_session_history=True,
-    num_past_sessions=10,
+    num_past_sessions_to_search=10,
 )
 
 

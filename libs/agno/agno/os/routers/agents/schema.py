@@ -155,7 +155,7 @@ class AgentResponse(BaseModel):
             "num_history_runs": agent.num_history_runs,
             "search_session_history": agent.search_session_history,
             "num_history_sessions": agent.num_history_sessions,
-            "num_past_sessions": agent.num_past_sessions,
+            "num_past_sessions_to_search": agent.num_past_sessions_to_search,
             "num_past_session_runs": agent.num_past_session_runs,
             "cache_session": agent.cache_session,
         }

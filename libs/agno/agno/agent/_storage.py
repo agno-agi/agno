@@ -462,8 +462,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["search_session_history"] = agent.search_session_history
     if agent.num_history_sessions is not None:
         config["num_history_sessions"] = agent.num_history_sessions
-    if agent.num_past_sessions is not None:
-        config["num_past_sessions"] = agent.num_past_sessions
+    if agent.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = agent.num_past_sessions_to_search
     if agent.num_past_session_runs is not None:
         config["num_past_session_runs"] = agent.num_past_session_runs
     if agent.enable_session_summaries:
@@ -879,7 +879,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         cache_session=config.get("cache_session", False),
         search_session_history=config.get("search_session_history", False),
         num_history_sessions=config.get("num_history_sessions"),
-        num_past_sessions=config.get("num_past_sessions"),
+        num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
         num_past_session_runs=config.get("num_past_session_runs"),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),

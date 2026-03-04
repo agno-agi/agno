@@ -144,7 +144,7 @@ def get_tools(
         agent_tools.append(
             _default_tools.get_search_past_sessions_function(
                 agent,
-                num_past_sessions=agent.num_past_sessions,
+                num_past_sessions_to_search=agent.num_past_sessions_to_search,
                 num_past_session_runs=agent.num_past_session_runs,
                 user_id=user_id,
                 current_session_id=session.session_id if session else None,
@@ -276,7 +276,7 @@ async def aget_tools(
         agent_tools.append(
             await _default_tools.aget_search_past_sessions_function(
                 agent,
-                num_past_sessions=agent.num_past_sessions,
+                num_past_sessions_to_search=agent.num_past_sessions_to_search,
                 num_past_session_runs=agent.num_past_session_runs,
                 user_id=user_id,
                 current_session_id=session.session_id if session else None,

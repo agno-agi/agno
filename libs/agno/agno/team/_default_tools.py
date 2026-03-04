@@ -189,7 +189,7 @@ def _update_session_state_tool(team: "Team", run_context: RunContext, session_st
 
 def _search_past_sessions_function(
     team: "Team",
-    num_past_sessions: Optional[int] = None,
+    num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs: Optional[int] = None,
     user_id: Optional[str] = None,
     current_session_id: Optional[str] = None,
@@ -200,7 +200,7 @@ def _search_past_sessions_function(
     from agno.agent._default_tools import _extract_session_preview
     from agno.team._init import _has_async_db
 
-    _limit = num_past_sessions if num_past_sessions is not None else 20
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
     _num_runs = num_past_session_runs if num_past_session_runs is not None else 3
 
     def search_past_sessions() -> str:

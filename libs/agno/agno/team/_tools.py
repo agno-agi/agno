@@ -189,7 +189,7 @@ def _determine_tools_for_model(
         _tools.append(
             _search_past_sessions_function(
                 team,
-                num_past_sessions=team.num_past_sessions,
+                num_past_sessions_to_search=team.num_past_sessions_to_search,
                 num_past_session_runs=team.num_past_session_runs,
                 user_id=user_id,
                 current_session_id=session.session_id if session else None,

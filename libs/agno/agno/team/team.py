@@ -136,8 +136,8 @@ class Team:
     search_session_history: Optional[bool] = False
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
-    # Max past sessions to list (default 20 when None)
-    num_past_sessions: Optional[int] = None
+    # Max past sessions to search (default 20 when None)
+    num_past_sessions_to_search: Optional[int] = None
     # Max runs per session in preview (default 3 when None)
     num_past_session_runs: Optional[int] = None
 
@@ -431,7 +431,7 @@ class Team:
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        num_past_sessions: Optional[int] = None,
+        num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -545,7 +545,7 @@ class Team:
             num_team_history_runs=num_team_history_runs,
             search_session_history=search_session_history,
             num_history_sessions=num_history_sessions,
-            num_past_sessions=num_past_sessions,
+            num_past_sessions_to_search=num_past_sessions_to_search,
             num_past_session_runs=num_past_session_runs,
             description=description,
             instructions=instructions,
