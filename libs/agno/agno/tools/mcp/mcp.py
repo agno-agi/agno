@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import weakref
@@ -183,6 +184,7 @@ class MCPTools(Toolkit):
         self._run_sessions: dict[str, Tuple[ClientSession, float]] = {}
         self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
+        self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
         def cleanup():
             """Cancel active connections"""
@@ -195,6 +197,13 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    @property
+    def _session_creation_lock(self) -> asyncio.Lock:
+        """Lazily create an asyncio lock for serializing session creation."""
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
+        return self._session_lock
 
     def _call_header_provider(
         self,
@@ -298,70 +307,104 @@ class MCPTools(Toolkit):
                 raise ValueError("Session is not initialized")
             return self.session
 
-        # Lazy cleanup of stale sessions
-        await self._cleanup_stale_sessions()
-
-        # Check if we already have a session for this run
         run_id = run_context.run_id
+
+        # Fast path: return existing session without acquiring the lock,
+        # but ensure it is still within the configured TTL.
         if run_id in self._run_sessions:
-            session, _ = self._run_sessions[run_id]
+            session, created_at = self._run_sessions[run_id]
+            ttl = getattr(self, "_session_ttl_seconds", None)
+            if not ttl or (time.time() - created_at) <= ttl:
+                # Either no TTL is configured, or the session is still fresh.
+                # Opportunistically clean up stale sessions for other run_ids.
+                await self._cleanup_stale_sessions()
+                return session
+            # Stale session: fall through to the slow path where
+            # cleanup_run_session properly exits context managers.
+
+        # Slow path: serialize session creation so parallel tool calls
+        # sharing the same run_id don't each create (and overwrite) sessions.
+        async with self._session_creation_lock:
+            # Opportunistically clean up stale sessions from other runs
+            await self._cleanup_stale_sessions()
+
+            # Re-check after acquiring lock (another coroutine may have created it)
+            if run_id in self._run_sessions:
+                session, created_at = self._run_sessions[run_id]
+                if time.time() - created_at <= self._session_ttl_seconds:
+                    return session
+                # Stale under lock — clean up before recreating
+                await self.cleanup_run_session(run_id)
+
+            # Create a new session with dynamic headers for this run
+            log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
+
+            # Generate dynamic headers from the provider
+            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+
+            # Create new session with merged headers based on transport type
+            if self.transport == "sse":
+                sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+                if "url" not in sse_params:
+                    sse_params["url"] = self.url
+
+                # Merge dynamic headers into existing headers
+                existing_headers = sse_params.get("headers", {})
+                sse_params["headers"] = {**existing_headers, **dynamic_headers}
+
+                context = sse_client(**sse_params)  # type: ignore
+                client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
+
+            elif self.transport == "streamable-http":
+                streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+                if "url" not in streamable_http_params:
+                    streamable_http_params["url"] = self.url
+
+                # Merge dynamic headers into existing headers
+                existing_headers = streamable_http_params.get("headers", {})
+                streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
+
+                context = streamablehttp_client(**streamable_http_params)  # type: ignore
+                params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
+                if isinstance(params_timeout, timedelta):
+                    params_timeout = int(params_timeout.total_seconds())
+                client_timeout = min(self.timeout_seconds, params_timeout)
+            else:
+                # stdio doesn't support headers, fall back to default session
+                log_warning(f"Cannot use dynamic headers with {self.transport} transport, using default session")
+                if self.session is None:
+                    raise ValueError("Session is not initialized")
+                return self.session
+
+            # Enter the context and create session — clean up on partial failure
+            session_context = None
+            try:
+                session_params = await context.__aenter__()  # type: ignore
+                read, write = session_params[0:2]
+
+                session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+                session = await session_context.__aenter__()  # type: ignore
+
+                # Initialize the session
+                await session.initialize()
+            except Exception:
+                # Exit partially-entered context managers to avoid resource leaks
+                if session_context is not None:
+                    try:
+                        await session_context.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                try:
+                    await context.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                raise
+
+            # Store the session with timestamp and context for cleanup
+            self._run_sessions[run_id] = (session, time.time())
+            self._run_session_contexts[run_id] = (context, session_context)
+
             return session
-
-        # Create a new session with dynamic headers for this run
-        log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
-
-        # Generate dynamic headers from the provider
-        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
-
-        # Create new session with merged headers based on transport type
-        if self.transport == "sse":
-            sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in sse_params:
-                sse_params["url"] = self.url
-
-            # Merge dynamic headers into existing headers
-            existing_headers = sse_params.get("headers", {})
-            sse_params["headers"] = {**existing_headers, **dynamic_headers}
-
-            context = sse_client(**sse_params)  # type: ignore
-            client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
-
-        elif self.transport == "streamable-http":
-            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in streamable_http_params:
-                streamable_http_params["url"] = self.url
-
-            # Merge dynamic headers into existing headers
-            existing_headers = streamable_http_params.get("headers", {})
-            streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
-
-            context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
-        else:
-            # stdio doesn't support headers, fall back to default session
-            log_warning(f"Cannot use dynamic headers with {self.transport} transport, using default session")
-            if self.session is None:
-                raise ValueError("Session is not initialized")
-            return self.session
-
-        # Enter the context and create session
-        session_params = await context.__aenter__()  # type: ignore
-        read, write = session_params[0:2]
-
-        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        session = await session_context.__aenter__()  # type: ignore
-
-        # Initialize the session
-        await session.initialize()
-
-        # Store the session with timestamp and context for cleanup
-        self._run_sessions[run_id] = (session, time.time())
-        self._run_session_contexts[run_id] = (context, session_context)
-
-        return session
 
     async def cleanup_run_session(self, run_id: str) -> None:
         """
@@ -383,22 +426,22 @@ class MCPTools(Toolkit):
             if session_context is not None:
                 try:
                     await session_context.__aexit__(None, None, None)
-                except (RuntimeError, Exception):
-                    pass  # Silently ignore
+                except BaseException:
+                    pass  # Silently ignore (includes CancelledError)
 
             # Try to clean up transport context
             if context is not None:
                 try:
                     await context.__aexit__(None, None, None)
-                except (RuntimeError, Exception):
-                    pass  # Silently ignore
+                except BaseException:
+                    pass  # Silently ignore (includes CancelledError)
 
             # Remove from tracking regardless of cleanup success
             # The connections will be cleaned up by garbage collection
             del self._run_sessions[run_id]
             del self._run_session_contexts[run_id]
 
-        except Exception:
+        except BaseException:
             pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
