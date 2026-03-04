@@ -471,8 +471,9 @@ class DaytonaTools(Toolkit):
             Success message or error
         """
         try:
+            # run_shell_command handles cd specially: it resolves the path,
+            # validates it exists, and calls _set_working_directory internally.
             result = self.run_shell_command(agent, f"cd {directory}")
-            self._set_working_directory(agent, directory)
             return result
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error changing directory: {str(e)}"})

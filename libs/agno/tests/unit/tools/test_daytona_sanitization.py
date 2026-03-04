@@ -95,9 +95,13 @@ class TestShellCommandSanitization:
         tools.run_shell_command(mock_agent, f"cd {malicious_path}")
 
         cmd = _get_exec_command(mock_process, 0)
-        assert shlex.quote(malicious_path) in cmd
-        # Should NOT contain the raw unquoted path
-        assert f"test -d {malicious_path} " not in cmd
+        # Path.resolve() may alter the path (e.g. /tmp -> /private/tmp on macOS)
+        from pathlib import Path
+
+        resolved_path = str(Path(malicious_path).resolve())
+        assert shlex.quote(resolved_path) in cmd
+        # Should NOT contain the raw unquoted resolved path
+        assert f"test -d {resolved_path} " not in cmd
 
     def test_mkdir_quotes_parent_dir(self, mock_agent, daytona_tools_with_sandbox):
         """create_file should quote the parent directory in mkdir -p."""
@@ -307,3 +311,42 @@ class TestShellCommandSanitization:
         assert shlex.quote(injected_path) in test_cmd
         rm_cmd = _get_exec_command(mock_process, 1)
         assert shlex.quote(injected_path) in rm_cmd
+
+    def test_change_directory_quotes_path(self, mock_agent, daytona_tools_with_sandbox):
+        """change_directory should quote the path via run_shell_command's cd handling."""
+        tools, mock_process = daytona_tools_with_sandbox
+
+        mock_test_result = MagicMock()
+        mock_test_result.result = "exists"
+        mock_process.exec.return_value = mock_test_result
+
+        malicious_dir = "/home/user/evil; rm -rf /"
+
+        tools.change_directory(mock_agent, malicious_dir)
+
+        # change_directory delegates to run_shell_command which handles cd specially
+        from pathlib import Path
+
+        resolved_dir = str(Path(malicious_dir).resolve())
+        cmd = _get_exec_command(mock_process, 0)
+        assert shlex.quote(resolved_dir) in cmd
+        # The raw unquoted path must not appear as a bare argument
+        assert f"test -d {resolved_dir} " not in cmd
+
+    def test_change_directory_stores_resolved_path(self, mock_agent, daytona_tools_with_sandbox):
+        """change_directory should store the resolved (not raw) path in session state."""
+        tools, mock_process = daytona_tools_with_sandbox
+
+        mock_test_result = MagicMock()
+        mock_test_result.result = "exists"
+        mock_process.exec.return_value = mock_test_result
+
+        tools.change_directory(mock_agent, "/home/user/safe_dir")
+
+        from pathlib import Path
+
+        resolved = str(Path("/home/user/safe_dir").resolve())
+        # The stored working directory should be the resolved path from run_shell_command,
+        # not the raw input value
+        stored = mock_agent.session_state.get("working_directory")
+        assert stored == resolved
