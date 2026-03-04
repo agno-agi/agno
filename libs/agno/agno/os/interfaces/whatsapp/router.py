@@ -1,3 +1,4 @@
+import asyncio
 from os import getenv
 from typing import Optional, Union
 
@@ -121,7 +122,8 @@ def attach_routes(
             message_audio = None
             message_doc = None
 
-            await typing_indicator_async(message.get("id"))
+            message_id = message.get("id")
+            await typing_indicator_async(message_id)
 
             msg_type = message.get("type")
 
@@ -182,7 +184,21 @@ def attach_routes(
                 run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {phone_number}"}
                 run_kwargs["add_dependencies_to_context"] = True
 
-            response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            # Refresh typing indicator every 20s while the agent runs
+            # WhatsApp auto-dismisses the indicator after ~25s
+            async def _keep_typing():
+                try:
+                    while True:
+                        await asyncio.sleep(20)
+                        await typing_indicator_async(message_id)
+                except asyncio.CancelledError:
+                    pass
+
+            typing_task = asyncio.create_task(_keep_typing())
+            try:
+                response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            finally:
+                typing_task.cancel()
 
             if response.status == "ERROR":
                 await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE)
