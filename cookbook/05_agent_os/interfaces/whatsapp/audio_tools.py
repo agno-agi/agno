@@ -43,7 +43,6 @@ audio_agent = Agent(
         "your reply into audio and send it as a voice message.",
         "Keep your replies concise and conversational since they will be "
         "delivered as voice messages.",
-        "Always use text_to_speech for your responses instead of replying with text.",
     ],
     add_history_to_context=True,
     num_history_runs=5,
@@ -73,4 +72,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="audio_tools:app", reload=True)
+    agent_os.serve(app="audio_tools:app", port=8000)

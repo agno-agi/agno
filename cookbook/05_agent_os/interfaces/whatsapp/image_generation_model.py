@@ -45,4 +45,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="image_generation_model:app", reload=True)
+    agent_os.serve(app="image_generation_model:app", port=8000)

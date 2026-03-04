@@ -105,6 +105,10 @@ async def upload_response_images_async(response, recipient: str) -> None:
         image_bytes = extract_media_bytes(img)
         if image_bytes:
             media_id = await upload_media_async(media_data=image_bytes, mime_type="image/png", filename="image.png")
+            if isinstance(media_id, dict):
+                log_warning(f"Image upload failed for user {recipient}: {media_id}")
+                await send_whatsapp_message_async(recipient, response.content or "")
+                continue
             await send_image_message_async(media_id=media_id, recipient=recipient, text=response.content)
         else:
             log_warning(f"Could not process image content for user {recipient}. Type: {type(img.content)}")
@@ -122,6 +126,10 @@ async def upload_response_files_async(response, recipient: str) -> None:
             mime_type = _MIME_MAP.get(ext, "application/octet-stream")
 
             media_id = await upload_media_async(media_data=file_bytes, mime_type=mime_type, filename=filename)
+            if isinstance(media_id, dict):
+                log_warning(f"File upload failed for user {recipient}: {media_id}")
+                await send_whatsapp_message_async(recipient, response.content or "")
+                continue
             await send_document_message_async(
                 media_id=media_id,
                 recipient=recipient,
@@ -140,6 +148,10 @@ async def upload_response_audio_async(response, recipient: str) -> None:
             mime_type = getattr(aud, "mime_type", None) or "audio/mpeg"
             audio_bytes, mime_type, filename = prepare_audio_for_whatsapp(audio_bytes, mime_type, aud)
             media_id = await upload_media_async(media_data=audio_bytes, mime_type=mime_type, filename=filename)
+            if isinstance(media_id, dict):
+                log_warning(f"Audio upload failed for user {recipient}: {media_id}")
+                await send_whatsapp_message_async(recipient, response.content or "")
+                continue
             await send_audio_message_async(media_id=media_id, recipient=recipient)
         else:
             log_warning(f"Could not process audio content for user {recipient}. Type: {type(aud.content)}")
@@ -152,6 +164,9 @@ async def upload_response_audio_single_async(audio_obj, recipient: str) -> None:
         mime_type = getattr(audio_obj, "mime_type", None) or "audio/mpeg"
         audio_bytes, mime_type, filename = prepare_audio_for_whatsapp(audio_bytes, mime_type, audio_obj)
         media_id = await upload_media_async(media_data=audio_bytes, mime_type=mime_type, filename=filename)
+        if isinstance(media_id, dict):
+            log_warning(f"Audio upload failed for user {recipient}: {media_id}")
+            return
         await send_audio_message_async(media_id=media_id, recipient=recipient)
     else:
         log_warning(f"Could not process response_audio for user {recipient}.")

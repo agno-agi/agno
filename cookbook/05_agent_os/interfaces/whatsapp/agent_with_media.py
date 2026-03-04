@@ -45,4 +45,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="agent_with_media:app", reload=True)
+    agent_os.serve(app="agent_with_media:app", port=8000)

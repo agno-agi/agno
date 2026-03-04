@@ -20,7 +20,7 @@ agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 image_agent = Agent(
     id="image_generation_tools",
     db=agent_db,
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
     add_history_to_context=True,
@@ -46,4 +46,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="image_generation_tools:app", reload=True)
+    agent_os.serve(app="image_generation_tools:app", port=8000)

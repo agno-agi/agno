@@ -364,7 +364,7 @@ async def typing_indicator_async(message_id: Optional[str] = None):
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, data=data)
+            response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
         return {"error": str(e)}

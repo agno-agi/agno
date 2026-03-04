@@ -78,4 +78,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="tourist_guide:app", reload=True)
+    agent_os.serve(app="tourist_guide:app", port=8000)

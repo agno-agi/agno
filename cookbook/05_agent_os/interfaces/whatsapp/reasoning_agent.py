@@ -52,4 +52,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="reasoning_agent:app", reload=True)
+    agent_os.serve(app="reasoning_agent:app", port=8000)

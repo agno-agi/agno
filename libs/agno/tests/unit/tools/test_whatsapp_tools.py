@@ -82,7 +82,9 @@ def test_send_text_message_default_recipient(whatsapp_tools):
 
 
 def test_send_text_message_no_recipient():
-    with patch.dict("os.environ", ENV):
+    # Explicitly unset WHATSAPP_RECIPIENT_WAID so default_recipient stays None
+    env = {**ENV, "WHATSAPP_RECIPIENT_WAID": ""}
+    with patch.dict("os.environ", env, clear=False):
         with patch("agno.tools.whatsapp.httpx"):
             tools = WhatsAppTools()
             result = tools.send_text_message(text="Hello")

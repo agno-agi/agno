@@ -85,4 +85,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="content_workflow:app", reload=True)
+    agent_os.serve(app="content_workflow:app", port=8000)
