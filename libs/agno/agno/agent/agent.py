@@ -92,8 +92,9 @@ class Agent:
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
-    search_session_history: Optional[bool] = False
-    num_history_sessions: Optional[int] = None
+    search_past_sessions: Optional[bool] = False
+    num_past_sessions_to_search: Optional[int] = None
+    num_past_session_runs_in_search: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
     # If True, the agent adds session summaries to the context
@@ -369,7 +370,11 @@ class Agent:
         overwrite_db_session_state: bool = False,
         enable_agentic_state: bool = False,
         cache_session: bool = False,
-        search_session_history: Optional[bool] = False,
+        search_past_sessions: Optional[bool] = False,
+        num_past_sessions_to_search: Optional[int] = None,
+        num_past_session_runs_in_search: Optional[int] = None,
+        # Deprecated params — kept for backward compatibility
+        search_session_history: Optional[bool] = None,
         num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
@@ -477,8 +482,15 @@ class Agent:
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
-        self.search_session_history = search_session_history
-        self.num_history_sessions = num_history_sessions
+        # Deprecated param mapping
+        if search_session_history is not None and not search_past_sessions:
+            search_past_sessions = search_session_history
+        if num_history_sessions is not None and num_past_sessions_to_search is None:
+            num_past_sessions_to_search = num_history_sessions
+
+        self.search_past_sessions = search_past_sessions
+        self.num_past_sessions_to_search = num_past_sessions_to_search
+        self.num_past_session_runs_in_search = num_past_session_runs_in_search
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context

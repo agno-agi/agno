@@ -80,7 +80,11 @@ def __init__(
     cache_session: bool = False,
     add_team_history_to_members: bool = False,
     num_team_history_runs: int = 3,
-    search_session_history: Optional[bool] = False,
+    search_past_sessions: Optional[bool] = False,
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    # Deprecated params — kept for backward compatibility
+    search_session_history: Optional[bool] = None,
     num_history_sessions: Optional[int] = None,
     description: Optional[str] = None,
     instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -230,8 +234,16 @@ def __init__(
 
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
-    team.search_session_history = search_session_history
-    team.num_history_sessions = num_history_sessions
+
+    # Deprecated param mapping
+    if search_session_history is not None and not search_past_sessions:
+        search_past_sessions = search_session_history
+    if num_history_sessions is not None and num_past_sessions_to_search is None:
+        num_past_sessions_to_search = num_history_sessions
+
+    team.search_past_sessions = search_past_sessions
+    team.num_past_sessions_to_search = num_past_sessions_to_search
+    team.num_past_session_runs_in_search = num_past_session_runs_in_search
 
     team.description = description
     team.instructions = instructions
