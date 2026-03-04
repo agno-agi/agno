@@ -465,6 +465,7 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
 
     if isinstance(member, Agent):
         member.team_id = team.id
+        member._team = team
         member.set_id()
 
         # Inherit team primary model if agent has no explicit model

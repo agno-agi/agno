@@ -648,6 +648,7 @@ class Agent:
         self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
+        self._team: Optional[Any] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
