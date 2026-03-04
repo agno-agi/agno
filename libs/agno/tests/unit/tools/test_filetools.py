@@ -144,3 +144,71 @@ def test_check_escape():
         assert path.resolve() == base_dir.joinpath(Path("a")).resolve()
         flag, path = f.check_escape("a/b/../../..")
         assert not (flag)
+
+
+def test_search_content_finds_matches():
+    """Test that search_content finds files containing the query string."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "hello.txt").write_text("Hello World, this is a test file")
+        (base_dir / "other.py").write_text("def greet():\n    print('hello')")
+        (base_dir / "nope.txt").write_text("nothing relevant here")
+
+        result = file_tools.search_content(query="hello")
+        data = json.loads(result)
+
+        assert data["query"] == "hello"
+        assert data["matches_found"] == 2
+        file_names = [m["file"] for m in data["files"]]
+        assert "hello.txt" in file_names
+        assert "other.py" in file_names
+
+
+def test_search_content_directory_scoping():
+    """Test that search_content respects directory scoping."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "root.txt").write_text("target text here")
+        subdir = base_dir / "sub"
+        subdir.mkdir()
+        (subdir / "nested.txt").write_text("target text also here")
+
+        result = file_tools.search_content(query="target", directory="sub")
+        data = json.loads(result)
+
+        assert data["matches_found"] == 1
+        assert data["files"][0]["file"] == "sub/nested.txt"
+
+
+def test_search_content_no_matches():
+    """Test that search_content returns zero matches when query is not found."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "file.txt").write_text("some content")
+
+        result = file_tools.search_content(query="nonexistent_string_xyz")
+        data = json.loads(result)
+
+        assert data["matches_found"] == 0
+        assert data["files"] == []
+
+
+def test_search_content_limit():
+    """Test that search_content respects the limit parameter."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        for i in range(5):
+            (base_dir / f"file{i}.txt").write_text("common string in all files")
+
+        result = file_tools.search_content(query="common string", limit=2)
+        data = json.loads(result)
+
+        assert data["matches_found"] == 2

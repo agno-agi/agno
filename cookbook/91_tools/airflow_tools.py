@@ -33,8 +33,8 @@ agent_readonly = Agent(
     tools=[
         AirflowTools(
             dags_dir="tmp/dags",
-            enable_save_dag=False,  # Disable DAG creation
-            enable_read_dag=True,  # Enable DAG reading
+            enable_save_dag_file=False,  # Disable DAG creation
+            enable_read_dag_file=True,  # Enable DAG reading
         )
     ],
     description="You are an Airflow analyst focused on reading and analyzing existing DAGs.",
@@ -51,8 +51,8 @@ agent_explicit = Agent(
     tools=[
         AirflowTools(
             dags_dir="tmp/dags",
-            enable_save_dag=True,
-            enable_read_dag=True,
+            enable_save_dag_file=True,
+            enable_read_dag_file=True,
         )
     ],
     description="You are an Airflow developer with explicit permissions for all DAG operations.",

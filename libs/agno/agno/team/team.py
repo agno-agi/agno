@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -30,9 +31,10 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -317,8 +319,6 @@ class Team:
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
-    # Version of the team config (set when loaded from DB)
-    version: Optional[int] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -628,6 +628,10 @@ class Team:
             callable_members_cache_key=callable_members_cache_key,
         )
 
+        # Component metadata (set by get_teams during DB loading)
+        self._version: Optional[int] = None
+        self._stage: Optional[str] = None
+
     @property
     def background_executor(self) -> Any:
         return _init.background_executor(self)
@@ -830,7 +834,7 @@ class Team:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         background: bool = False,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def arun(
@@ -1006,7 +1010,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def acontinue_run(
@@ -1259,8 +1263,11 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        return _response.calculate_metrics(self, messages, current_run_metrics=current_run_metrics)
+    def _calculate_metrics(
+        self, messages: List[Message], current_run_metrics: Optional[RunMetrics] = None
+    ) -> RunMetrics:
+        # Metrics are now accumulated immediately during model calls
+        return current_run_metrics or RunMetrics()
 
     def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         _session.update_session_metrics(self, session, run_response)
@@ -1541,10 +1548,10 @@ class Team:
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None):
@@ -1706,6 +1713,7 @@ def get_team_by_id(
 def get_teams(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
 ) -> List["Team"]:
     """
     Get all teams from the database.
@@ -1713,13 +1721,16 @@ def get_teams(
     Args:
         db: Database to load teams from
         registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
 
     Returns:
         List of Team instances loaded from the database
     """
     teams: List[Team] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        components, _ = db.list_components(
+            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids
+        )
         for component in components:
             component_id = component["component_id"]
             config = db.get_config(component_id=component_id)
@@ -1729,8 +1740,9 @@ def get_teams(
                     if "id" not in team_config:
                         team_config["id"] = component_id
                     team = Team.from_dict(team_config, db=db, registry=registry)
-                    # Ensure team.id is set to the component_id
                     team.id = component_id
+                    team._version = component.get("current_version")
+                    team._stage = config.get("stage")
                     teams.append(team)
         return teams
 

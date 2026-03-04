@@ -6,6 +6,7 @@ Demonstrates auto-generating a workflow session name after a run.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
@@ -56,6 +57,7 @@ if __name__ == "__main__":
     article_workflow = Workflow(
         description="Automated article creation from research to writing",
         steps=[article_creation_sequence],
+        db=SqliteDb(db_file="tmp/workflows.db"),
         debug_mode=True,
     )
 
@@ -65,4 +67,4 @@ if __name__ == "__main__":
     )
 
     article_workflow.set_session_name(autogenerate=True)
-    print(f"New session name: {article_workflow.session_name}")
+    print(f"New session name: {article_workflow.get_session_name()}")

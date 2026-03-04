@@ -19,7 +19,7 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
     Union[
@@ -58,6 +58,11 @@ class Loop:
         - 'all_success'
         - 'last_step_content.contains("DONE")'
         - 'all_success && current_iteration >= 2'
+
+    HITL Mode:
+        Start confirmation (requires_confirmation=True):
+           - Pauses before the first iteration
+           - User confirms -> execute loop, User rejects -> skip loop
     """
 
     steps: WorkflowSteps
@@ -68,6 +73,12 @@ class Loop:
     max_iterations: int = 3  # Default to 3
     end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None
 
+    # HITL configuration - start confirmation
+    # If True, the loop will pause before the first iteration and require user confirmation
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+    on_reject: Union[OnReject, str] = OnReject.skip
+
     def __init__(
         self,
         steps: WorkflowSteps,
@@ -75,12 +86,18 @@ class Loop:
         description: Optional[str] = None,
         max_iterations: int = 3,
         end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None,
+        requires_confirmation: bool = False,
+        confirmation_message: Optional[str] = None,
+        on_reject: Union[OnReject, str] = OnReject.skip,
     ):
         self.steps = steps
         self.name = name
         self.description = description
         self.max_iterations = max_iterations
         self.end_condition = end_condition
+        self.requires_confirmation = requires_confirmation
+        self.confirmation_message = confirmation_message
+        self.on_reject = on_reject
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -103,7 +120,40 @@ class Loop:
         else:
             raise ValueError(f"Invalid end_condition type: {type(self.end_condition).__name__}")
 
+        # Add HITL fields
+        result["requires_confirmation"] = self.requires_confirmation
+        result["confirmation_message"] = self.confirmation_message
+        result["on_reject"] = str(self.on_reject)
+
         return result
+
+    def create_step_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for HITL pause.
+
+        Args:
+            step_index: Index of the loop in the workflow.
+            step_input: The prepared input for the loop.
+
+        Returns:
+            StepRequirement configured for this loop's HITL needs.
+        """
+        message = self.confirmation_message or f"Execute loop '{self.name or 'loop'}'?"
+
+        return StepRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"loop_{step_index + 1}",
+            step_index=step_index,
+            step_type="Loop",
+            requires_confirmation=True,
+            confirmation_message=message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            requires_user_input=False,
+            step_input=step_input,
+        )
 
     @classmethod
     def from_dict(
@@ -157,6 +207,9 @@ class Loop:
             steps=[deserialize_step(step) for step in data.get("steps", [])],
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
+            requires_confirmation=data.get("requires_confirmation", False),
+            confirmation_message=data.get("confirmation_message"),
+            on_reject=data.get("on_reject", OnReject.skip),
         )
 
     def _evaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.agent import RunOutput
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 from agno.utils.reasoning import extract_thinking_content
@@ -242,9 +242,6 @@ class Ollama(Model):
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().chat(
@@ -273,9 +270,6 @@ class Ollama(Model):
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = await self.get_async_client().chat(
@@ -302,9 +296,6 @@ class Ollama(Model):
         """
         Sends a streaming chat request to the Ollama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat(
@@ -330,9 +321,6 @@ class Ollama(Model):
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         async for chunk in await self.get_async_client().chat(
@@ -428,17 +416,17 @@ class Ollama(Model):
 
         return model_response
 
-    def _get_metrics(self, response: Union[dict, ChatResponse]) -> Metrics:
+    def _get_metrics(self, response: Union[dict, ChatResponse]) -> MessageMetrics:
         """
-        Parse the given Ollama usage into an Agno Metrics object.
+        Parse the given Ollama usage into an Agno MessageMetrics object.
 
         Args:
             response: The response from the provider.
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         # Safely handle None values from Ollama Cloud responses
         input_tokens = response.get("prompt_eval_count")
@@ -448,5 +436,18 @@ class Ollama(Model):
         metrics.input_tokens = input_tokens if input_tokens is not None else 0
         metrics.output_tokens = output_tokens if output_tokens is not None else 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        # Capture Ollama timing metrics
+        provider_metrics: Dict[str, Any] = {}
+        if response.get("total_duration") is not None:
+            provider_metrics["total_duration"] = response["total_duration"]
+        if response.get("load_duration") is not None:
+            provider_metrics["load_duration"] = response["load_duration"]
+        if response.get("prompt_eval_duration") is not None:
+            provider_metrics["prompt_eval_duration"] = response["prompt_eval_duration"]
+        if response.get("eval_duration") is not None:
+            provider_metrics["eval_duration"] = response["eval_duration"]
+        if provider_metrics:
+            metrics.provider_metrics = provider_metrics
 
         return metrics
