@@ -515,6 +515,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["num_history_messages"] = agent.num_history_messages
     if agent.max_tool_calls_from_history is not None:
         config["max_tool_calls_from_history"] = agent.max_tool_calls_from_history
+    if agent.max_history_tokens is not None:
+        config["max_history_tokens"] = agent.max_history_tokens
 
     # --- Knowledge settings ---
     # TODO: implement knowledge serialization
@@ -903,6 +905,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         num_history_runs=config.get("num_history_runs"),
         num_history_messages=config.get("num_history_messages"),
         max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+        max_history_tokens=config.get("max_history_tokens"),
         # --- Knowledge settings ---
         # knowledge=config.get("knowledge"),  # TODO
         knowledge_filters=config.get("knowledge_filters"),
