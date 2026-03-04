@@ -1,8 +1,14 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
+from agno.utils.string import (
+    generate_id_from_name,
+    parse_response_dict_str,
+    parse_response_model_str,
+    sanitize_postgres_string,
+    url_safe_string,
+)
 
 
 def test_url_safe_string_spaces():
@@ -415,3 +421,91 @@ def test_sanitize_postgres_string_other_illegal_chars():
     assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
     # Unicode replacement characters
     assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"
+
+
+# =============================================================================
+# Tests for fenced code blocks inside JSON string values (issue #5901)
+# =============================================================================
+
+
+class MemoryOutput(BaseModel):
+    id: Optional[str] = None
+    content: Optional[str] = None
+    action: Literal["add", "update", "delete"]
+
+
+class AgentOutput(BaseModel):
+    answer: str
+    memories: List[MemoryOutput] = []
+
+
+def test_parse_json_with_fenced_code_block_in_value():
+    """Issue #5901: parse_response_model_str fails when JSON string contains fenced code blocks."""
+    content = '{\n    "answer": "Here is a simple Python code that prints \'Hello, World!\':\\n\\n```python\\nprint(\'Hello, World!\')\\n```",\n    "memories": []\n}'
+    result = parse_response_model_str(content, AgentOutput)
+    assert result is not None
+    assert isinstance(result, AgentOutput)
+    assert "```python" in result.answer
+    assert result.memories == []
+
+
+def test_parse_json_with_multiple_fenced_blocks():
+    """Multiple fenced code blocks inside a single string value."""
+    content = '{"answer": "First:\\n```python\\nprint(1)\\n```\\nSecond:\\n```bash\\necho hi\\n```", "memories": []}'
+    result = parse_response_model_str(content, AgentOutput)
+    assert result is not None
+    assert "```python" in result.answer
+    assert "```bash" in result.answer
+
+
+def test_parse_json_with_json_fenced_block_inside_value():
+    """A ```json code block inside a JSON string value should not confuse the parser."""
+    content = '{"answer": "Example:\\n```json\\n{\\"key\\": \\"val\\"}\\n```", "memories": []}'
+    result = parse_response_model_str(content, AgentOutput)
+    assert result is not None
+    assert "```json" in result.answer
+
+
+def test_parse_dict_with_fenced_code_block():
+    """parse_response_dict_str should also handle fenced blocks in values."""
+    content = '{"answer": "Code:\\n```python\\nx = 1\\n```", "data": 42}'
+    result = parse_response_dict_str(content)
+    assert result is not None
+    assert "```python" in result["answer"]
+    assert result["data"] == 42
+
+
+def test_parse_json_wrapped_in_markdown_still_works():
+    """Content wrapped in ```json ... ``` should still parse correctly."""
+    content = '```json\n{"answer": "hello", "memories": []}\n```'
+    result = parse_response_model_str(content, AgentOutput)
+    assert result is not None
+    assert result.answer == "hello"
+
+
+def test_parse_plain_json_no_code_blocks():
+    """Plain JSON without any code blocks should still work."""
+    content = '{"answer": "no code blocks here", "memories": []}'
+    result = parse_response_model_str(content, AgentOutput)
+    assert result is not None
+    assert result.answer == "no code blocks here"
+
+
+def test_parse_json_with_backticks_in_inline_code():
+    """Inline backticks (not fenced blocks) in values should parse fine."""
+    content = '{"answer": "Use `print()` to output text", "memories": []}'
+    result = parse_response_model_str(content, AgentOutput)
+    assert result is not None
+    assert "`print()`" in result.answer
+
+
+def test_parse_json_with_fenced_block_in_memory_content():
+    """Fenced code block inside a nested list item's string field should be preserved."""
+    memory_json = (
+        '{"answer": "See below", "memories": [{"id": "m1", "content": "```python\\nprint(42)\\n```", "action": "add"}]}'
+    )
+    result = parse_response_model_str(memory_json, AgentOutput)
+    assert result is not None
+    assert result.answer == "See below"
+    assert len(result.memories) == 1
+    assert "```python" in result.memories[0].content
