@@ -423,6 +423,9 @@ class Loop:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
 
+            # Carry forward output to next iteration
+            step_input = current_step_input
+
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
@@ -604,6 +607,9 @@ class Loop:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
 
+            # Carry forward output to next iteration
+            step_input = current_step_input
+
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         if stream_events and workflow_run_response:
@@ -723,6 +729,9 @@ class Loop:
             if early_termination:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
+
+            # Carry forward output to next iteration
+            step_input = current_step_input
 
         log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
@@ -904,6 +913,9 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
+
+            # Carry forward output to next iteration
+            step_input = current_step_input
 
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
