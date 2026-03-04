@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.knowledge.backend import ManagedKnowledgeBackend
-from agno.knowledge.backend.lightrag import LightRagBackend
 from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.managed_backend import ManagedKnowledgeBackend
+from agno.knowledge.managed_backend.lightrag import LightRagBackend
 from agno.knowledge.pipeline.ingestion import KnowledgeContentOrigin
 from agno.vectordb.base import VectorDb
 

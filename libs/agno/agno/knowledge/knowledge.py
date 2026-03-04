@@ -71,7 +71,7 @@ class Knowledge:
 
     def _detect_managed_backend(self):
         """Check if vector_db satisfies the ManagedKnowledgeBackend protocol."""
-        from agno.knowledge.backend import ManagedKnowledgeBackend
+        from agno.knowledge.managed_backend import ManagedKnowledgeBackend
 
         if self.vector_db is not None and isinstance(self.vector_db, ManagedKnowledgeBackend):
             log_debug(f"Detected managed backend: {self.vector_db.__class__.__name__}")

@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional, Union
 import httpx
 
 from agno.filters import FilterExpr
-from agno.knowledge.backend.lightrag import LightRagBackend
 from agno.knowledge.document import Document
+from agno.knowledge.managed_backend.lightrag import LightRagBackend
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 
