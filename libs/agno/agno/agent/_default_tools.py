@@ -413,7 +413,13 @@ def _get_message_text(msg: Message) -> Optional[str]:
     if isinstance(msg.content, str):
         return msg.content
     if isinstance(msg.content, list):
-        return " ".join(str(part) for part in msg.content if isinstance(part, str))
+        parts = []
+        for part in msg.content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and "text" in part:
+                parts.append(part["text"])
+        return " ".join(parts) if parts else None
     return None
 
 

@@ -264,6 +264,18 @@ def test_get_message_text_none():
     assert _default_tools._get_message_text(msg) is None
 
 
+def test_get_message_text_dict_blocks():
+    """Dict content blocks with 'text' key (multi-modal providers) are extracted."""
+    msg = Message(role="user", content=[{"type": "text", "text": "hello"}, {"type": "image_url", "url": "..."}])
+    assert _default_tools._get_message_text(msg) == "hello"
+
+
+def test_get_message_text_mixed_str_and_dict():
+    """Mixed string and dict content blocks are both extracted."""
+    msg = Message(role="user", content=["prefix", {"type": "text", "text": "suffix"}])
+    assert _default_tools._get_message_text(msg) == "prefix suffix"
+
+
 def test_extract_session_preview_returns_runs_format():
     """_extract_session_preview returns runs list instead of single preview string."""
     session = _make_session("s1", [("Hello", "Hi there")])
