@@ -662,6 +662,39 @@ class Knowledge:
             return False
         return self.vector_db.delete_by_metadata(metadata)
 
+    async def aremove_vectors_by_id(self, id: str) -> bool:
+        import asyncio
+
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        if self.vector_db is None:
+            log_warning("No vector DB provided")
+            return False
+        return await asyncio.to_thread(self.vector_db.delete_by_id, id)
+
+    async def aremove_vectors_by_name(self, name: str) -> bool:
+        import asyncio
+
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        if self.vector_db is None:
+            log_warning("No vector DB provided")
+            return False
+        return await asyncio.to_thread(self.vector_db.delete_by_name, name)
+
+    async def aremove_vectors_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        import asyncio
+
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        if self.vector_db is None:
+            log_warning("No vector DB provided")
+            return False
+        return await asyncio.to_thread(self.vector_db.delete_by_metadata, metadata)
+
     # ==========================================
     # PUBLIC API - FILTER METHODS (forwarded to ContentStore)
     # ==========================================
