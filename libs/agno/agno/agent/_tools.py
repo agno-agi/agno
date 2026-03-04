@@ -135,6 +135,10 @@ def get_tools(
         _raise_if_async_tools_in_list(resolved_tools)
         agent_tools.extend(resolved_tools)
 
+    # Add tool execution kit if initialized
+    if agent._tool_execution_kit is not None:
+        agent_tools.append(agent._tool_execution_kit)
+
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
@@ -256,6 +260,10 @@ async def aget_tools(
 
             # Add the tool (MCP tools that passed checks, or any non-MCP tool)
             agent_tools.append(tool)
+
+    # Add tool execution kit if initialized
+    if agent._tool_execution_kit is not None:
+        agent_tools.append(agent._tool_execution_kit)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -469,6 +477,7 @@ def determine_tools_for_model(
         for func in _functions:  # type: ignore
             if isinstance(func, Function):
                 func._run_context = run_context
+                func._run_response = run_response
                 func._images = joint_images
                 func._files = joint_files
                 func._audios = joint_audios

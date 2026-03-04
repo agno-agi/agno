@@ -188,6 +188,12 @@ class Agent:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
+    # --- Tool Execution ---
+    # Enable tool execution: the agent writes Python code to orchestrate tool calls in a single exec() pass
+    enable_tool_execution: bool = False
+    # Manager for configuring tool execution (model, retries, discovery, etc.)
+    tool_execution_manager: Optional[Any] = None
+
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
     read_chat_history: bool = False
@@ -410,6 +416,8 @@ class Agent:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        enable_tool_execution: bool = False,
+        tool_execution_manager: Optional[Any] = None,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -562,6 +570,9 @@ class Agent:
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
 
+        self.enable_tool_execution = enable_tool_execution
+        self.tool_execution_manager = tool_execution_manager
+
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
         self.add_search_knowledge_instructions = add_search_knowledge_instructions
@@ -636,6 +647,7 @@ class Agent:
         self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
+        self._tool_execution_kit: Optional[Any] = None
 
         self._formatter: Optional[SafeFormatter] = None
 

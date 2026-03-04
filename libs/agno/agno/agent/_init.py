@@ -230,6 +230,41 @@ def get_models(agent: Agent) -> None:
         agent.compression_manager.model = agent.model
 
 
+def _set_tool_execution(agent: Agent) -> None:
+    from agno.tool_execution.manager import ToolExecutionManager
+    from agno.tool_execution.toolkit import _ToolExecutionKit
+
+    # Auto-create default manager if only the boolean flag was set
+    if agent.tool_execution_manager is None:
+        agent.tool_execution_manager = ToolExecutionManager()
+
+    mgr = agent.tool_execution_manager
+
+    # Resolve the manager's model (falls back to agent.model)
+    if mgr.model is not None:
+        mgr.model = get_model(mgr.model)
+
+    if not isinstance(agent.tools, list):
+        raise ValueError("enable_tool_execution=True requires tools to be a list (not a callable factory)")
+    tools_to_wrap = [t for t in agent.tools if not isinstance(t, dict)]
+    agent.tools = []
+
+    if not tools_to_wrap:
+        log_warning("enable_tool_execution=True but no tools to wrap")
+        return
+
+    agent._tool_execution_kit = _ToolExecutionKit(
+        tools=tools_to_wrap,
+        code_model=mgr.model,
+        max_code_retries=mgr.max_retries,
+        discovery=mgr.discovery,
+        discovery_threshold=mgr.discovery_threshold,
+        additional_modules=mgr.additional_modules,
+        max_code_length=mgr.max_code_length,
+        code_generation_prompt=mgr.code_generation_prompt,
+    )
+
+
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_default_model(agent)
     set_debug(agent, debug_mode=debug_mode)
@@ -250,6 +285,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_compression_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
+    if agent.enable_tool_execution or agent.tool_execution_manager is not None:
+        _set_tool_execution(agent)
 
     log_debug(f"Agent ID: {agent.id}", center=True)
 
