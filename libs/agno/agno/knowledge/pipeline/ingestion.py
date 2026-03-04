@@ -278,13 +278,11 @@ class IngestionPipeline:
 
         log_info(f"Adding content from URL {content.url}")
         content.file_type = "url"
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         if not content.url:
             raise ValueError("No url provided")
-
-        # Store URL source metadata in _agno for source tracking
-        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
-        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         if not content.name and content.url:
             from urllib.parse import urlparse
@@ -409,13 +407,11 @@ class IngestionPipeline:
 
         log_info(f"Adding content from URL {content.url}")
         content.file_type = "url"
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
+        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         if not content.url:
             raise ValueError("No url provided")
-
-        # Store URL source metadata in _agno for source tracking
-        content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
-        content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
         if not content.name and content.url:
             from urllib.parse import urlparse
