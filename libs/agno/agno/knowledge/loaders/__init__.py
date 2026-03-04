@@ -9,6 +9,7 @@ This module provides loaders for various cloud storage providers:
 
 All loaders inherit from BaseLoader which provides common utilities for
 computing content names, creating content entries, and merging metadata.
+Each loader receives a ``knowledge`` reference for callback operations.
 """
 
 from agno.knowledge.loaders.azure_blob import AzureBlobLoader

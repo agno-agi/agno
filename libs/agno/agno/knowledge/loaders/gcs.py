@@ -3,8 +3,6 @@
 Provides methods for loading content from Google Cloud Storage.
 """
 
-# mypy: disable-error-code="attr-defined"
-
 from io import BytesIO
 from typing import Any, Dict, Optional, cast
 
@@ -152,18 +150,18 @@ class GCSLoader(BaseLoader):
                 metadata=merged_metadata,
                 file_type="gcs",
             )
-            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.content_hash = self.knowledge._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
 
-            await self._ainsert_contents_db(content_entry)
+            await self.knowledge._ainsert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
-                await self._aupdate_content(content_entry)
+                await self.knowledge._aupdate_content(content_entry)
                 continue
 
             # Select reader
-            reader = self._select_reader_by_uri(gcs_object.name, content.reader)
+            reader = self.knowledge._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
             # Fetch and load the content
@@ -173,8 +171,8 @@ class GCSLoader(BaseLoader):
             read_documents = await reader.async_read(readable_content, name=file_name)
 
             # Prepare and insert the content in the vector database
-            self._prepare_documents_for_insert(read_documents, content_entry.id)
-            await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
+            self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
+            await self.knowledge._ahandle_vector_db_insert(content_entry, read_documents, upsert)
 
     def _load_from_gcs(
         self,
@@ -243,18 +241,18 @@ class GCSLoader(BaseLoader):
                 metadata=merged_metadata,
                 file_type="gcs",
             )
-            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.content_hash = self.knowledge._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
 
-            self._insert_contents_db(content_entry)
+            self.knowledge._insert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self.knowledge._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
-                self._update_content(content_entry)
+                self.knowledge._update_content(content_entry)
                 continue
 
             # Select reader
-            reader = self._select_reader_by_uri(gcs_object.name, content.reader)
+            reader = self.knowledge._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
             # Fetch and load the content
@@ -264,5 +262,5 @@ class GCSLoader(BaseLoader):
             read_documents = reader.read(readable_content, name=file_name)
 
             # Prepare and insert the content in the vector database
-            self._prepare_documents_for_insert(read_documents, content_entry.id)
-            self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            self.knowledge._prepare_documents_for_insert(read_documents, content_entry.id)
+            self.knowledge._handle_vector_db_insert(content_entry, read_documents, upsert)

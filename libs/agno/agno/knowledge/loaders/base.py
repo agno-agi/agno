@@ -30,9 +30,12 @@ class BaseLoader:
     This class provides common methods used by all content loaders to reduce
     code duplication between sync and async implementations.
 
-    Methods that call self._build_content_hash() assume they are mixed into
-    a class that provides this method (e.g., Knowledge via RemoteKnowledge).
+    Each loader receives a ``knowledge`` reference in its constructor,
+    which provides callback methods like ``_build_content_hash()``.
     """
+
+    def __init__(self, knowledge: Any = None):
+        self.knowledge = knowledge
 
     RESERVED_METADATA_KEY = RESERVED_AGNO_KEY
 
@@ -91,7 +94,7 @@ class BaseLoader:
             metadata=metadata,
             file_type=file_type,
         )
-        entry.content_hash = self._build_content_hash(entry)  # type: ignore[attr-defined]
+        entry.content_hash = self.knowledge._build_content_hash(entry)
         entry.id = generate_id(entry.content_hash)
         return entry
 
@@ -118,7 +121,7 @@ class BaseLoader:
         content.metadata = metadata
         content.file_type = file_type
         if not content.content_hash:
-            content.content_hash = self._build_content_hash(content)  # type: ignore[attr-defined]
+            content.content_hash = self.knowledge._build_content_hash(content)
         if not content.id:
             content.id = generate_id(content.content_hash)
         return content
