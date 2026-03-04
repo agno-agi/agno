@@ -105,9 +105,7 @@ if __name__ == "__main__":
             model=OpenAIResponses(id="gpt-5.2"),
             knowledge=knowledge,
             search_knowledge=True,
-            knowledge_filters=[
-                OR(EQ("category", "recipes"), EQ("category", "docs"))
-            ],
+            knowledge_filters=[OR(EQ("category", "recipes"), EQ("category", "docs"))],
             markdown=True,
         )
         agent_or.print_response("What do you know?", stream=True)
