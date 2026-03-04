@@ -451,7 +451,10 @@ def _determine_team_member_interactions(
 ) -> Optional[str]:
     team_member_interactions_str = None
     if team.share_member_interactions:
-        team_member_interactions_str = get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
+        team_member_interactions_str = get_team_member_interactions_str(
+            team_run_context=team_run_context,
+            include_tool_results=team.include_tool_results_in_member_response,
+        )  # type: ignore
         if context_images := get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
             images.extend(context_images)
         if context_videos := get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore

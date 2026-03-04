@@ -74,6 +74,7 @@ def add_interaction_to_team_run_context(
 def get_team_member_interactions_str(
     team_run_context: Dict[str, Any],
     max_interactions: Optional[int] = None,
+    include_tool_results: bool = True,
 ) -> str:
     """
     Build a string representation of member interactions from the team run context.
@@ -106,11 +107,13 @@ def get_team_member_interactions_str(
 
         for interaction in member_responses:
             response_dict = interaction["run_response"].to_dict()
-            response_content = (
-                response_dict.get("content")
-                or ",".join([tool.get("content", "") for tool in response_dict.get("tools", [])])
-                or ""
-            )
+            content = response_dict.get("content")
+            if content:
+                response_content = content
+            elif include_tool_results:
+                response_content = ",".join([tool.get("content", "") for tool in response_dict.get("tools", [])]) or ""
+            else:
+                response_content = ""
             team_member_interactions_str += f"Member: {interaction['member_name']}\n"
             team_member_interactions_str += f"Task: {interaction['task']}\n"
             team_member_interactions_str += f"Response: {response_content}\n"

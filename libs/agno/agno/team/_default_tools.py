@@ -584,7 +584,11 @@ def _get_delegate_task_function(
                         yield content
 
                     # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
+                    elif (
+                        team.include_tool_results_in_member_response
+                        and member_agent_run_response.tools is not None
+                        and len(member_agent_run_response.tools) > 0
+                    ):  # type: ignore
                         tool_str = ""
                         for tool in member_agent_run_response.tools:  # type: ignore
                             if tool.result:
@@ -722,7 +726,7 @@ def _get_delegate_task_function(
                         yield member_agent_run_response.content  # type: ignore
 
                     # If the content is empty but we have tool calls
-                    elif (
+                    elif team.include_tool_results_in_member_response and (
                         member_agent_run_response.tools is not None  # type: ignore
                         and len(member_agent_run_response.tools) > 0  # type: ignore
                     ):
@@ -851,7 +855,7 @@ def _get_delegate_task_function(
                     elif isinstance(member_agent_run_response.content, str):  # type: ignore
                         if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content}"  # type: ignore
-                        elif (
+                        elif team.include_tool_results_in_member_response and (
                             member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
                         ):
                             yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
@@ -1048,7 +1052,7 @@ def _get_delegate_task_function(
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
                                 return (f"Agent {member_name}: {member_agent_run_response.content}", None, None)
-                            elif (
+                            elif team.include_tool_results_in_member_response and (
                                 member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
                             ):
                                 return (

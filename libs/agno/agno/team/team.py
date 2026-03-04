@@ -131,6 +131,8 @@ class Team:
     num_team_history_runs: int = 3
     # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False
+    # If False, suppress tool call results as fallback content in member responses to the supervisor
+    include_tool_results_in_member_response: bool = True
 
     # If True, adds a tool to allow searching through previous sessions
     search_session_history: Optional[bool] = False
@@ -452,6 +454,7 @@ class Team:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         share_member_interactions: bool = False,
+        include_tool_results_in_member_response: bool = True,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -564,6 +567,7 @@ class Team:
             knowledge_retriever=knowledge_retriever,
             references_format=references_format,
             share_member_interactions=share_member_interactions,
+            include_tool_results_in_member_response=include_tool_results_in_member_response,
             get_member_information_tool=get_member_information_tool,
             search_knowledge=search_knowledge,
             add_search_knowledge_instructions=add_search_knowledge_instructions,

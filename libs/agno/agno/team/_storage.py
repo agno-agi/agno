@@ -466,6 +466,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_team_history_runs"] = team.num_team_history_runs
     if team.share_member_interactions:
         config["share_member_interactions"] = team.share_member_interactions
+    if not team.include_tool_results_in_member_response:
+        config["include_tool_results_in_member_response"] = team.include_tool_results_in_member_response
     if team.search_session_history:
         config["search_session_history"] = team.search_session_history
     if team.num_history_sessions is not None:
@@ -899,6 +901,7 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
+            include_tool_results_in_member_response=config.get("include_tool_results_in_member_response", True),
             search_session_history=config.get("search_session_history", False),
             num_history_sessions=config.get("num_history_sessions"),
             read_chat_history=config.get("read_chat_history", False),
