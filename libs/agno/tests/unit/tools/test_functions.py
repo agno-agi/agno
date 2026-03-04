@@ -63,7 +63,7 @@ def test_decorator_instantiation():
     assert test_func.description == "Test function with parameters."
     assert test_func.entrypoint is not None
     assert test_func.parameters["properties"]["param1"]["type"] == "string"
-    assert test_func.parameters["properties"]["param2"]["type"] == "number"
+    assert test_func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in test_func.parameters["required"]
     assert "param2" not in test_func.parameters["required"]
 
@@ -110,7 +110,7 @@ def test_function_from_callable():
     assert "param1" in func.parameters["properties"]
     assert "param2" in func.parameters["properties"]
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]  # Because it has a default value
 
@@ -167,7 +167,7 @@ def test_function_process_entrypoint():
 
     func.process_entrypoint()
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]
 
@@ -708,6 +708,36 @@ def test_tool_decorator_with_agent_team_params():
     assert "team" not in agent_team_func.parameters["properties"]
     assert "param1" in agent_team_func.parameters["properties"]
     assert agent_team_func.parameters["properties"]["param1"]["type"] == "string"
+
+
+def test_tool_decorator_with_agent_team_type_annotations():
+    """Test @tool decorator skips validation when parameter types are Agent/Team,
+    even when parameter names differ from 'agent'/'team' (issue #6344)."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    @tool
+    def func_with_agent_type(my_agent: Agent, query: str) -> str:
+        """Function with Agent type but non-standard parameter name."""
+        return query
+
+    assert isinstance(func_with_agent_type, Function)
+    func_with_agent_type.process_entrypoint()
+    # Should not have _wrapped_for_validation since validation was skipped
+    assert not getattr(func_with_agent_type.entrypoint, "_wrapped_for_validation", False)
+    assert "query" in func_with_agent_type.parameters["properties"]
+    assert "my_agent" not in func_with_agent_type.parameters["properties"]
+
+    @tool
+    def func_with_team_type(my_team: Team, query: str) -> str:
+        """Function with Team type but non-standard parameter name."""
+        return query
+
+    assert isinstance(func_with_team_type, Function)
+    func_with_team_type.process_entrypoint()
+    assert not getattr(func_with_team_type.entrypoint, "_wrapped_for_validation", False)
+    assert "query" in func_with_team_type.parameters["properties"]
+    assert "my_team" not in func_with_team_type.parameters["properties"]
 
 
 def test_tool_decorator_with_complex_types():
