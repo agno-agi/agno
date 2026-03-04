@@ -7,7 +7,12 @@ This module contains the RemoteLoader class which composes all loader
 instances and dispatches to the appropriate provider.
 """
 
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, List, Optional
+
+if TYPE_CHECKING:
+    from agno.knowledge.pipeline.ingestion import IngestionPipeline
 
 from agno.knowledge.content import Content
 from agno.knowledge.loaders.azure_blob import AzureBlobLoader
@@ -33,7 +38,7 @@ class RemoteLoader:
     direct access to content_store, reader_registry, and vector_db.
     """
 
-    def __init__(self, pipeline: Any, content_sources: Optional[List[BaseStorageConfig]] = None):
+    def __init__(self, pipeline: IngestionPipeline, content_sources: Optional[List[BaseStorageConfig]] = None):
         self.content_sources = content_sources
         self._s3_loader = S3Loader(pipeline=pipeline)
         self._gcs_loader = GCSLoader(pipeline=pipeline)
