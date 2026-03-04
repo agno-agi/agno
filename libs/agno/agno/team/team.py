@@ -136,8 +136,10 @@ class Team:
     search_session_history: Optional[bool] = False
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
-    # Max sessions to search across (default 20 when None)
-    search_past_sessions_limit: Optional[int] = None
+    # Max past sessions to list (default 20 when None)
+    num_past_sessions: Optional[int] = None
+    # Max runs per session in preview (default 3 when None)
+    num_past_session_runs: Optional[int] = None
 
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
@@ -429,7 +431,8 @@ class Team:
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        search_past_sessions_limit: Optional[int] = None,
+        num_past_sessions: Optional[int] = None,
+        num_past_session_runs: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         use_instruction_tags: bool = False,
@@ -542,7 +545,8 @@ class Team:
             num_team_history_runs=num_team_history_runs,
             search_session_history=search_session_history,
             num_history_sessions=num_history_sessions,
-            search_past_sessions_limit=search_past_sessions_limit,
+            num_past_sessions=num_past_sessions,
+            num_past_session_runs=num_past_session_runs,
             description=description,
             instructions=instructions,
             use_instruction_tags=use_instruction_tags,

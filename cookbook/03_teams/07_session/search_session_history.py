@@ -2,16 +2,17 @@
 Search Session History (Team)
 =============================
 
-Demonstrates the two-step search-then-read pattern for accessing previous
+Demonstrates the two-step list-then-read pattern for accessing previous
 team sessions with user-scoped history access.
 
 The team gets two tools:
-  - search_past_sessions(query?) -- lightweight previews, optional keyword filter
+  - search_past_sessions() -- lightweight per-run previews of recent sessions
   - read_past_session(session_id) -- full conversation for a specific session
 
 Enable with `search_session_history=True`. Optionally set
-`search_past_sessions_limit` to control how many past sessions are searched
-(default 20).
+`num_past_sessions` to control how many past sessions are listed (default 20)
+and `num_past_session_runs` to control how many runs per session appear in
+the preview (default 3).
 """
 
 import asyncio
@@ -38,7 +39,7 @@ team = Team(
     members=[],
     db=db,
     search_session_history=True,
-    search_past_sessions_limit=10,
+    num_past_sessions=10,
 )
 
 
@@ -93,10 +94,10 @@ async def main() -> None:
         user_id="user_2",
     )
 
-    # --- Search with keyword ---
-    print("\n=== User 1: Search for 'China' ===")
+    # --- Read a specific session ---
+    print("\n=== User 1: Read session about China ===")
     await team.aprint_response(
-        "Find the session where we talked about China",
+        "Read the full conversation from the session where we discussed China",
         session_id="user1_session_5",
         user_id="user_1",
     )

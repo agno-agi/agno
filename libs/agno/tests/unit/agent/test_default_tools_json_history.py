@@ -54,6 +54,30 @@ def _make_session(
     return session
 
 
+def _make_multi_run_session(
+    session_id: str, runs_data: list[list[tuple[str, str]]], created_at: Optional[datetime] = None
+) -> AgentSession:
+    """Helper to build an AgentSession with multiple runs, each with message pairs."""
+    runs = []
+    for i, messages in enumerate(runs_data):
+        msgs = []
+        for user_text, assistant_text in messages:
+            msgs.append(Message(role="user", content=user_text))
+            msgs.append(Message(role="assistant", content=assistant_text))
+        runs.append(
+            RunOutput(
+                run_id=f"run-{i + 1}",
+                session_id=session_id,
+                agent_id="agent-1",
+                messages=msgs,
+            )
+        )
+    session = AgentSession(session_id=session_id, runs=runs)
+    if created_at:
+        session.created_at = created_at
+    return session
+
+
 class _MockDbWithSessions:
     def __init__(self, sessions: list[AgentSession]):
         self._sessions = sessions
@@ -95,7 +119,7 @@ def test_search_past_sessions_returns_empty_json_when_no_sessions(db):
     assert json.loads(result) == []
 
 
-def test_search_past_sessions_browse_mode_returns_all():
+def test_search_past_sessions_returns_all_sessions():
     sessions = [
         _make_session("s1", [("Hello", "Hi there")]),
         _make_session("s2", [("Weather?", "It is sunny")]),
@@ -107,32 +131,10 @@ def test_search_past_sessions_browse_mode_returns_all():
     assert len(result) == 2
     assert result[0]["session_id"] == "s1"
     assert result[1]["session_id"] == "s2"
-    assert "Hello" in result[0]["preview"]
-
-
-def test_search_past_sessions_with_query_filters():
-    sessions = [
-        _make_session("s1", [("Hello", "Hi there")]),
-        _make_session("s2", [("Tell me about weather", "It is sunny today")]),
-    ]
-    db = _MockDbWithSessions(sessions)
-    agent = Agent(name="test-agent", db=db)
-    search = _default_tools.get_search_past_sessions_function(agent)
-    result = json.loads(search(query="weather"))
-    assert len(result) == 1
-    assert result[0]["session_id"] == "s2"
-    assert "matched_snippet" in result[0]
-
-
-def test_search_past_sessions_case_insensitive():
-    sessions = [
-        _make_session("s1", [("HELLO WORLD", "response")]),
-    ]
-    db = _MockDbWithSessions(sessions)
-    agent = Agent(name="test-agent", db=db)
-    search = _default_tools.get_search_past_sessions_function(agent)
-    result = json.loads(search(query="hello"))
-    assert len(result) == 1
+    # Preview should have runs list with user/assistant pairs
+    assert len(result[0]["runs"]) == 1
+    assert result[0]["runs"][0]["user"] == "Hello"
+    assert result[0]["runs"][0]["assistant"] == "Hi there"
 
 
 def test_search_past_sessions_excludes_current_session():
@@ -148,15 +150,46 @@ def test_search_past_sessions_excludes_current_session():
     assert result[0]["session_id"] == "other-session"
 
 
-def test_search_past_sessions_query_no_match_returns_empty():
-    sessions = [
-        _make_session("s1", [("Hello", "Hi")]),
-    ]
-    db = _MockDbWithSessions(sessions)
+def test_search_past_sessions_limits_runs_per_session():
+    """num_past_session_runs caps the number of runs shown in preview."""
+    session = _make_multi_run_session(
+        "s1",
+        [
+            [("Run 1 Q", "Run 1 A")],
+            [("Run 2 Q", "Run 2 A")],
+            [("Run 3 Q", "Run 3 A")],
+            [("Run 4 Q", "Run 4 A")],
+            [("Run 5 Q", "Run 5 A")],
+        ],
+    )
+    db = _MockDbWithSessions([session])
+    agent = Agent(name="test-agent", db=db)
+
+    # Default num_past_session_runs=3
+    search = _default_tools.get_search_past_sessions_function(agent)
+    result = json.loads(search())
+    assert len(result[0]["runs"]) == 3
+    assert result[0]["runs"][0]["user"] == "Run 1 Q"
+    assert result[0]["runs"][2]["user"] == "Run 3 Q"
+
+    # Custom limit of 1
+    search = _default_tools.get_search_past_sessions_function(agent, num_past_session_runs=1)
+    result = json.loads(search())
+    assert len(result[0]["runs"]) == 1
+    assert result[0]["runs"][0]["user"] == "Run 1 Q"
+
+
+def test_search_past_sessions_preview_truncates_long_messages():
+    """Messages longer than 200 chars are truncated with '...'."""
+    long_msg = "x" * 300
+    session = _make_session("s1", [(long_msg, "short reply")])
+    db = _MockDbWithSessions([session])
     agent = Agent(name="test-agent", db=db)
     search = _default_tools.get_search_past_sessions_function(agent)
-    result = json.loads(search(query="nonexistent"))
-    assert result == []
+    result = json.loads(search())
+    user_preview = result[0]["runs"][0]["user"]
+    assert len(user_preview) == 203  # 200 + "..."
+    assert user_preview.endswith("...")
 
 
 # --- read_past_session tests ---
@@ -229,6 +262,23 @@ def test_get_message_text_list():
 def test_get_message_text_none():
     msg = Message(role="user", content=None)
     assert _default_tools._get_message_text(msg) is None
+
+
+def test_extract_session_preview_returns_runs_format():
+    """_extract_session_preview returns runs list instead of single preview string."""
+    session = _make_session("s1", [("Hello", "Hi there")])
+    preview = _default_tools._extract_session_preview(session)
+    assert preview["session_id"] == "s1"
+    assert "runs" in preview
+    assert len(preview["runs"]) == 1
+    assert preview["runs"][0]["user"] == "Hello"
+    assert preview["runs"][0]["assistant"] == "Hi there"
+
+
+def test_truncate():
+    assert _default_tools._truncate("short") == "short"
+    assert _default_tools._truncate("x" * 300) == "x" * 200 + "..."
+    assert _default_tools._truncate("x" * 200) == "x" * 200
 
 
 # --- existing tests (kept) ---

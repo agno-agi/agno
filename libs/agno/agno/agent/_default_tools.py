@@ -417,68 +417,57 @@ def _get_message_text(msg: Message) -> Optional[str]:
     return None
 
 
-def _extract_session_preview(session: Union[AgentSession, Any]) -> Dict[str, Any]:
-    """Extract session_id, created_at, and first user message as preview."""
-    preview_text = ""
-    for run in session.runs or []:
+def _truncate(text: str, limit: int = 200) -> str:
+    """Truncate text to *limit* characters, appending '...' if trimmed."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _extract_session_preview(session: Union[AgentSession, Any], num_runs: int = 3) -> Dict[str, Any]:
+    """Extract session_id, created_at, and per-run user/assistant previews."""
+    runs_preview: List[Dict[str, str]] = []
+    for run in (session.runs or [])[:num_runs]:
+        user_text = ""
+        assistant_text = ""
         for msg in run.messages or []:
-            if msg.role == "user":
+            if msg.role == "user" and not user_text:
                 text = _get_message_text(msg)
                 if text:
-                    preview_text = text[:200]
-                    if len(text) > 200:
-                        preview_text += "..."
-                    break
-        if preview_text:
-            break
+                    user_text = _truncate(text)
+            elif msg.role == "assistant" and not assistant_text:
+                text = _get_message_text(msg)
+                if text:
+                    assistant_text = _truncate(text)
+            if user_text and assistant_text:
+                break
+        if user_text or assistant_text:
+            runs_preview.append({"user": user_text, "assistant": assistant_text})
     return {
         "session_id": session.session_id,
         "created_at": str(session.created_at) if session.created_at else None,
-        "preview": preview_text,
+        "runs": runs_preview,
     }
-
-
-def _search_session_messages(session: Union[AgentSession, Any], query: str) -> Optional[str]:
-    """Search all user/assistant messages in a session for a query match, return a snippet if found."""
-    query_lower = query.lower()
-    for run in session.runs or []:
-        for msg in run.messages or []:
-            if msg.role not in ("user", "assistant"):
-                continue
-            text = _get_message_text(msg)
-            if text and query_lower in text.lower():
-                idx = text.lower().index(query_lower)
-                start = max(0, idx - 80)
-                end = min(len(text), idx + len(query) + 80)
-                snippet = text[start:end]
-                if start > 0:
-                    snippet = "..." + snippet
-                if end < len(text):
-                    snippet = snippet + "..."
-                return snippet
-    return None
 
 
 def get_search_past_sessions_function(
     agent: Agent,
-    search_past_sessions_limit: Optional[int] = None,
+    num_past_sessions: Optional[int] = None,
+    num_past_session_runs: Optional[int] = None,
     user_id: Optional[str] = None,
     current_session_id: Optional[str] = None,
 ) -> Callable:
     """Factory for search_past_sessions tool."""
 
-    _limit = search_past_sessions_limit if search_past_sessions_limit is not None else 20
+    _limit = num_past_sessions if num_past_sessions is not None else 20
+    _num_runs = num_past_session_runs if num_past_session_runs is not None else 3
 
-    def search_past_sessions(query: Optional[str] = None) -> str:
-        """Search previous chat sessions. Returns session previews.
-        If query is provided, returns only sessions with matching content.
-        If no query, returns recent sessions for browsing.
-
-        Args:
-            query: Optional search term to filter sessions by content.
+    def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, preview, and matched_snippet.
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
         import json
 
@@ -500,15 +489,7 @@ def get_search_past_sessions_function(
                 continue
             if current_session_id and session.session_id == current_session_id:
                 continue
-
-            if query:
-                snippet = _search_session_messages(session, query)
-                if snippet is not None:
-                    info = _extract_session_preview(session)
-                    info["matched_snippet"] = snippet
-                    results.append(info)
-            else:
-                results.append(_extract_session_preview(session))
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
         return json.dumps(results)
 
@@ -517,25 +498,23 @@ def get_search_past_sessions_function(
 
 async def aget_search_past_sessions_function(
     agent: Agent,
-    search_past_sessions_limit: Optional[int] = None,
+    num_past_sessions: Optional[int] = None,
+    num_past_session_runs: Optional[int] = None,
     user_id: Optional[str] = None,
     current_session_id: Optional[str] = None,
 ) -> Function:
     """Async factory for search_past_sessions tool."""
     from agno.agent import _init
 
-    _limit = search_past_sessions_limit if search_past_sessions_limit is not None else 20
+    _limit = num_past_sessions if num_past_sessions is not None else 20
+    _num_runs = num_past_session_runs if num_past_session_runs is not None else 3
 
-    async def search_past_sessions(query: Optional[str] = None) -> str:
-        """Search previous chat sessions. Returns session previews.
-        If query is provided, returns only sessions with matching content.
-        If no query, returns recent sessions for browsing.
-
-        Args:
-            query: Optional search term to filter sessions by content.
+    async def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, preview, and matched_snippet.
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
         import json
 
@@ -565,15 +544,7 @@ async def aget_search_past_sessions_function(
                 continue
             if current_session_id and session.session_id == current_session_id:
                 continue
-
-            if query:
-                snippet = _search_session_messages(session, query)
-                if snippet is not None:
-                    info = _extract_session_preview(session)
-                    info["matched_snippet"] = snippet
-                    results.append(info)
-            else:
-                results.append(_extract_session_preview(session))
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
         return json.dumps(results)
 

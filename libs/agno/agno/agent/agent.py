@@ -94,7 +94,8 @@ class Agent:
 
     search_session_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
-    search_past_sessions_limit: Optional[int] = None
+    num_past_sessions: Optional[int] = None
+    num_past_session_runs: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
     # If True, the agent adds session summaries to the context
@@ -372,7 +373,8 @@ class Agent:
         cache_session: bool = False,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        search_past_sessions_limit: Optional[int] = None,
+        num_past_sessions: Optional[int] = None,
+        num_past_session_runs: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
@@ -481,7 +483,8 @@ class Agent:
 
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
-        self.search_past_sessions_limit = search_past_sessions_limit
+        self.num_past_sessions = num_past_sessions
+        self.num_past_session_runs = num_past_session_runs
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context

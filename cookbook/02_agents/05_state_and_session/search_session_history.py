@@ -2,15 +2,16 @@
 Search Session History
 ======================
 
-Demonstrates the two-step search-then-read pattern for accessing previous sessions.
+Demonstrates the two-step list-then-read pattern for accessing previous sessions.
 
 The agent gets two tools:
-  - search_past_sessions(query?) -- lightweight previews, optional keyword filter
+  - search_past_sessions() -- lightweight per-run previews of recent sessions
   - read_past_session(session_id) -- full conversation for a specific session
 
 Enable with `search_session_history=True`. Optionally set
-`search_past_sessions_limit` to control how many past sessions are searched
-(default 20).
+`num_past_sessions` to control how many past sessions are listed (default 20)
+and `num_past_session_runs` to control how many runs per session appear in
+the preview (default 3).
 """
 
 import asyncio
@@ -36,7 +37,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
     db=db,
     search_session_history=True,
-    search_past_sessions_limit=10,
+    num_past_sessions=10,
 )
 
 
@@ -74,7 +75,7 @@ async def main() -> None:
         user_id="alice",
     )
 
-    print("\n=== Search: keyword filter ===")
+    print("\n=== Search: find cooking session ===")
     await agent.aprint_response(
         "Find my past session where we talked about cooking",
         session_id="session_search",

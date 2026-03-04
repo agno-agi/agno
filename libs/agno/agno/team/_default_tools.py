@@ -189,28 +189,26 @@ def _update_session_state_tool(team: "Team", run_context: RunContext, session_st
 
 def _search_past_sessions_function(
     team: "Team",
-    search_past_sessions_limit: Optional[int] = None,
+    num_past_sessions: Optional[int] = None,
+    num_past_session_runs: Optional[int] = None,
     user_id: Optional[str] = None,
     current_session_id: Optional[str] = None,
     async_mode: bool = False,
 ) -> Function:
     """Factory for search_past_sessions tool for Team."""
 
-    from agno.agent._default_tools import _extract_session_preview, _search_session_messages
+    from agno.agent._default_tools import _extract_session_preview
     from agno.team._init import _has_async_db
 
-    _limit = search_past_sessions_limit if search_past_sessions_limit is not None else 20
+    _limit = num_past_sessions if num_past_sessions is not None else 20
+    _num_runs = num_past_session_runs if num_past_session_runs is not None else 3
 
-    def search_past_sessions(query: Optional[str] = None) -> str:
-        """Search previous chat sessions. Returns session previews.
-        If query is provided, returns only sessions with matching content.
-        If no query, returns recent sessions for browsing.
-
-        Args:
-            query: Optional search term to filter sessions by content.
+    def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, preview, and matched_snippet.
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
         if team.db is None:
             return json.dumps([])
@@ -230,28 +228,16 @@ def _search_past_sessions_function(
                 continue
             if current_session_id and session.session_id == current_session_id:
                 continue
-
-            if query:
-                snippet = _search_session_messages(session, query)
-                if snippet is not None:
-                    info = _extract_session_preview(session)
-                    info["matched_snippet"] = snippet
-                    results.append(info)
-            else:
-                results.append(_extract_session_preview(session))
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
         return json.dumps(results)
 
-    async def asearch_past_sessions(query: Optional[str] = None) -> str:
-        """Search previous chat sessions. Returns session previews.
-        If query is provided, returns only sessions with matching content.
-        If no query, returns recent sessions for browsing.
-
-        Args:
-            query: Optional search term to filter sessions by content.
+    async def asearch_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, preview, and matched_snippet.
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
         if team.db is None:
             return json.dumps([])
@@ -279,15 +265,7 @@ def _search_past_sessions_function(
                 continue
             if current_session_id and session.session_id == current_session_id:
                 continue
-
-            if query:
-                snippet = _search_session_messages(session, query)
-                if snippet is not None:
-                    info = _extract_session_preview(session)
-                    info["matched_snippet"] = snippet
-                    results.append(info)
-            else:
-                results.append(_extract_session_preview(session))
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
         return json.dumps(results)
 
