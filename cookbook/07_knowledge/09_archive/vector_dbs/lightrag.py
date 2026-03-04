@@ -10,14 +10,14 @@ import time
 from os import getenv
 
 from agno.agent import Agent
+from agno.knowledge.external_provider import LightRagBackend
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
-from agno.vectordb.lightrag import LightRag
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-vector_db = LightRag(
+backend = LightRagBackend(
     server_url=getenv("LIGHTRAG_SERVER_URL", "http://localhost:9621"),
     api_key=getenv("LIGHTRAG_API_KEY"),
 )
@@ -29,7 +29,7 @@ vector_db = LightRag(
 knowledge = Knowledge(
     name="LightRAG Knowledge Base",
     description="Knowledge base using LightRAG for graph-based retrieval",
-    vector_db=vector_db,
+    external_provider=backend,
 )
 
 
@@ -70,7 +70,7 @@ async def main() -> None:
         markdown=True,
     )
 
-    results = await vector_db.async_search("What skills does Jordan Mitchell have?")
+    results = await backend.aquery("What skills does Jordan Mitchell have?")
     if results:
         doc = results[0]
         print(f"References: {doc.meta_data.get('references', [])}")

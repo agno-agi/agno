@@ -1,11 +1,9 @@
-"""ManagedKnowledgeBackend — protocol for backends that manage their own indexing.
+"""ExternalKnowledgeProvider — protocol for external providers that manage their own indexing.
 
-Backends implementing this protocol handle ingestion (file/text), search, and
+Providers implementing this protocol handle ingestion (file/text), search, and
 deletion internally, bypassing Agno's default chunk-embed-store pipeline.
 LightRAG is the canonical example: it runs its own graph-based indexing server
 and exposes HTTP endpoints for upload, query, and delete.
-
-Detection is automatic via ``isinstance(vector_db, ManagedKnowledgeBackend)``.
 """
 
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
@@ -14,11 +12,11 @@ from agno.knowledge.document import Document
 
 
 @runtime_checkable
-class ManagedKnowledgeBackend(Protocol):
-    """Protocol for knowledge backends that manage their own indexing pipeline.
+class ExternalKnowledgeProvider(Protocol):
+    """Protocol for external knowledge providers that manage their own indexing pipeline.
 
-    Any VectorDb subclass that implements these methods will automatically be
-    detected as a managed backend. No registration or configuration needed.
+    Any class that implements these methods can be passed to
+    ``Knowledge(external_provider=...)``.
     """
 
     # ------------------------------------------------------------------
@@ -78,7 +76,7 @@ class ManagedKnowledgeBackend(Protocol):
         mode: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
-        """Search the backend. Returns matching documents."""
+        """Search the provider. Returns matching documents."""
         ...
 
     async def aquery(

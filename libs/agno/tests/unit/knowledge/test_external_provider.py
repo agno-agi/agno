@@ -1,15 +1,15 @@
-"""Tests for ManagedKnowledgeBackend protocol and integration."""
+"""Tests for ExternalKnowledgeProvider protocol and integration."""
 
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
+from agno.knowledge.external_provider import ExternalKnowledgeProvider
+from agno.knowledge.external_provider.lightrag import LightRagBackend
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.managed_backend import ManagedKnowledgeBackend
-from agno.knowledge.managed_backend.lightrag import LightRagBackend
 from agno.knowledge.pipeline.ingestion import KnowledgeContentOrigin
 from agno.vectordb.base import VectorDb
 
@@ -18,8 +18,8 @@ from agno.vectordb.base import VectorDb
 # ------------------------------------------------------------------
 
 
-class MockManagedBackend:
-    """A mock that satisfies the ManagedKnowledgeBackend protocol."""
+class MockExternalProvider:
+    """A mock that satisfies the ExternalKnowledgeProvider protocol."""
 
     def __init__(self):
         self.ingested_files: List[str] = []
@@ -95,7 +95,7 @@ class MockManagedBackend:
 
 
 class MockVectorDb(VectorDb):
-    """A regular VectorDb that does NOT satisfy ManagedKnowledgeBackend."""
+    """A regular VectorDb that does NOT satisfy ExternalKnowledgeProvider."""
 
     def create(self) -> None:
         pass
@@ -173,40 +173,37 @@ class MockVectorDb(VectorDb):
 
 
 class TestProtocolDetection:
-    def test_mock_backend_satisfies_protocol(self):
-        backend = MockManagedBackend()
-        assert isinstance(backend, ManagedKnowledgeBackend)
+    def test_mock_provider_satisfies_protocol(self):
+        provider = MockExternalProvider()
+        assert isinstance(provider, ExternalKnowledgeProvider)
 
     def test_lightrag_backend_satisfies_protocol(self):
         backend = LightRagBackend()
-        assert isinstance(backend, ManagedKnowledgeBackend)
+        assert isinstance(backend, ExternalKnowledgeProvider)
 
     def test_regular_vectordb_does_not_satisfy_protocol(self):
         vdb = MockVectorDb()
-        assert not isinstance(vdb, ManagedKnowledgeBackend)
-
-    def test_lightrag_vectordb_satisfies_protocol(self):
-        from agno.vectordb.lightrag import LightRag
-
-        lightrag = LightRag.__new__(LightRag)
-        # Need to set up minimal state for isinstance check
-        lightrag._backend = LightRagBackend()
-        assert isinstance(lightrag, ManagedKnowledgeBackend)
+        assert not isinstance(vdb, ExternalKnowledgeProvider)
 
 
 # ------------------------------------------------------------------
-# Knowledge auto-detection tests
+# Knowledge external_provider field tests
 # ------------------------------------------------------------------
 
 
-class TestKnowledgeAutoDetection:
-    def test_regular_vectordb_no_managed_backend(self):
+class TestKnowledgeExternalProvider:
+    def test_regular_vectordb_no_external_provider(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        assert knowledge._managed_backend is None
+        assert knowledge.external_provider is None
 
-    def test_managed_backend_not_passed_to_pipeline_when_regular_vdb(self):
+    def test_external_provider_not_passed_to_pipeline_when_regular_vdb(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        assert knowledge._pipeline.managed_backend is None
+        assert knowledge._pipeline.external_provider is None
+
+    def test_external_provider_passed_to_pipeline(self):
+        provider = MockExternalProvider()
+        knowledge = Knowledge(external_provider=provider)
+        assert knowledge._pipeline.external_provider is provider
 
 
 # ------------------------------------------------------------------
@@ -221,26 +218,26 @@ class TestSearchRouting:
         assert len(results) == 1
         assert results[0].content == "regular-result"
 
-    def test_search_routes_to_managed_backend(self):
+    def test_search_routes_to_external_provider(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
-        knowledge._managed_backend = backend
+        provider = MockExternalProvider()
+        knowledge.external_provider = provider
 
         results = knowledge.search("test query")
         assert len(results) == 1
         assert "test query" in results[0].content
-        assert len(backend.queries) == 1
+        assert len(provider.queries) == 1
 
     @pytest.mark.asyncio
-    async def test_asearch_routes_to_managed_backend(self):
+    async def test_asearch_routes_to_external_provider(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
-        knowledge._managed_backend = backend
+        provider = MockExternalProvider()
+        knowledge.external_provider = provider
 
         results = await knowledge.asearch("async query")
         assert len(results) == 1
         assert "async query" in results[0].content
-        assert len(backend.queries) == 1
+        assert len(provider.queries) == 1
 
 
 # ------------------------------------------------------------------
@@ -249,10 +246,10 @@ class TestSearchRouting:
 
 
 class TestDeleteRouting:
-    def test_delete_routes_to_managed_backend(self):
+    def test_delete_routes_to_external_provider(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
-        knowledge._managed_backend = backend
+        provider = MockExternalProvider()
+        knowledge.external_provider = provider
 
         # Mock content store to return content with external_id
         mock_content = Content(name="test", external_id="ext-123")
@@ -261,13 +258,13 @@ class TestDeleteRouting:
         knowledge.contents_db = None
 
         knowledge.remove_content_by_id("content-1")
-        assert "ext-123" in backend.deleted_ids
+        assert "ext-123" in provider.deleted_ids
 
     @pytest.mark.asyncio
-    async def test_adelete_routes_to_managed_backend(self):
+    async def test_adelete_routes_to_external_provider(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
-        knowledge._managed_backend = backend
+        provider = MockExternalProvider()
+        knowledge.external_provider = provider
 
         mock_content = Content(name="test", external_id="ext-456")
         knowledge._content_store.aget_content_by_id = AsyncMock(return_value=mock_content)
@@ -275,7 +272,7 @@ class TestDeleteRouting:
         knowledge.contents_db = None
 
         await knowledge.aremove_content_by_id("content-2")
-        assert "ext-456" in backend.deleted_ids
+        assert "ext-456" in provider.deleted_ids
 
     def test_delete_regular_vectordb_uses_content_id(self):
         vdb = MockVectorDb()
@@ -288,16 +285,16 @@ class TestDeleteRouting:
 
 
 # ------------------------------------------------------------------
-# Pipeline managed ingestion tests
+# Pipeline external ingestion tests
 # ------------------------------------------------------------------
 
 
-class TestPipelineManagedIngestion:
-    def test_ingest_managed_content_type(self):
+class TestPipelineExternalIngestion:
+    def test_ingest_external_content_type(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
+        provider = MockExternalProvider()
         pipeline = knowledge._pipeline
-        pipeline.managed_backend = backend
+        pipeline.external_provider = provider
         pipeline.content_store.insert = MagicMock()
         pipeline.content_store.update = MagicMock()
 
@@ -305,17 +302,17 @@ class TestPipelineManagedIngestion:
             name="test.txt",
             file_data=FileData(content=b"hello world", type="text/plain", filename="test.txt"),
         )
-        pipeline._ingest_managed(content, KnowledgeContentOrigin.CONTENT)
+        pipeline._ingest_external(content, KnowledgeContentOrigin.CONTENT)
 
-        assert len(backend.ingested_files) == 1
+        assert len(provider.ingested_files) == 1
         assert content.status == ContentStatus.COMPLETED
         assert content.external_id is not None
 
-    def test_ingest_managed_topic(self):
+    def test_ingest_external_topic(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
+        provider = MockExternalProvider()
         pipeline = knowledge._pipeline
-        pipeline.managed_backend = backend
+        pipeline.external_provider = provider
         pipeline.content_store.insert = MagicMock()
         pipeline.content_store.update = MagicMock()
 
@@ -323,17 +320,17 @@ class TestPipelineManagedIngestion:
         mock_reader.read = MagicMock(return_value=[Document(content="topic content")])
 
         content = Content(name="topic1", topics=["topic1"], reader=mock_reader)
-        pipeline._ingest_managed(content, KnowledgeContentOrigin.TOPIC)
+        pipeline._ingest_external(content, KnowledgeContentOrigin.TOPIC)
 
-        assert len(backend.ingested_texts) == 1
+        assert len(provider.ingested_texts) == 1
         assert content.status == ContentStatus.COMPLETED
 
     @pytest.mark.asyncio
-    async def test_aingest_managed_content_type(self):
+    async def test_aingest_external_content_type(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
+        provider = MockExternalProvider()
         pipeline = knowledge._pipeline
-        pipeline.managed_backend = backend
+        pipeline.external_provider = provider
         pipeline.content_store.ainsert = AsyncMock()
         pipeline.content_store.aupdate = AsyncMock()
 
@@ -341,18 +338,18 @@ class TestPipelineManagedIngestion:
             name="test.txt",
             file_data=FileData(content=b"hello world", type="text/plain", filename="test.txt"),
         )
-        await pipeline._aingest_managed(content, KnowledgeContentOrigin.CONTENT)
+        await pipeline._aingest_external(content, KnowledgeContentOrigin.CONTENT)
 
-        assert len(backend.ingested_files) == 1
+        assert len(provider.ingested_files) == 1
         assert content.status == ContentStatus.COMPLETED
         assert content.external_id is not None
 
-    def test_ingest_managed_failure_sets_status(self):
+    def test_ingest_external_failure_sets_status(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
-        backend = MockManagedBackend()
-        backend.ingest_file = MagicMock(side_effect=Exception("Upload failed"))
+        provider = MockExternalProvider()
+        provider.ingest_file = MagicMock(side_effect=Exception("Upload failed"))
         pipeline = knowledge._pipeline
-        pipeline.managed_backend = backend
+        pipeline.external_provider = provider
         pipeline.content_store.insert = MagicMock()
         pipeline.content_store.update = MagicMock()
 
@@ -360,7 +357,7 @@ class TestPipelineManagedIngestion:
             name="test.txt",
             file_data=FileData(content=b"hello world", type="text/plain", filename="test.txt"),
         )
-        pipeline._ingest_managed(content, KnowledgeContentOrigin.CONTENT)
+        pipeline._ingest_external(content, KnowledgeContentOrigin.CONTENT)
 
         assert content.status == ContentStatus.FAILED
         assert "Upload failed" in (content.status_message or "")

@@ -28,6 +28,7 @@ class Knowledge:
     name: Optional[str] = None
     description: Optional[str] = None
     vector_db: Optional[Any] = None
+    external_provider: Optional[Any] = None
     contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
@@ -40,9 +41,6 @@ class Knowledge:
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db and not self.vector_db.exists():
             self.vector_db.create()
-
-        # Detect managed backend (e.g. LightRAG)
-        self._managed_backend = self._detect_managed_backend()
 
         # Initialize components
         self._content_store = ContentStore(
@@ -62,21 +60,12 @@ class Knowledge:
             reader_registry=self._reader_registry,
             knowledge_name=self.name,
             isolate_vector_search=self.isolate_vector_search,
-            managed_backend=self._managed_backend,
+            external_provider=self.external_provider,
         )
         self._remote_loader = RemoteLoader(
             pipeline=self._pipeline,
             content_sources=self.content_sources,
         )
-
-    def _detect_managed_backend(self):
-        """Check if vector_db satisfies the ManagedKnowledgeBackend protocol."""
-        from agno.knowledge.managed_backend import ManagedKnowledgeBackend
-
-        if self.vector_db is not None and isinstance(self.vector_db, ManagedKnowledgeBackend):
-            log_debug(f"Detected managed backend: {self.vector_db.__class__.__name__}")
-            return self.vector_db
-        return None
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -486,10 +475,10 @@ class Knowledge:
         _max_results = max_results or self.max_results
 
         # Route through managed backend if detected
-        if self._managed_backend is not None:
+        if self.external_provider is not None:
             try:
                 log_debug(f"Getting {_max_results} relevant documents via managed backend for query: {query}")
-                return self._managed_backend.query(query=query, limit=_max_results)
+                return self.external_provider.query(query=query, limit=_max_results)
             except Exception as e:
                 log_warning(f"Error searching managed backend: {e}")
                 return []
@@ -538,10 +527,10 @@ class Knowledge:
         _max_results = max_results or self.max_results
 
         # Route through managed backend if detected
-        if self._managed_backend is not None:
+        if self.external_provider is not None:
             try:
                 log_debug(f"Getting {_max_results} relevant documents via managed backend for query: {query}")
-                return await self._managed_backend.aquery(query=query, limit=_max_results)
+                return await self.external_provider.aquery(query=query, limit=_max_results)
             except Exception as e:
                 log_warning(f"Error searching managed backend: {e}")
                 return []
@@ -627,10 +616,10 @@ class Knowledge:
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is not None:
-            if self._managed_backend is not None:
+            if self.external_provider is not None:
                 content = self.get_content_by_id(content_id)
                 if content and content.external_id:
-                    self._managed_backend.delete_content(content.external_id)
+                    self.external_provider.delete_content(content.external_id)
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from managed backend")
             else:
@@ -641,10 +630,10 @@ class Knowledge:
 
     async def aremove_content_by_id(self, content_id: str):
         if self.vector_db is not None:
-            if self._managed_backend is not None:
+            if self.external_provider is not None:
                 content = await self.aget_content_by_id(content_id)
                 if content and content.external_id:
-                    await self._managed_backend.adelete_content(content.external_id)
+                    await self.external_provider.adelete_content(content.external_id)
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from managed backend")
             else:

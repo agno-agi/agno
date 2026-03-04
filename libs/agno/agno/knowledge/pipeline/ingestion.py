@@ -4,7 +4,6 @@ Handles loading content from paths, URLs, text, and topics into the
 vector database. Orchestrates reading, chunking, hashing, and insertion.
 """
 
-import asyncio
 import hashlib
 import io
 from dataclasses import dataclass
@@ -43,7 +42,7 @@ class IngestionPipeline:
     reader_registry: Optional[ReaderRegistry] = None
     knowledge_name: Optional[str] = None
     isolate_vector_search: bool = False
-    managed_backend: Optional[Any] = None
+    external_provider: Optional[Any] = None
 
     # ==========================================
     # MAIN ENTRY POINTS
@@ -122,8 +121,8 @@ class IngestionPipeline:
                     self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                     return
 
-                if self.managed_backend is not None:
-                    self._ingest_managed(content, KnowledgeContentOrigin.PATH)
+                if self.external_provider is not None:
+                    self._ingest_external(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -206,8 +205,8 @@ class IngestionPipeline:
                     await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                     return
 
-                if self.managed_backend is not None:
-                    await self._aingest_managed(content, KnowledgeContentOrigin.PATH)
+                if self.external_provider is not None:
+                    await self._aingest_external(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -298,8 +297,8 @@ class IngestionPipeline:
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if self.managed_backend is not None:
-            self._ingest_managed(content, KnowledgeContentOrigin.URL)
+        if self.external_provider is not None:
+            self._ingest_external(content, KnowledgeContentOrigin.URL)
             return
 
         try:
@@ -427,8 +426,8 @@ class IngestionPipeline:
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if self.managed_backend is not None:
-            await self._aingest_managed(content, KnowledgeContentOrigin.URL)
+        if self.external_provider is not None:
+            await self._aingest_external(content, KnowledgeContentOrigin.URL)
             return
 
         try:
@@ -569,8 +568,8 @@ class IngestionPipeline:
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if content.file_data and self.managed_backend is not None:
-            self._ingest_managed(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.external_provider is not None:
+            self._ingest_external(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -671,8 +670,8 @@ class IngestionPipeline:
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if content.file_data and self.managed_backend is not None:
-            await self._aingest_managed(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.external_provider is not None:
+            await self._aingest_external(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -777,8 +776,8 @@ class IngestionPipeline:
                 self.content_store.update(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            if self.managed_backend is not None:
-                self._ingest_managed(topic_content, KnowledgeContentOrigin.TOPIC)
+            if self.external_provider is not None:
+                self._ingest_external(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
             if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
@@ -841,8 +840,8 @@ class IngestionPipeline:
                 await self.content_store.aupdate(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            if self.managed_backend is not None:
-                await self._aingest_managed(topic_content, KnowledgeContentOrigin.TOPIC)
+            if self.external_provider is not None:
+                await self._aingest_external(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
             if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
@@ -1096,7 +1095,7 @@ class IngestionPipeline:
     # MANAGED BACKEND INGESTION
     # ==========================================
 
-    def _ingest_managed(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+    def _ingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         """Route content to the managed backend (sync). Handles PATH, URL, CONTENT, and TOPIC origins."""
         self.content_store.insert(content)  # type: ignore[union-attr]
         try:
@@ -1109,7 +1108,7 @@ class IngestionPipeline:
             content.status_message = f"Managed backend ingestion failed: {str(e)}"
         self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
-    async def _aingest_managed(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+    async def _aingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         """Route content to the managed backend (async). Handles PATH, URL, CONTENT, and TOPIC origins."""
         await self.content_store.ainsert(content)  # type: ignore[union-attr]
         try:
@@ -1124,7 +1123,7 @@ class IngestionPipeline:
 
     def _do_managed_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
         """Dispatch to the appropriate managed backend ingestion method (sync)."""
-        backend = self.managed_backend
+        backend = self.external_provider
         assert backend is not None
 
         if content_type == KnowledgeContentOrigin.PATH:
@@ -1183,7 +1182,7 @@ class IngestionPipeline:
 
     async def _ado_managed_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
         """Dispatch to the appropriate managed backend ingestion method (async)."""
-        backend = self.managed_backend
+        backend = self.external_provider
         assert backend is not None
 
         if content_type == KnowledgeContentOrigin.PATH:

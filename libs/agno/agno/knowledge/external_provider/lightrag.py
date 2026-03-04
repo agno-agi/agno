@@ -1,8 +1,7 @@
-"""LightRagBackend — ManagedKnowledgeBackend implementation for LightRAG.
+"""LightRagBackend — ExternalKnowledgeProvider implementation for LightRAG.
 
-Encapsulates all HTTP communication with a LightRAG server. The existing
-``agno.vectordb.lightrag.LightRag`` class delegates to an instance of this
-backend so that ``isinstance(lightrag_vdb, ManagedKnowledgeBackend)`` is True.
+Encapsulates all HTTP communication with a LightRAG server. Pass directly
+to ``Knowledge(external_provider=LightRagBackend(...))`` for graph-based RAG.
 """
 
 import asyncio
