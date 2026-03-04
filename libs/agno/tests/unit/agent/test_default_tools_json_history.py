@@ -210,6 +210,37 @@ def test_read_past_session_returns_formatted_conversation():
     assert "Session: s1" in result
 
 
+def test_read_past_session_num_runs_limits_output():
+    """num_runs parameter limits how many runs are included in the output."""
+    session = _make_multi_run_session(
+        "s1",
+        [
+            [("Run 1 Q", "Run 1 A")],
+            [("Run 2 Q", "Run 2 A")],
+            [("Run 3 Q", "Run 3 A")],
+        ],
+    )
+    db = _MockDbWithSessions([session])
+    agent = Agent(name="test-agent", db=db)
+    read = _default_tools.get_read_past_session_function(agent)
+
+    # Default: all runs
+    result = read(session_id="s1")
+    assert "Run 1 Q" in result
+    assert "Run 3 A" in result
+
+    # Limit to 2 runs
+    result = read(session_id="s1", num_runs=2)
+    assert "Run 1 Q" in result
+    assert "Run 2 A" in result
+    assert "Run 3 Q" not in result
+
+    # Limit to 1 run
+    result = read(session_id="s1", num_runs=1)
+    assert "Run 1 Q" in result
+    assert "Run 2 Q" not in result
+
+
 def test_read_past_session_not_found():
     db = _EmptySessionsDb()
     agent = Agent(name="test-agent", db=db)

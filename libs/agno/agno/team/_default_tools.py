@@ -284,12 +284,13 @@ def _read_past_session_function(
     from agno.agent._default_tools import _get_message_text
     from agno.team._init import _has_async_db
 
-    def read_past_session(session_id: str) -> str:
+    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
         """Read the full conversation from a previous session.
         Use search_past_sessions first to find relevant sessions.
 
         Args:
             session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
 
         Returns:
             str: The conversation formatted as User/Assistant message pairs.
@@ -313,7 +314,8 @@ def _read_past_session_function(
             lines.append(f"Created: {session.created_at}")
         lines.append("")
 
-        for run in session.runs:
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
             for msg in run.messages or []:
                 if msg.role not in ("user", "assistant"):
                     continue
@@ -325,12 +327,13 @@ def _read_past_session_function(
 
         return "\n".join(lines) if lines else "No messages found in session."
 
-    async def aread_past_session(session_id: str) -> str:
+    async def aread_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
         """Read the full conversation from a previous session.
         Use search_past_sessions first to find relevant sessions.
 
         Args:
             session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
 
         Returns:
             str: The conversation formatted as User/Assistant message pairs.
@@ -360,7 +363,8 @@ def _read_past_session_function(
             lines.append(f"Created: {session.created_at}")
         lines.append("")
 
-        for run in session.runs:
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
             for msg in run.messages or []:
                 if msg.role not in ("user", "assistant"):
                     continue
