@@ -185,12 +185,12 @@ def _determine_tools_for_model(
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
-    if team.search_session_history:
+    if team.search_past_sessions:
         _tools.append(
             _search_past_sessions_function(
                 team,
                 num_past_sessions_to_search=team.num_past_sessions_to_search,
-                num_past_session_runs=team.num_past_session_runs,
+                num_past_session_runs_in_search=team.num_past_session_runs_in_search,
                 user_id=user_id,
                 current_session_id=session.session_id if session else None,
                 async_mode=async_mode,

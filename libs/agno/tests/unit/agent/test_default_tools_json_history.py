@@ -151,7 +151,7 @@ def test_search_past_sessions_excludes_current_session():
 
 
 def test_search_past_sessions_limits_runs_per_session():
-    """num_past_session_runs caps the number of runs shown in preview."""
+    """num_past_session_runs_in_search caps the number of runs shown in preview."""
     session = _make_multi_run_session(
         "s1",
         [
@@ -165,7 +165,7 @@ def test_search_past_sessions_limits_runs_per_session():
     db = _MockDbWithSessions([session])
     agent = Agent(name="test-agent", db=db)
 
-    # Default num_past_session_runs=3
+    # Default num_past_session_runs_in_search=3
     search = _default_tools.get_search_past_sessions_function(agent)
     result = json.loads(search())
     assert len(result[0]["runs"]) == 3
@@ -173,7 +173,7 @@ def test_search_past_sessions_limits_runs_per_session():
     assert result[0]["runs"][2]["user"] == "Run 3 Q"
 
     # Custom limit of 1
-    search = _default_tools.get_search_past_sessions_function(agent, num_past_session_runs=1)
+    search = _default_tools.get_search_past_sessions_function(agent, num_past_session_runs_in_search=1)
     result = json.loads(search())
     assert len(result[0]["runs"]) == 1
     assert result[0]["runs"][0]["user"] == "Run 1 Q"

@@ -9,9 +9,9 @@ The team gets two tools:
   - search_past_sessions() -- lightweight per-run previews of recent sessions
   - read_past_session(session_id) -- full conversation for a specific session
 
-Enable with `search_session_history=True`. Optionally set
+Enable with `search_past_sessions=True`. Optionally set
 `num_past_sessions_to_search` to control how many past sessions are searched (default 20)
-and `num_past_session_runs` to control how many runs per session appear in
+and `num_past_session_runs_in_search` to control how many runs per session appear in
 the preview (default 3).
 """
 
@@ -38,7 +38,7 @@ team = Team(
     model=OpenAIResponses(id="gpt-4o"),
     members=[],
     db=db,
-    search_session_history=True,
+    search_past_sessions=True,
     num_past_sessions_to_search=10,
 )
 

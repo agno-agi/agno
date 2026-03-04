@@ -140,12 +140,12 @@ def get_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_session_history:
+    if agent.search_past_sessions:
         agent_tools.append(
             _default_tools.get_search_past_sessions_function(
                 agent,
                 num_past_sessions_to_search=agent.num_past_sessions_to_search,
-                num_past_session_runs=agent.num_past_session_runs,
+                num_past_session_runs_in_search=agent.num_past_session_runs_in_search,
                 user_id=user_id,
                 current_session_id=session.session_id if session else None,
             )
@@ -272,12 +272,12 @@ async def aget_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_session_history:
+    if agent.search_past_sessions:
         agent_tools.append(
             await _default_tools.aget_search_past_sessions_function(
                 agent,
                 num_past_sessions_to_search=agent.num_past_sessions_to_search,
-                num_past_session_runs=agent.num_past_session_runs,
+                num_past_session_runs_in_search=agent.num_past_session_runs_in_search,
                 user_id=user_id,
                 current_session_id=session.session_id if session else None,
             )
