@@ -1,17 +1,21 @@
-"""Tests for conditional strict parameter in learning store tool functions.
+"""Tests for conditional strict parameter in tool function building.
 
-Verifies that learning stores respect the model's supports_native_structured_outputs
-flag when building tool functions, rather than always hardcoding strict=True.
+Verifies that learning stores, memory manager, and culture manager respect the
+model's supports_native_structured_outputs flag when building tool functions,
+rather than always hardcoding strict=True.
 
-This prevents VertexAI Claude from rejecting tool definitions that include the
-'strict' field (VertexAI returns: "tools.0.custom.strict: Extra inputs are not permitted").
+This prevents VertexAI Claude and AWS Claude from rejecting tool definitions
+that include the 'strict' field (VertexAI returns:
+"tools.0.custom.strict: Extra inputs are not permitted").
 
-Covers all five learning stores:
+Covers all affected components:
 - UserProfileStore
 - UserMemoryStore
 - SessionContextStore
 - EntityMemoryStore
 - LearnedKnowledgeStore
+- MemoryManager
+- CultureManager
 """
 
 from unittest.mock import MagicMock
@@ -201,6 +205,74 @@ class TestLearnedKnowledgeStoreStrict:
     def test_strict_disabled_when_model_is_none(self):
         store = self._make_store(None)
         functions = store._build_functions_for_model([_dummy_tool])
+        assert len(functions) == 1
+        assert not functions[0].strict
+
+
+# ---------------------------------------------------------------------------
+# MemoryManager
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryManagerStrict:
+    def _make_manager(self, model):
+        from agno.memory.manager import MemoryManager
+
+        # MemoryManager.__init__ validates model type via get_model(),
+        # so create with None and set model directly for testing.
+        manager = MemoryManager()
+        manager.model = model
+        return manager
+
+    def test_strict_enabled_when_model_supports(self, model_with_strict):
+        manager = self._make_manager(model_with_strict)
+        functions = manager.determine_tools_for_model([_dummy_tool])
+        assert len(functions) == 1
+        assert functions[0].strict is True
+
+    def test_strict_disabled_when_model_does_not_support(self, model_without_strict):
+        manager = self._make_manager(model_without_strict)
+        functions = manager.determine_tools_for_model([_dummy_tool])
+        assert len(functions) == 1
+        assert not functions[0].strict
+
+    def test_strict_disabled_when_model_is_none(self):
+        manager = self._make_manager(None)
+        functions = manager.determine_tools_for_model([_dummy_tool])
+        assert len(functions) == 1
+        assert not functions[0].strict
+
+
+# ---------------------------------------------------------------------------
+# CultureManager
+# ---------------------------------------------------------------------------
+
+
+class TestCultureManagerStrict:
+    def _make_manager(self, model):
+        from agno.culture.manager import CultureManager
+
+        # CultureManager.__init__ validates model type via get_model(),
+        # so create with None and set model directly for testing.
+        manager = CultureManager()
+        manager.model = model
+        return manager
+
+    def test_strict_enabled_when_model_supports(self, model_with_strict):
+        manager = self._make_manager(model_with_strict)
+        functions = manager._determine_tools_for_model([_dummy_tool])
+        assert len(functions) == 1
+        assert functions[0].strict is True
+
+    def test_strict_disabled_when_model_does_not_support(self, model_without_strict):
+        manager = self._make_manager(model_without_strict)
+        functions = manager._determine_tools_for_model([_dummy_tool])
+        assert len(functions) == 1
+        assert not functions[0].strict
+
+    def test_strict_disabled_when_model_is_none(self):
+        manager = self._make_manager(None)
+        functions = manager._determine_tools_for_model([_dummy_tool])
         assert len(functions) == 1
         assert not functions[0].strict
 

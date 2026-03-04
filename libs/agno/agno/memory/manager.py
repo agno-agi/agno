@@ -940,14 +940,17 @@ class MemoryManager:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
 
+        use_strict = getattr(self.model, "supports_native_structured_outputs", False)
+
         for tool in tools:
             try:
                 function_name = tool.__name__
                 if function_name in _function_names:
                     continue
                 _function_names.append(function_name)
-                func = Function.from_callable(tool, strict=True)  # type: ignore
-                func.strict = True
+                func = Function.from_callable(tool, strict=use_strict)  # type: ignore
+                if use_strict:
+                    func.strict = True
                 _functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
