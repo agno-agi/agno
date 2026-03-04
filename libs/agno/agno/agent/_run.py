@@ -4434,7 +4434,11 @@ def cleanup_and_store(
             user_id=user_id,
         )
 
-        session.upsert_run(run=run_response)
+        # Shallow copy breaks aliasing so the finally-block restore
+        # doesn't rehydrate media on the cached session's run list
+        import copy
+
+        session.upsert_run(run=copy.copy(run_response))
         update_session_metrics(agent, session=session, run_response=run_response)
 
         if run_context is not None and run_context.session_state is not None:
@@ -4492,7 +4496,9 @@ async def acleanup_and_store(
             user_id=user_id,
         )
 
-        session.upsert_run(run=run_response)
+        import copy
+
+        session.upsert_run(run=copy.copy(run_response))
         update_session_metrics(agent, session=session, run_response=run_response)
 
         if run_context is not None and run_context.session_state is not None:

@@ -3939,7 +3939,9 @@ def _cleanup_and_store(
         if run_context is not None and run_context.session_state is not None:
             run_response.session_state = run_context.session_state
 
-        session.upsert_run(run_response=run_response)
+        import copy
+
+        session.upsert_run(run_response=copy.copy(run_response))
         update_session_metrics(team, session=session, run_response=run_response)
 
         if run_context is not None and run_context.session_state is not None:
@@ -3988,7 +3990,9 @@ async def _acleanup_and_store(
         if run_context is not None and run_context.session_state is not None:
             run_response.session_state = run_context.session_state
 
-        session.upsert_run(run_response=run_response)
+        import copy
+
+        session.upsert_run(run_response=copy.copy(run_response))
         update_session_metrics(team, session=session, run_response=run_response)
 
         if run_context is not None and run_context.session_state is not None:
