@@ -68,7 +68,17 @@ class ElevenLabsTools(Toolkit):
         if all or enable_text_to_speech:
             tools.append(self.text_to_speech)
 
-        super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
+        # Media-producing tools must stop after execution to prevent the
+        # model loop from re-triggering TTS via send_media_to_model feedback
+        user_stop = kwargs.pop("stop_after_tool_call_tools", None) or []
+        stop_tools = [t.__name__ for t in tools if t in (self.text_to_speech, self.generate_sound_effect)]
+        stop_tools.extend(s for s in user_stop if s not in stop_tools)
+        super().__init__(
+            name="elevenlabs_tools",
+            tools=tools,
+            stop_after_tool_call_tools=stop_tools,
+            **kwargs,
+        )
 
     def get_voices(self) -> str:
         """
