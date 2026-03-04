@@ -844,6 +844,49 @@ class FunctionCall(BaseModel):
                 log_warning(f"Error in post-hook callback: {e}")
                 log_exception(e)
 
+    def _merge_entrypoint_and_tool_arguments(
+        self, entrypoint_args: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Merge framework-injected entrypoint args with tool arguments safely.
+
+        When the entrypoint declares a ``_tool_arguments`` parameter (e.g. MCP
+        tool entrypoints), tool arguments are routed through that dedicated
+        parameter instead of being merged directly.  This prevents parameter
+        name collisions — for example, an MCP tool whose schema includes a
+        ``team`` field would otherwise overwrite the framework-injected
+        ``Team`` object.
+
+        For non-MCP entrypoints, collisions between framework-injected args
+        and tool arguments raise ``TypeError``, preserving the behavior of
+        the original ``entrypoint(**entrypoint_args, **self.arguments)`` call.
+        """
+        from inspect import signature
+
+        arguments = entrypoint_args.copy()
+        if self.arguments is None or self.arguments == {}:
+            return arguments
+
+        sig = signature(self.function.entrypoint)  # type: ignore
+        if "_tool_arguments" in sig.parameters:
+            arguments["_tool_arguments"] = self.arguments
+        else:
+            # For non-MCP style entrypoints, preserve the historical behavior of
+            # raising on collisions instead of silently overwriting framework-
+            # injected arguments (e.g., `team`, `agent`, `run_context`).
+            overlapping = set(arguments).intersection(self.arguments)
+            if overlapping:
+                # Emulate Python's "multiple values for argument" style error.
+                # This makes it clear which names conflict and prevents
+                # accidental clobbering of framework objects.
+                overlapping_list = ", ".join(sorted(overlapping))
+                raise TypeError(
+                    f"{self.function.entrypoint.__name__}() got multiple values for "
+                    f"argument(s): {overlapping_list}"
+                )
+            # No overlap guaranteed by the check above; safe to merge.
+            arguments.update(self.arguments)
+        return arguments
+
     def _build_entrypoint_args(self) -> Dict[str, Any]:
         """Builds the arguments for the entrypoint."""
         from inspect import signature
@@ -936,9 +979,7 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
-            arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
+            arguments = self._merge_entrypoint_and_tool_arguments(entrypoint_args)
             return self.function.entrypoint(**arguments)  # type: ignore
 
         # If no hooks, just return the entrypoint execution function
@@ -1008,7 +1049,8 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+                arguments = self._merge_entrypoint_and_tool_arguments(entrypoint_args)
+                result = self.function.entrypoint(**arguments)  # type: ignore
 
             # Handle generator case
             if isgenerator(result):
@@ -1128,9 +1170,7 @@ class FunctionCall(BaseModel):
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
-            arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
+            arguments = self._merge_entrypoint_and_tool_arguments(entrypoint_args)
 
             result = self.function.entrypoint(**arguments)  # type: ignore
             if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
@@ -1139,9 +1179,7 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
-            arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
+            arguments = self._merge_entrypoint_and_tool_arguments(entrypoint_args)
             return self.function.entrypoint(**arguments)  # type: ignore
 
         # If no hooks, just return the entrypoint execution function
@@ -1220,10 +1258,8 @@ class FunctionCall(BaseModel):
                 execution_chain = await self._build_nested_execution_chain_async(entrypoint_args)
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                if self.arguments is None or self.arguments == {}:
-                    result = self.function.entrypoint(**entrypoint_args)
-                else:
-                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                arguments = self._merge_entrypoint_and_tool_arguments(entrypoint_args)
+                result = self.function.entrypoint(**arguments)
 
                 # Handle both sync and async entrypoints
                 if isasyncgenfunction(self.function.entrypoint):

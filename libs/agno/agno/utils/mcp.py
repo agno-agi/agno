@@ -1,6 +1,6 @@
 import json
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_exception
@@ -48,8 +48,13 @@ def get_entrypoint_for_tool(
         run_context: Optional["RunContext"] = None,
         agent: Optional["Agent"] = None,
         team: Optional["Team"] = None,
+        _tool_arguments: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> ToolResult:
+        # Use _tool_arguments when provided to avoid parameter name collisions
+        # between framework-injected args (agent, team, etc.) and MCP tool parameters.
+        tool_args = _tool_arguments if _tool_arguments is not None else kwargs
+
         # Execute the MCP tool call
         try:
             # Get the appropriate session for this run
@@ -76,8 +81,8 @@ def get_entrypoint_for_tool(
             except Exception as e:
                 log_exception(e)
 
-            log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            log_debug(f"Calling MCP Tool '{tool_name}' with args: {tool_args}")
+            result: CallToolResult = await active_session.call_tool(tool_name, tool_args)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:
