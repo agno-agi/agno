@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Union
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages, tool_result_text
 
 try:
     # TODO: Adapt these imports to the new Mistral SDK versions
@@ -51,6 +52,8 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
 def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
     mistral_messages: List[MistralMessage] = []
 
+    messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+
     for message in messages:
         mistral_message: MistralMessage
         if message.role == "user":
@@ -75,7 +78,7 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
         elif message.role == "assistant":
             if message.reasoning_content is not None:
                 mistral_message = UserMessage(role="user", content=message.content)
-            elif message.tool_calls is not None:
+            elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 mistral_message = AssistantMessage(
                     role="assistant", content=message.content, tool_calls=message.tool_calls
                 )
@@ -84,9 +87,12 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
         elif message.role == "system":
             mistral_message = SystemMessage(role="system", content=message.content)
         elif message.role == "tool":
-            # Get compressed content if compression is active
             tool_content = message.get_content(use_compressed_content=compress_tool_results)
-            mistral_message = ToolMessage(name="tool", content=tool_content, tool_call_id=message.tool_call_id)
+            mistral_message = ToolMessage(
+                name="tool",
+                content=tool_result_text(tool_content),
+                tool_call_id=message.tool_call_id,
+            )
         else:
             raise ValueError(f"Unknown role: {message.role}")
 

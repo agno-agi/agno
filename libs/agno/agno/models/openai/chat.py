@@ -17,6 +17,7 @@ from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages, resolve_tool_call_id, tool_result_text
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
 
@@ -334,6 +335,17 @@ class OpenAIChat(Model):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
+        if message.role == "tool":
+            if isinstance(message_dict.get("content"), list):
+                message_dict["content"] = tool_result_text(message_dict["content"])
+            if "tool_call_id" not in message_dict and message.tool_calls:
+                for tc in message.tool_calls:
+                    tc_id = resolve_tool_call_id(tc)
+                    if tc_id is not None:
+                        message_dict["tool_call_id"] = tc_id
+                        break
+            message_dict.pop("tool_calls", None)
+
         # Ignore non-string message content
         # because we assume that the images/audio are already added to the message
         if (message.images is not None and len(message.images) > 0) or (
@@ -357,7 +369,7 @@ class OpenAIChat(Model):
             log_warning("Video input is currently unsupported.")
 
         # OpenAI expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
+        if message.role != "tool" and message.tool_calls is not None and len(message.tool_calls) == 0:
             message_dict["tool_calls"] = None
 
         if message.files is not None:
@@ -374,10 +386,16 @@ class OpenAIChat(Model):
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
-        # Manually add the content field even if it is None
-        if message.content is None:
+        # Ensure content field is always present (OpenAI requires it)
+        # Use "content" not in dict rather than message.content is None,
+        # because tool messages may have compressed_content set via get_content()
+        if "content" not in message_dict:
             message_dict["content"] = ""
         return message_dict
+
+    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+        return [self._format_message(m, compress_tool_results) for m in messages]
 
     def invoke(
         self,
@@ -408,7 +426,7 @@ class OpenAIChat(Model):
 
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -489,7 +507,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -568,7 +586,7 @@ class OpenAIChat(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -646,7 +664,7 @@ class OpenAIChat(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(

@@ -738,6 +738,12 @@ class Gemini(Model):
                     message_parts.append(part)
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
+                # Parse comma-separated tool_name for fallback
+                top_level_names = (
+                    [n.strip() for n in message.tool_name.split(",")]
+                    if message.tool_name and "," in message.tool_name
+                    else ([message.tool_name] if message.tool_name else [])
+                )
                 for idx, tool_call in enumerate(message.tool_calls):
                     if isinstance(content, list) and idx < len(content):
                         original_from_list = content[idx]
@@ -748,16 +754,28 @@ class Gemini(Model):
                         else:
                             tc_content = original_from_list
                     else:
-                        tc_content = message.get_content(use_compressed_content=compress_tool_results)
-
+                        # Content-length mismatch: prefer per-tool content over full message content
+                        tc_content = tool_call.get("content")
                         if tc_content is None:
-                            tc_content = tool_call.get("content")
-                            if tc_content is None:
-                                tc_content = content
+                            tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                        if tc_content is None:
+                            tc_content = content
 
-                    message_parts.append(
-                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tc_content})
-                    )
+                    # Resolve tool name with fallback to top-level comma-separated names
+                    tc_name = tool_call.get("tool_name")
+                    if not tc_name and idx < len(top_level_names):
+                        tc_name = top_level_names[idx]
+                    if not tc_name:
+                        tc_name = "unknown"
+
+                    message_parts.append(Part.from_function_response(name=tc_name, response={"result": tc_content}))
+            # Canonical tool message from other providers (tool_call_id set, no tool_calls list)
+            elif message.role == "tool" and message.tool_call_id:
+                tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                if tc_content is None:
+                    tc_content = ""
+                tc_name = message.tool_name or "unknown"
+                message_parts.append(Part.from_function_response(name=tc_name, response={"result": tc_content}))
             # Regular text content
             else:
                 if isinstance(content, str):
@@ -834,7 +852,20 @@ class Gemini(Model):
                 continue
 
             final_message = Content(role=role, parts=message_parts)
-            formatted_messages.append(final_message)
+
+            # Merge consecutive tool-role messages into one Content block.
+            # Gemini expects all function_responses from one turn in a single Content.
+            if (
+                message.role == "tool"
+                and formatted_messages
+                and formatted_messages[-1].role == "user"
+                and formatted_messages[-1].parts
+                and hasattr(formatted_messages[-1].parts[0], "function_response")
+                and formatted_messages[-1].parts[0].function_response is not None
+            ):
+                formatted_messages[-1].parts.extend(message_parts)
+            else:
+                formatted_messages.append(final_message)
 
         return formatted_messages, system_message
 

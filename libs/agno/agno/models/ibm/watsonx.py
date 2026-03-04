@@ -11,6 +11,7 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages, resolve_tool_call_id, tool_result_text
 from agno.utils.models.watsonx import format_images_for_message
 
 try:
@@ -157,7 +158,23 @@ class WatsonX(Model):
         # Use compressed content for tool messages if compression is active
         if message.role == "tool" and compress_tool_results:
             message_dict["content"] = message.get_content(use_compressed_content=True)
+
+        if message.role == "tool":
+            if isinstance(message_dict.get("content"), list):
+                message_dict["content"] = tool_result_text(message_dict["content"])
+            if "tool_call_id" not in message_dict and message.tool_calls:
+                for tc in message.tool_calls:
+                    tc_id = resolve_tool_call_id(tc)
+                    if tc_id is not None:
+                        message_dict["tool_call_id"] = tc_id
+                        break
+            message_dict.pop("tool_calls", None)
+
         return message_dict
+
+    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+        return [self._format_message(m, compress_tool_results) for m in messages]
 
     def invoke(
         self,
@@ -175,7 +192,7 @@ class WatsonX(Model):
         try:
             client = self.get_client()
 
-            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
+            formatted_messages = self._format_messages(messages, compress_tool_results)
             request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
@@ -207,7 +224,7 @@ class WatsonX(Model):
         """
         try:
             client = self.get_client()
-            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
+            formatted_messages = self._format_messages(messages, compress_tool_results)
 
             request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -240,7 +257,7 @@ class WatsonX(Model):
         """
         try:
             client = self.get_client()
-            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
+            formatted_messages = self._format_messages(messages, compress_tool_results)
 
             request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -272,7 +289,7 @@ class WatsonX(Model):
         """
         try:
             client = self.get_client()
-            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
+            formatted_messages = self._format_messages(messages, compress_tool_results)
 
             # Get parameters for chat
             request_params = self.get_request_params(

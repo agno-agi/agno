@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Sequence
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages, tool_result_text
 
 
 def _format_images_for_message(message: Message, images: Sequence[Image]) -> List[Dict[str, Any]]:
@@ -57,6 +58,8 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
     Returns:
         List[Dict[str, Any]]: The formatted messages.
     """
+    messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+
     formatted_messages = []
     for message in messages:
         # Use compressed content for tool messages if compression is active
@@ -90,5 +93,12 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
             log_warning("File input is currently unsupported.")
 
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
+        if message.role == "tool":
+            tool_content = message_dict.get("content")
+            if isinstance(tool_content, list):
+                message_dict["content"] = tool_result_text(tool_content)
+            message_dict.pop("tool_calls", None)
+
         formatted_messages.append(message_dict)
     return formatted_messages

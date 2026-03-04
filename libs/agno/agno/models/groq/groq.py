@@ -14,6 +14,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.tool_messages import normalize_tool_result_messages, resolve_tool_call_id, tool_result_text
 from agno.utils.openai import images_to_message
 
 try:
@@ -252,6 +253,17 @@ class Groq(Model):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
+        if message.role == "tool":
+            if isinstance(message_dict.get("content"), list):
+                message_dict["content"] = tool_result_text(message_dict["content"])
+            if "tool_call_id" not in message_dict and message.tool_calls:
+                for tc in message.tool_calls:
+                    tc_id = resolve_tool_call_id(tc)
+                    if tc_id is not None:
+                        message_dict["tool_call_id"] = tc_id
+                        break
+            message_dict.pop("tool_calls", None)
+
         if (
             message.role == "system"
             and isinstance(message.content, str)
@@ -280,6 +292,15 @@ class Groq(Model):
 
         return message_dict
 
+    def format_messages(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
+    ) -> List[Dict[str, Any]]:
+        messages = normalize_tool_result_messages(messages, compress_tool_results=compress_tool_results)
+        return [self.format_message(m, response_format, compress_tool_results) for m in messages]
+
     def invoke(
         self,
         messages: List[Message],
@@ -297,7 +318,7 @@ class Groq(Model):
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
+                messages=self.format_messages(messages, response_format, compress_tool_results),  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -335,7 +356,7 @@ class Groq(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
+                messages=self.format_messages(messages, response_format, compress_tool_results),  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -374,7 +395,7 @@ class Groq(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
+                messages=self.format_messages(messages, response_format, compress_tool_results),  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
@@ -413,7 +434,7 @@ class Groq(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
+                messages=self.format_messages(messages, response_format, compress_tool_results),  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )

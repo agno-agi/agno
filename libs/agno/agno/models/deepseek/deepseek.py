@@ -6,6 +6,7 @@ from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_warning
+from agno.utils.models.tool_messages import resolve_tool_call_id, tool_result_text
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 
@@ -84,6 +85,17 @@ class DeepSeek(OpenAILike):
             "reasoning_content": message.reasoning_content,
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
+        if message.role == "tool":
+            if isinstance(message_dict.get("content"), list):
+                message_dict["content"] = tool_result_text(message_dict["content"])
+            if "tool_call_id" not in message_dict and message.tool_calls:
+                for tc in message.tool_calls:
+                    tc_id = resolve_tool_call_id(tc)
+                    if tc_id is not None:
+                        message_dict["tool_call_id"] = tc_id
+                        break
+            message_dict.pop("tool_calls", None)
 
         # Ignore non-string message content
         # because we assume that the images/audio are already added to the message
