@@ -225,12 +225,13 @@ def convert_schema(
     if schema_type is None or schema_type == "null":
         return None
     description = schema_dict.get("description", None)
+    title = schema_dict.get("title", None)
     default = schema_dict.get("default", None)
 
     # Handle enum types
     if "enum" in schema_dict:
         enum_values = schema_dict["enum"]
-        return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default)
+        return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default, title=title)
 
     if schema_type == "object":
         # Handle regular objects with properties
@@ -250,6 +251,10 @@ def convert_schema(
                     if is_nullable:
                         converted_schema.nullable = True
                     properties[key] = converted_schema
+                else:
+                    properties[key] = Schema(
+                        title=prop_def.get("title", None), description=prop_def.get("description", None)
+                    )
 
             required = schema_dict.get("required", [])
 
@@ -260,9 +265,10 @@ def convert_schema(
                     required=required,
                     description=description,
                     default=default,
+                    title=title,
                 )
             else:
-                return Schema(type=GeminiType.OBJECT, description=description, default=default)
+                return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
 
         # Handle Dict types (objects with additionalProperties but no properties)
         elif "additionalProperties" in schema_dict:
@@ -305,11 +311,11 @@ def convert_schema(
                 )
             else:
                 # additionalProperties is false or true
-                return Schema(type=GeminiType.OBJECT, description=description, default=default)
+                return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
 
         # Handle empty objects
         else:
-            return Schema(type=GeminiType.OBJECT, description=description, default=default)
+            return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
 
     elif schema_type == "array" and "items" in schema_dict:
         if not schema_dict["items"]:  # Handle empty {}
@@ -325,6 +331,7 @@ def convert_schema(
             items=items,
             min_items=min_items,
             max_items=max_items,
+            title=title,
         )
 
     elif schema_type == "string":
@@ -332,6 +339,7 @@ def convert_schema(
             "type": GeminiType.STRING,
             "description": description,
             "default": default,
+            "title": title,
         }
         if "format" in schema_dict:
             schema_kwargs["format"] = schema_dict["format"]
@@ -342,6 +350,7 @@ def convert_schema(
             "type": schema_type.upper(),
             "description": description,
             "default": default,
+            "title": title,
         }
         if "maximum" in schema_dict:
             schema_kwargs["maximum"] = schema_dict["maximum"]
@@ -373,6 +382,7 @@ def convert_schema(
                 any_of=any_of,
                 description=description,
                 default=default,
+                title=title,
             )
     else:
         if isinstance(schema_type, list):
@@ -384,7 +394,7 @@ def convert_schema(
         # Only convert to uppercase if schema_type is not empty
         if schema_type:
             schema_type = schema_type.upper()
-            return Schema(type=schema_type, description=description, default=default)
+            return Schema(type=schema_type, description=description, default=default, title=title)
         else:
             # If we get here with an empty type and no other handlers matched,
             # something is wrong with the schema

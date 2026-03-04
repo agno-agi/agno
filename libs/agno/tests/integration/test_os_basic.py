@@ -36,7 +36,8 @@ def test_os_client(agent: Agent):
     return TestClient(app)
 
 
-def test_basic_with_no_import_errors(test_os_client, agent):
+def test_basic(test_os_client, agent):
+    """Minimal test to ensure the OS works and can run an agent."""
     response = test_os_client.post(
         f"/agents/{agent.id}/runs",
         data={"message": "Hello, world!"},

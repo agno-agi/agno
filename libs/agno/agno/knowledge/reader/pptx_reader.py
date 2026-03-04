@@ -8,7 +8,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     from pptx import Presentation  # type: ignore
@@ -23,10 +23,11 @@ class PPTXReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PPTX readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
@@ -34,7 +35,7 @@ class PPTXReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.PPTX]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -43,15 +44,13 @@ class PPTXReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                log_info(f"Reading: {file}")
+                log_debug(f"Reading: {file}")
                 presentation = Presentation(str(file))
                 doc_name = name or file.stem
             else:
-                log_info(f"Reading uploaded file: {getattr(file, 'name', 'pptx_file')}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 presentation = Presentation(file)
-                doc_name = name or (
-                    getattr(file, "name", "pptx_file").split(".")[0] if hasattr(file, "name") else "pptx_file"
-                )
+                doc_name = name or getattr(file, "name", "pptx_file").split(".")[0]
 
             # Extract text from all slides
             slide_texts = []
@@ -89,7 +88,7 @@ class PPTXReader(Reader):
             return documents
 
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {e}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -97,5 +96,5 @@ class PPTXReader(Reader):
         try:
             return await asyncio.to_thread(self.read, file, name)
         except Exception as e:
-            logger.error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {e}")
             return []

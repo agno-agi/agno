@@ -3,14 +3,15 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import get_sort_value
 from agno.utils.log import log_warning
 
 try:
-    from redis import Redis
+    from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -51,7 +52,7 @@ def generate_index_key(prefix: str, table_type: str, index_field: str, index_val
     return f"{prefix}:{table_type}:index:{index_field}:{index_value}"
 
 
-def get_all_keys_for_table(redis_client: Redis, prefix: str, table_type: str) -> List[str]:
+def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str) -> List[str]:
     """Get all relevant keys for the given table type.
 
     Args:
@@ -80,21 +81,36 @@ def get_all_keys_for_table(redis_client: Redis, prefix: str, table_type: str) ->
 def apply_sorting(
     records: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    if sort_by is None:
+    """Apply sorting to the given records list.
+
+    Args:
+        records: The list of dictionaries to sort
+        sort_by: The field to sort by
+        sort_order: The sort order ('asc' or 'desc')
+
+    Returns:
+        The sorted list
+
+    Note:
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
+    """
+    if sort_by is None or not records:
         return records
 
-    def get_sort_key(record):
-        value = record.get(sort_by, 0)
-        if value is None:
-            return 0 if isinstance(records[0].get(sort_by, 0), (int, float)) else ""
-        return value
-
     try:
-        is_reverse = sort_order == "desc"
-        return sorted(records, key=get_sort_key, reverse=is_reverse)
+        is_descending = sort_order == "desc"
+
+        # Sort using the helper function that handles updated_at -> created_at fallback
+        sorted_records = sorted(
+            records,
+            key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+            reverse=is_descending,
+        )
+
+        return sorted_records
 
     except Exception as e:
-        log_warning(f"Error sorting Redisrecords: {e}")
+        log_warning(f"Error sorting Redis records: {e}")
         return records
 
 
@@ -130,7 +146,7 @@ def apply_filters(records: List[Dict[str, Any]], conditions: Dict[str, Any]) -> 
 
 
 def create_index_entries(
-    redis_client: Redis,
+    redis_client: Union[Redis, RedisCluster],
     prefix: str,
     table_type: str,
     record_id: str,
@@ -144,7 +160,7 @@ def create_index_entries(
 
 
 def remove_index_entries(
-    redis_client: Redis,
+    redis_client: Union[Redis, RedisCluster],
     prefix: str,
     table_type: str,
     record_id: str,

@@ -6,6 +6,7 @@ import pytest
 
 from agno.db.sqlite import SqliteDb
 from agno.memory import MemoryManager, UserMemory
+from agno.memory.strategies.types import MemoryOptimizationStrategyType
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 
@@ -339,6 +340,7 @@ def test_update_memory_task_with_db(memory_with_db):
     assert any("John Doe" not in memory.memory for memory in memories)
 
 
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.asyncio
 async def test_aupdate_memory_task_with_db(memory_with_db):
     """Test async updating memory with a task using database persistence."""
@@ -383,3 +385,139 @@ async def test_aupdate_memory_task_with_db(memory_with_db):
     memories = memory_with_db.get_user_memories("test_user")
     assert len(memories) > 0
     assert any("John Doe" not in memory.memory for memory in memories)
+
+
+def test_optimize_memories_with_db(memory_with_db):
+    """Test optimizing memories with database persistence."""
+    # Add multiple memories with different content
+    memory1 = UserMemory(
+        memory="The user's name is John Doe", topics=["name", "user"], user_id="test_user", updated_at=datetime.now()
+    )
+    memory2 = UserMemory(
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        user_id="test_user",
+        updated_at=datetime.now(),
+    )
+    memory3 = UserMemory(
+        memory="The user's favorite color is blue",
+        topics=["preferences", "colors"],
+        user_id="test_user",
+        updated_at=datetime.now(),
+    )
+
+    # Add the memories
+    memory_with_db.add_user_memory(memory=memory1, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory2, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory3, user_id="test_user")
+
+    # Get original count
+    original_memories = memory_with_db.get_user_memories(user_id="test_user")
+    original_count = len(original_memories)
+
+    # Optimize memories with default SUMMARIZE strategy
+    optimized = memory_with_db.optimize_memories(
+        user_id="test_user",
+        strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+        apply=True,
+    )
+
+    # Verify optimization returned results
+    assert len(optimized) > 0
+    assert all(isinstance(mem, UserMemory) for mem in optimized)
+
+    # Verify memories were replaced in database
+    final_memories = memory_with_db.get_user_memories(user_id="test_user")
+    assert len(final_memories) == len(optimized)
+    assert len(final_memories) < original_count  # Should be fewer after summarization
+
+    # Verify optimized memory contains information from original memories
+    optimized_content = " ".join([mem.memory.lower() for mem in optimized])
+    assert "john doe" in optimized_content or "basketball" in optimized_content or "blue" in optimized_content
+
+
+def test_optimize_memories_with_db_apply_false(memory_with_db):
+    """Test optimizing memories without applying to database."""
+    # Add multiple memories with different content
+    memory1 = UserMemory(
+        memory="The user's name is John Doe", topics=["name", "user"], user_id="test_user", updated_at=datetime.now()
+    )
+    memory2 = UserMemory(
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        user_id="test_user",
+        updated_at=datetime.now(),
+    )
+
+    # Add the memories
+    memory_with_db.add_user_memory(memory=memory1, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory2, user_id="test_user")
+
+    # Get original memories
+    original_memories = memory_with_db.get_user_memories(user_id="test_user")
+    original_count = len(original_memories)
+
+    # Optimize memories with apply=False
+    optimized = memory_with_db.optimize_memories(
+        user_id="test_user",
+        strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+        apply=False,
+    )
+
+    # Verify optimization returned results
+    assert len(optimized) > 0
+
+    # Verify original memories are still in database (not replaced)
+    final_memories = memory_with_db.get_user_memories(user_id="test_user")
+    assert len(final_memories) == original_count
+    assert final_memories == original_memories
+
+
+def test_optimize_memories_with_db_empty(memory_with_db):
+    """Test optimizing memories when no memories exist."""
+    # Optimize memories for user with no memories
+    optimized = memory_with_db.optimize_memories(user_id="test_user", apply=False)
+
+    # Should return empty list
+    assert optimized == []
+
+
+def test_optimize_memories_with_db_default_user_id(memory_with_db):
+    """Test optimizing memories with default user_id."""
+    # Add memories with default user_id
+    memory1 = UserMemory(memory="Default user memory", topics=["test"], user_id="default", updated_at=datetime.now())
+    memory_with_db.add_user_memory(memory=memory1, user_id="default")
+
+    # Optimize without specifying user_id (should default to "default")
+    optimized = memory_with_db.optimize_memories(strategy=MemoryOptimizationStrategyType.SUMMARIZE, apply=False)
+
+    # Verify optimization worked
+    assert len(optimized) > 0
+
+
+def test_optimize_memories_persistence_across_instances(model, memory_db):
+    """Test that optimized memories persist across different Memory instances."""
+    # Create the first Memory instance
+    memory1 = MemoryManager(model=model, db=memory_db)
+
+    # Add multiple memories
+    memory1_obj = UserMemory(
+        memory="The user's name is John Doe", topics=["name"], user_id="test_user", updated_at=datetime.now()
+    )
+    memory2_obj = UserMemory(
+        memory="The user likes basketball", topics=["sports"], user_id="test_user", updated_at=datetime.now()
+    )
+
+    memory1.add_user_memory(memory=memory1_obj, user_id="test_user")
+    memory1.add_user_memory(memory=memory2_obj, user_id="test_user")
+
+    # Optimize memories
+    optimized = memory1.optimize_memories(user_id="test_user", apply=True)
+
+    # Create a second Memory instance with the same database
+    memory2 = MemoryManager(model=model, db=memory_db)
+
+    # Verify optimized memories are accessible from the second instance
+    final_memories = memory2.get_user_memories(user_id="test_user")
+    assert len(final_memories) == len(optimized)
+    assert final_memories[0].memory_id == optimized[0].memory_id

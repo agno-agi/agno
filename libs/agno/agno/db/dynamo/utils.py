@@ -8,6 +8,7 @@ from agno.db.base import SessionType
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.utils import get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -174,13 +175,35 @@ def apply_pagination(
 def apply_sorting(
     items: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Apply sorting to a list of items."""
+    """Apply sorting to a list of items.
+
+    Args:
+        items: The list of dictionaries to sort
+        sort_by: The field to sort by (defaults to 'created_at')
+        sort_order: The sort order ('asc' or 'desc')
+
+    Returns:
+        The sorted list
+
+    Note:
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
+    """
+    if not items:
+        return items
+
     if sort_by is None:
         sort_by = "created_at"
 
-    reverse = sort_order == "desc"
+    is_descending = sort_order == "desc"
 
-    return sorted(items, key=lambda x: x.get(sort_by, ""), reverse=reverse)
+    # Sort using the helper function that handles updated_at -> created_at fallback
+    sorted_records = sorted(
+        items,
+        key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+        reverse=is_descending,
+    )
+
+    return sorted_records
 
 
 # -- Session utils --
@@ -442,7 +465,7 @@ def fetch_all_sessions_data_by_type(
         expression_attribute_names = {}
         expression_attribute_values = {":session_type": {"S": session_type}}
 
-        if user_id:
+        if user_id is not None:
             filter_expression = "#user_id = :user_id"
             expression_attribute_names["#user_id"] = "user_id"
             expression_attribute_values[":user_id"] = {"S": user_id}

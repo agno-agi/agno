@@ -1,9 +1,11 @@
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from importlib import metadata
+from typing import Any, Dict, List, Optional, Union
 
 from bson import ObjectId
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -19,10 +21,13 @@ except ImportError:
 try:
     from pymongo import AsyncMongoClient, MongoClient, errors
     from pymongo.collection import Collection
+    from pymongo.driver_info import DriverInfo
     from pymongo.operations import SearchIndexModel
 
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install using `pip install pymongo`")
+
+DRIVER_METADATA = DriverInfo(name="Agno", version=metadata.version("agno"))
 
 
 class MongoDb(VectorDb):
@@ -109,7 +114,7 @@ class MongoDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
 
         self.distance_metric = distance_metric
@@ -134,6 +139,11 @@ class MongoDb(VectorDb):
         self._async_db = None
         self._async_collection: Optional[Collection] = None
 
+        if self._client is not None:
+            # append_metadata was added in PyMongo 4.14.0, but is a valid database name on earlier versions
+            if callable(self._client.append_metadata):
+                self._client.append_metadata(DRIVER_METADATA)
+
     def _get_client(self) -> MongoClient:
         """Create or retrieve the MongoDB client."""
         if self._client is None:
@@ -156,7 +166,7 @@ class MongoDb(VectorDb):
                         warnings.filterwarnings(
                             "ignore", category=UserWarning, message=".*connected to a CosmosDB cluster.*"
                         )
-                        self._client = MongoClient(self.connection_string, **cosmos_kwargs)  # type: ignore
+                        self._client = MongoClient(self.connection_string, **cosmos_kwargs, driver=DRIVER_METADATA)  # type: ignore
 
                         self._client.admin.command("ping")
 
@@ -172,7 +182,7 @@ class MongoDb(VectorDb):
             else:
                 try:
                     log_debug("Creating MongoDB Client")
-                    self._client = MongoClient(self.connection_string, **self.kwargs)
+                    self._client = MongoClient(self.connection_string, **self.kwargs, driver=DRIVER_METADATA)  # type: ignore
                     # Trigger a connection to verify the client
                     self._client.admin.command("ping")
                     log_info("Connected to MongoDB successfully.")
@@ -194,6 +204,7 @@ class MongoDb(VectorDb):
                 maxPoolSize=self.kwargs.get("maxPoolSize", 100),
                 retryWrites=self.kwargs.get("retryWrites", True),
                 serverSelectionTimeoutMS=5000,
+                driver=DRIVER_METADATA,
             )
             # Verify connection
             try:
@@ -470,20 +481,6 @@ class MongoDb(VectorDb):
             if self.wait_until_index_ready_in_seconds:
                 await self._wait_for_index_ready_async()
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the MongoDB collection based on its content."""
-        try:
-            collection = self._get_collection()
-            # Use content hash as document ID
-            doc_id = md5(document.content.encode("utf-8")).hexdigest()
-            result = collection.find_one({"_id": doc_id})
-            exists = result is not None
-            log_debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking document existence: {e}")
-            return False
-
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection."""
         try:
@@ -585,9 +582,16 @@ class MongoDb(VectorDb):
         return True
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        min_score: float = 0.0,
     ) -> List[Document]:
         """Search for documents using vector similarity."""
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit=limit, filters=filters)
 
@@ -1016,19 +1020,6 @@ class MongoDb(VectorDb):
             logger.error(f"Error getting document count: {e}")
             return 0
 
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists asynchronously."""
-        try:
-            collection = await self._get_async_collection()
-            doc_id = md5(document.content.encode("utf-8")).hexdigest()
-            result = await collection.find_one({"_id": doc_id})
-            exists = result is not None
-            log_debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking document existence asynchronously: {e}")
-            return False
-
     async def async_insert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -1153,10 +1144,13 @@ class MongoDb(VectorDb):
                 logger.error(f"Error upserting document '{document.name}' asynchronously: {e}")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search for documents asynchronously."""
-        query_embedding = self.embedder.get_embedding(query)
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
+            filters = None
+        query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")
             return []

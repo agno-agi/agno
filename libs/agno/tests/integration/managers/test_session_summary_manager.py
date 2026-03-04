@@ -48,7 +48,7 @@ def session_summary_manager(model):
 def mock_agent_session():
     """Create a mock agent session with sample messages."""
     session = Mock(spec=AgentSession)
-    session.get_messages_for_session.return_value = [
+    session.get_messages.return_value = [
         Message(role="user", content="Hello, I need help with Python programming."),
         Message(
             role="assistant",
@@ -144,7 +144,7 @@ def test_get_system_message_with_custom_prompt(session_summary_manager, mock_age
     custom_prompt = "Summarize this conversation in a specific way."
     session_summary_manager.session_summary_prompt = custom_prompt
 
-    conversation = mock_agent_session.get_messages_for_session()
+    conversation = mock_agent_session.get_messages()
     response_format = {"type": "json_object"}
 
     system_message = session_summary_manager.get_system_message(conversation, response_format)
@@ -156,7 +156,7 @@ def test_get_system_message_with_custom_prompt(session_summary_manager, mock_age
 
 def test_get_system_message_default_prompt(session_summary_manager, mock_agent_session):
     """Test get_system_message with default prompt generation."""
-    conversation = mock_agent_session.get_messages_for_session()
+    conversation = mock_agent_session.get_messages()
     response_format = SessionSummaryResponse
 
     system_message = session_summary_manager.get_system_message(conversation, response_format)
@@ -170,7 +170,7 @@ def test_get_system_message_default_prompt(session_summary_manager, mock_agent_s
 
 def test_get_system_message_with_json_object_format(session_summary_manager, mock_agent_session):
     """Test get_system_message with JSON object response format."""
-    conversation = mock_agent_session.get_messages_for_session()
+    conversation = mock_agent_session.get_messages()
     response_format = {"type": "json_object"}
 
     with patch("agno.utils.prompts.get_json_output_prompt") as mock_json_prompt:

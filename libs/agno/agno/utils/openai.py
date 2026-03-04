@@ -248,7 +248,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
     # Case 3: Document is bytes content
     if file.content is not None:
-        name = getattr(file, "filename", "file")
+        name = file.filename or "file"
         _mime = file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
         _encoded = base64.b64encode(file.content).decode("utf-8")
         _data_url = f"data:{_mime};base64,{_encoded}"

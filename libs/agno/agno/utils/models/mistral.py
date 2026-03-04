@@ -48,7 +48,7 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
     return None
 
 
-def format_messages(messages: List[Message]) -> List[MistralMessage]:
+def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
     mistral_messages: List[MistralMessage] = []
 
     for message in messages:
@@ -84,7 +84,9 @@ def format_messages(messages: List[Message]) -> List[MistralMessage]:
         elif message.role == "system":
             mistral_message = SystemMessage(role="system", content=message.content)
         elif message.role == "tool":
-            mistral_message = ToolMessage(name="tool", content=message.content, tool_call_id=message.tool_call_id)
+            # Get compressed content if compression is active
+            tool_content = message.get_content(use_compressed_content=compress_tool_results)
+            mistral_message = ToolMessage(name="tool", content=tool_content, tool_call_id=message.tool_call_id)
         else:
             raise ValueError(f"Unknown role: {message.role}")
 

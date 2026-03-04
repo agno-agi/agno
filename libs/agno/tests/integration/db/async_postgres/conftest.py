@@ -33,7 +33,7 @@ def async_postgres_db(mock_async_engine) -> AsyncPostgresDb:
 async def async_postgres_engine():
     """Create an async PostgreSQL engine for testing using the actual database setup"""
     # Use the same connection string but async version
-    db_url = "postgresql+asyncpg://ai:ai@localhost:5532/ai"
+    db_url = "postgresql+psycopg_async://ai:ai@localhost:5532/ai"
     engine = create_async_engine(db_url)
 
     # Test connection

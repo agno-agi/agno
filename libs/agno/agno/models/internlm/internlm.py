@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Optional
+from typing import Any, Dict, Optional
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -24,3 +25,19 @@ class InternLM(OpenAILike):
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("INTERNLM_API_KEY"))
     base_url: Optional[str] = "https://internlm-chat.intern-ai.org.cn/puyu/api/v1/chat/completions"
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for INTERNLM_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("INTERNLM_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="INTERNLM_API_KEY not set. Please set the INTERNLM_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+        return super()._get_client_params()

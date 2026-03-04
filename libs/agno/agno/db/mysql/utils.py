@@ -5,15 +5,14 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Engine
-
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Table
+    from sqlalchemy import Engine, Table, func
     from sqlalchemy.dialects import mysql
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -33,6 +32,11 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
 
     Returns:
         The modified statement with sorting applied
+
+    Note:
+        For 'updated_at' sorting, uses COALESCE(updated_at, created_at) to fall back
+        to created_at when updated_at is NULL. This ensures pre-2.0 records (which may
+        have NULL updated_at) are sorted correctly by their creation time.
     """
     if sort_by is None:
         return stmt
@@ -41,8 +45,13 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
         return stmt
 
-    # Apply the given sorting
-    sort_column = getattr(table.c, sort_by)
+    # For updated_at, use COALESCE to fall back to created_at if updated_at is NULL
+    # This handles pre-2.0 records that may have NULL updated_at values
+    if sort_by == "updated_at" and hasattr(table.c, "created_at"):
+        sort_column = func.coalesce(table.c.updated_at, table.c.created_at)
+    else:
+        sort_column = getattr(table.c, sort_by)
+
     if sort_order and sort_order == "asc":
         return stmt.order_by(sort_column.asc())
     else:
@@ -91,8 +100,10 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
     Check if the existing table has the expected column names.
 
     Args:
+        db_engine: Database engine
         table_name (str): Name of the table to validate
-        schema (str): Database schema name
+        table_type (str): Type of table (for schema lookup)
+        db_schema (str): Database schema name
 
     Returns:
         bool: True if table has all expected columns, False otherwise
@@ -123,6 +134,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     """Bulk upsert metrics into the database.
 
     Args:
+        session (Session): The SQLAlchemy session
         table (Table): The table to upsert into.
         metrics_records (list[dict]): The metrics records to upsert.
 
@@ -156,13 +168,65 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
 
     for record in metrics_records:
         select_stmt = select(table).where(
-            and_(table.c.date == record["date"], table.c.aggregation_period == record["aggregation_period"])
+            and_(
+                table.c.date == record["date"],
+                table.c.aggregation_period == record["aggregation_period"],
+            )
         )
         result = session.execute(select_stmt).fetchone()
         if result:
             results.append(result._mapping)
 
     return results  # type: ignore
+
+
+async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_records: list[dict]) -> list[dict]:
+    """Async bulk upsert metrics into the database.
+
+    Args:
+        session (AsyncSession): The async SQLAlchemy session
+        table (Table): The table to upsert into.
+        metrics_records (list[dict]): The metrics records to upsert.
+
+    Returns:
+        list[dict]: The upserted metrics records.
+    """
+    if not metrics_records:
+        return []
+
+    results = []
+
+    # MySQL doesn't support returning in the same way as PostgreSQL
+    # We'll need to insert/update and then fetch the records
+    for record in metrics_records:
+        stmt = mysql.insert(table).values(record)
+
+        # Columns to update in case of conflict
+        update_dict = {
+            col.name: record.get(col.name)
+            for col in table.columns
+            if col.name not in ["id", "date", "created_at", "aggregation_period"] and col.name in record
+        }
+
+        stmt = stmt.on_duplicate_key_update(**update_dict)
+        await session.execute(stmt)
+
+    # Fetch the updated records
+    from sqlalchemy import and_, select
+
+    for record in metrics_records:
+        select_stmt = select(table).where(
+            and_(
+                table.c.date == record["date"],
+                table.c.aggregation_period == record["aggregation_period"],
+            )
+        )
+        result = await session.execute(select_stmt)
+        fetched_row = result.fetchone()
+        if fetched_row:
+            results.append(dict(fetched_row._mapping))
+
+    return results
 
 
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
@@ -299,7 +363,9 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 
 # -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+def serialize_cultural_knowledge_for_db(
+    cultural_knowledge: CulturalKnowledge,
+) -> Dict[str, Any]:
     """Serialize a CulturalKnowledge object for database storage.
 
     Converts the model's separate content, categories, and notes fields
@@ -353,3 +419,80 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
             "team_id": db_row.get("team_id"),
         }
     )
+
+
+# -- Async DB util methods --
+async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
+    """Async version: Create the database schema if it doesn't exist.
+
+    Args:
+        session: The async SQLAlchemy session to use
+        db_schema (str): The definition of the database schema to create
+    """
+    try:
+        log_debug(f"Creating database if not exists: {db_schema}")
+        # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
+        await session.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_schema}`;"))
+    except Exception as e:
+        log_warning(f"Could not create database {db_schema}: {e}")
+
+
+async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:
+    """Async version: Check if a table with the given name exists in the given schema.
+
+    Returns:
+        bool: True if the table exists, False otherwise.
+    """
+    try:
+        exists_query = text(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+        )
+        result = await session.execute(exists_query, {"schema": db_schema, "table": table_name})
+        exists = result.scalar() is not None
+        if not exists:
+            log_debug(f"Table {db_schema}.{table_name} {'exists' if exists else 'does not exist'}")
+
+        return exists
+
+    except Exception as e:
+        log_error(f"Error checking if table exists: {e}")
+        return False
+
+
+async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: str) -> bool:
+    """Async version: Check if the existing table has the expected column names.
+
+    Args:
+        db_engine: Async database engine
+        table_name (str): Name of the table to validate
+        table_type (str): Type of table (for schema lookup)
+        db_schema (str): Database schema name
+
+    Returns:
+        bool: True if table has all expected columns, False otherwise
+    """
+    try:
+        expected_table_schema = get_table_schema_definition(table_type)
+        expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+
+        # Get existing columns from the async engine
+        async with db_engine.connect() as conn:
+            existing_columns = await conn.run_sync(_get_table_columns, table_name, db_schema)
+
+        # Check if all expected columns exist
+        missing_columns = expected_columns - existing_columns
+        if missing_columns:
+            log_warning(f"Missing columns {missing_columns} in table {db_schema}.{table_name}")
+            return False
+
+        return True
+    except Exception as e:
+        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        return False
+
+
+def _get_table_columns(connection, table_name: str, db_schema: str) -> set[str]:
+    """Helper function to get table columns using sync inspector."""
+    inspector = inspect(connection)
+    columns_info = inspector.get_columns(table_name, schema=db_schema)
+    return {col["name"] for col in columns_info}
