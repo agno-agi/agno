@@ -399,7 +399,11 @@ class AgentOS:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
         # Registry router
         if self.registry is not None:
@@ -738,8 +742,14 @@ class AgentOS:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            log_debug("Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS")
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            log_debug(
+                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
+            )
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 routers.append(_get_disabled_feature_router(prefix, tag, "db"))
 
         # Registry router
@@ -1358,6 +1368,11 @@ class AgentOS:
         **kwargs,
     ):
         import uvicorn
+
+        host = getenv("AGENT_OS_HOST", host)
+        env_port = getenv("AGENT_OS_PORT")
+        if env_port is not None:
+            port = int(env_port)
 
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"
