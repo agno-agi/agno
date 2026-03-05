@@ -1,7 +1,7 @@
 """
 Graph RAG: LightRAG Integration
 =================================
-LightRAG is a managed knowledge backend that builds a knowledge graph
+LightRAG is an external knowledge provider that builds a knowledge graph
 from your documents. It handles its own ingestion and retrieval,
 providing graph-based RAG capabilities.
 
@@ -24,10 +24,10 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 
 try:
-    from agno.vectordb.lightrag import LightRag
+    from agno.knowledge.external_provider import LightRagProvider
 
     knowledge = Knowledge(
-        vector_db=LightRag(
+        external_provider=LightRagProvider(
             server_url="http://localhost:9621",
         ),
     )

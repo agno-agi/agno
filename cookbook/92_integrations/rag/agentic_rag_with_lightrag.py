@@ -9,19 +9,19 @@ import asyncio
 from os import getenv
 
 from agno.agent import Agent
+from agno.knowledge.external_provider import LightRagProvider
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
-from agno.vectordb.lightrag import LightRag
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-vector_db = LightRag(api_key=getenv("LIGHTRAG_API_KEY"))
+provider = LightRagProvider(api_key=getenv("LIGHTRAG_API_KEY"))
 
 knowledge = Knowledge(
     name="My LightRag Knowledge Base",
-    description="Knowledge base using a LightRag vector database",
-    vector_db=vector_db,
+    description="Knowledge base using LightRAG as an external provider",
+    external_provider=provider,
 )
 
 # ---------------------------------------------------------------------------

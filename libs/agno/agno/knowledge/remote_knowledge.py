@@ -9,7 +9,7 @@ instances and dispatches to the appropriate provider.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from agno.knowledge.pipeline.ingestion import IngestionPipeline

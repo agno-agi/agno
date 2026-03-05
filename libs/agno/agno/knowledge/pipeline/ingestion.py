@@ -4,7 +4,6 @@ Handles loading content from paths, URLs, text, and topics into the
 vector database. Orchestrates reading, chunking, hashing, and insertion.
 """
 
-import asyncio
 import hashlib
 import io
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from httpx import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
+from agno.knowledge.external_provider.schemas import ProcessingResult
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader_registry import ReaderRegistry
 from agno.knowledge.store.content_store import ContentStore
@@ -43,6 +43,7 @@ class IngestionPipeline:
     reader_registry: Optional[ReaderRegistry] = None
     knowledge_name: Optional[str] = None
     isolate_vector_search: bool = False
+    external_provider: Optional[Any] = None
 
     # ==========================================
     # MAIN ENTRY POINTS
@@ -121,8 +122,8 @@ class IngestionPipeline:
                     self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                     return
 
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    self.process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                if self.external_provider is not None:
+                    self._ingest_external(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -205,8 +206,8 @@ class IngestionPipeline:
                     await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
                     return
 
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                if self.external_provider is not None:
+                    await self._aingest_external(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -297,8 +298,8 @@ class IngestionPipeline:
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if self.vector_db.__class__.__name__ == "LightRag":
-            self.process_lightrag_content(content, KnowledgeContentOrigin.URL)
+        if self.external_provider is not None:
+            self._ingest_external(content, KnowledgeContentOrigin.URL)
             return
 
         try:
@@ -426,8 +427,8 @@ class IngestionPipeline:
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if self.vector_db.__class__.__name__ == "LightRag":
-            await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.URL)
+        if self.external_provider is not None:
+            await self._aingest_external(content, KnowledgeContentOrigin.URL)
             return
 
         try:
@@ -568,8 +569,8 @@ class IngestionPipeline:
             self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            self.process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.external_provider is not None:
+            self._ingest_external(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -670,8 +671,8 @@ class IngestionPipeline:
             await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
             return
 
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            await self.aprocess_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.external_provider is not None:
+            await self._aingest_external(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -776,8 +777,8 @@ class IngestionPipeline:
                 self.content_store.update(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            if self.vector_db.__class__.__name__ == "LightRag":
-                self.process_lightrag_content(topic_content, KnowledgeContentOrigin.TOPIC)
+            if self.external_provider is not None:
+                self._ingest_external(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
             if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
@@ -840,8 +841,8 @@ class IngestionPipeline:
                 await self.content_store.aupdate(topic_content, vector_db=self.vector_db)  # type: ignore[union-attr]
                 continue
 
-            if self.vector_db.__class__.__name__ == "LightRag":
-                await self.aprocess_lightrag_content(topic_content, KnowledgeContentOrigin.TOPIC)
+            if self.external_provider is not None:
+                await self._aingest_external(topic_content, KnowledgeContentOrigin.TOPIC)
                 continue
 
             if self.vector_db and self.vector_db.content_hash_exists(topic_content.content_hash) and skip_if_exists:
@@ -1092,321 +1093,190 @@ class IngestionPipeline:
         return chunked_documents
 
     # ==========================================
-    # LIGHTRAG PROCESSING
+    # EXTERNAL PROVIDER INGESTION
     # ==========================================
 
-    async def aprocess_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        from agno.vectordb import VectorDb
+    def _ingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        """Route content to the external provider (sync). Handles PATH, URL, CONTENT, and TOPIC origins.
 
-        self.vector_db = cast(VectorDb, self.vector_db)
+        Content stays in PROCESSING state because the external provider (e.g. LightRAG)
+        processes documents asynchronously. Status is resolved when polled.
+        """
+        content.metadata = self._build_external_provider_metadata(content, content_type)
+        try:
+            result = self._do_external_ingest(content, content_type)
+            content.external_id = result.external_id
+            content.status = result.status
+            content.status_message = result.status_message
+            if result.processing_id:
+                content.metadata = set_agno_metadata(content.metadata, "processing_id", result.processing_id)
+            if result.external_id:
+                content.metadata = set_agno_metadata(content.metadata, "external_id", result.external_id)
+        except Exception as e:
+            log_error(f"Error ingesting via external provider: {e}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"External provider ingestion failed: {str(e)}"
+        self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
-        await self.content_store.ainsert(content)  # type: ignore[union-attr]
+    async def _aingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        """Route content to the external provider (async). Handles PATH, URL, CONTENT, and TOPIC origins.
+
+        Content stays in PROCESSING state because the external provider (e.g. LightRAG)
+        processes documents asynchronously. Status is resolved when polled.
+        """
+        content.metadata = self._build_external_provider_metadata(content, content_type)
+        try:
+            result = await self._ado_external_ingest(content, content_type)
+            content.external_id = result.external_id
+            content.status = result.status
+            content.status_message = result.status_message
+            if result.processing_id:
+                content.metadata = set_agno_metadata(content.metadata, "processing_id", result.processing_id)
+            if result.external_id:
+                content.metadata = set_agno_metadata(content.metadata, "external_id", result.external_id)
+        except Exception as e:
+            log_error(f"Error ingesting via external provider: {e}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"External provider ingestion failed: {str(e)}"
+        await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+
+    def _build_external_provider_metadata(
+        self,
+        content: Content,
+        content_type: KnowledgeContentOrigin,
+    ) -> Dict[str, Any]:
+        """Build _agno metadata for content managed by an external provider."""
+        provider = self.external_provider
+        assert provider is not None
+
+        provider_class = type(provider).__name__
+        metadata = content.metadata or {}
+        metadata = set_agno_metadata(metadata, "source_type", "external_provider")
+        metadata = set_agno_metadata(metadata, "provider", provider_class)
+        metadata = set_agno_metadata(metadata, "content_origin", content_type.value)
+
+        if hasattr(provider, "server_url"):
+            metadata = set_agno_metadata(metadata, "server_url", provider.server_url)
+
+        if content_type == KnowledgeContentOrigin.URL and content.url:
+            metadata = set_agno_metadata(metadata, "source_url", content.url)
+        elif content_type == KnowledgeContentOrigin.PATH and content.path:
+            metadata = set_agno_metadata(metadata, "source_path", content.path)
+        elif content_type == KnowledgeContentOrigin.TOPIC and content.topics:
+            metadata = set_agno_metadata(metadata, "source_topics", content.topics)
+
+        return metadata
+
+    def _do_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> ProcessingResult:
+        """Dispatch to the appropriate external provider ingestion method (sync)."""
+        provider = self.external_provider
+        assert provider is not None
+
         if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
             if content.path is None:
-                log_error("No path provided for content")
-                return
-
+                raise ValueError("No path provided for content")
             path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
-            try:
-                with open(path, "rb") as f:
-                    file_content = f.read()
-
-                file_type = content.file_type or path.suffix
-
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = await self.vector_db.insert_file_bytes(
-                        file_content=file_content,
-                        filename=path.name,
-                        content_type=file_type,
-                        send_metadata=True,
-                    )
-
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+            log_info(f"Ingesting file via external provider from path: {path}")
+            with open(path, "rb") as f:
+                file_content = f.read()
+            file_type = content.file_type or path.suffix
+            return provider.ingest_file(file_content=file_content, filename=path.name, content_type=file_type)
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
-            try:
-                reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
-                if reader is None:
-                    log_error("No URL reader available")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self.prepare_documents_for_insert(read_documents, content.id)
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.url,
-                        text=read_documents[0].content,
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+            log_info(f"Ingesting content via external provider from URL: {content.url}")
+            reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
+            if reader is None:
+                raise ValueError("No URL reader available")
+            reader.chunk = False
+            read_documents = reader.read(content.url, name=content.name)
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self.prepare_documents_for_insert(read_documents, content.id)
+            if not read_documents:
+                raise ValueError("No documents read from URL")
+            return provider.ingest_text(text=read_documents[0].content, source_name=content.url)
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
             filename = (
                 content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
             )
-            log_info(f"Uploading file to LightRAG: {filename}")
-
+            log_info(f"Ingesting file via external provider: {filename}")
             if content.file_data and content.file_data.content:
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = await self.vector_db.insert_file_bytes(
-                        file_content=content.file_data.content,
-                        filename=filename,
-                        content_type=content.file_data.type,
-                        send_metadata=True,
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                return provider.ingest_file(
+                    file_content=content.file_data.content,
+                    filename=filename,
+                    content_type=content.file_data.type,
+                )
             else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
+                raise ValueError(f"No file data available for external provider upload: {content.name}")
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
+            log_info(f"Ingesting topic via external provider: {content.name}")
             if content.reader is None:
-                log_error("No reader available for topic content")
-                content.status = ContentStatus.FAILED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
+                raise ValueError("No reader available for topic content")
             if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
+                raise ValueError("No topics available for content")
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.topics[0],
-                        text=read_documents[0].content,
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+                return provider.ingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
-                return
+                raise ValueError(f"No documents found for external provider upload: {content.name}")
 
-    def process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Synchronously process LightRAG content. Uses asyncio.run() only for LightRAG-specific async methods."""
-        from agno.vectordb import VectorDb
+        raise ValueError(f"Unsupported content type: {content_type}")
 
-        self.vector_db = cast(VectorDb, self.vector_db)
+    async def _ado_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> ProcessingResult:
+        """Dispatch to the appropriate external provider ingestion method (async)."""
+        provider = self.external_provider
+        assert provider is not None
 
-        self.content_store.insert(content)  # type: ignore[union-attr]
         if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
             if content.path is None:
-                log_error("No path provided for content")
-                return
-
+                raise ValueError("No path provided for content")
             path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
-            try:
-                with open(path, "rb") as f:
-                    file_content = f.read()
-
-                file_type = content.file_type or path.suffix
-
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=file_content,
-                            filename=path.name,
-                            content_type=file_type,
-                            send_metadata=True,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+            log_info(f"Ingesting file via external provider from path: {path}")
+            with open(path, "rb") as f:
+                file_content = f.read()
+            file_type = content.file_type or path.suffix
+            return await provider.aingest_file(file_content=file_content, filename=path.name, content_type=file_type)
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
-            try:
-                reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
-                if reader is None:
-                    log_error("No URL reader available")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self.prepare_documents_for_insert(read_documents, content.id)
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.url,
-                            text=read_documents[0].content,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
-            except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+            log_info(f"Ingesting content via external provider from URL: {content.url}")
+            reader = content.reader or self.reader_registry.website_reader  # type: ignore[union-attr]
+            if reader is None:
+                raise ValueError("No URL reader available")
+            reader.chunk = False
+            read_documents = reader.read(content.url, name=content.name)
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self.prepare_documents_for_insert(read_documents, content.id)
+            if not read_documents:
+                raise ValueError("No documents read from URL")
+            return await provider.aingest_text(text=read_documents[0].content, source_name=content.url)
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
             filename = (
                 content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
             )
-            log_info(f"Uploading file to LightRAG: {filename}")
-
+            log_info(f"Ingesting file via external provider: {filename}")
             if content.file_data and content.file_data.content:
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=content.file_data.content,
-                            filename=filename,
-                            content_type=content.file_data.type,
-                            send_metadata=True,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
+                return await provider.aingest_file(
+                    file_content=content.file_data.content,
+                    filename=filename,
+                    content_type=content.file_data.type,
+                )
             else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
+                raise ValueError(f"No file data available for external provider upload: {content.name}")
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
+            log_info(f"Ingesting topic via external provider: {content.name}")
             if content.reader is None:
-                log_error("No reader available for topic content")
-                content.status = ContentStatus.FAILED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
+                raise ValueError("No reader available for topic content")
             if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
-
+                raise ValueError("No topics available for content")
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.topics[0],
-                            text=read_documents[0].content,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
-                return
+                return await provider.aingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
-                return
+                raise ValueError(f"No documents found for external provider upload: {content.name}")
+
+        raise ValueError(f"Unsupported content type: {content_type}")
