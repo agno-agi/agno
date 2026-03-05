@@ -360,11 +360,8 @@ def _create_events_from_chunk(
         except Exception:
             custom_event_name = chunk.event
 
-        # Use the complete Agno event as value if parsing it works, else the event content field
-        try:
-            custom_event_value = chunk.to_dict()
-        except Exception:
-            custom_event_value = chunk.content  # type: ignore
+        # Reuse the already-serialized raw_dict, falling back to content
+        custom_event_value = raw_dict if raw_dict is not None else chunk.content  # type: ignore
 
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value, raw_event=raw_dict)
         events_to_emit.append(custom_event)
@@ -399,12 +396,14 @@ def _create_completion_events(
         raw_dict = None
 
     # End remaining active tool calls if needed
+    # These are synthetic cleanup events, not direct translations of the completion chunk,
+    # so raw_event is set to None to avoid misleading attribution.
     for tool_call_id in list(event_buffer.active_tool_call_ids):
         if tool_call_id not in event_buffer.ended_tool_call_ids:
             end_event = ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id,
-                raw_event=raw_dict,
+                raw_event=None,
             )
             events_to_emit.append(end_event)
 
