@@ -104,6 +104,7 @@ def authenticate(func):
             if not self.service:
                 self.service = build("gmail", "v1", credentials=self.creds)
         except Exception as e:
+            log_error(f"Gmail authentication failed: {e}")
             return json.dumps({"error": f"Gmail authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
@@ -662,15 +663,21 @@ class GmailTools(Toolkit):
         body: str,
         cc: Optional[str] = None,
         attachments: Optional[Union[str, List[str]]] = None,
+        thread_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> str:
         """
-        Create and save a draft email. to and cc are comma separated string of email ids
+        Create and save a draft email. To reply to a thread, provide thread_id and message_id.
+        to and cc are comma separated string of email ids.
+
         Args:
             to (str): Comma separated string of recipient email addresses
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
             attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
+            thread_id (Optional[str]): Thread ID to reply to (optional, makes this a reply draft)
+            message_id (Optional[str]): Message ID being replied to (optional, used with thread_id)
 
         Returns:
             str: Stringified dictionary containing draft email details including id
@@ -690,9 +697,17 @@ class GmailTools(Toolkit):
                     if not Path(file_path).exists():
                         return f"Error: Attachment file not found: {file_path}"
 
-            body = body.replace("\n", "<br>")
+            if thread_id and not subject.lower().startswith("re:"):
+                subject = f"Re: {subject}"
+
             message = self._create_message(
-                to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+                to.split(","),
+                subject,
+                body,
+                cc.split(",") if cc else None,
+                thread_id=thread_id,
+                message_id=message_id,
+                attachments=attachment_files,
             )
             draft = {"message": message}
             draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
@@ -749,7 +764,6 @@ class GmailTools(Toolkit):
             if thread_id and not subject.lower().startswith("re:"):
                 subject = f"Re: {subject}"
 
-            body = body.replace("\n", "<br>")
             message = self._create_message(
                 to.split(","),
                 subject,
@@ -811,7 +825,6 @@ class GmailTools(Toolkit):
                     if not Path(file_path).exists():
                         return f"Error: Attachment file not found: {file_path}"
 
-            body = body.replace("\n", "<br>")
             message = self._create_message(
                 to.split(","),
                 subject,
@@ -1004,14 +1017,9 @@ class GmailTools(Toolkit):
             if not messages:
                 return f"No emails found matching: '{context}'"
 
-            # Check if label exists, create if not
-            labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-            label_id = None
-            for label in labels:
-                if label["name"].lower() == label_name.lower():
-                    label_id = label["id"]
-                    break
-
+            # Populate cache if needed, then check existence
+            self._resolve_label_ids([label_name])
+            label_id = self._label_cache.get(label_name.lower())  # type: ignore[union-attr]
             if not label_id:
                 label = (
                     self.service.users()  # type: ignore
@@ -1052,15 +1060,9 @@ class GmailTools(Toolkit):
             str: Summary of emails with label removed
         """
         try:
-            # Get all labels to find the target label
-            labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-            label_id = None
-
-            for label in labels:
-                if label["name"].lower() == label_name.lower():
-                    label_id = label["id"]
-                    break
-
+            # Populate cache if needed, then check existence
+            self._resolve_label_ids([label_name])
+            label_id = self._label_cache.get(label_name.lower())  # type: ignore[union-attr]
             if not label_id:
                 return f"Label '{label_name}' not found."
 
@@ -1161,7 +1163,7 @@ class GmailTools(Toolkit):
         attachments: Optional[List[str]] = None,
     ) -> dict:
         """Build a base64-encoded MIME message dict ready for the Gmail API send/draft endpoints."""
-        body = body.replace("\\n", "\n")
+        body = body.replace("\\n", "\n").replace("\n", "<br>")
 
         # Create multipart message if attachments exist, otherwise simple text message
         message: Union[MIMEMultipart, MIMEText]
@@ -1722,7 +1724,7 @@ class GmailTools(Toolkit):
             mime = self._create_message(
                 to=[t.strip() for t in to.split(",")],
                 subject=subject,
-                body=body.replace("\n", "<br>"),
+                body=body,
                 cc=[c.strip() for c in cc.split(",")] if cc else None,
                 bcc=[b.strip() for b in bcc.split(",")] if bcc else None,
                 thread_id=thread_id,

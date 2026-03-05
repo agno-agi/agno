@@ -58,14 +58,14 @@ if __name__ == "__main__":
     user_id = "user@example.com"
 
     # # Session 1: Triage inbox and learn preferences
-    # print("\n--- Session 1: Triage inbox, agent learns your style ---\n")
+    print("\n--- Session 1: Triage inbox, agent learns your style ---\n")
 
-    # agent.print_response(
-    #     "Summarize my 5 most recent unread emails. Keep it short and direct.",
-    #     user_id=user_id,
-    #     session_id="session_1",
-    #     stream=True,
-    # )
+    agent.print_response(
+        "Summarize my 5 most recent unread emails. Keep it short and direct.",
+        user_id=user_id,
+        session_id="session_1",
+        stream=True,
+    )
 
     # # Show what the agent learned
     # lm = agent.learning_machine
