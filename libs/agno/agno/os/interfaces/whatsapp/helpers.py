@@ -53,6 +53,7 @@ def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
             doc_id=message["document"]["id"],
         )
 
+    # Interactive replies carry the selected option's title and description
     if msg_type == "interactive":
         interactive = message.get("interactive", {})
         interactive_type = interactive.get("type")
@@ -77,6 +78,7 @@ def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
 
 
 def extract_media_bytes(media_obj) -> Optional[bytes]:
+    # Content may arrive as raw bytes or base64-encoded string
     content = media_obj.content
     if isinstance(content, bytes):
         try:
@@ -125,6 +127,7 @@ async def send_whatsapp_message_async(recipient: str, message: str, italics: boo
             return "\n".join([f"_{line}_" for line in text.split("\n")])
         return text
 
+    # WhatsApp limit is 4096 chars; split at 4000 to leave room for batch prefix
     if len(message) <= 4096:
         await send_text_message_async(recipient=recipient, text=_format(message))
         return
@@ -135,6 +138,7 @@ async def send_whatsapp_message_async(recipient: str, message: str, italics: boo
         await send_text_message_async(recipient=recipient, text=_format(batch_message))
 
 
+# Upload each image to Meta, then send with response text as caption
 async def upload_response_images_async(response, recipient: str) -> None:
     for img in response.images:
         image_bytes = extract_media_bytes(img)

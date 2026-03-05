@@ -26,6 +26,7 @@ def validate_webhook_signature(
         log_warning("WHATSAPP_APP_SECRET not set — signature validation disabled (DO NOT use in production)")
         return True
 
+    # 5-minute window guards against replay attacks
     if timestamp is not None:
         if abs(time.time() - timestamp) > 300:
             log_warning("Rejecting webhook: timestamp too old (possible replay attack)")
@@ -34,14 +35,17 @@ def validate_webhook_signature(
     if not signature_header or not signature_header.startswith("sha256="):
         return False
 
+    # Header format: "sha256=<hex>"; strip prefix to compare digests
     expected_signature = signature_header.removeprefix("sha256=")
 
     hmac_obj = hmac.new(app_secret.encode(), payload, hashlib.sha256)
     calculated_signature = hmac_obj.hexdigest()
 
+    # Constant-time comparison prevents timing side-channels
     return hmac.compare_digest(calculated_signature, expected_signature)
 
 
+# Walk the nested webhook payload to find the oldest message timestamp
 def extract_earliest_timestamp(body: dict) -> Optional[int]:
     timestamps = []
     for entry in body.get("entry", []):

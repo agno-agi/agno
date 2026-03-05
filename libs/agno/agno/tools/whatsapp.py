@@ -61,10 +61,12 @@ class WhatsAppTools(Toolkit):
                 "WHATSAPP_PHONE_NUMBER_ID is not set. Set the environment variable or pass phone_number_id."
             )
 
+        # Fallback recipient for standalone use outside router context
         self.default_recipient = recipient_waid or getenv("WHATSAPP_RECIPIENT_WAID")
         self.version = version or getenv("WHATSAPP_VERSION", "v22.0")
         self.base_url = "https://graph.facebook.com"
 
+        # Register only enabled tools to keep the agent's tool list focused
         tools: List[Any] = []
         if enable_send_text_message or all:
             tools.append(self.send_text_message)
@@ -101,6 +103,7 @@ class WhatsAppTools(Toolkit):
         return None
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        # Raise on 4xx/5xx with parsed error body for better diagnostics
         response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data)
         if response.status_code >= 400:
             error_body = (

@@ -21,6 +21,7 @@ def get_phone_number_id() -> str:
     return phone_number_id
 
 
+# Two-hop fetch: Graph API returns a temporary URL, then we download the bytes
 def get_media(media_id: str) -> Union[dict, bytes]:
     url = f"https://graph.facebook.com/v22.0/{media_id}"
     access_token = get_access_token()
@@ -65,6 +66,7 @@ async def get_media_async(media_id: str) -> Union[dict, bytes]:
         return {"error": str(e)}
 
 
+# Upload bytes to Meta's media endpoint; returns a reusable media_id
 def upload_media(media_data: bytes, mime_type: str, filename: str = "file"):
     phone_number_id = get_phone_number_id()
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/media"
@@ -183,6 +185,7 @@ def send_image_message(
         raise
 
 
+# Marks message as read AND shows typing indicator in one API call
 def typing_indicator(message_id: Optional[str] = None):
     if not message_id:
         return

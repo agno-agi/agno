@@ -28,6 +28,7 @@ class Whatsapp(BaseInterface):
         self.team = team
         self.workflow = workflow
         self.prefix = prefix
+        # Tags group endpoints in OpenAPI docs
         self.tags = tags or ["Whatsapp"]
         self.show_reasoning = show_reasoning
         self.send_user_number_to_context = send_user_number_to_context

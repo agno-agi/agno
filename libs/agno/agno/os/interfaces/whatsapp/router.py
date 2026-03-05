@@ -67,6 +67,7 @@ def attach_routes(
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
 
+    # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
     entity_type = "agent" if agent else "team" if team else "workflow"
     raw_name = getattr(entity, "name", None)
@@ -130,6 +131,7 @@ def attach_routes(
             log_warning(f"Received non-WhatsApp webhook object: {body.get('object')}")
             return WhatsAppWebhookResponse(status="ignored")
 
+        # ACK immediately, process in background. Meta retries if no 200 within ~20s
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
                 for message in change.get("value", {}).get("messages", []):
@@ -138,6 +140,7 @@ def attach_routes(
         return WhatsAppWebhookResponse(status="processing")
 
     async def process_message(message: dict):
+        # Extract early so error handler can notify the user
         phone_number = message["from"]
         try:
             message_id = message.get("id")
@@ -149,15 +152,21 @@ def attach_routes(
 
             log_info(f"Processing message from {phone_number}: {parsed.text}")
 
-            run_kwargs = {
+            # Download media from Meta servers and wrap as Agno media objects
+            run_kwargs: dict = {
                 "user_id": phone_number,
                 "session_id": f"wa:{phone_number}",
-                "images": [Image(content=await get_media_async(parsed.image_id))] if parsed.image_id else None,
-                "files": [File(content=await get_media_async(parsed.doc_id))] if parsed.doc_id else None,
-                "videos": [Video(content=await get_media_async(parsed.video_id))] if parsed.video_id else None,
-                "audio": [Audio(content=await get_media_async(parsed.audio_id))] if parsed.audio_id else None,
             }
+            if parsed.image_id:
+                run_kwargs["images"] = [Image(content=await get_media_async(parsed.image_id))]
+            if parsed.doc_id:
+                run_kwargs["files"] = [File(content=await get_media_async(parsed.doc_id))]
+            if parsed.video_id:
+                run_kwargs["videos"] = [Video(content=await get_media_async(parsed.video_id))]
+            if parsed.audio_id:
+                run_kwargs["audio"] = [Audio(content=await get_media_async(parsed.audio_id))]
 
+            # Inject phone number so the agent can reference the user in responses
             if send_user_number_to_context:
                 run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {phone_number}"}
                 run_kwargs["add_dependencies_to_context"] = True
@@ -188,6 +197,7 @@ def attach_routes(
                 if reasoning:
                     await send_whatsapp_message_async(phone_number, reasoning, italics=True)
 
+            # Send media first, then decide whether to also send text
             has_media = False
             if response.images:
                 await upload_response_images_async(response, phone_number)
@@ -217,6 +227,7 @@ def attach_routes(
             tools_sent_message = response_tools and any(
                 t.tool_name in _WA_TOOL_NAMES for t in response_tools
             )
+            # Only send text if no media was uploaded and no tool already messaged the user
             if not has_media and not tools_sent_message:
                 await send_whatsapp_message_async(phone_number, response.content or "")
 
