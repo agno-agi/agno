@@ -60,6 +60,7 @@ class BaseRunOutputEvent:
                 "metrics",
                 "run_input",
                 "requirements",
+                "tasks",
                 "memories",
             ]
         }
@@ -153,6 +154,9 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "memories") and self.memories is not None:
             _dict["memories"] = [mem.to_dict() if hasattr(mem, "to_dict") else mem for mem in self.memories]
+
+        if hasattr(self, "tasks") and self.tasks is not None:
+            _dict["tasks"] = [t.to_dict() for t in self.tasks]
 
         return _dict
 
@@ -253,6 +257,13 @@ class BaseRunOutputEvent:
                 elif isinstance(item, dict):
                     requirements_list.append(RunRequirement.from_dict(item))
             data["requirements"] = requirements_list if requirements_list else None
+
+        # Handle tasks (TaskData objects in TaskStateUpdatedEvent)
+        tasks_data = data.pop("tasks", None)
+        if tasks_data is not None:
+            from agno.run.team import TaskData
+
+            data["tasks"] = [TaskData.from_dict(t) if isinstance(t, dict) else t for t in tasks_data]
 
         # Filter data to only include fields that are actually defined in the target class
         # CustomEvent accepts arbitrary fields, so skip filtering for it
