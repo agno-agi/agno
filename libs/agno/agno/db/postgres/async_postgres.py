@@ -1910,11 +1910,21 @@ class AsyncPostgresDb(AsyncBaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "processing_id": "processing_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
                 # String fields that need sanitization
-                string_fields = {"name", "description", "type", "status", "status_message", "external_id", "linked_to"}
+                string_fields = {
+                    "name",
+                    "description",
+                    "type",
+                    "status",
+                    "status_message",
+                    "external_id",
+                    "linked_to",
+                    "processing_id",
+                }
 
                 for model_field, table_column in field_mapping.items():
                     if table_column in table_columns:

@@ -1946,6 +1946,7 @@ class SingleStoreDb(BaseDb):
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
+                        "processing_id": knowledge_row.processing_id,
                     }.items()
                     if v is not None
                 }

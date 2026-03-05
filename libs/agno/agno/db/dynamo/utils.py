@@ -78,6 +78,8 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
             "size": getattr(knowledge, "size", None),
             "linked_to": getattr(knowledge, "linked_to", None),
             "access_count": getattr(knowledge, "access_count", None),
+            "external_id": getattr(knowledge, "external_id", None),
+            "processing_id": getattr(knowledge, "processing_id", None),
             "created_at": int(knowledge.created_at) if knowledge.created_at else None,
             "updated_at": int(knowledge.updated_at) if knowledge.updated_at else None,
         }
@@ -98,6 +100,8 @@ def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
         access_count=data.get("access_count"),
         status=data.get("status"),
         status_message=data.get("status_message"),
+        external_id=data.get("external_id"),
+        processing_id=data.get("processing_id"),
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),
     )
