@@ -1,9 +1,14 @@
 """
-Content Workflow
-================
+Basic Workflow
+==============
 
-A WhatsApp workflow that takes a user's topic, researches it, then writes
-a short summary -- delivered back over WhatsApp.
+A two-step workflow exposed through WhatsApp: a Research Agent gathers
+information, then a Content Writer turns it into a polished summary.
+
+Key concepts:
+  - ``Workflow`` chains sequential ``Step`` objects.
+  - Each step uses a dedicated agent with its own model and tools.
+  - Uses SQLite for session persistence (no external database required).
 
 Requires:
   WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID
@@ -24,7 +29,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 
 model = Claude(id="claude-sonnet-4-6")
-workflow_db = SqliteDb(db_file="tmp/content_workflow.db")
+workflow_db = SqliteDb(db_file="tmp/basic_workflow.db")
 
 researcher = Agent(
     name="Researcher",
@@ -79,10 +84,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
-    agent_os.serve(app="content_workflow:app", port=8000)
+    agent_os.serve(app="basic_workflow:app", reload=True)

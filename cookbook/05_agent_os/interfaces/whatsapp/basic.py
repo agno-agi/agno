@@ -40,10 +40,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
-    agent_os.serve(app="basic:app", port=8000)
+    agent_os.serve(app="basic:app", reload=True)

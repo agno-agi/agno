@@ -1,11 +1,11 @@
 """
-Research Agent
-==============
+Research Assistant
+==================
 
 A WhatsApp agent that researches topics and writes papers as PDF documents.
 
-The user sends a topic, the agent searches the web for information, writes a
-structured research paper, and sends it back as a PDF via WhatsApp.
+Uses WhatsApp interactive features (reply buttons) to clarify ambiguous
+topics, and ``FileGenerationTools`` to deliver results as downloadable PDFs.
 
 Requires:
   WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID
@@ -26,7 +26,7 @@ from agno.tools.whatsapp import WhatsAppTools
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent_db = SqliteDb(db_file="tmp/research_agent.db")
+agent_db = SqliteDb(db_file="tmp/research_assistant.db")
 
 research_agent = Agent(
     name="Research Agent",
@@ -77,10 +77,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
-    agent_os.serve(app="research_agent:app", port=8000)
+    agent_os.serve(app="research_assistant:app", reload=True)
