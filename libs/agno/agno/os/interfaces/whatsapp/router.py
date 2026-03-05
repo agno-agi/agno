@@ -14,7 +14,7 @@ from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
     get_media_async,
-    parse_whatsapp_message,
+    extract_message_content,
     send_whatsapp_message_async,
     typing_indicator_async,
     upload_and_send_media_async,
@@ -84,7 +84,7 @@ def attach_routes(
         raise ValueError("Either agent, team, or workflow must be provided.")
 
     # Resolve credentials once; inner functions capture via closure
-    config = WhatsAppConfig.from_env(
+    config = WhatsAppConfig.init(
         access_token=access_token,
         phone_number_id=phone_number_id,
         verify_token=verify_token,
@@ -172,7 +172,7 @@ def attach_routes(
             message_id = message.get("id")
             await typing_indicator_async(message_id, config)
 
-            parsed = parse_whatsapp_message(message)
+            parsed = extract_message_content(message)
             if parsed is None:
                 return
 

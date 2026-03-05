@@ -1,6 +1,4 @@
 import struct
-import wave
-from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,74 +6,12 @@ import pytest
 from agno.media import Audio, File, Image
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
-    prepare_audio_for_whatsapp,
     send_whatsapp_message_async,
     upload_and_send_media_async,
 )
 from agno.os.interfaces.whatsapp.security import extract_earliest_timestamp
 
 _TEST_CONFIG = WhatsAppConfig(access_token="test-token", phone_number_id="123456", verify_token="test-verify")
-
-# === prepare_audio_for_whatsapp ===
-
-
-def test_prepare_audio_passthrough_supported_mime():
-    audio_bytes = b"\xff\xfb\x90\x00"
-    audio_obj = Audio(content=audio_bytes, mime_type="audio/mpeg", format="mp3")
-    result_bytes, result_mime, result_filename = prepare_audio_for_whatsapp(audio_bytes, audio_obj)
-    assert result_bytes == audio_bytes
-    assert result_mime == "audio/mpeg"
-    assert result_filename == "audio.mp3"
-
-
-def test_prepare_audio_passthrough_wav():
-    audio_bytes = b"RIFF\x00\x00\x00\x00WAVE"
-    audio_obj = Audio(content=audio_bytes, mime_type="audio/wav", format="wav")
-    result_bytes, result_mime, result_filename = prepare_audio_for_whatsapp(audio_bytes, audio_obj)
-    assert result_bytes == audio_bytes
-    assert result_mime == "audio/wav"
-
-
-def test_prepare_audio_passthrough_no_format():
-    audio_bytes = b"\x00\x00\x00\x1cftypisom"
-    audio_obj = Audio(content=audio_bytes, mime_type="audio/mp4")
-    result_bytes, result_mime, result_filename = prepare_audio_for_whatsapp(audio_bytes, audio_obj)
-    assert result_filename == "audio.mp4"
-
-
-def test_prepare_audio_pcm_to_wav_conversion():
-    pcm_data = struct.pack("<" + "h" * 100, *range(100))
-    audio_obj = Audio(content=pcm_data, mime_type="audio/L16;rate=24000")
-    result_bytes, result_mime, result_filename = prepare_audio_for_whatsapp(pcm_data, audio_obj)
-    assert result_mime == "audio/wav"
-    assert result_filename == "audio.wav"
-    buf = BytesIO(result_bytes)
-    with wave.open(buf, "rb") as wf:
-        assert wf.getnchannels() == 1
-        assert wf.getframerate() == 24000
-        assert wf.getsampwidth() == 2
-        assert wf.readframes(100) == pcm_data
-
-
-def test_prepare_audio_pcm_custom_rate_from_obj():
-    pcm_data = struct.pack("<" + "h" * 50, *range(50))
-    audio_obj = Audio(content=pcm_data, mime_type="audio/raw", sample_rate=16000, channels=2)
-    result_bytes, result_mime, result_filename = prepare_audio_for_whatsapp(pcm_data, audio_obj)
-    buf = BytesIO(result_bytes)
-    with wave.open(buf, "rb") as wf:
-        assert wf.getframerate() == 16000
-        assert wf.getnchannels() == 2
-
-
-def test_prepare_audio_pcm_rate_from_malformed_mime():
-    pcm_data = struct.pack("<" + "h" * 10, *range(10))
-    audio_obj = Audio(content=pcm_data, mime_type="audio/L16;rate=")
-    result_bytes, result_mime, _ = prepare_audio_for_whatsapp(pcm_data, audio_obj)
-    assert result_mime == "audio/wav"
-    # Audio defaults sample_rate=24000
-    buf = BytesIO(result_bytes)
-    with wave.open(buf, "rb") as wf:
-        assert wf.getframerate() == 24000
 
 
 # === extract_earliest_timestamp ===

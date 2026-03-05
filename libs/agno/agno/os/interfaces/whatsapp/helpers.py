@@ -1,13 +1,13 @@
 import io
 import mimetypes
 import os
-import wave
 from dataclasses import dataclass
 from typing import Optional, Union
 
 import httpx
 
 from agno.media import Audio, File
+from agno.utils.audio import pcm_to_wav_bytes
 from agno.utils.log import log_error, log_info, log_warning
 
 _BASE_URL = "https://graph.facebook.com"
@@ -22,7 +22,7 @@ class WhatsAppConfig:
     verify_token: Optional[str] = None
 
     @classmethod
-    def from_env(
+    def init(
         cls,
         access_token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
@@ -50,7 +50,7 @@ class WhatsAppConfig:
 
 
 @dataclass
-class ParsedMessage:
+class MessageContent:
     text: str
     image_id: Optional[str] = None
     video_id: Optional[str] = None
@@ -58,31 +58,31 @@ class ParsedMessage:
     doc_id: Optional[str] = None
 
 
-def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
+def extract_message_content(message: dict) -> Optional[MessageContent]:
     msg_type = message.get("type")
 
     if msg_type == "text":
         text = message["text"]["body"]
         log_info(text)
-        return ParsedMessage(text=text)
+        return MessageContent(text=text)
 
     if msg_type == "image":
-        return ParsedMessage(
+        return MessageContent(
             text=message.get("image", {}).get("caption", "Describe the image"),
             image_id=message["image"]["id"],
         )
 
     if msg_type == "video":
-        return ParsedMessage(
+        return MessageContent(
             text=message.get("video", {}).get("caption", "Describe the video"),
             video_id=message["video"]["id"],
         )
 
     if msg_type == "audio":
-        return ParsedMessage(text="Reply to audio", audio_id=message["audio"]["id"])
+        return MessageContent(text="Reply to audio", audio_id=message["audio"]["id"])
 
     if msg_type == "document":
-        return ParsedMessage(
+        return MessageContent(
             text=message.get("document", {}).get("caption", "Process the document"),
             doc_id=message["document"]["id"],
         )
@@ -95,7 +95,7 @@ def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
             reply = interactive.get("button_reply", {})
             text = reply.get("title", "")
             log_info(f"Button reply: id={reply.get('id')} title={text}")
-            return ParsedMessage(text=text)
+            return MessageContent(text=text)
         if interactive_type == "list_reply":
             reply = interactive.get("list_reply", {})
             text = reply.get("title", "")
@@ -103,7 +103,7 @@ def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
             if description:
                 text = f"{text}: {description}"
             log_info(f"List reply: id={reply.get('id')} title={text}")
-            return ParsedMessage(text=text)
+            return MessageContent(text=text)
         log_warning(f"Unknown interactive type: {interactive_type}")
         return None
 
@@ -112,27 +112,6 @@ def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
 
 
 _WHATSAPP_AUDIO_MIMES = {"audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg", "audio/wav"}
-
-
-def prepare_audio_for_whatsapp(audio_bytes: bytes, audio_obj: Audio) -> tuple[bytes, str, str]:
-    mime_type = audio_obj.mime_type or "audio/mpeg"
-
-    if mime_type.split(";")[0] in _WHATSAPP_AUDIO_MIMES:
-        fmt = audio_obj.format or mime_type.split("/")[-1]
-        return audio_bytes, mime_type, f"audio.{fmt}"
-
-    # Unsupported format (e.g. raw PCM "audio/L16;rate=24000") — wrap as WAV
-    sample_rate = audio_obj.sample_rate or 24000
-    channels = audio_obj.channels or 1
-    sample_width = 2  # 16-bit; matches L16 from Gemini TTS
-
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(sample_width)
-        wf.setframerate(sample_rate)
-        wf.writeframes(audio_bytes)
-    return buf.getvalue(), "audio/wav", "audio.wav"
 
 
 async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, bytes]:
@@ -307,7 +286,14 @@ async def upload_and_send_media_async(
             filename = item.name or item.filename or "document"
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         elif media_type == "audio":
-            raw_bytes, mime_type, filename = prepare_audio_for_whatsapp(raw_bytes, item)
+            mime_type = item.mime_type or "audio/mpeg"
+            if mime_type.split(";")[0] in _WHATSAPP_AUDIO_MIMES:
+                fmt = item.format or mime_type.split("/")[-1]
+                filename = f"audio.{fmt}"
+            else:
+                # Raw PCM (e.g. Gemini TTS "audio/L16;rate=24000") — wrap as WAV
+                raw_bytes = pcm_to_wav_bytes(raw_bytes, channels=item.channels, rate=item.sample_rate)
+                mime_type, filename = "audio/wav", "audio.wav"
         else:
             mime_type, filename = "application/octet-stream", media_type
 
