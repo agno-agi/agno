@@ -234,7 +234,7 @@ class GmailTools(Toolkit):
         self.max_body_length = max_body_length
         self.attachment_dir = attachment_dir
         # Gmail API allows max 100 items per batch request
-        self.max_batch_size = min(max_batch_size, 100)
+        self.max_batch_size = max(min(max_batch_size, 100), 1)
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
 
