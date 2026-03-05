@@ -117,39 +117,11 @@ def validate_email(email: str) -> bool:
     return bool(re.match(pattern, email))
 
 
-DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
+GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Gmail tools for reading, composing, and organizing emails.
 
-    - `get_latest_emails(count)`: Get the most recent emails from the inbox.
-    - `get_unread_emails(count)`: Get unread emails.
-    - `get_emails_from_user(user, count)`: Get emails from a specific sender.
-    - `search_emails(query, count)`: Search emails using a Gmail query string.
-    - `get_starred_emails(count)`: Get starred emails.
-    - `get_emails_by_context(context, count)`: Get emails matching a raw Gmail query.
-    - `get_emails_by_date(start_date, range_in_days, num_emails)`: Get emails in a date range (start_date is YYYY/MM/DD format).
-    - `get_emails_by_thread(thread_id)`: Get all messages in a thread.
-    - `create_draft_email(to, subject, body, cc, attachments)`: Create a draft email.
-    - `send_email(to, subject, body, cc, bcc, attachments)`: Send an email immediately.
-    - `send_email_reply(thread_id, message_id, to, subject, body)`: Reply to a thread.
-    - `mark_email_as_read(message_id)`: Mark a message as read.
-    - `mark_email_as_unread(message_id)`: Mark a message as unread.
-    - `star_email(message_id)`: Star an email.
-    - `unstar_email(message_id)`: Remove star from an email.
-    - `list_custom_labels()`: List user-created labels.
-    - `apply_label(context, label_name, count)`: Find emails by query and apply a label.
-    - `remove_label(context, label_name, count)`: Find emails by query and remove a label.
-    - `delete_custom_label(label_name, confirm)`: Delete a custom label.
-
-    - `get_message(message_id)`: Get a single email with full body, headers, and attachment metadata.
-    - `get_thread(thread_id)`: Get all messages in a conversation thread.
-    - `search_threads(query, count)`: Search Gmail threads by query. Returns thread IDs and snippets.
-    - `get_draft(draft_id)`: Get a draft email by ID with full content.
-    - `list_drafts(count)`: List draft emails in the mailbox.
-    - `send_draft(draft_id)`: Send an existing draft email.
-    - `update_draft(draft_id, to, subject, body, ...)`: Replace content of an existing draft.
-
     ## Gmail Query Syntax
-    Combine these operators in `search_emails`, `search_threads`, or `get_emails_by_context`:
+    Use these operators in search and context query parameters:
     - `from:user@example.com` / `to:user@example.com` — filter by sender/recipient
     - `subject:"meeting notes"` — filter by subject
     - `is:unread` / `is:starred` / `is:important` — filter by status
@@ -158,14 +130,7 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent("""\
     - `after:2024/01/01` / `before:2024/12/31` — absolute date range
     - `label:work` — filter by label
     - `from:me` — emails sent by the user
-    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`
-
-    ## Guidelines
-    - Use `get_message(message_id)` to read a specific email's full content.
-    - Use `search_threads` to find conversations, then `get_thread` for full content.
-    - To download attachments: call `get_message` first to get attachment IDs, then `download_attachment`.
-    - Use `create_draft_email` to draft emails for review before sending.
-    - Use `send_email_reply` with `thread_id` and `message_id` to reply within a conversation.""")
+    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`""")
 
 
 class GmailTools(Toolkit):
@@ -221,7 +186,7 @@ class GmailTools(Toolkit):
         trash_thread: bool = False,
         get_draft: bool = True,
         list_drafts: bool = True,
-        send_draft: bool = True,
+        send_draft: bool = False,
         update_draft: bool = True,
         list_labels: bool = False,
         modify_message_labels: bool = False,
@@ -251,7 +216,7 @@ class GmailTools(Toolkit):
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
         if instructions is None:
-            self.instructions = DEFAULT_INSTRUCTIONS
+            self.instructions = GMAIL_QUERY_INSTRUCTIONS
         else:
             self.instructions = instructions
 
@@ -269,7 +234,8 @@ class GmailTools(Toolkit):
         self.attachment_dir = attachment_dir
         # Gmail API allows max 100 items per batch request
         self.max_batch_size = min(max_batch_size, 100)
-        self._temp_dir: Optional[str] = None
+        self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
+        self._label_cache: Optional[Dict[str, str]] = None
 
         # When include_tools is specified, expose the full catalog and let
         # Toolkit's whitelist filter select the requested tools.
@@ -1056,6 +1022,8 @@ class GmailTools(Toolkit):
                     .execute()
                 )
                 label_id = label["id"]
+                # New label created — invalidate cache
+                self._label_cache = None
 
             # Apply label to all matching messages
             for msg in messages:
@@ -1155,6 +1123,7 @@ class GmailTools(Toolkit):
 
             # Delete the label
             self.service.users().labels().delete(userId="me", id=target_label["id"]).execute()  # type: ignore
+            self._label_cache = None
 
             return f"Successfully deleted label '{label_name}'. This label has been removed from all emails."
 
@@ -1213,7 +1182,7 @@ class GmailTools(Toolkit):
                 if content_type is None or encoding is not None:
                     content_type = "application/octet-stream"
 
-                main_type, sub_type = content_type.split("/", 1)
+                _, sub_type = content_type.split("/", 1)
 
                 # Read file and create attachment
                 with open(file_path, "rb") as file:
@@ -1322,11 +1291,10 @@ class GmailTools(Toolkit):
 
     def _resolve_label_ids(self, label_names: List[str]) -> List[str]:
         """Convert label names to Gmail label IDs. Falls back to raw name for system labels like INBOX."""
-        service = self.service
-        labels = service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-        lookup = {lbl["name"].lower(): lbl["id"] for lbl in labels}
-        # Fall back to the raw name (allows system label IDs like INBOX, UNREAD)
-        return [lookup.get(name.lower(), name) for name in label_names]
+        if self._label_cache is None:
+            labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+            self._label_cache = {lbl["name"].lower(): lbl["id"] for lbl in labels}
+        return [self._label_cache.get(name.lower(), name) for name in label_names]
 
     def _batch_get(
         self,
@@ -1371,8 +1339,8 @@ class GmailTools(Toolkit):
             dest_dir = Path(self.attachment_dir)
         else:
             if self._temp_dir is None:
-                self._temp_dir = tempfile.mkdtemp()
-            dest_dir = Path(self._temp_dir)
+                self._temp_dir = tempfile.TemporaryDirectory()
+            dest_dir = Path(self._temp_dir.name)
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Strip directory components to prevent path traversal from sender-controlled filenames
         safe_name = Path(filename).name or "attachment"
