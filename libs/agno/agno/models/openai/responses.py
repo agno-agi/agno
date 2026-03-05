@@ -961,7 +961,7 @@ class OpenAIResponses(Model):
         Handle the results of function calls.
 
         Translates each result's tool_call_id from fc_id format (fc_*) to call_id format (call_*)
-        using name-based lookup from the assistant message's tool_calls. This is necessary because
+        using fc_id-based lookup from the assistant message's tool_calls. This is necessary because
         index-based mapping breaks when external_execution tools are present — tool_call_ids has
         entries for ALL tool calls while function_call_results only has internally-executed ones.
 
