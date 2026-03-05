@@ -1,9 +1,13 @@
+import hashlib
 import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+
+# "sender_phone" hashed — matches router.py's sha256(phone_number.encode()).hexdigest()
+_HASHED_SENDER = hashlib.sha256("sender_phone".encode()).hexdigest()
 
 
 def _build_app(agent_mock: Mock) -> FastAPI:
@@ -162,8 +166,8 @@ async def test_text_message_processing():
         agent_mock.arun.assert_called_once()
         call_args = agent_mock.arun.call_args
         assert call_args[0][0] == "hello world"
-        assert call_args.kwargs["user_id"] == "sender_phone"
-        assert call_args.kwargs["session_id"] == "wa:sender_phone"
+        assert call_args.kwargs["user_id"] == _HASHED_SENDER
+        assert call_args.kwargs["session_id"] == f"wa:{_HASHED_SENDER}"
 
 
 @pytest.mark.asyncio
@@ -235,7 +239,7 @@ async def test_button_reply_processing():
         agent_mock.arun.assert_called_once()
         call_args = agent_mock.arun.call_args
         assert call_args[0][0] == "Yes"
-        assert call_args.kwargs["user_id"] == "sender_phone"
+        assert call_args.kwargs["user_id"] == _HASHED_SENDER
 
 
 @pytest.mark.asyncio
@@ -590,5 +594,91 @@ async def test_send_user_number_to_context():
 
         call_kwargs = agent_mock.arun.call_args.kwargs
         assert "dependencies" in call_kwargs
+        # Raw phone number still passed to agent context (for reply targeting)
         assert "sender_phone" in str(call_kwargs["dependencies"])
         assert call_kwargs["add_dependencies_to_context"] is True
+        # But user_id in storage is hashed
+        assert call_kwargs["user_id"] == _HASHED_SENDER
+
+
+# === Media Response: caption truncation + text fallback ===
+
+
+@pytest.mark.asyncio
+async def test_image_response_short_caption_no_extra_text():
+    agent_mock = AsyncMock()
+    agent_mock.arun = AsyncMock(
+        return_value=Mock(
+            status="OK",
+            content="Short caption",
+            reasoning_content=None,
+            images=[Mock(content=b"\x89PNG")],
+            files=None,
+            videos=None,
+            audio=None,
+            response_audio=None,
+            tools=None,
+        )
+    )
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock) as mock_send_text,
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.upload_and_send_media_async", new_callable=AsyncMock) as mock_upload,
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook("text", text={"body": "show me an image"})
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+        import asyncio
+
+        await asyncio.sleep(0.3)
+
+        mock_upload.assert_called_once()
+        # Short content — no separate text message
+        mock_send_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_image_response_long_caption_sends_full_text():
+    long_content = "x" * 1500
+    agent_mock = AsyncMock()
+    agent_mock.arun = AsyncMock(
+        return_value=Mock(
+            status="OK",
+            content=long_content,
+            reasoning_content=None,
+            images=[Mock(content=b"\x89PNG")],
+            files=None,
+            videos=None,
+            audio=None,
+            response_audio=None,
+            tools=None,
+        )
+    )
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers.send_text_message_async", new_callable=AsyncMock) as mock_send_text,
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.upload_and_send_media_async", new_callable=AsyncMock) as mock_upload,
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook("text", text={"body": "show me an image"})
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+        import asyncio
+
+        await asyncio.sleep(0.3)
+
+        mock_upload.assert_called_once()
+        # Long content — full text sent as separate message after media
+        mock_send_text.assert_called_once()
+        assert len(mock_send_text.call_args.kwargs["text"]) == 1500

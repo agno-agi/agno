@@ -23,6 +23,10 @@ class Whatsapp(BaseInterface):
         tags: Optional[List[str]] = None,
         show_reasoning: bool = False,
         send_user_number_to_context: bool = False,
+        # Falls back to env vars when None
+        access_token: Optional[str] = None,
+        phone_number_id: Optional[str] = None,
+        verify_token: Optional[str] = None,
     ):
         self.agent = agent
         self.team = team
@@ -32,6 +36,9 @@ class Whatsapp(BaseInterface):
         self.tags = tags or ["Whatsapp"]
         self.show_reasoning = show_reasoning
         self.send_user_number_to_context = send_user_number_to_context
+        self.access_token = access_token
+        self.phone_number_id = phone_number_id
+        self.verify_token = verify_token
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Whatsapp requires an agent, team, or workflow")
@@ -46,6 +53,9 @@ class Whatsapp(BaseInterface):
             workflow=self.workflow,
             show_reasoning=self.show_reasoning,
             send_user_number_to_context=self.send_user_number_to_context,
+            access_token=self.access_token,
+            phone_number_id=self.phone_number_id,
+            verify_token=self.verify_token,
         )
 
         return self.router

@@ -1,18 +1,53 @@
 import base64
 import io
+import json
 import mimetypes
+import os
 import wave
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
-from agno.utils.log import log_info, log_warning
-from agno.utils.whatsapp import (
-    send_audio_message_async,
-    send_document_message_async,
-    send_image_message_async,
-    send_text_message_async,
-    upload_media_async,
-)
+import httpx
+
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+
+_BASE_URL = "https://graph.facebook.com"
+_API_VERSION = "v22.0"
+
+
+@dataclass
+class WhatsAppConfig:
+    # Resolved once at startup by attach_routes; passed to all helpers
+    access_token: str
+    phone_number_id: str
+    verify_token: Optional[str] = None
+
+    @classmethod
+    def from_env(
+        cls,
+        access_token: Optional[str] = None,
+        phone_number_id: Optional[str] = None,
+        verify_token: Optional[str] = None,
+    ) -> "WhatsAppConfig":
+        token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        phone_id = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        v_token = verify_token or os.getenv("WHATSAPP_VERIFY_TOKEN")
+        if not token:
+            raise ValueError("WHATSAPP_ACCESS_TOKEN is not set. Set the environment variable or pass access_token.")
+        if not phone_id:
+            raise ValueError(
+                "WHATSAPP_PHONE_NUMBER_ID is not set. Set the environment variable or pass phone_number_id."
+            )
+        return cls(access_token=token, phone_number_id=phone_id, verify_token=v_token)
+
+    def messages_url(self) -> str:
+        return f"{_BASE_URL}/{_API_VERSION}/{self.phone_number_id}/messages"
+
+    def media_url(self) -> str:
+        return f"{_BASE_URL}/{_API_VERSION}/{self.phone_number_id}/media"
+
+    def auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.access_token}"}
 
 
 @dataclass
@@ -121,7 +156,194 @@ def prepare_audio_for_whatsapp(audio_bytes: bytes, mime_type: str, audio_obj) ->
     return buf.getvalue(), "audio/wav", "audio.wav"
 
 
-async def send_whatsapp_message_async(recipient: str, message: str, italics: bool = False) -> None:
+# ---------------------------------------------------------------------------
+# Graph API helpers — accept WhatsAppConfig instead of reading env per call
+# ---------------------------------------------------------------------------
+
+
+# Two-hop fetch: Graph API returns a temporary URL, then we download the bytes
+def get_media(media_id: str, config: WhatsAppConfig) -> Union[dict, bytes]:
+    url = f"{_BASE_URL}/{_API_VERSION}/{media_id}"
+    headers = config.auth_headers()
+
+    try:
+        response = httpx.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        media_url = data.get("url")
+    except httpx.HTTPError as e:
+        return {"error": str(e)}
+
+    try:
+        response = httpx.get(media_url, headers=headers)
+        response.raise_for_status()
+        return response.content
+    except httpx.HTTPError as e:
+        return {"error": str(e)}
+
+
+async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, bytes]:
+    url = f"{_BASE_URL}/{_API_VERSION}/{media_id}"
+    headers = config.auth_headers()
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        media_url = data.get("url")
+    except httpx.HTTPStatusError as e:
+        return {"error": str(e)}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(media_url, headers=headers)
+            response.raise_for_status()
+            return response.content
+    except httpx.HTTPStatusError as e:
+        return {"error": str(e)}
+
+
+# Upload bytes to Meta's media endpoint; returns a reusable media_id
+def upload_media(media_data: bytes, mime_type: str, filename: str, config: WhatsAppConfig) -> Union[str, dict]:
+    url = config.media_url()
+    headers = config.auth_headers()
+    data = {"messaging_product": "whatsapp", "type": mime_type}
+
+    try:
+        file_data = io.BytesIO(media_data)
+        files = {"file": (filename, file_data, mime_type)}
+        response = httpx.post(url, headers=headers, data=data, files=files)
+        response.raise_for_status()
+        json_resp = response.json()
+        result_id = json_resp.get("id")
+        if not result_id:
+            return {"error": "Media ID not found in response", "response": json_resp}
+        return result_id
+    except httpx.HTTPError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def upload_media_async(
+    media_data: bytes, mime_type: str, filename: str, config: WhatsAppConfig
+) -> Union[str, dict]:
+    url = config.media_url()
+    headers = config.auth_headers()
+    data = {"messaging_product": "whatsapp", "type": mime_type}
+
+    try:
+        file_data = io.BytesIO(media_data)
+        files = {"file": (filename, file_data, mime_type)}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, data=data, files=files)
+            response.raise_for_status()
+            json_resp = response.json()
+            result_id = json_resp.get("id")
+            if not result_id:
+                return {"error": "Media ID not found in response", "response": json_resp}
+            return result_id
+    except httpx.HTTPStatusError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def send_text_message_async(recipient: str, text: str, config: WhatsAppConfig, preview_url: bool = False) -> None:
+    url = config.messages_url()
+    headers = config.auth_headers()
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "text",
+        "text": {"preview_url": preview_url, "body": text},
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp text message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp text message: {str(e)}")
+        raise
+
+
+async def send_media_message_async(
+    media_type: str,
+    media_id: str,
+    recipient: str,
+    config: WhatsAppConfig,
+    caption: Optional[str] = None,
+    filename: Optional[str] = None,
+) -> None:
+    url = config.messages_url()
+    headers = config.auth_headers()
+
+    media_payload: dict = {"id": media_id}
+    if caption:
+        media_payload["caption"] = caption
+    if filename and media_type == "document":
+        media_payload["filename"] = filename
+
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": media_type,
+        media_type: media_payload,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        log_error(f"Failed to send WhatsApp {media_type} message: {e}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        raise
+    except Exception as e:
+        log_error(f"Unexpected error sending WhatsApp {media_type} message: {str(e)}")
+        raise
+
+
+# Marks message as read AND shows typing indicator in one API call
+async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConfig) -> Optional[dict]:
+    if not message_id:
+        return None
+
+    url = config.messages_url()
+    headers = config.auth_headers()
+    data = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": f"{message_id}",
+        "typing_indicator": {"type": "text"},
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return {"error": str(e)}
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Response upload helpers — used by the router to send agent output as media
+# ---------------------------------------------------------------------------
+
+
+async def send_whatsapp_message_async(
+    recipient: str, message: str, config: WhatsAppConfig, italics: bool = False
+) -> None:
     def _format(text: str) -> str:
         if italics:
             return "\n".join([f"_{line}_" for line in text.split("\n")])
@@ -129,80 +351,60 @@ async def send_whatsapp_message_async(recipient: str, message: str, italics: boo
 
     # WhatsApp limit is 4096 chars; split at 4000 to leave room for batch prefix
     if len(message) <= 4096:
-        await send_text_message_async(recipient=recipient, text=_format(message))
+        await send_text_message_async(recipient=recipient, text=_format(message), config=config)
         return
 
     message_batches = [message[i : i + 4000] for i in range(0, len(message), 4000)]
     for i, batch in enumerate(message_batches, 1):
         batch_message = f"[{i}/{len(message_batches)}] {batch}"
-        await send_text_message_async(recipient=recipient, text=_format(batch_message))
+        await send_text_message_async(recipient=recipient, text=_format(batch_message), config=config)
 
 
-# Upload each image to Meta, then send with response text as caption
-async def upload_response_images_async(response, recipient: str) -> None:
-    for img in response.images:
-        image_bytes = extract_media_bytes(img)
-        if image_bytes:
-            media_id = await upload_media_async(media_data=image_bytes, mime_type="image/png", filename="image.png")
-            if isinstance(media_id, dict):
-                log_warning(f"Image upload failed for user {recipient}: {media_id}")
-                await send_whatsapp_message_async(recipient, response.content or "")
-                continue
-            await send_image_message_async(media_id=media_id, recipient=recipient, text=response.content)
-        else:
-            log_warning(f"Could not process image content for user {recipient}. Type: {type(img.content)}")
-            await send_whatsapp_message_async(recipient, response.content or "")
+async def upload_and_send_media_async(
+    media_items: list,
+    media_type: str,
+    recipient: str,
+    config: WhatsAppConfig,
+    response_content: Optional[str] = None,
+    send_text_fallback: bool = True,
+) -> None:
+    for item in media_items:
+        raw_bytes = extract_media_bytes(item)
+        if not raw_bytes:
+            log_warning(f"Could not process {media_type} content for user {recipient}. Type: {type(item.content)}")
+            if send_text_fallback:
+                await send_whatsapp_message_async(recipient, response_content or "", config)
+            continue
 
-
-async def upload_response_files_async(response, recipient: str) -> None:
-    for file in response.files:
-        file_bytes = extract_media_bytes(file)
-        if file_bytes:
-            filename = getattr(file, "name", None) or getattr(file, "filename", None) or "document"
+        # Type-specific prep: resolve mime_type, filename, and optionally transform bytes
+        if media_type == "image":
+            mime_type, filename = "image/png", "image.png"
+        elif media_type == "document":
+            filename = getattr(item, "name", None) or getattr(item, "filename", None) or "document"
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-
-            media_id = await upload_media_async(media_data=file_bytes, mime_type=mime_type, filename=filename)
-            if isinstance(media_id, dict):
-                log_warning(f"File upload failed for user {recipient}: {media_id}")
-                await send_whatsapp_message_async(recipient, response.content or "")
-                continue
-            await send_document_message_async(
-                media_id=media_id,
-                recipient=recipient,
-                filename=filename,
-                caption=response.content,
-            )
+        elif media_type == "audio":
+            mime_type = getattr(item, "mime_type", None) or "audio/mpeg"
+            raw_bytes, mime_type, filename = prepare_audio_for_whatsapp(raw_bytes, mime_type, item)
         else:
-            log_warning(f"Could not process file content for user {recipient}. Type: {type(file.content)}")
-            await send_whatsapp_message_async(recipient, response.content or "")
+            mime_type, filename = "application/octet-stream", media_type
 
+        mid = await upload_media_async(media_data=raw_bytes, mime_type=mime_type, filename=filename, config=config)
+        if isinstance(mid, dict):
+            log_warning(f"{media_type.title()} upload failed for user {recipient}: {mid}")
+            if send_text_fallback:
+                await send_whatsapp_message_async(recipient, response_content or "", config)
+            continue
 
-async def upload_response_audio_async(response, recipient: str) -> None:
-    for aud in response.audio:
-        audio_bytes = extract_media_bytes(aud)
-        if audio_bytes:
-            mime_type = getattr(aud, "mime_type", None) or "audio/mpeg"
-            audio_bytes, mime_type, filename = prepare_audio_for_whatsapp(audio_bytes, mime_type, aud)
-            media_id = await upload_media_async(media_data=audio_bytes, mime_type=mime_type, filename=filename)
-            if isinstance(media_id, dict):
-                log_warning(f"Audio upload failed for user {recipient}: {media_id}")
-                await send_whatsapp_message_async(recipient, response.content or "")
-                continue
-            await send_audio_message_async(media_id=media_id, recipient=recipient)
-        else:
-            log_warning(f"Could not process audio content for user {recipient}. Type: {type(aud.content)}")
-            await send_whatsapp_message_async(recipient, response.content or "")
-
-
-async def upload_response_audio_single_async(audio_obj, recipient: str) -> None:
-    audio_bytes = extract_media_bytes(audio_obj)
-    if audio_bytes:
-        mime_type = getattr(audio_obj, "mime_type", None) or "audio/mpeg"
-        audio_bytes, mime_type, filename = prepare_audio_for_whatsapp(audio_bytes, mime_type, audio_obj)
-        media_id = await upload_media_async(media_data=audio_bytes, mime_type=mime_type, filename=filename)
-        if isinstance(media_id, dict):
-            log_warning(f"Audio upload failed for user {recipient}: {media_id}")
-            return
-        await send_audio_message_async(media_id=media_id, recipient=recipient)
-    else:
-        log_warning(f"Could not process response_audio for user {recipient}.")
+        # Caption only for image/document; audio has no caption field
+        # WhatsApp caps captions at 1024 chars — truncate explicitly
+        caption = response_content if media_type in ("image", "document") else None
+        if caption and len(caption) > 1024:
+            caption = caption[:1021] + "..."
+        await send_media_message_async(
+            media_type=media_type,
+            media_id=mid,
+            recipient=recipient,
+            config=config,
+            caption=caption,
+            filename=filename if media_type == "document" else None,
+        )
