@@ -9,6 +9,7 @@ from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.external_provider import ExternalKnowledgeProvider
 from agno.knowledge.external_provider.lightrag import LightRagProvider
+from agno.knowledge.external_provider.schemas import ProcessingResult
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.pipeline.ingestion import KnowledgeContentOrigin
 from agno.vectordb.base import VectorDb
@@ -26,6 +27,7 @@ class MockExternalProvider:
         self.ingested_texts: List[str] = []
         self.queries: List[str] = []
         self.deleted_ids: List[str] = []
+        self._status_responses: Dict[str, ProcessingResult] = {}
 
     def ingest_file(
         self,
@@ -33,9 +35,10 @@ class MockExternalProvider:
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         self.ingested_files.append(filename or "unknown")
-        return f"ext-file-{len(self.ingested_files)}"
+        pid = f"proc-file-{len(self.ingested_files)}"
+        return ProcessingResult(processing_id=pid, status=ContentStatus.PROCESSING)
 
     async def aingest_file(
         self,
@@ -43,27 +46,30 @@ class MockExternalProvider:
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         self.ingested_files.append(filename or "unknown")
-        return f"ext-file-{len(self.ingested_files)}"
+        pid = f"proc-file-{len(self.ingested_files)}"
+        return ProcessingResult(processing_id=pid, status=ContentStatus.PROCESSING)
 
     def ingest_text(
         self,
         text: str,
         source_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         self.ingested_texts.append(source_name or "unknown")
-        return f"ext-text-{len(self.ingested_texts)}"
+        pid = f"proc-text-{len(self.ingested_texts)}"
+        return ProcessingResult(processing_id=pid, status=ContentStatus.PROCESSING)
 
     async def aingest_text(
         self,
         text: str,
         source_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         self.ingested_texts.append(source_name or "unknown")
-        return f"ext-text-{len(self.ingested_texts)}"
+        pid = f"proc-text-{len(self.ingested_texts)}"
+        return ProcessingResult(processing_id=pid, status=ContentStatus.PROCESSING)
 
     def query(
         self,
@@ -92,6 +98,14 @@ class MockExternalProvider:
     async def adelete_content(self, external_id: str) -> bool:
         self.deleted_ids.append(external_id)
         return True
+
+    def get_status(self, processing_id: str) -> ProcessingResult:
+        if processing_id in self._status_responses:
+            return self._status_responses[processing_id]
+        return ProcessingResult(processing_id=processing_id, status=ContentStatus.PROCESSING)
+
+    async def aget_status(self, processing_id: str) -> ProcessingResult:
+        return self.get_status(processing_id)
 
 
 class MockVectorDb(VectorDb):
@@ -305,8 +319,8 @@ class TestPipelineExternalIngestion:
         pipeline._ingest_external(content, KnowledgeContentOrigin.CONTENT)
 
         assert len(provider.ingested_files) == 1
-        assert content.status == ContentStatus.COMPLETED
-        assert content.external_id is not None
+        assert content.status == ContentStatus.PROCESSING
+        assert content.processing_id is not None
 
     def test_ingest_external_topic(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
@@ -323,7 +337,7 @@ class TestPipelineExternalIngestion:
         pipeline._ingest_external(content, KnowledgeContentOrigin.TOPIC)
 
         assert len(provider.ingested_texts) == 1
-        assert content.status == ContentStatus.COMPLETED
+        assert content.status == ContentStatus.PROCESSING
 
     @pytest.mark.asyncio
     async def test_aingest_external_content_type(self):
@@ -341,8 +355,8 @@ class TestPipelineExternalIngestion:
         await pipeline._aingest_external(content, KnowledgeContentOrigin.CONTENT)
 
         assert len(provider.ingested_files) == 1
-        assert content.status == ContentStatus.COMPLETED
-        assert content.external_id is not None
+        assert content.status == ContentStatus.PROCESSING
+        assert content.processing_id is not None
 
     def test_ingest_external_failure_sets_status(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
@@ -361,3 +375,125 @@ class TestPipelineExternalIngestion:
 
         assert content.status == ContentStatus.FAILED
         assert "Upload failed" in (content.status_message or "")
+
+
+# ------------------------------------------------------------------
+# Status resolution tests
+# ------------------------------------------------------------------
+
+
+class TestStatusResolution:
+    def test_resolve_external_status_completed(self):
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        provider = MockExternalProvider()
+        provider._status_responses["proc-123"] = ProcessingResult(
+            processing_id="proc-123",
+            external_id="doc-456",
+            status=ContentStatus.COMPLETED,
+        )
+        knowledge.external_provider = provider
+
+        mock_content = Content(
+            id="content-1",
+            name="test",
+            processing_id="proc-123",
+            status=ContentStatus.PROCESSING,
+        )
+        knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
+        knowledge._content_store.update = MagicMock()
+
+        status, message = knowledge._resolve_external_status("content-1", ContentStatus.PROCESSING, None)
+        assert status == ContentStatus.COMPLETED
+        assert mock_content.external_id == "doc-456"
+        knowledge._content_store.update.assert_called_once()
+
+    def test_resolve_external_status_failed(self):
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        provider = MockExternalProvider()
+        provider._status_responses["proc-789"] = ProcessingResult(
+            processing_id="proc-789",
+            status=ContentStatus.FAILED,
+            status_message="External provider processing failed",
+        )
+        knowledge.external_provider = provider
+
+        mock_content = Content(
+            id="content-2",
+            name="test",
+            processing_id="proc-789",
+            status=ContentStatus.PROCESSING,
+        )
+        knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
+        knowledge._content_store.update = MagicMock()
+
+        status, message = knowledge._resolve_external_status("content-2", ContentStatus.PROCESSING, None)
+        assert status == ContentStatus.FAILED
+        assert message == "External provider processing failed"
+        knowledge._content_store.update.assert_called_once()
+
+    def test_resolve_external_status_still_processing(self):
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        provider = MockExternalProvider()
+        knowledge.external_provider = provider
+
+        mock_content = Content(
+            id="content-3",
+            name="test",
+            processing_id="proc-still",
+            status=ContentStatus.PROCESSING,
+        )
+        knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
+        knowledge._content_store.update = MagicMock()
+
+        status, message = knowledge._resolve_external_status("content-3", ContentStatus.PROCESSING, None)
+        assert status == ContentStatus.PROCESSING
+        # Should NOT persist when still processing
+        knowledge._content_store.update.assert_not_called()
+
+    def test_resolve_external_status_no_processing_id(self):
+        """Falls back to external_id when processing_id is None."""
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        provider = MockExternalProvider()
+        provider._status_responses["ext-fallback"] = ProcessingResult(
+            processing_id="ext-fallback",
+            status=ContentStatus.COMPLETED,
+            external_id="ext-fallback",
+        )
+        knowledge.external_provider = provider
+
+        mock_content = Content(
+            id="content-4",
+            name="test",
+            external_id="ext-fallback",
+            status=ContentStatus.PROCESSING,
+        )
+        knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
+        knowledge._content_store.update = MagicMock()
+
+        status, _ = knowledge._resolve_external_status("content-4", ContentStatus.PROCESSING, None)
+        assert status == ContentStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_aresolve_external_status_completed(self):
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        provider = MockExternalProvider()
+        provider._status_responses["proc-async"] = ProcessingResult(
+            processing_id="proc-async",
+            external_id="doc-async",
+            status=ContentStatus.COMPLETED,
+        )
+        knowledge.external_provider = provider
+
+        mock_content = Content(
+            id="content-5",
+            name="test",
+            processing_id="proc-async",
+            status=ContentStatus.PROCESSING,
+        )
+        knowledge._content_store.aget_content_by_id = AsyncMock(return_value=mock_content)
+        knowledge._content_store.aupdate = AsyncMock()
+
+        status, message = await knowledge._aresolve_external_status("content-5", ContentStatus.PROCESSING, None)
+        assert status == ContentStatus.COMPLETED
+        assert mock_content.external_id == "doc-async"
+        knowledge._content_store.aupdate.assert_called_once()

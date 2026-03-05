@@ -2,17 +2,29 @@
 
 Encapsulates all HTTP communication with a LightRAG server. Pass directly
 to ``Knowledge(external_provider=LightRagProvider(...))`` for graph-based RAG.
+
+Ingestion is fire-and-forget: the provider hands content to LightRAG and
+returns immediately with a ``ProcessingResult`` containing a ``processing_id``
+(the LightRAG track_id).  LightRAG processes documents asynchronously in the
+background; queries will include the new content once processing completes.
+The Agno contents-db tracks content as PROCESSING until it is resolved via
+``get_status``/``aget_status``.
 """
 
 import asyncio
+import concurrent.futures
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from agno.knowledge.content import ContentStatus
 from agno.knowledge.document import Document
+from agno.knowledge.external_provider.schemas import ProcessingResult
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 DEFAULT_SERVER_URL = "http://localhost:9621"
+
+TRACK_ID_PREFIX = "track:"
 
 
 class LightRagProvider:
@@ -29,6 +41,20 @@ class LightRagProvider:
         self.api_key = api_key
         self.auth_header_name = auth_header_name
         self.auth_header_format = auth_header_format
+
+    # ------------------------------------------------------------------
+    # Async-to-sync helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _run_sync(coro):  # type: ignore[no-untyped-def]
+        """Run an async coroutine from sync code, even inside a running event loop."""
+        try:
+            asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result()
+        except RuntimeError:
+            return asyncio.run(coro)
 
     # ------------------------------------------------------------------
     # Header helpers
@@ -56,9 +82,9 @@ class LightRagProvider:
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         """Sync wrapper around aingest_file."""
-        return asyncio.run(
+        return self._run_sync(
             self.aingest_file(
                 file_content=file_content,
                 filename=filename,
@@ -73,11 +99,19 @@ class LightRagProvider:
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Upload raw file bytes to the LightRAG server. Returns an external document ID."""
+    ) -> ProcessingResult:
+        """Upload raw file bytes to the LightRAG server.
+
+        Returns a ``ProcessingResult`` with the track_id as ``processing_id``.
+        LightRAG processes the document in the background.
+        """
         if not file_content:
             log_warning("File content is empty.")
-            return None
+            return ProcessingResult(
+                processing_id="",
+                status=ContentStatus.FAILED,
+                status_message="File content is empty",
+            )
 
         if filename and content_type:
             files = {"file": (filename, file_content, content_type)}
@@ -92,12 +126,12 @@ class LightRagProvider:
             )
             response.raise_for_status()
             result = response.json()
-            log_info(f"File insertion result: {result}")
             track_id = result["track_id"]
-            log_info(f"Track ID: {track_id}")
-            doc_id = await self._get_document_id(track_id)
-            log_info(f"Document ID: {doc_id}")
-            return doc_id
+            log_info(f"File submitted to LightRAG, track_id: {track_id}")
+            return ProcessingResult(
+                processing_id=track_id,
+                status=ContentStatus.PROCESSING,
+            )
 
     # ------------------------------------------------------------------
     # Ingestion — plain text
@@ -108,17 +142,21 @@ class LightRagProvider:
         text: str,
         source_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         """Sync wrapper around aingest_text."""
-        return asyncio.run(self.aingest_text(text=text, source_name=source_name, metadata=metadata))
+        return self._run_sync(self.aingest_text(text=text, source_name=source_name, metadata=metadata))
 
     async def aingest_text(
         self,
         text: str,
         source_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Insert text into the LightRAG server. Returns an external document ID."""
+    ) -> ProcessingResult:
+        """Insert text into the LightRAG server.
+
+        Returns a ``ProcessingResult`` with the track_id as ``processing_id``.
+        LightRAG processes the document in the background.
+        """
         payload: Dict[str, str] = {"text": text}
         if source_name:
             payload["file_source"] = source_name
@@ -131,12 +169,12 @@ class LightRagProvider:
             )
             response.raise_for_status()
             result = response.json()
-            log_info(f"Text insertion result: {result}")
             track_id = result["track_id"]
-            log_info(f"Track ID: {track_id}")
-            doc_id = await self._get_document_id(track_id)
-            log_info(f"Document ID: {doc_id}")
-            return doc_id
+            log_info(f"Text submitted to LightRAG, track_id: {track_id}")
+            return ProcessingResult(
+                processing_id=track_id,
+                status=ContentStatus.PROCESSING,
+            )
 
     # ------------------------------------------------------------------
     # Query
@@ -150,7 +188,7 @@ class LightRagProvider:
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """Sync wrapper around aquery."""
-        result = asyncio.run(self.aquery(query=query, limit=limit, mode=mode, filters=filters))
+        result = self._run_sync(self.aquery(query=query, limit=limit, mode=mode, filters=filters))
         return result if result is not None else []
 
     async def aquery(
@@ -198,7 +236,7 @@ class LightRagProvider:
     ) -> bool:
         """Sync wrapper around adelete_content."""
         try:
-            return asyncio.run(self.adelete_content(external_id))
+            return self._run_sync(self.adelete_content(external_id))
         except Exception as e:
             log_error(f"Error in sync delete_content: {e}")
             return False
@@ -207,9 +245,18 @@ class LightRagProvider:
         self,
         external_id: str,
     ) -> bool:
-        """Delete a document from LightRAG by its external ID."""
+        """Delete a document from LightRAG by its external ID.
+
+        Accepts either a raw doc ID or a ``track:<track_id>`` reference.
+        Track references are resolved to a doc ID on the fly.
+        """
         try:
-            payload = {"doc_ids": [external_id], "delete_file": False}
+            doc_id = await self._resolve_doc_id(external_id)
+            if doc_id is None:
+                log_warning(f"Could not resolve LightRAG doc ID from: {external_id}")
+                return False
+
+            payload = {"doc_ids": [doc_id], "delete_file": False}
             async with httpx.AsyncClient() as client:
                 response = await client.request(
                     method="DELETE",
@@ -224,25 +271,90 @@ class LightRagProvider:
             return False
 
     # ------------------------------------------------------------------
+    # Status polling
+    # ------------------------------------------------------------------
+
+    def get_status(self, processing_id: str) -> ProcessingResult:
+        """Sync wrapper around aget_status."""
+        return self._run_sync(self.aget_status(processing_id))
+
+    async def aget_status(self, processing_id: str) -> ProcessingResult:
+        """Check LightRAG processing status for a track ID.
+
+        Queries the track status endpoint and returns a ``ProcessingResult``
+        with the resolved ``external_id`` (document ID) when completed.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.server_url}/documents/track_status/{processing_id}",
+                    headers=self._get_headers(),
+                )
+                response.raise_for_status()
+                result = response.json()
+                log_debug(f"Track status for {processing_id}: {result}")
+
+                status_summary = result.get("status_summary", {})
+                if status_summary.get("failed", 0) > 0:
+                    return ProcessingResult(
+                        processing_id=processing_id,
+                        status=ContentStatus.FAILED,
+                        status_message="External provider processing failed",
+                    )
+
+                documents = result.get("documents", [])
+                if documents:
+                    external_id = documents[0]["id"]
+                    return ProcessingResult(
+                        processing_id=processing_id,
+                        external_id=external_id,
+                        status=ContentStatus.COMPLETED,
+                    )
+
+                return ProcessingResult(
+                    processing_id=processing_id,
+                    status=ContentStatus.PROCESSING,
+                )
+        except Exception as e:
+            log_error(f"Error checking track status {processing_id}: {e}")
+            return ProcessingResult(
+                processing_id=processing_id,
+                status=ContentStatus.PROCESSING,
+                status_message=f"Error checking status: {e}",
+            )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get_document_id(self, track_id: str) -> Optional[str]:
-        """Poll the LightRAG server for a document ID given a track ID."""
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.server_url}/documents/track_status/{track_id}",
-                headers=self._get_headers(),
-            )
-            response.raise_for_status()
-            result = response.json()
-            log_debug(f"Document ID result: {result}")
+    async def _resolve_doc_id(self, external_id: str) -> Optional[str]:
+        """Resolve an external_id to a LightRAG document ID.
 
-            if "documents" in result and len(result["documents"]) > 0:
-                return result["documents"][0]["id"]
-            else:
-                log_error(f"No documents found in track response: {result}")
+        If the external_id is a ``track:<track_id>`` reference, queries the
+        track status endpoint to find the actual document ID.  Otherwise
+        returns the external_id as-is (assumed to be a doc ID already).
+        """
+        if not external_id.startswith(TRACK_ID_PREFIX):
+            return external_id
+
+        track_id = external_id[len(TRACK_ID_PREFIX) :]
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.server_url}/documents/track_status/{track_id}",
+                    headers=self._get_headers(),
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                if "documents" in result and len(result["documents"]) > 0:
+                    return result["documents"][0]["id"]
+
+                log_warning(f"No documents found for track_id {track_id}: {result}")
                 return None
+        except Exception as e:
+            log_error(f"Error resolving doc ID from track_id {track_id}: {e}")
+            return None
 
     def _format_response(self, result: Any, query: str, mode: str) -> List[Document]:
         """Format LightRAG server response into Document objects."""

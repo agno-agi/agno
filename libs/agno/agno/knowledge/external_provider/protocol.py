@@ -1,14 +1,19 @@
 """ExternalKnowledgeProvider — protocol for external providers that manage their own indexing.
 
-Providers implementing this protocol handle ingestion (file/text), search, and
-deletion internally, bypassing Agno's default chunk-embed-store pipeline.
-LightRAG is the canonical example: it runs its own graph-based indexing server
-and exposes HTTP endpoints for upload, query, and delete.
+Providers implementing this protocol handle ingestion (file/text), search,
+deletion, and status polling internally, bypassing Agno's default chunk-embed-store
+pipeline. LightRAG is the canonical example: it runs its own graph-based indexing
+server and exposes HTTP endpoints for upload, query, and delete.
 """
 
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from agno.knowledge.document import Document
+
+if TYPE_CHECKING:
+    from agno.knowledge.external_provider.schemas import ProcessingResult
 
 
 @runtime_checkable
@@ -29,8 +34,8 @@ class ExternalKnowledgeProvider(Protocol):
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Ingest a file from raw bytes. Returns an external document ID."""
+    ) -> ProcessingResult:
+        """Ingest a file from raw bytes. Returns a ProcessingResult."""
         ...
 
     async def aingest_file(
@@ -39,7 +44,7 @@ class ExternalKnowledgeProvider(Protocol):
         filename: Optional[str] = None,
         content_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         """Async variant of ingest_file."""
         ...
 
@@ -52,8 +57,8 @@ class ExternalKnowledgeProvider(Protocol):
         text: str,
         source_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Ingest plain text. Returns an external document ID."""
+    ) -> ProcessingResult:
+        """Ingest plain text. Returns a ProcessingResult."""
         ...
 
     async def aingest_text(
@@ -61,7 +66,7 @@ class ExternalKnowledgeProvider(Protocol):
         text: str,
         source_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> ProcessingResult:
         """Async variant of ingest_text."""
         ...
 
@@ -105,4 +110,22 @@ class ExternalKnowledgeProvider(Protocol):
         external_id: str,
     ) -> bool:
         """Async variant of delete_content."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Status polling
+    # ------------------------------------------------------------------
+
+    def get_status(
+        self,
+        processing_id: str,
+    ) -> ProcessingResult:
+        """Get the processing status of a document by its processing ID."""
+        ...
+
+    async def aget_status(
+        self,
+        processing_id: str,
+    ) -> ProcessingResult:
+        """Async variant of get_status."""
         ...

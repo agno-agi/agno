@@ -68,6 +68,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    "processing_id": {"type": lambda: String(128), "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

@@ -600,10 +600,96 @@ class Knowledge:
         return await self._content_store.aget_content_by_id(content_id)
 
     def get_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
-        return self._content_store.get_content_status(content_id)
+        status, message = self._content_store.get_content_status(content_id)
+        if status == ContentStatus.PROCESSING and self.external_provider is not None:
+            status, message = self._resolve_external_status(content_id, status, message)
+        return status, message
 
     async def aget_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
-        return await self._content_store.aget_content_status(content_id)
+        status, message = await self._content_store.aget_content_status(content_id)
+        if status == ContentStatus.PROCESSING and self.external_provider is not None:
+            status, message = await self._aresolve_external_status(content_id, status, message)
+        return status, message
+
+    def _resolve_external_status(
+        self,
+        content_id: str,
+        current_status: ContentStatus,
+        current_message: Optional[str],
+    ) -> Tuple[ContentStatus, Optional[str]]:
+        """Check an external provider for updated processing status (sync)."""
+        content = self._content_store.get_content_by_id(content_id)
+        if content is None:
+            return current_status, current_message
+
+        polling_id = content.processing_id or content.external_id
+        if polling_id is None:
+            return current_status, current_message
+
+        try:
+            provider = self.external_provider
+            if provider is not None and hasattr(provider, "get_status"):
+                result = provider.get_status(polling_id)
+                return self._apply_provider_result(content, result, current_status, current_message)
+        except Exception as e:
+            log_debug(f"Could not check external provider status: {e}")
+        return current_status, current_message
+
+    async def _aresolve_external_status(
+        self,
+        content_id: str,
+        current_status: ContentStatus,
+        current_message: Optional[str],
+    ) -> Tuple[ContentStatus, Optional[str]]:
+        """Check an external provider for updated processing status (async)."""
+        content = await self._content_store.aget_content_by_id(content_id)
+        if content is None:
+            return current_status, current_message
+
+        polling_id = content.processing_id or content.external_id
+        if polling_id is None:
+            return current_status, current_message
+
+        try:
+            provider = self.external_provider
+            if provider is not None and hasattr(provider, "aget_status"):
+                result = await provider.aget_status(polling_id)
+                return await self._aapply_provider_result(content, result, current_status, current_message)
+        except Exception as e:
+            log_debug(f"Could not check external provider status: {e}")
+        return current_status, current_message
+
+    def _apply_provider_result(
+        self,
+        content: Content,
+        result: Any,
+        current_status: ContentStatus,
+        current_message: Optional[str],
+    ) -> Tuple[ContentStatus, Optional[str]]:
+        """Apply a ProcessingResult from the external provider and persist changes (sync)."""
+        content.status = result.status
+        content.status_message = result.status_message
+        if result.status == ContentStatus.COMPLETED and result.external_id and not content.external_id:
+            content.external_id = result.external_id
+        if result.status in (ContentStatus.COMPLETED, ContentStatus.FAILED):
+            self._content_store.update(content, vector_db=self.vector_db)
+        return content.status, content.status_message
+
+    async def _aapply_provider_result(
+        self,
+        content: Content,
+        result: Any,
+        current_status: ContentStatus,
+        current_message: Optional[str],
+    ) -> Tuple[ContentStatus, Optional[str]]:
+        """Apply a ProcessingResult from the external provider and persist changes (async)."""
+        content.status = result.status
+        content.status_message = result.status_message
+        if result.status == ContentStatus.COMPLETED and result.external_id and not content.external_id:
+            content.external_id = result.external_id
+        if result.status in (ContentStatus.COMPLETED, ContentStatus.FAILED):
+            await self._content_store.aupdate(content, vector_db=self.vector_db)
+        return content.status, content.status_message
 
     def patch_content(self, content: Content) -> Optional[Dict[str, Any]]:
         return self._content_store.patch_content(content, vector_db=self.vector_db)

@@ -17,6 +17,7 @@ from httpx import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
+from agno.knowledge.external_provider.schemas import ProcessingResult
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader_registry import ReaderRegistry
 from agno.knowledge.store.content_store import ContentStore
@@ -1096,12 +1097,22 @@ class IngestionPipeline:
     # ==========================================
 
     def _ingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Route content to the external provider (sync). Handles PATH, URL, CONTENT, and TOPIC origins."""
-        self.content_store.insert(content)  # type: ignore[union-attr]
+        """Route content to the external provider (sync). Handles PATH, URL, CONTENT, and TOPIC origins.
+
+        Content stays in PROCESSING state because the external provider (e.g. LightRAG)
+        processes documents asynchronously. Status is resolved when polled.
+        """
+        content.metadata = self._build_external_provider_metadata(content, content_type)
         try:
             result = self._do_external_ingest(content, content_type)
-            content.external_id = result
-            content.status = ContentStatus.COMPLETED
+            content.processing_id = result.processing_id
+            content.external_id = result.external_id
+            content.status = result.status
+            content.status_message = result.status_message
+            if result.processing_id:
+                content.metadata = set_agno_metadata(content.metadata, "processing_id", result.processing_id)
+            if result.external_id:
+                content.metadata = set_agno_metadata(content.metadata, "external_id", result.external_id)
         except Exception as e:
             log_error(f"Error ingesting via external provider: {e}")
             content.status = ContentStatus.FAILED
@@ -1109,19 +1120,56 @@ class IngestionPipeline:
         self.content_store.update(content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
     async def _aingest_external(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Route content to the external provider (async). Handles PATH, URL, CONTENT, and TOPIC origins."""
-        await self.content_store.ainsert(content)  # type: ignore[union-attr]
+        """Route content to the external provider (async). Handles PATH, URL, CONTENT, and TOPIC origins.
+
+        Content stays in PROCESSING state because the external provider (e.g. LightRAG)
+        processes documents asynchronously. Status is resolved when polled.
+        """
+        content.metadata = self._build_external_provider_metadata(content, content_type)
         try:
             result = await self._ado_external_ingest(content, content_type)
-            content.external_id = result
-            content.status = ContentStatus.COMPLETED
+            content.processing_id = result.processing_id
+            content.external_id = result.external_id
+            content.status = result.status
+            content.status_message = result.status_message
+            if result.processing_id:
+                content.metadata = set_agno_metadata(content.metadata, "processing_id", result.processing_id)
+            if result.external_id:
+                content.metadata = set_agno_metadata(content.metadata, "external_id", result.external_id)
         except Exception as e:
             log_error(f"Error ingesting via external provider: {e}")
             content.status = ContentStatus.FAILED
             content.status_message = f"External provider ingestion failed: {str(e)}"
         await self.content_store.aupdate(content, vector_db=self.vector_db)  # type: ignore[union-attr]
 
-    def _do_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
+    def _build_external_provider_metadata(
+        self,
+        content: Content,
+        content_type: KnowledgeContentOrigin,
+    ) -> Dict[str, Any]:
+        """Build _agno metadata for content managed by an external provider."""
+        provider = self.external_provider
+        assert provider is not None
+
+        provider_class = type(provider).__name__
+        metadata = content.metadata or {}
+        metadata = set_agno_metadata(metadata, "source_type", "external_provider")
+        metadata = set_agno_metadata(metadata, "provider", provider_class)
+        metadata = set_agno_metadata(metadata, "content_origin", content_type.value)
+
+        if hasattr(provider, "server_url"):
+            metadata = set_agno_metadata(metadata, "server_url", provider.server_url)
+
+        if content_type == KnowledgeContentOrigin.URL and content.url:
+            metadata = set_agno_metadata(metadata, "source_url", content.url)
+        elif content_type == KnowledgeContentOrigin.PATH and content.path:
+            metadata = set_agno_metadata(metadata, "source_path", content.path)
+        elif content_type == KnowledgeContentOrigin.TOPIC and content.topics:
+            metadata = set_agno_metadata(metadata, "source_topics", content.topics)
+
+        return metadata
+
+    def _do_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> ProcessingResult:
         """Dispatch to the appropriate external provider ingestion method (sync)."""
         provider = self.external_provider
         assert provider is not None
@@ -1162,8 +1210,7 @@ class IngestionPipeline:
                     content_type=content.file_data.type,
                 )
             else:
-                log_warning(f"No file data available for external provider upload: {content.name}")
-                return None
+                raise ValueError(f"No file data available for external provider upload: {content.name}")
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
             log_info(f"Ingesting topic via external provider: {content.name}")
@@ -1175,12 +1222,11 @@ class IngestionPipeline:
             if len(read_documents) > 0:
                 return provider.ingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for external provider upload: {content.name}")
-                return None
+                raise ValueError(f"No documents found for external provider upload: {content.name}")
 
-        return None
+        raise ValueError(f"Unsupported content type: {content_type}")
 
-    async def _ado_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> Optional[str]:
+    async def _ado_external_ingest(self, content: Content, content_type: KnowledgeContentOrigin) -> ProcessingResult:
         """Dispatch to the appropriate external provider ingestion method (async)."""
         provider = self.external_provider
         assert provider is not None
@@ -1221,8 +1267,7 @@ class IngestionPipeline:
                     content_type=content.file_data.type,
                 )
             else:
-                log_warning(f"No file data available for external provider upload: {content.name}")
-                return None
+                raise ValueError(f"No file data available for external provider upload: {content.name}")
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
             log_info(f"Ingesting topic via external provider: {content.name}")
@@ -1234,7 +1279,6 @@ class IngestionPipeline:
             if len(read_documents) > 0:
                 return await provider.aingest_text(text=read_documents[0].content, source_name=content.topics[0])
             else:
-                log_warning(f"No documents found for external provider upload: {content.name}")
-                return None
+                raise ValueError(f"No documents found for external provider upload: {content.name}")
 
-        return None
+        raise ValueError(f"Unsupported content type: {content_type}")
