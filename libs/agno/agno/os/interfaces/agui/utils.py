@@ -486,7 +486,8 @@ def _create_completion_events(
     # Emit final state snapshot before finishing the run (only if frontend opted into state tracking)
     if run_state is not None:
         # Use session_state from RunCompletedEvent (authoritative) if available, otherwise fall back to run_state
-        final_state = getattr(chunk, "session_state", None) or run_state
+        authoritative_state = getattr(chunk, "session_state", None)
+        final_state = authoritative_state if authoritative_state is not None else run_state
         snapshot_event = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=final_state)
         events_to_emit.append(snapshot_event)
 
