@@ -35,6 +35,8 @@ _REASONING_SKIP_PREFIXES = ("Action:", "Next Action:", "Confidence:")
 # router skips duplicate text when any of these ran
 _WA_TOOL_NAMES = frozenset(
     {
+        "send_text_message",
+        "send_template_message",
         "send_reply_buttons",
         "send_list_message",
         "send_image",
@@ -190,13 +192,21 @@ def attach_routes(
                 "session_id": session_id,
             }
             if parsed.image_id:
-                run_kwargs["images"] = [Image(content=await get_media_async(parsed.image_id, config))]
+                media = await get_media_async(parsed.image_id, config)
+                if isinstance(media, bytes):
+                    run_kwargs["images"] = [Image(content=media)]
             if parsed.doc_id:
-                run_kwargs["files"] = [File(content=await get_media_async(parsed.doc_id, config))]
+                media = await get_media_async(parsed.doc_id, config)
+                if isinstance(media, bytes):
+                    run_kwargs["files"] = [File(content=media)]
             if parsed.video_id:
-                run_kwargs["videos"] = [Video(content=await get_media_async(parsed.video_id, config))]
+                media = await get_media_async(parsed.video_id, config)
+                if isinstance(media, bytes):
+                    run_kwargs["videos"] = [Video(content=media)]
             if parsed.audio_id:
-                run_kwargs["audio"] = [Audio(content=await get_media_async(parsed.audio_id, config))]
+                media = await get_media_async(parsed.audio_id, config)
+                if isinstance(media, bytes):
+                    run_kwargs["audio"] = [Audio(content=media)]
 
             # Inject phone number so the agent can reference the user in responses
             if send_user_number_to_context:

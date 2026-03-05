@@ -1,4 +1,3 @@
-import base64
 import io
 import mimetypes
 import os
@@ -8,6 +7,7 @@ from typing import Optional, Union
 
 import httpx
 
+from agno.media import Audio, File
 from agno.utils.log import log_error, log_info, log_warning
 
 _BASE_URL = "https://graph.facebook.com"
@@ -111,74 +111,28 @@ def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
     return None
 
 
-def extract_media_bytes(media_obj) -> Optional[bytes]:
-    # Content may arrive as raw bytes or base64-encoded string
-    content = media_obj.content
-    if isinstance(content, bytes):
-        try:
-            decoded_string = content.decode("utf-8")
-            return base64.b64decode(decoded_string)
-        except Exception:
-            return content
-    elif isinstance(content, str):
-        return base64.b64decode(content)
-    return None
+_WHATSAPP_AUDIO_MIMES = {"audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg", "audio/wav"}
 
 
-def prepare_audio_for_whatsapp(audio_bytes: bytes, mime_type: str, audio_obj) -> tuple:
-    """Convert raw PCM audio to WAV for WhatsApp compatibility.
+def prepare_audio_for_whatsapp(audio_bytes: bytes, audio_obj: Audio) -> tuple[bytes, str, str]:
+    mime_type = audio_obj.mime_type or "audio/mpeg"
 
-    Gemini TTS returns raw PCM with mime_type like 'audio/L16;rate=24000'.
-    WhatsApp requires a proper container format (mp3, ogg, wav, aac, amr).
-    """
-    WHATSAPP_AUDIO_MIMES = {"audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg", "audio/wav"}
-
-    if mime_type in WHATSAPP_AUDIO_MIMES:
-        fmt = getattr(audio_obj, "format", None) or mime_type.split("/")[-1]
+    if mime_type.split(";")[0] in _WHATSAPP_AUDIO_MIMES:
+        fmt = audio_obj.format or mime_type.split("/")[-1]
         return audio_bytes, mime_type, f"audio.{fmt}"
 
-    # Raw PCM from Gemini (e.g. "audio/L16;rate=24000") — wrap as WAV
-    sample_rate = getattr(audio_obj, "sample_rate", None) or 24000
-    channels = getattr(audio_obj, "channels", None) or 1
-    if "rate=" in mime_type:
-        try:
-            sample_rate = int(mime_type.split("rate=")[1].split(";")[0])
-        except (ValueError, IndexError):
-            pass
+    # Unsupported format (e.g. raw PCM "audio/L16;rate=24000") — wrap as WAV
+    sample_rate = audio_obj.sample_rate or 24000
+    channels = audio_obj.channels or 1
+    sample_width = 2  # 16-bit; matches L16 from Gemini TTS
 
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(channels)
-        wf.setsampwidth(2)
+        wf.setsampwidth(sample_width)
         wf.setframerate(sample_rate)
         wf.writeframes(audio_bytes)
     return buf.getvalue(), "audio/wav", "audio.wav"
-
-
-# ---------------------------------------------------------------------------
-# Graph API helpers — accept WhatsAppConfig instead of reading env per call
-# ---------------------------------------------------------------------------
-
-
-# Two-hop fetch: Graph API returns a temporary URL, then we download the bytes
-def get_media(media_id: str, config: WhatsAppConfig) -> Union[dict, bytes]:
-    url = f"{_BASE_URL}/{_API_VERSION}/{media_id}"
-    headers = config.auth_headers()
-
-    try:
-        response = httpx.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        media_url = data.get("url")
-    except httpx.HTTPError as e:
-        return {"error": str(e)}
-
-    try:
-        response = httpx.get(media_url, headers=headers)
-        response.raise_for_status()
-        return response.content
-    except httpx.HTTPError as e:
-        return {"error": str(e)}
 
 
 async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, bytes]:
@@ -191,7 +145,7 @@ async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, 
             response.raise_for_status()
             data = response.json()
         media_url = data.get("url")
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPError as e:
         return {"error": str(e)}
 
     try:
@@ -199,29 +153,7 @@ async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, 
             response = await client.get(media_url, headers=headers)
             response.raise_for_status()
             return response.content
-    except httpx.HTTPStatusError as e:
-        return {"error": str(e)}
-
-
-# Upload bytes to Meta's media endpoint; returns a reusable media_id
-def upload_media(media_data: bytes, mime_type: str, filename: str, config: WhatsAppConfig) -> Union[str, dict]:
-    url = config.media_url()
-    headers = config.auth_headers()
-    data = {"messaging_product": "whatsapp", "type": mime_type}
-
-    try:
-        file_data = io.BytesIO(media_data)
-        files = {"file": (filename, file_data, mime_type)}
-        response = httpx.post(url, headers=headers, data=data, files=files)
-        response.raise_for_status()
-        json_resp = response.json()
-        result_id = json_resp.get("id")
-        if not result_id:
-            return {"error": "Media ID not found in response", "response": json_resp}
-        return result_id
     except httpx.HTTPError as e:
-        return {"error": str(e)}
-    except Exception as e:
         return {"error": str(e)}
 
 
@@ -243,13 +175,13 @@ async def upload_media_async(
             if not result_id:
                 return {"error": "Media ID not found in response", "response": json_resp}
             return result_id
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPError as e:
         return {"error": str(e)}
     except Exception as e:
         return {"error": str(e)}
 
 
-async def send_text_message_async(recipient: str, text: str, config: WhatsAppConfig, preview_url: bool = False) -> None:
+async def _send_text(recipient: str, text: str, config: WhatsAppConfig, preview_url: bool = False) -> None:
     url = config.messages_url()
     headers = config.auth_headers()
 
@@ -267,14 +199,14 @@ async def send_text_message_async(recipient: str, text: str, config: WhatsAppCon
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp text message: {e}")
-        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        log_error(f"Error response: {e.response.text}")
         raise
     except Exception as e:
         log_error(f"Unexpected error sending WhatsApp text message: {str(e)}")
         raise
 
 
-async def send_media_message_async(
+async def _send_media(
     media_type: str,
     media_id: str,
     recipient: str,
@@ -305,14 +237,13 @@ async def send_media_message_async(
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp {media_type} message: {e}")
-        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        log_error(f"Error response: {e.response.text}")
         raise
     except Exception as e:
         log_error(f"Unexpected error sending WhatsApp {media_type} message: {str(e)}")
         raise
 
 
-# Marks message as read AND shows typing indicator in one API call
 async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConfig) -> Optional[dict]:
     if not message_id:
         return None
@@ -322,7 +253,7 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
     data = {
         "messaging_product": "whatsapp",
         "status": "read",
-        "message_id": f"{message_id}",
+        "message_id": message_id,
         "typing_indicator": {"type": "text"},
     }
 
@@ -335,11 +266,6 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
     return None
 
 
-# ---------------------------------------------------------------------------
-# Response upload helpers — used by the router to send agent output as media
-# ---------------------------------------------------------------------------
-
-
 async def send_whatsapp_message_async(
     recipient: str, message: str, config: WhatsAppConfig, italics: bool = False
 ) -> None:
@@ -350,13 +276,13 @@ async def send_whatsapp_message_async(
 
     # WhatsApp limit is 4096 chars; split at 4000 to leave room for batch prefix
     if len(message) <= 4096:
-        await send_text_message_async(recipient=recipient, text=_format(message), config=config)
+        await _send_text(recipient=recipient, text=_format(message), config=config)
         return
 
     message_batches = [message[i : i + 4000] for i in range(0, len(message), 4000)]
     for i, batch in enumerate(message_batches, 1):
         batch_message = f"[{i}/{len(message_batches)}] {batch}"
-        await send_text_message_async(recipient=recipient, text=_format(batch_message), config=config)
+        await _send_text(recipient=recipient, text=_format(batch_message), config=config)
 
 
 async def upload_and_send_media_async(
@@ -368,22 +294,20 @@ async def upload_and_send_media_async(
     send_text_fallback: bool = True,
 ) -> None:
     for item in media_items:
-        raw_bytes = extract_media_bytes(item)
+        raw_bytes = item.get_content_bytes()
         if not raw_bytes:
             log_warning(f"Could not process {media_type} content for user {recipient}. Type: {type(item.content)}")
             if send_text_fallback:
                 await send_whatsapp_message_async(recipient, response_content or "", config)
             continue
 
-        # Type-specific prep: resolve mime_type, filename, and optionally transform bytes
         if media_type == "image":
             mime_type, filename = "image/png", "image.png"
         elif media_type == "document":
-            filename = getattr(item, "name", None) or getattr(item, "filename", None) or "document"
+            filename = item.name or item.filename or "document"
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         elif media_type == "audio":
-            mime_type = getattr(item, "mime_type", None) or "audio/mpeg"
-            raw_bytes, mime_type, filename = prepare_audio_for_whatsapp(raw_bytes, mime_type, item)
+            raw_bytes, mime_type, filename = prepare_audio_for_whatsapp(raw_bytes, item)
         else:
             mime_type, filename = "application/octet-stream", media_type
 
@@ -399,7 +323,7 @@ async def upload_and_send_media_async(
         caption = response_content if media_type in ("image", "document") else None
         if caption and len(caption) > 1024:
             caption = caption[:1021] + "..."
-        await send_media_message_async(
+        await _send_media(
             media_type=media_type,
             media_id=mid,
             recipient=recipient,
