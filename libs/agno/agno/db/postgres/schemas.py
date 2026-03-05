@@ -69,7 +69,6 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": String, "nullable": True},
-    "processing_id": {"type": String, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

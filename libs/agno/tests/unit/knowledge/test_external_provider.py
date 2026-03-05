@@ -12,6 +12,7 @@ from agno.knowledge.external_provider.lightrag import LightRagProvider
 from agno.knowledge.external_provider.schemas import ProcessingResult
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.pipeline.ingestion import KnowledgeContentOrigin
+from agno.knowledge.utils import get_agno_metadata
 from agno.vectordb.base import VectorDb
 
 # ------------------------------------------------------------------
@@ -320,7 +321,7 @@ class TestPipelineExternalIngestion:
 
         assert len(provider.ingested_files) == 1
         assert content.status == ContentStatus.PROCESSING
-        assert content.processing_id is not None
+        assert get_agno_metadata(content.metadata, "processing_id") is not None
 
     def test_ingest_external_topic(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
@@ -356,7 +357,7 @@ class TestPipelineExternalIngestion:
 
         assert len(provider.ingested_files) == 1
         assert content.status == ContentStatus.PROCESSING
-        assert content.processing_id is not None
+        assert get_agno_metadata(content.metadata, "processing_id") is not None
 
     def test_ingest_external_failure_sets_status(self):
         knowledge = Knowledge(vector_db=MockVectorDb())
@@ -396,7 +397,7 @@ class TestStatusResolution:
         mock_content = Content(
             id="content-1",
             name="test",
-            processing_id="proc-123",
+            metadata={"_agno": {"processing_id": "proc-123"}},
             status=ContentStatus.PROCESSING,
         )
         knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
@@ -420,7 +421,7 @@ class TestStatusResolution:
         mock_content = Content(
             id="content-2",
             name="test",
-            processing_id="proc-789",
+            metadata={"_agno": {"processing_id": "proc-789"}},
             status=ContentStatus.PROCESSING,
         )
         knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
@@ -439,7 +440,7 @@ class TestStatusResolution:
         mock_content = Content(
             id="content-3",
             name="test",
-            processing_id="proc-still",
+            metadata={"_agno": {"processing_id": "proc-still"}},
             status=ContentStatus.PROCESSING,
         )
         knowledge._content_store.get_content_by_id = MagicMock(return_value=mock_content)
@@ -451,7 +452,7 @@ class TestStatusResolution:
         knowledge._content_store.update.assert_not_called()
 
     def test_resolve_external_status_no_processing_id(self):
-        """Falls back to external_id when processing_id is None."""
+        """Falls back to external_id when processing_id is not in _agno metadata."""
         knowledge = Knowledge(vector_db=MockVectorDb())
         provider = MockExternalProvider()
         provider._status_responses["ext-fallback"] = ProcessingResult(
@@ -487,7 +488,7 @@ class TestStatusResolution:
         mock_content = Content(
             id="content-5",
             name="test",
-            processing_id="proc-async",
+            metadata={"_agno": {"processing_id": "proc-async"}},
             status=ContentStatus.PROCESSING,
         )
         knowledge._content_store.aget_content_by_id = AsyncMock(return_value=mock_content)

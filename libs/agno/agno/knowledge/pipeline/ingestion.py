@@ -1105,7 +1105,6 @@ class IngestionPipeline:
         content.metadata = self._build_external_provider_metadata(content, content_type)
         try:
             result = self._do_external_ingest(content, content_type)
-            content.processing_id = result.processing_id
             content.external_id = result.external_id
             content.status = result.status
             content.status_message = result.status_message
@@ -1128,7 +1127,6 @@ class IngestionPipeline:
         content.metadata = self._build_external_provider_metadata(content, content_type)
         try:
             result = await self._ado_external_ingest(content, content_type)
-            content.processing_id = result.processing_id
             content.external_id = result.external_id
             content.status = result.status
             content.status_message = result.status_message

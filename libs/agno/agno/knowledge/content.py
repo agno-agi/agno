@@ -48,7 +48,6 @@ class Content:
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None
-    processing_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Content":
@@ -72,5 +71,4 @@ class Content:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             external_id=data.get("external_id"),
-            processing_id=data.get("processing_id"),
         )

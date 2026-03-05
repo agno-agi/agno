@@ -21,7 +21,6 @@ class KnowledgeRow(BaseModel):
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None
-    processing_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 

@@ -14,7 +14,7 @@ from agno.knowledge.remote_content.remote_content import (
 )
 from agno.knowledge.remote_knowledge import RemoteLoader
 from agno.knowledge.store.content_store import ContentStore
-from agno.knowledge.utils import strip_agno_metadata
+from agno.knowledge.utils import get_agno_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.log import log_debug, log_info, log_warning
 from agno.utils.string import generate_id
 
@@ -622,7 +622,8 @@ class Knowledge:
         if content is None:
             return current_status, current_message
 
-        polling_id = content.processing_id or content.external_id
+        # Read processing_id from _agno metadata (persisted via the metadata JSON column)
+        polling_id = get_agno_metadata(content.metadata, "processing_id") or content.external_id
         if polling_id is None:
             return current_status, current_message
 
@@ -646,7 +647,8 @@ class Knowledge:
         if content is None:
             return current_status, current_message
 
-        polling_id = content.processing_id or content.external_id
+        # Read processing_id from _agno metadata (persisted via the metadata JSON column)
+        polling_id = get_agno_metadata(content.metadata, "processing_id") or content.external_id
         if polling_id is None:
             return current_status, current_message
 
@@ -669,8 +671,9 @@ class Knowledge:
         """Apply a ProcessingResult from the external provider and persist changes (sync)."""
         content.status = result.status
         content.status_message = result.status_message
-        if result.status == ContentStatus.COMPLETED and result.external_id and not content.external_id:
+        if result.status == ContentStatus.COMPLETED and result.external_id:
             content.external_id = result.external_id
+            content.metadata = set_agno_metadata(content.metadata, "external_id", result.external_id)
         if result.status in (ContentStatus.COMPLETED, ContentStatus.FAILED):
             self._content_store.update(content, vector_db=self.vector_db)
         return content.status, content.status_message
@@ -685,8 +688,9 @@ class Knowledge:
         """Apply a ProcessingResult from the external provider and persist changes (async)."""
         content.status = result.status
         content.status_message = result.status_message
-        if result.status == ContentStatus.COMPLETED and result.external_id and not content.external_id:
+        if result.status == ContentStatus.COMPLETED and result.external_id:
             content.external_id = result.external_id
+            content.metadata = set_agno_metadata(content.metadata, "external_id", result.external_id)
         if result.status in (ContentStatus.COMPLETED, ContentStatus.FAILED):
             await self._content_store.aupdate(content, vector_db=self.vector_db)
         return content.status, content.status_message

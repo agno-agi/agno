@@ -85,10 +85,6 @@ class ContentStore:
                 content_row.external_id = self._ensure_string_field(
                     content.external_id, "content.external_id", default=""
                 )
-            if content.processing_id is not None:
-                content_row.processing_id = self._ensure_string_field(
-                    content.processing_id, "content.processing_id", default=""
-                )
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
@@ -134,10 +130,6 @@ class ContentStore:
             if content.external_id is not None:
                 content_row.external_id = self._ensure_string_field(
                     content.external_id, "content.external_id", default=""
-                )
-            if content.processing_id is not None:
-                content_row.processing_id = self._ensure_string_field(
-                    content.processing_id, "content.processing_id", default=""
                 )
 
             content_row.updated_at = int(time.time())
@@ -374,7 +366,6 @@ class ContentStore:
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
             external_id=content_row.external_id,
-            processing_id=content_row.processing_id,
         )
 
     def _build_knowledge_row(self, content: Content) -> KnowledgeRow:

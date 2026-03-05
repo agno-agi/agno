@@ -2123,7 +2123,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
-                    "processing_id": "processing_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
