@@ -1004,7 +1004,7 @@ def get_agent_router(
 
         return run_output.to_dict()
 
-    @router.get(
+    @router.post(
         "/agents/{agent_id}/runs/{run_id}/resume",
         tags=["Agents"],
         operation_id="resume_agent_run_stream",
@@ -1019,7 +1019,7 @@ def get_agent_router(
             "3. **Run completed (in database)**: Replays events from database\n\n"
             "**Client usage:**\n"
             "Track `event_index` from each SSE event. On reconnection, pass the last "
-            "received `event_index` as `last_event_index` query parameter."
+            "received `event_index` as `last_event_index`."
         ),
         responses={
             200: {
@@ -1034,8 +1034,8 @@ def get_agent_router(
     async def resume_agent_run_stream(
         agent_id: str,
         run_id: str,
-        last_event_index: Optional[int] = Query(None, description="Index of last event received by client (0-based)"),
-        session_id: Optional[str] = Query(None, description="Session ID for database fallback"),
+        last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
+        session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:

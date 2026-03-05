@@ -1965,6 +1965,7 @@ async def _arun_background_stream(
 
                 # Format as SSE
                 from agno.os.utils import format_sse_event_with_index
+
                 sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
 
                 # Push to primary queue (original client)
@@ -1976,6 +1977,7 @@ async def _arun_background_stream(
                 # Publish to SSE subscribers (resumed clients)
                 try:
                     from agno.os.managers import sse_subscriber_manager
+
                     await sse_subscriber_manager.publish(run_id, sse_data)
                 except Exception:
                     pass
@@ -1987,6 +1989,7 @@ async def _arun_background_stream(
             # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
             try:
                 from agno.os.managers import event_buffer
+
                 event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
             except Exception:
                 pass
@@ -1994,6 +1997,7 @@ async def _arun_background_stream(
             # Signal SSE subscribers that run is done
             try:
                 from agno.os.managers import sse_subscriber_manager
+
                 await sse_subscriber_manager.complete(run_id)
             except Exception:
                 pass

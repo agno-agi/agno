@@ -138,13 +138,15 @@ async def test_sse_reconnection():
     print("\nPhase 2: Reconnecting via /resume endpoint...")
     events_phase2: list[dict] = []
 
-    params: dict = {"last_event_index": last_event_index}
+    form_data: dict = {}
+    if last_event_index is not None:
+        form_data["last_event_index"] = str(last_event_index)
     if session_id:
-        params["session_id"] = session_id
+        form_data["session_id"] = session_id
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=120) as client:
         async with client.stream(
-            "GET", f"/agents/{agent_id}/runs/{run_id}/resume", params=params
+            "POST", f"/agents/{agent_id}/runs/{run_id}/resume", data=form_data
         ) as response:
             buffer = ""
             async for chunk in response.aiter_text():
