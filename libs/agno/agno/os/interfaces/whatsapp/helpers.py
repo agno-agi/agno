@@ -1,6 +1,5 @@
 import base64
 import io
-import json
 import mimetypes
 import os
 import wave
@@ -9,7 +8,7 @@ from typing import Optional, Union
 
 import httpx
 
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 _BASE_URL = "https://graph.facebook.com"
 _API_VERSION = "v22.0"

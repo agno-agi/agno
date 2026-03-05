@@ -3,7 +3,7 @@ import struct
 import wave
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
