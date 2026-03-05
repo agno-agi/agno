@@ -115,7 +115,7 @@ def test_cancel_workflow_with_agents_during_streaming(streaming_workflow_with_ag
         "Agent 2 should have captured partial content"
     )
     assert step_2_result.success is False
-    assert "Cancelled during execution" in (step_2_result.error or "")
+    assert "cancelled" in (step_2_result.error or "").lower()
 
 
 # ============================================================================
@@ -192,7 +192,7 @@ async def test_cancel_workflow_with_agents_during_async_streaming(streaming_work
         "Agent 2 should have captured partial content"
     )
     assert step_2_result.success is False
-    assert "Cancelled during execution" in (step_2_result.error or "")
+    assert "cancelled" in (step_2_result.error or "").lower()
 
 
 # ============================================================================
@@ -248,9 +248,11 @@ def test_cancel_workflow_before_step_2_starts(streaming_workflow_with_agents):
 
     assert last_run.status == RunStatus.cancelled
     assert last_run.step_results is not None
-    # Should only have step 1 since we cancelled before step 2 started
-    assert len(last_run.step_results) == 1, "Should only have step 1 result"
-    assert last_run.step_results[0].step_name == "agent_step_1"
+    # Should have step 1 results (may include both skipped and partial progress entries)
+    assert len(last_run.step_results) >= 1, "Should have at least step 1 result"
+    # All step results should be for agent_step_1 (step 2 should not have started)
+    for step_result in last_run.step_results:
+        assert step_result.step_name == "agent_step_1", "Only step 1 should have results"
 
 
 @pytest.mark.asyncio

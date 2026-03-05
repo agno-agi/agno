@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -220,13 +220,13 @@ class Parallel:
             steps=step_outputs,
         )
 
-    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[RunMetrics]:
         """Extract and aggregate metrics from parallel step outputs"""
         if not step_outputs:
             return None
 
         # Aggregate metrics from all parallel step outputs
-        total_metrics = Metrics()
+        total_metrics = RunMetrics()
 
         for result in step_outputs:
             if result.metrics:

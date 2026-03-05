@@ -103,17 +103,33 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         # NX: only set if key does not exist, preserving cancel-before-start intent
         await client.set(key, "0", ex=self.ttl_seconds, nx=True)
 
-    # Lua script for atomic cancel: checks existence then sets to "1" with optional TTL.
-    # Returns 1 if the key already existed (run was registered), 0 otherwise.
-    _CANCEL_LUA = """
-local existed = redis.call('EXISTS', KEYS[1])
-redis.call('SET', KEYS[1], '1')
-local ttl = tonumber(ARGV[1])
-if ttl and ttl > 0 then
-    redis.call('EXPIRE', KEYS[1], ttl)
-end
-return existed
-"""
+    def _cancel_via_pipeline(self, client: Union[Redis, RedisCluster], key: str) -> bool:
+        """Cancel a run atomically using a pipeline: EXISTS + SET (+ EXPIRE).
+
+        Returns True if the key already existed (run was registered).
+        """
+        pipe = client.pipeline()
+        pipe.exists(key)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            pipe.set(key, "1", ex=self.ttl_seconds)
+        else:
+            pipe.set(key, "1")
+        results = pipe.execute()
+        return bool(results[0])
+
+    async def _acancel_via_pipeline(self, client: Union[AsyncRedis, AsyncRedisCluster], key: str) -> bool:
+        """Cancel a run atomically using an async pipeline: EXISTS + SET (+ EXPIRE).
+
+        Returns True if the key already existed (run was registered).
+        """
+        pipe = client.pipeline()
+        pipe.exists(key)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            pipe.set(key, "1", ex=self.ttl_seconds)
+        else:
+            pipe.set(key, "1")
+        results = await pipe.execute()
+        return bool(results[0])
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
@@ -128,8 +144,7 @@ return existed
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
 
-        # Atomic: check existence then set to "1" in a single round-trip
-        was_registered = bool(client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))
+        was_registered = self._cancel_via_pipeline(client, key)
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
@@ -150,8 +165,7 @@ return existed
         client = self._ensure_async_client()
         key = self._get_key(run_id)
 
-        # Atomic: check existence then set to "1" in a single round-trip
-        was_registered = bool(await client.eval(self._CANCEL_LUA, 1, key, self.ttl_seconds or 0))  # type: ignore[misc]
+        was_registered = await self._acancel_via_pipeline(client, key)
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
