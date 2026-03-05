@@ -46,6 +46,7 @@ workflow = Workflow(
             ],
             end_condition=lambda step_outputs: int(step_outputs[-1].content) >= 50,
             max_iterations=10,
+            forward_iteration_output=True,
         ),
     ],
 )

@@ -813,6 +813,7 @@ def test_loop_carries_forward_output_between_iterations():
         steps=[_increment_step],
         end_condition=lambda outputs: int(outputs[-1].content) >= 50,
         max_iterations=10,
+        forward_iteration_output=True,
     )
     step_input = _make_loop_step_input("35")
 
@@ -833,6 +834,7 @@ async def test_loop_carries_forward_output_between_iterations_async():
         steps=[_increment_step],
         end_condition=lambda outputs: int(outputs[-1].content) >= 50,
         max_iterations=10,
+        forward_iteration_output=True,
     )
     step_input = _make_loop_step_input("35")
 
@@ -853,6 +855,7 @@ def test_loop_carries_forward_output_stream():
         steps=[_increment_step],
         end_condition=lambda outputs: int(outputs[-1].content) >= 50,
         max_iterations=10,
+        forward_iteration_output=True,
     )
     step_input = _make_loop_step_input("35")
 
@@ -885,6 +888,7 @@ async def test_loop_carries_forward_output_async_stream():
         steps=[_increment_step],
         end_condition=lambda outputs: int(outputs[-1].content) >= 50,
         max_iterations=10,
+        forward_iteration_output=True,
     )
     step_input = _make_loop_step_input("35")
 
@@ -926,6 +930,7 @@ def test_loop_carry_forward_in_workflow(shared_db):
                 steps=[_increment_step],
                 end_condition=lambda outputs: int(outputs[-1].content) >= 50,
                 max_iterations=10,
+                forward_iteration_output=True,
             ),
         ],
     )
@@ -971,6 +976,7 @@ def test_loop_carry_forward_multi_step_iteration():
         name="Multi Step Carry Forward",
         steps=[step_a, step_b],
         max_iterations=3,
+        forward_iteration_output=True,
     )
     step_input = _make_loop_step_input("1")
 
