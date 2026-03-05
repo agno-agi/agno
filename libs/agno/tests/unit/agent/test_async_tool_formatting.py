@@ -1,7 +1,7 @@
 """
 Tests for consistent output formatting between sync and async tool call paths.
 
-Verifies three fixes in arun_function_calls (agno/models/base.py):
+Verifies:
 
 1. Non-generator, non-ToolResult results use function_execution_result.result
    (not function_call.result) and handle None/falsy values by returning ""
@@ -12,6 +12,9 @@ Verifies three fixes in arun_function_calls (agno/models/base.py):
 
 3. Sync generator path inside arun_function_calls includes
    WorkflowCompletedEvent handling (matching the sync run_function_call path).
+
+4. Shared helpers (_process_generator_item, _format_non_generator_result)
+   correctly handle edge cases including falsy values (0, False, empty list).
 """
 
 import os
@@ -19,6 +22,7 @@ import os
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from typing import List
+
 import pytest
 
 from agno.models.message import Message
@@ -287,3 +291,145 @@ class TestAsyncSyncConsistency:
         assert len(async_results) == 1
         assert sync_results[0].content == async_results[0].content
         assert sync_results[0].content == "42"
+
+
+class TestFormatNonGeneratorResult:
+    """Tests for _format_non_generator_result helper with edge cases."""
+
+    def test_zero_result_preserved(self, model):
+        """Falsy value 0 should format as '0', not ''."""
+        from agno.tools.function import FunctionExecutionResult
+
+        def returns_zero() -> int:
+            return 0
+
+        fc = _make_function_call(returns_zero)
+        fer = FunctionExecutionResult(status="success", result=0)
+
+        output, show_response = model._format_non_generator_result(fer, fc)
+        assert output == "0"
+
+    def test_false_result_preserved(self, model):
+        """Falsy value False should format as 'False', not ''."""
+        from agno.tools.function import FunctionExecutionResult
+
+        def returns_false() -> bool:
+            return False
+
+        fc = _make_function_call(returns_false)
+        fer = FunctionExecutionResult(status="success", result=False)
+
+        output, show_response = model._format_non_generator_result(fer, fc)
+        assert output == "False"
+
+    def test_empty_list_result_preserved(self, model):
+        """Falsy value [] should format as '[]', not ''."""
+        from agno.tools.function import FunctionExecutionResult
+
+        def returns_empty_list() -> list:
+            return []
+
+        fc = _make_function_call(returns_empty_list)
+        fer = FunctionExecutionResult(status="success", result=[])
+
+        output, show_response = model._format_non_generator_result(fer, fc)
+        assert output == "[]"
+
+    def test_none_result_formats_as_empty(self, model):
+        """None should still format as ''."""
+        from agno.tools.function import FunctionExecutionResult
+
+        def returns_none() -> None:
+            return None
+
+        fc = _make_function_call(returns_none)
+        fer = FunctionExecutionResult(status="success", result=None)
+
+        output, show_response = model._format_non_generator_result(fer, fc)
+        assert output == ""
+
+    def test_tool_result_media_transferred(self, model):
+        """ToolResult media is properly transferred to FunctionExecutionResult."""
+        from agno.media import Image
+        from agno.tools.function import FunctionExecutionResult
+
+        def returns_tool_result() -> ToolResult:
+            return ToolResult(
+                content="media content",
+                images=[Image(url="https://example.com/img.png")],
+            )
+
+        fc = _make_function_call(returns_tool_result)
+        tr = ToolResult(content="media content", images=[Image(url="https://example.com/img.png")])
+        fer = FunctionExecutionResult(status="success", result=tr)
+
+        output, show_response = model._format_non_generator_result(fer, fc)
+        assert output == "media content"
+        assert fer.images is not None
+        assert len(fer.images) == 1
+
+
+class TestFalsyValueSyncAsyncConsistency:
+    """Verify falsy values (0, False) are formatted consistently in both paths."""
+
+    @pytest.mark.asyncio
+    async def test_sync_async_zero_match(self, model):
+        """Both paths should produce '0' for integer 0 result."""
+
+        def returns_zero() -> int:
+            return 0
+
+        # Sync
+        fc_sync = _make_function_call(returns_zero, call_id="call_sync")
+        sync_results: List[Message] = []
+        list(
+            model.run_function_calls(
+                function_calls=[fc_sync],
+                function_call_results=sync_results,
+            )
+        )
+
+        # Async
+        fc_async = _make_function_call(returns_zero, call_id="call_async")
+        async_results: List[Message] = []
+        async for _ in model.arun_function_calls(
+            function_calls=[fc_async],
+            function_call_results=async_results,
+        ):
+            pass
+
+        assert len(sync_results) == 1
+        assert len(async_results) == 1
+        assert sync_results[0].content == async_results[0].content
+        assert sync_results[0].content == "0"
+
+    @pytest.mark.asyncio
+    async def test_sync_async_false_match(self, model):
+        """Both paths should produce 'False' for boolean False result."""
+
+        def returns_false() -> bool:
+            return False
+
+        # Sync
+        fc_sync = _make_function_call(returns_false, call_id="call_sync")
+        sync_results: List[Message] = []
+        list(
+            model.run_function_calls(
+                function_calls=[fc_sync],
+                function_call_results=sync_results,
+            )
+        )
+
+        # Async
+        fc_async = _make_function_call(returns_false, call_id="call_async")
+        async_results: List[Message] = []
+        async for _ in model.arun_function_calls(
+            function_calls=[fc_async],
+            function_call_results=async_results,
+        ):
+            pass
+
+        assert len(sync_results) == 1
+        assert len(async_results) == 1
+        assert sync_results[0].content == async_results[0].content
+        assert sync_results[0].content == "False"
