@@ -1,11 +1,11 @@
-"""Tests for custom datetime_format on Agent."""
+"""Tests for custom datetime_format on Team."""
 
 import re
 from unittest.mock import MagicMock
 
-from agno.agent._messages import get_system_message
-from agno.agent.agent import Agent
-from agno.session import AgentSession
+from agno.session import TeamSession
+from agno.team._messages import get_system_message
+from agno.team.team import Team
 
 
 # =============================================================================
@@ -14,49 +14,53 @@ from agno.session import AgentSession
 
 
 def test_default_datetime_format_is_none():
-    agent = Agent()
-    assert agent.datetime_format is None
+    team = Team(name="t", mode="coordinate", members=[])
+    assert team.datetime_format is None
 
 
 def test_custom_datetime_format_stored():
-    agent = Agent(datetime_format="%Y-%m-%d %H:%M:%S")
-    assert agent.datetime_format == "%Y-%m-%d %H:%M:%S"
+    team = Team(name="t", mode="coordinate", members=[], datetime_format="%Y-%m-%d %H:%M:%S")
+    assert team.datetime_format == "%Y-%m-%d %H:%M:%S"
 
 
 def test_datetime_format_in_to_dict():
-    agent = Agent(
-        id="test-agent",
+    team = Team(
+        name="t",
+        mode="coordinate",
+        members=[],
         add_datetime_to_context=True,
         datetime_format="%d/%m/%Y",
     )
-    config = agent.to_dict()
+    config = team.to_dict()
     assert config["datetime_format"] == "%d/%m/%Y"
 
 
 def test_datetime_format_not_in_to_dict_when_none():
-    agent = Agent(id="test-agent")
-    config = agent.to_dict()
+    team = Team(name="t", mode="coordinate", members=[])
+    config = team.to_dict()
     assert "datetime_format" not in config
 
 
 def test_datetime_format_from_dict():
     config = {
-        "id": "test-agent",
+        "name": "t",
+        "mode": "coordinate",
         "add_datetime_to_context": True,
         "datetime_format": "%Y-%m-%d",
     }
-    agent = Agent.from_dict(config)
-    assert agent.datetime_format == "%Y-%m-%d"
-    assert agent.add_datetime_to_context is True
+    team = Team.from_dict(config)
+    assert team.datetime_format == "%Y-%m-%d"
+    assert team.add_datetime_to_context is True
 
 
 def test_datetime_format_from_dict_missing():
     config = {
-        "id": "test-agent",
+        "name": "t",
+        "mode": "coordinate",
         "add_datetime_to_context": True,
     }
-    agent = Agent.from_dict(config)
-    assert agent.datetime_format is None
+    team = Team.from_dict(config)
+    assert team.datetime_format is None
 
 
 # =============================================================================
@@ -64,52 +68,50 @@ def test_datetime_format_from_dict_missing():
 # =============================================================================
 
 
-def _make_agent_with_model(**kwargs) -> Agent:
-    """Create an Agent with a mocked model for system message generation."""
-    agent = Agent(**kwargs)
+def _make_team_with_model(**kwargs) -> Team:
+    """Create a Team with a mocked model for system message generation."""
+    team = Team(name="test-team", mode="coordinate", members=[], **kwargs)
     mock_model = MagicMock()
     mock_model.get_instructions_for_model = MagicMock(return_value=None)
     mock_model.get_system_message_for_model = MagicMock(return_value=None)
-    agent.model = mock_model
-    return agent
+    team.model = mock_model
+    return team
 
 
 def test_default_format_includes_full_datetime():
     """When no datetime_format is set, the full default datetime str is used."""
-    agent = _make_agent_with_model(add_datetime_to_context=True)
-    session = AgentSession(session_id="test-session")
+    team = _make_team_with_model(add_datetime_to_context=True)
+    session = TeamSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    msg = get_system_message(team, session)
 
     assert msg is not None
-    # Default Python datetime str format: YYYY-MM-DD HH:MM:SS.ffffff
     assert re.search(r"The current time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", msg.content)
 
 
 def test_custom_date_only_format():
     """When datetime_format='%Y-%m-%d', only the date portion appears."""
-    agent = _make_agent_with_model(
+    team = _make_team_with_model(
         add_datetime_to_context=True,
         datetime_format="%Y-%m-%d",
     )
-    session = AgentSession(session_id="test-session")
+    session = TeamSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    msg = get_system_message(team, session)
 
     assert msg is not None
-    # Should match YYYY-MM-DD followed by period (no time component)
     assert re.search(r"The current time is \d{4}-\d{2}-\d{2}\.", msg.content)
 
 
 def test_custom_format_slash_style():
     """Custom format with slashes: %d/%m/%Y %H:%M."""
-    agent = _make_agent_with_model(
+    team = _make_team_with_model(
         add_datetime_to_context=True,
         datetime_format="%d/%m/%Y %H:%M",
     )
-    session = AgentSession(session_id="test-session")
+    session = TeamSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    msg = get_system_message(team, session)
 
     assert msg is not None
     assert re.search(r"The current time is \d{2}/\d{2}/\d{4} \d{2}:\d{2}\.", msg.content)
@@ -117,12 +119,12 @@ def test_custom_format_slash_style():
 
 def test_no_datetime_when_disabled():
     """When add_datetime_to_context is False, no datetime info is added."""
-    agent = _make_agent_with_model(
+    team = _make_team_with_model(
         add_datetime_to_context=False,
         datetime_format="%Y-%m-%d",
     )
-    session = AgentSession(session_id="test-session")
-    msg = get_system_message(agent, session)
+    session = TeamSession(session_id="test-session")
+    msg = get_system_message(team, session)
 
     if msg is not None:
         assert "current time" not in msg.content.lower()

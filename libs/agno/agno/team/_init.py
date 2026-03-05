@@ -90,6 +90,7 @@ def __init__(
     markdown: bool = False,
     add_datetime_to_context: bool = False,
     add_location_to_context: bool = False,
+    datetime_format: Optional[str] = None,
     timezone_identifier: Optional[str] = None,
     add_name_to_context: bool = False,
     add_member_tools_to_context: bool = False,
@@ -241,6 +242,7 @@ def __init__(
     team.markdown = markdown
     team.add_datetime_to_context = add_datetime_to_context
     team.add_location_to_context = add_location_to_context
+    team.datetime_format = datetime_format
     team.add_name_to_context = add_name_to_context
     team.timezone_identifier = timezone_identifier
     team.add_member_tools_to_context = add_member_tools_to_context
