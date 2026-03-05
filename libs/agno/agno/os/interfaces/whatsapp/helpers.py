@@ -6,7 +6,6 @@ from typing import Optional, Union
 
 import httpx
 
-from agno.media import File
 from agno.utils.audio import pcm_to_wav_bytes
 from agno.utils.log import log_error, log_info, log_warning
 
