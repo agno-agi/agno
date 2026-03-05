@@ -23,8 +23,8 @@ if os.path.exists("tmp/data.db"):
 agent = Agent(
     model=OpenAIResponses(id="gpt-5-mini"),
     db=AsyncSqliteDb(db_file="tmp/data.db"),
-    search_session_history=True,  # allow searching previous sessions
-    num_history_sessions=2,  # only include the last 2 sessions in the search to avoid context length issues
+    search_past_sessions=True,  # allow searching previous sessions
+    num_past_sessions_to_search=2,  # only include the last 2 sessions in the search to avoid context length issues
 )
 
 

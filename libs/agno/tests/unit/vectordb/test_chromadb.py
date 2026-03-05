@@ -1117,3 +1117,172 @@ def test_reranker_success(mock_embedder, sample_documents):
     finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
+
+
+# --- Tests for duplicate ID handling (issue #6682) ---
+
+
+def test_insert_duplicate_content_documents(chroma_db):
+    """Test that inserting documents with identical content does not raise duplicate ID errors."""
+    documents = [
+        Document(content="identical content", name="doc_1"),
+        Document(content="identical content", name="doc_2"),
+        Document(content="identical content", name="doc_3"),
+    ]
+    chroma_db.insert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 3
+
+
+def test_insert_empty_content_documents(chroma_db):
+    """Test that inserting documents with empty content does not raise duplicate ID errors.
+
+    This is the exact scenario from issue #6682 where PDF parsing produces empty pages.
+    """
+    documents = [
+        Document(content="", name="empty_page_1"),
+        Document(content="", name="empty_page_2"),
+        Document(content="", name="empty_page_3"),
+    ]
+    chroma_db.insert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 3
+
+
+def test_insert_mixed_unique_and_duplicate_content(chroma_db):
+    """Test inserting a mix of unique and duplicate content documents."""
+    documents = [
+        Document(content="unique content A", name="doc_a"),
+        Document(content="repeated header", name="doc_b"),
+        Document(content="repeated header", name="doc_c"),
+        Document(content="unique content B", name="doc_d"),
+    ]
+    chroma_db.insert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 4
+
+
+def test_insert_many_duplicate_documents(chroma_db):
+    """Test inserting many documents with identical content (e.g., PDF with many empty pages)."""
+    documents = [Document(content="", name=f"empty_page_{i}") for i in range(50)]
+    chroma_db.insert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 50
+
+
+def test_upsert_duplicate_content_documents(chroma_db):
+    """Test that upserting documents with identical content does not raise duplicate ID errors."""
+    documents = [
+        Document(content="repeated section", name="section_1"),
+        Document(content="repeated section", name="section_2"),
+        Document(content="unique section", name="section_3"),
+    ]
+    chroma_db._upsert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 3
+
+
+def test_upsert_replaces_duplicate_content_documents(chroma_db):
+    """Test that upsert correctly replaces documents even with duplicate content."""
+    documents = [
+        Document(content="repeated", name="doc_1"),
+        Document(content="repeated", name="doc_2"),
+    ]
+    chroma_db.upsert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 2
+
+    # Upsert with same content_hash should replace
+    new_documents = [
+        Document(content="new repeated", name="new_1"),
+        Document(content="new repeated", name="new_2"),
+        Document(content="new repeated", name="new_3"),
+    ]
+    chroma_db.upsert(content_hash="test_hash", documents=new_documents)
+    assert chroma_db.get_count() == 3
+
+
+@pytest.mark.asyncio
+async def test_async_insert_duplicate_content_documents(chroma_db):
+    """Test that async inserting documents with identical content does not raise duplicate ID errors."""
+    documents = [
+        Document(content="", name="async_empty_1"),
+        Document(content="", name="async_empty_2"),
+        Document(content="identical async content", name="async_doc_1"),
+        Document(content="identical async content", name="async_doc_2"),
+    ]
+    # Pre-set embeddings to avoid async embedding issues with mock
+    for doc in documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+    await chroma_db.async_insert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 4
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_duplicate_content_documents(chroma_db):
+    """Test that async upserting documents with identical content does not raise duplicate ID errors."""
+    documents = [
+        Document(content="async repeated", name="async_section_1"),
+        Document(content="async repeated", name="async_section_2"),
+    ]
+    # Pre-set embeddings to avoid async embedding issues with mock
+    for doc in documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+    await chroma_db._async_upsert(content_hash="test_hash", documents=documents)
+    assert chroma_db.get_count() == 2
+
+
+def test_insert_unique_ids_generated(chroma_db):
+    """Verify that all generated IDs are unique when content is duplicated."""
+    documents = [Document(content="same content", name=f"doc_{i}") for i in range(10)]
+    chroma_db.insert(content_hash="test_hash", documents=documents)
+
+    result = chroma_db._collection.get()
+    ids = result["ids"]
+    assert len(ids) == 10
+    assert len(set(ids)) == 10, "Generated IDs must be unique"
+
+
+def test_sync_async_id_consistency(mock_embedder):
+    """Verify that sync and async methods generate the same IDs for the same input."""
+    import asyncio
+
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        content_hash = "consistency_hash"
+        mock_embedding = mock_embedder.get_embedding("test")
+
+        # Sync
+        db_sync = ChromaDb(
+            collection="test_sync_ids",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+        )
+        db_sync.create()
+        docs_sync = [
+            Document(content="content A", name="doc_a"),
+            Document(content="content B", name="doc_b"),
+        ]
+        db_sync.insert(content_hash=content_hash, documents=docs_sync)
+        sync_ids = sorted(db_sync._collection.get()["ids"])
+        db_sync.drop()
+
+        # Async - pre-set embeddings to avoid mock async issues
+        db_async = ChromaDb(
+            collection="test_async_ids",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+        )
+        db_async.create()
+        docs_async = [
+            Document(content="content A", name="doc_a"),
+            Document(content="content B", name="doc_b"),
+        ]
+        for doc in docs_async:
+            doc.embedding = mock_embedding
+        asyncio.get_event_loop().run_until_complete(
+            db_async.async_insert(content_hash=content_hash, documents=docs_async)
+        )
+        async_ids = sorted(db_async._collection.get()["ids"])
+        db_async.drop()
+
+        assert sync_ids == async_ids, f"Sync IDs {sync_ids} != Async IDs {async_ids}"
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
