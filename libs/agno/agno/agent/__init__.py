@@ -9,7 +9,6 @@ from agno.agent.agent import (
 )
 from agno.agent.remote import RemoteAgent
 from agno.run.agent import (
-    Followup,
     Followups,
     FollowupsCompletedEvent,
     FollowupsStartedEvent,
@@ -36,7 +35,6 @@ __all__ = [
     "Agent",
     "RemoteAgent",
     "AgentSession",
-    "Followup",
     "Followups",
     "FollowupsStartedEvent",
     "FollowupsCompletedEvent",

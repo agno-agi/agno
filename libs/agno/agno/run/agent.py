@@ -25,19 +25,12 @@ if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
 
 
-class Followup(BaseModel):
-    """A single followup prompt suggested after the agent's response."""
-
-    title: str = Field(..., description="Short action-oriented suggestion (5-10 words)")
-    reason: str = Field(..., description="One sentence explaining why this is a good follow-up")
-
-
 class Followups(BaseModel):
-    """Container for followup prompts generated after the main response."""
+    """Followup prompts generated after the main response."""
 
-    suggestions: List[Followup] = Field(
+    suggestions: List[str] = Field(
         ...,
-        description="Followup prompts based on the response",
+        description="Short action-oriented followup prompts (5-10 words each)",
     )
 
 

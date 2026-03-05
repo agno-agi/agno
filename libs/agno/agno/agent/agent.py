@@ -464,7 +464,7 @@ class Agent:
         save_response_to_file: Optional[str] = None,
         followups: bool = False,
         num_followups: int = 3,
-        followups_model: Optional[Model] = None,
+        followups_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -629,7 +629,7 @@ class Agent:
 
         self.followups = followups
         self.num_followups = num_followups
-        self.followups_model = followups_model
+        self.followups_model = followups_model  # type: ignore[assignment]
 
         self.stream = stream
         self.stream_events = stream_events

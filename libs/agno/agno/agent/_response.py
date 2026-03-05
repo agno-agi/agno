@@ -1705,14 +1705,15 @@ def _get_followups_response_format(model: Model) -> Optional[Union[Dict, Type[Ba
         return {"type": "json_object"}
 
 
-def _build_followup_messages(response_content: Any, num_suggestions: int) -> List[Message]:
+def _build_followup_messages(
+    response_content: Any, num_suggestions: int, user_message: Optional[str] = None
+) -> List[Message]:
     """Build the messages for the followups model call."""
     import json
 
     system_prompt = (
-        "Based on the assistant's response below, generate follow-up suggestions. "
-        "Each suggestion should have a short action-oriented title (5-10 words) "
-        "and a brief reason explaining why it is a good follow-up. "
+        "Based on the user's message and the assistant's response below, generate follow-up suggestions. "
+        "Each suggestion should be a short action-oriented prompt (5-10 words). "
         "Cover different angles: dig deeper, practical next step, or alternative perspective."
     )
 
@@ -1726,11 +1727,15 @@ def _build_followup_messages(response_content: Any, num_suggestions: int) -> Lis
     else:
         content_str = str(response_content)
 
-    user_msg = f"Generate exactly {num_suggestions} follow-up suggestions for this response:\n\n{content_str}"
+    parts = []
+    if user_message:
+        parts.append(f"User message:\n{user_message}")
+    parts.append(f"Assistant response:\n{content_str}")
+    parts.append(f"\nGenerate exactly {num_suggestions} follow-up suggestions.")
 
     return [
         Message(role="system", content=system_prompt),
-        Message(role="user", content=user_msg),
+        Message(role="user", content="\n\n".join(parts)),
     ]
 
 
@@ -1759,6 +1764,18 @@ def _parse_followups_response(model_response: ModelResponse) -> Optional[Followu
     return None
 
 
+def _accumulate_followups_metrics(model_response: ModelResponse, model: Model, run_response: RunOutput) -> None:
+    """Accumulate metrics from the followups model call into the run response."""
+    from agno.metrics import ModelType, accumulate_model_metrics
+
+    accumulate_model_metrics(
+        model_response,
+        model,
+        ModelType.FOLLOWUPS_MODEL,
+        run_response.metrics if run_response is not None else None,
+    )
+
+
 def generate_followups(
     agent: Agent,
     run_response: RunOutput,
@@ -1772,7 +1789,8 @@ def generate_followups(
         return
 
     response_format = _get_followups_response_format(model)
-    messages = _build_followup_messages(run_response.content, agent.num_followups)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
 
     try:
         model_response: ModelResponse = model.response(
@@ -1780,6 +1798,7 @@ def generate_followups(
             response_format=response_format,
         )
         run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
         log_warning(f"Error generating followups: {e}")
 
@@ -1797,7 +1816,8 @@ async def agenerate_followups(
         return
 
     response_format = _get_followups_response_format(model)
-    messages = _build_followup_messages(run_response.content, agent.num_followups)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1805,6 +1825,7 @@ async def agenerate_followups(
             response_format=response_format,
         )
         run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
         log_warning(f"Error generating followups: {e}")
 
@@ -1831,7 +1852,8 @@ def generate_followups_stream(
         )
 
     response_format = _get_followups_response_format(model)
-    messages = _build_followup_messages(run_response.content, agent.num_followups)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
 
     try:
         model_response: ModelResponse = model.response(
@@ -1839,6 +1861,7 @@ def generate_followups_stream(
             response_format=response_format,
         )
         run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
         log_warning(f"Error generating followups: {e}")
 
@@ -1873,7 +1896,8 @@ async def agenerate_followups_stream(
         )
 
     response_format = _get_followups_response_format(model)
-    messages = _build_followup_messages(run_response.content, agent.num_followups)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1881,6 +1905,7 @@ async def agenerate_followups_stream(
             response_format=response_format,
         )
         run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
         log_warning(f"Error generating followups: {e}")
 
