@@ -493,6 +493,13 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -
         for message in run_response.reasoning_messages:
             scrub_media_from_message(message)
 
+    # 6. Null top-level output media fields
+    # Consumed by cleanup_and_store (with save/restore) and _scrub_member_responses (permanent)
+    run_response.images = None
+    run_response.videos = None
+    run_response.audio = None
+    run_response.files = None
+
 
 def scrub_media_from_message(message: Message) -> None:
     """Remove all media from a Message object."""
