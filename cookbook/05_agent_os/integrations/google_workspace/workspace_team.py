@@ -1,0 +1,121 @@
+"""
+Google Workspace Team
+=====================
+
+A team of specialized agents, each handling a different Workspace service.
+The coordinator routes user requests to the right specialist.
+
+This pattern avoids tool count limits by splitting services across agents
+and lets each agent have tailored instructions for its domain.
+
+Prerequisites:
+    1. Install gws CLI:
+        npm install -g @googleworkspace/cli
+
+    2. Authenticate:
+        gws auth setup
+
+    3. Set environment variables:
+        export OPENAI_API_KEY=your-openai-api-key
+
+Usage:
+    .venvs/demo/bin/python cookbook/05_agent_os/integrations/google_workspace/workspace_team.py
+"""
+
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
+from agno.team import Team
+from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Specialist Agents
+# ---------------------------------------------------------------------------
+
+db = SqliteDb(db_file="tmp/workspace_team.db")
+model = OpenAIChat(id="gpt-4o")
+
+gmail_agent = Agent(
+    id="gmail-agent",
+    name="Gmail Assistant",
+    role="Email management specialist",
+    model=model,
+    tools=[MCPTools(command="gws", args=["mcp", "-s", "gmail"])],
+    instructions=[
+        "You handle all email-related tasks: reading, searching, composing, and managing labels.",
+        "Summarize emails concisely, highlighting sender, subject, and action items.",
+        "Always confirm before sending or deleting emails.",
+    ],
+    add_datetime_to_context=True,
+    markdown=True,
+)
+
+drive_agent = Agent(
+    id="drive-agent",
+    name="Drive Assistant",
+    role="File management specialist",
+    model=model,
+    tools=[MCPTools(command="gws", args=["mcp", "-s", "drive"])],
+    instructions=[
+        "You handle all file and document tasks: searching, listing, uploading, and organizing files.",
+        "When listing files, show name, type, last modified date, and sharing status.",
+        "Help users find files by name, type, or content.",
+    ],
+    add_datetime_to_context=True,
+    markdown=True,
+)
+
+calendar_agent = Agent(
+    id="calendar-agent",
+    name="Calendar Assistant",
+    role="Scheduling specialist",
+    model=model,
+    tools=[MCPTools(command="gws", args=["mcp", "-s", "calendar"])],
+    instructions=[
+        "You handle all calendar tasks: viewing events, creating meetings, and finding free time.",
+        "When showing events, include title, time, location, and attendees.",
+        "Always confirm before creating, modifying, or deleting events.",
+    ],
+    add_datetime_to_context=True,
+    markdown=True,
+)
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
+
+workspace_team = Team(
+    id="workspace-team",
+    name="Workspace Team",
+    mode="coordinate",
+    model=model,
+    members=[gmail_agent, drive_agent, calendar_agent],
+    instructions=[
+        "You coordinate a team of Google Workspace specialists.",
+        "Route email tasks to Gmail Assistant, file tasks to Drive Assistant, "
+        "and scheduling tasks to Calendar Assistant.",
+        "For cross-service requests (e.g., 'email the file John shared with me'), "
+        "break the task into steps and delegate to the right specialists in order.",
+    ],
+    db=db,
+    add_datetime_to_context=True,
+    markdown=True,
+)
+
+# ---------------------------------------------------------------------------
+# Create AgentOS
+# ---------------------------------------------------------------------------
+
+agent_os = AgentOS(
+    description="Google Workspace team with specialized agents",
+    teams=[workspace_team],
+)
+app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    agent_os.serve(app="workspace_team:app", reload=True)
