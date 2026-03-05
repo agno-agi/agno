@@ -1884,6 +1884,62 @@ async def _arun_background(
     return run_response
 
 
+async def _arun_background_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
+    """Streaming agent run with RUNNING status persisted in DB before streaming begins.
+
+    Persists the run with RUNNING status, then delegates to _arun_stream.
+    The caller (e.g. router) is responsible for running this in a detached task
+    if client-disconnect survival is needed.
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    # Persist RUNNING status so the run is visible in the DB immediately
+    run_response.status = RunStatus.running
+
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+    agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background stream run {run_response.run_id} persisted with RUNNING status")
+
+    # Delegate to _arun_stream for actual execution
+    async for event in _arun_stream(
+        agent,
+        run_response=run_response,
+        run_context=run_context,
+        user_id=user_id,
+        response_format=response_format,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        session_id=session_id,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        debug_mode=debug_mode,
+        background_tasks=background_tasks,
+        pre_session=agent_session,
+        **kwargs,
+    ):
+        yield event
+
+
 async def _arun_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -2572,15 +2628,29 @@ def arun_dispatch(  # type: ignore
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
-    # Background execution: return immediately with PENDING status
+    # Background execution
     if background:
-        if opts.stream:
-            raise ValueError(
-                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
-            )
         if not agent.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, stream events via queue
+            return _arun_background_stream(  # type: ignore[return-value]
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                session_id=session_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             agent,

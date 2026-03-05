@@ -22,13 +22,13 @@ from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -131,17 +131,14 @@ async def agent_resumable_response_streamer(
 ) -> AsyncGenerator:
     """Resumable SSE generator for background=True, stream=True.
 
-    The actual agent execution runs in a detached asyncio.Task so it survives
-    client disconnections. Events are buffered for reconnection via /resume.
+    A detached asyncio.Task iterates the agent's background stream, buffers events,
+    and publishes to SSE subscribers — all of which survive client disconnections.
+    This generator reads from a primary queue and yields SSE data to the client.
     """
-    # Create a queue that the producer will publish to via SSESubscriberManager
-    # We need a pre-run queue since run_id isn't known yet. Use a dedicated queue
-    # that the producer writes to directly.
     primary_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
-    # Launch the producer as a detached background task
-    async def _producer_wrapper() -> None:
-        """Wrapper that publishes to the primary queue in addition to SSE subscribers."""
+    async def _producer() -> None:
+        """Detached task: iterates agent stream, buffers events, publishes to subscribers."""
         run_id: Optional[str] = None
         final_status = RunStatus.completed
 
@@ -167,6 +164,7 @@ async def agent_resumable_response_streamer(
                 files=files,
                 stream=True,
                 stream_events=stream_events,
+                background=True,
                 **kwargs,
             )
             async for run_response_chunk in run_response:
@@ -189,13 +187,11 @@ async def agent_resumable_response_streamer(
                     run_response_chunk, event_index=event_index, run_id=buffer_run_id
                 )
 
-                # Publish to primary queue (original client)
                 try:
                     await primary_queue.put(sse_data)
                 except Exception:
                     pass
 
-                # Publish to SSE subscriber queues (resumed clients)
                 if buffer_run_id:
                     try:
                         await sse_subscriber_manager.publish(buffer_run_id, sse_data)
@@ -268,16 +264,13 @@ async def agent_resumable_response_streamer(
                     await sse_subscriber_manager.complete(run_id)
                 except Exception:
                     pass
-            # Signal the primary queue that the run is done
             try:
                 await primary_queue.put(None)
             except Exception:
                 pass
 
-    # Start the producer as a detached task (survives client disconnect)
-    asyncio.create_task(_producer_wrapper())
+    asyncio.create_task(_producer())
 
-    # Read from the primary queue and yield SSE data
     while True:
         sse_data = await primary_queue.get()
         if sse_data is None:
