@@ -1899,17 +1899,26 @@ async def _arun_background_stream(
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     **kwargs: Any,
-) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-    """Streaming agent run with RUNNING status persisted in DB before streaming begins.
+) -> AsyncIterator[str]:
+    """Background streaming agent run that survives client disconnections.
 
-    Persists the run with RUNNING status, then delegates to _arun_stream.
-    The caller (e.g. router) is responsible for running this in a detached task
-    if client-disconnect survival is needed.
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _arun_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+
+    The detached task keeps running even if the client disconnects.
+    The caller (router) just yields the SSE strings to the client.
+
+    Similar to how Workflow._arun_background_stream handles WebSocket streaming,
+    but uses SSE transport with event_buffer and sse_subscriber_manager.
     """
     from agno.agent._session import asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
-    # Persist RUNNING status so the run is visible in the DB immediately
+    run_id = run_response.run_id
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
     run_response.status = RunStatus.running
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -1917,27 +1926,98 @@ async def _arun_background_stream(
     agent_session.upsert_run(run=run_response)
     await asave_session(agent, session=agent_session)
 
-    log_info(f"Background stream run {run_response.run_id} persisted with RUNNING status")
+    log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
-    # Delegate to _arun_stream for actual execution
-    async for event in _arun_stream(
-        agent,
-        run_response=run_response,
-        run_context=run_context,
-        user_id=user_id,
-        response_format=response_format,
-        stream_events=stream_events,
-        yield_run_output=yield_run_output,
-        session_id=session_id,
-        add_history_to_context=add_history_to_context,
-        add_dependencies_to_context=add_dependencies_to_context,
-        add_session_state_to_context=add_session_state_to_context,
-        debug_mode=debug_mode,
-        background_tasks=background_tasks,
-        pre_session=agent_session,
-        **kwargs,
-    ):
-        yield event
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        try:
+            async for event in _arun_stream(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=agent_session,
+                **kwargs,
+            ):
+                if isinstance(event, RunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    from agno.os.managers import event_buffer
+
+                    event_index = event_buffer.add_event(run_id, event)
+                except Exception:
+                    pass
+
+                # Format as SSE
+                from agno.os.utils import format_sse_event_with_index
+
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    pass
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    from agno.os.managers import sse_subscriber_manager
+
+                    await sse_subscriber_manager.publish(run_id, sse_data)
+                except Exception:
+                    pass
+
+        except Exception:
+            log_error(f"Background stream run {run_id} failed", exc_info=True)
+
+        finally:
+            # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
+            try:
+                from agno.os.managers import event_buffer
+
+                event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
+            except Exception:
+                pass
+
+            # Signal SSE subscribers that run is done
+            try:
+                from agno.os.managers import sse_subscriber_manager
+
+                await sse_subscriber_manager.complete(run_id)
+            except Exception:
+                pass
+
+            # Signal primary queue that run is done
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                pass
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
 
 
 async def _arun_stream(

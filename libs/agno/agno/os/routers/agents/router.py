@@ -131,271 +131,38 @@ async def agent_resumable_response_streamer(
 ) -> AsyncGenerator:
     """Resumable SSE generator for background=True, stream=True.
 
-    A detached asyncio.Task iterates the agent's background stream, buffers events,
-    and publishes to SSE subscribers — all of which survive client disconnections.
-    This generator reads from a primary queue and yields SSE data to the client.
+    Delegates to agent.arun(background=True, stream=True) which handles:
+    - Persisting RUNNING status in DB
+    - Running agent in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
     """
-    primary_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+    if background_tasks is not None:
+        kwargs["background_tasks"] = background_tasks
 
-    async def _producer() -> None:
-        """Detached task: iterates agent stream, buffers events, publishes to subscribers."""
-        run_id: Optional[str] = None
-        final_status = RunStatus.completed
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
 
-        try:
-            if background_tasks is not None:
-                kwargs["background_tasks"] = background_tasks
+    if auth_token and isinstance(agent, RemoteAgent):
+        kwargs["auth_token"] = auth_token
 
-            if "stream_events" in kwargs:
-                stream_events = kwargs.pop("stream_events")
-            else:
-                stream_events = True
-
-            if auth_token and isinstance(agent, RemoteAgent):
-                kwargs["auth_token"] = auth_token
-
-            run_response = agent.arun(
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                images=images,
-                audio=audio,
-                videos=videos,
-                files=files,
-                stream=True,
-                stream_events=stream_events,
-                background=True,
-                **kwargs,
-            )
-            async for run_response_chunk in run_response:
-                chunk_run_id = getattr(run_response_chunk, "run_id", None)
-                if run_id is None and chunk_run_id:
-                    run_id = chunk_run_id
-
-                if isinstance(run_response_chunk, RunOutput):
-                    continue
-
-                event_index: Optional[int] = None
-                buffer_run_id = run_id or chunk_run_id
-                if buffer_run_id:
-                    try:
-                        event_index = event_buffer.add_event(buffer_run_id, run_response_chunk)
-                    except Exception:
-                        pass
-
-                sse_data = format_sse_event_with_index(
-                    run_response_chunk, event_index=event_index, run_id=buffer_run_id
-                )
-
-                try:
-                    await primary_queue.put(sse_data)
-                except Exception:
-                    pass
-
-                if buffer_run_id:
-                    try:
-                        await sse_subscriber_manager.publish(buffer_run_id, sse_data)
-                    except Exception:
-                        pass
-
-                event_type = getattr(run_response_chunk, "event", "")
-                if event_type == RunEvent.run_error.value:
-                    final_status = RunStatus.error
-                elif event_type == RunEvent.run_cancelled.value:
-                    final_status = RunStatus.cancelled
-                elif event_type == RunEvent.run_paused.value:
-                    final_status = RunStatus.paused
-
-        except (InputCheckError, OutputCheckError) as e:
-            final_status = RunStatus.error
-            error_response = RunErrorEvent(
-                content=str(e),
-                error_type=e.type,
-                error_id=e.error_id,
-                additional_data=e.additional_data,
-            )
-            event_index = None
-            if run_id:
-                try:
-                    event_index = event_buffer.add_event(run_id, error_response)
-                except Exception:
-                    pass
-            sse_data = format_sse_event_with_index(error_response, event_index=event_index, run_id=run_id)
-            try:
-                await primary_queue.put(sse_data)
-            except Exception:
-                pass
-            if run_id:
-                try:
-                    await sse_subscriber_manager.publish(run_id, sse_data)
-                except Exception:
-                    pass
-        except Exception as e:
-            import traceback
-
-            traceback.print_exc(limit=3)
-            final_status = RunStatus.error
-            error_response = RunErrorEvent(
-                content=str(e),
-            )
-            event_index = None
-            if run_id:
-                try:
-                    event_index = event_buffer.add_event(run_id, error_response)
-                except Exception:
-                    pass
-            sse_data = format_sse_event_with_index(error_response, event_index=event_index, run_id=run_id)
-            try:
-                await primary_queue.put(sse_data)
-            except Exception:
-                pass
-            if run_id:
-                try:
-                    await sse_subscriber_manager.publish(run_id, sse_data)
-                except Exception:
-                    pass
-        finally:
-            if run_id:
-                try:
-                    event_buffer.set_run_completed(run_id, final_status)
-                except Exception:
-                    pass
-                try:
-                    await sse_subscriber_manager.complete(run_id)
-                except Exception:
-                    pass
-            try:
-                await primary_queue.put(None)
-            except Exception:
-                pass
-
-    asyncio.create_task(_producer())
-
-    while True:
-        sse_data = await primary_queue.get()
-        if sse_data is None:
-            break
+    async for sse_data in agent.arun(
+        input=message,
+        session_id=session_id,
+        user_id=user_id,
+        images=images,
+        audio=audio,
+        videos=videos,
+        files=files,
+        stream=True,
+        stream_events=stream_events,
+        background=True,
+        **kwargs,
+    ):
         yield sse_data
-
-
-async def _agent_continue_run_producer(
-    agent: Union[Agent, RemoteAgent],
-    run_id: str,
-    primary_queue: "asyncio.Queue[Optional[str]]",
-    updated_tools: Optional[List] = None,
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    background_tasks: Optional[BackgroundTasks] = None,
-    auth_token: Optional[str] = None,
-) -> None:
-    """Background task that runs agent.acontinue_run and publishes events."""
-    final_status = RunStatus.completed
-
-    try:
-        extra_kwargs: dict = {}
-        if auth_token and isinstance(agent, RemoteAgent):
-            extra_kwargs["auth_token"] = auth_token
-
-        continue_response = agent.acontinue_run(
-            run_id=run_id,
-            updated_tools=updated_tools,
-            session_id=session_id,
-            user_id=user_id,
-            stream=True,
-            stream_events=True,
-            background_tasks=background_tasks,
-            **extra_kwargs,
-        )
-        async for run_response_chunk in continue_response:
-            if isinstance(run_response_chunk, RunOutput):
-                continue
-
-            event_index: Optional[int] = None
-            try:
-                event_index = event_buffer.add_event(run_id, run_response_chunk)
-            except Exception:
-                pass
-
-            sse_data = format_sse_event_with_index(run_response_chunk, event_index=event_index, run_id=run_id)
-
-            try:
-                await primary_queue.put(sse_data)
-            except Exception:
-                pass
-
-            try:
-                await sse_subscriber_manager.publish(run_id, sse_data)
-            except Exception:
-                pass
-
-            event_type = getattr(run_response_chunk, "event", "")
-            if event_type == RunEvent.run_error.value:
-                final_status = RunStatus.error
-            elif event_type == RunEvent.run_cancelled.value:
-                final_status = RunStatus.cancelled
-            elif event_type == RunEvent.run_paused.value:
-                final_status = RunStatus.paused
-
-    except (InputCheckError, OutputCheckError) as e:
-        final_status = RunStatus.error
-        error_response = RunErrorEvent(
-            content=str(e),
-            error_type=e.type,
-            error_id=e.error_id,
-            additional_data=e.additional_data,
-        )
-        event_index = None
-        try:
-            event_index = event_buffer.add_event(run_id, error_response)
-        except Exception:
-            pass
-        sse_data = format_sse_event_with_index(error_response, event_index=event_index, run_id=run_id)
-        try:
-            await primary_queue.put(sse_data)
-        except Exception:
-            pass
-        try:
-            await sse_subscriber_manager.publish(run_id, sse_data)
-        except Exception:
-            pass
-
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        final_status = RunStatus.error
-        error_response = RunErrorEvent(
-            content=str(e),
-            error_type=e.type if hasattr(e, "type") else None,
-            error_id=e.error_id if hasattr(e, "error_id") else None,
-        )
-        event_index = None
-        try:
-            event_index = event_buffer.add_event(run_id, error_response)
-        except Exception:
-            pass
-        sse_data = format_sse_event_with_index(error_response, event_index=event_index, run_id=run_id)
-        try:
-            await primary_queue.put(sse_data)
-        except Exception:
-            pass
-        try:
-            await sse_subscriber_manager.publish(run_id, sse_data)
-        except Exception:
-            pass
-    finally:
-        try:
-            event_buffer.set_run_completed(run_id, final_status)
-        except Exception:
-            pass
-        try:
-            await sse_subscriber_manager.complete(run_id)
-        except Exception:
-            pass
-        try:
-            await primary_queue.put(None)
-        except Exception:
-            pass
 
 
 async def agent_continue_response_streamer(
@@ -443,38 +210,6 @@ async def agent_continue_response_streamer(
             error_id=e.error_id if hasattr(e, "error_id") else None,
         )
         yield format_sse_event(error_response)
-
-
-async def agent_resumable_continue_response_streamer(
-    agent: Union[Agent, RemoteAgent],
-    run_id: str,
-    updated_tools: Optional[List] = None,
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    background_tasks: Optional[BackgroundTasks] = None,
-    auth_token: Optional[str] = None,
-) -> AsyncGenerator:
-    """Resumable SSE generator for continue_run (background=True). Decoupled from agent execution."""
-    primary_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
-
-    asyncio.create_task(
-        _agent_continue_run_producer(
-            agent=agent,
-            run_id=run_id,
-            updated_tools=updated_tools,
-            primary_queue=primary_queue,
-            session_id=session_id,
-            user_id=user_id,
-            background_tasks=background_tasks,
-            auth_token=auth_token,
-        )
-    )
-
-    while True:
-        sse_data = await primary_queue.get()
-        if sse_data is None:
-            break
-        yield sse_data
 
 
 async def _resume_stream_generator(
@@ -1015,7 +750,6 @@ def get_agent_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
-        background: bool = Form(False),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1077,10 +811,8 @@ def get_agent_router(
         auth_token = get_auth_token_from_request(request)
 
         if stream:
-            # Use resumable streamer when background=True (agent survives client disconnect)
-            streamer = agent_resumable_continue_response_streamer if background else agent_continue_response_streamer
             return StreamingResponse(
-                streamer(
+                agent_continue_response_streamer(
                     agent,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
