@@ -122,7 +122,7 @@ class EventBuffer:
         """Store deep copy of current state for delta computation."""
         self._last_snapshot = copy.deepcopy(state)
 
-    def compute_state_delta(self, current_state: Dict[str, Any]) -> Optional[List[Any]]:
+    def compute_state_delta(self, current_state: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """Compute JSON Patch delta between last snapshot and current state.
 
         Returns a list of JSON Patch ops (RFC 6902) or None if unchanged/error.

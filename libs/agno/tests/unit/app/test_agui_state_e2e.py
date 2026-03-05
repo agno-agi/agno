@@ -1,10 +1,9 @@
 """End-to-end integration test for AG-UI state events (StateSnapshot + StateDelta).
 
 Tests the full pipeline: router -> streaming -> event emission, using mock agent responses.
-Also includes real API tests that run when OPENAI_API_KEY is set.
+Also includes real API tests that run when AGNO_RUN_REAL_API_TESTS=1 and OPENAI_API_KEY are set.
 """
 
-import json
 import os
 import uuid
 from unittest.mock import MagicMock, patch
@@ -24,6 +23,7 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.tools import tool
+from tests.helpers import parse_sse_events
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -67,25 +67,6 @@ def app(agent):
     attach_routes(router, agent=agent)
     test_app.include_router(router)
     return test_app
-
-
-def parse_sse_events(raw: str) -> list:
-    """Parse SSE text into a list of event dicts."""
-    events = []
-    for block in raw.strip().split("\n\n"):
-        event_data = {}
-        for line in block.split("\n"):
-            if line.startswith("event:"):
-                event_data["event"] = line[len("event:") :].strip()
-            elif line.startswith("data:"):
-                data_str = line[len("data:") :].strip()
-                try:
-                    event_data["data"] = json.loads(data_str)
-                except json.JSONDecodeError:
-                    event_data["data"] = data_str
-        if event_data:
-            events.append(event_data)
-    return events
 
 
 def get_event_types(events):
@@ -279,13 +260,13 @@ async def test_router_state_delta_after_tool_mutation(app, agent):
 
 
 # ---------------------------------------------------------------------------
-# Real API tests (require OPENAI_API_KEY)
+# Real API tests (require explicit opt-in and OPENAI_API_KEY)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(
-    not os.environ.get("OPENAI_API_KEY"),
-    reason="OPENAI_API_KEY not set",
+    not (os.environ.get("AGNO_RUN_REAL_API_TESTS") == "1" and os.environ.get("OPENAI_API_KEY")),
+    reason="Real API tests require AGNO_RUN_REAL_API_TESTS=1 and OPENAI_API_KEY set",
 )
 @pytest.mark.asyncio
 async def test_agui_state_events_real_api(app):
