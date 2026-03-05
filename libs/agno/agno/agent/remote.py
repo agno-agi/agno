@@ -440,7 +440,7 @@ class RemoteAgent(BaseRemote):
     async def acontinue_run(
         self,
         run_id: str,
-        updated_tools: List[ToolExecution],
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[False] = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -452,7 +452,7 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(
         self,
         run_id: str,
-        updated_tools: List[ToolExecution],
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -463,7 +463,7 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(  # type: ignore
         self,
         run_id: str,  # type: ignore
-        updated_tools: List[ToolExecution],
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -476,6 +476,7 @@ class RemoteAgent(BaseRemote):
         headers = self._get_auth_headers(auth_token)
 
         if self.agentos_client:
+            tools_list = updated_tools or []
             if stream:
                 # Handle streaming response
                 return self.agentos_client.continue_agent_run_stream(  # type: ignore
@@ -483,7 +484,7 @@ class RemoteAgent(BaseRemote):
                     run_id=run_id,
                     user_id=user_id,
                     session_id=session_id,
-                    tools=updated_tools,
+                    tools=tools_list,
                     headers=headers,
                     **kwargs,
                 )
@@ -491,7 +492,7 @@ class RemoteAgent(BaseRemote):
                 return self.agentos_client.continue_agent_run(  # type: ignore
                     agent_id=self.agent_id,
                     run_id=run_id,
-                    tools=updated_tools,
+                    tools=tools_list,
                     user_id=user_id,
                     session_id=session_id,
                     headers=headers,

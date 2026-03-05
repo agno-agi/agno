@@ -23,7 +23,6 @@ from pydantic import BaseModel
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
@@ -406,8 +405,6 @@ def generate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
 
 
 async def agenerate_response_with_output_model(
@@ -477,30 +474,6 @@ async def agenerate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
-
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-
-
-def calculate_metrics(team: "Team", messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-    metrics = current_run_metrics or Metrics()
-    assistant_message_role = team.model.assistant_message_role if team.model is not None else "assistant"
-
-    for m in messages:
-        if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-            metrics += m.metrics
-
-    # If the run metrics were already initialized, keep the time related metrics
-    if current_run_metrics is not None:
-        metrics.timer = current_run_metrics.timer
-        metrics.duration = current_run_metrics.duration
-        metrics.time_to_first_token = current_run_metrics.time_to_first_token
-
-    return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +685,7 @@ def reason(
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -756,6 +730,7 @@ async def areason(
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -928,9 +903,6 @@ def _update_run_response(
     # Update the TeamRunOutput messages
     run_response.messages = messages_for_run_response
 
-    # Update the TeamRunOutput metrics
-    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
-
     if model_response.tool_executions:
         for tool_call in model_response.tool_executions:
             tool_name = tool_call.tool_name
@@ -1091,8 +1063,6 @@ def _handle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the TeamRunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the TeamRunOutput metrics
-    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
@@ -1259,8 +1229,6 @@ async def _ahandle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the TeamRunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the TeamRunOutput metrics
-    run_response.metrics = calculate_metrics(team, messages_for_run_response, current_run_metrics=run_response.metrics)
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
