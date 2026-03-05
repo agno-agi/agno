@@ -1,7 +1,8 @@
 import asyncio
 import hashlib
 import re
-from typing import Optional, Union
+from typing import Dict, Optional, Union
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -25,6 +26,7 @@ from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
+_SESSION_RESET_MESSAGE = "New conversation started!"
 
 # Metadata lines from ReasoningTools that aren't useful to end users
 _REASONING_SKIP_PREFIXES = ("Action:", "Next Action:", "Confidence:")
@@ -78,6 +80,10 @@ def attach_routes(
 
     entity = agent or team or workflow
     entity_type = "agent" if agent else "team" if team else "workflow"
+
+    # Maps hashed_phone → session_id; absent key falls back to default deterministic ID.
+    # On server restart the map is empty, so users resume their original session.
+    _active_sessions: Dict[str, str] = {}
     raw_name = getattr(entity, "name", None)
     entity_name = raw_name if isinstance(raw_name, str) else entity_type
     # Unique suffix prevents operation_id collisions across mounted routers
@@ -159,12 +165,20 @@ def attach_routes(
             if parsed is None:
                 return
 
+            # /new starts a fresh session — old session data is preserved
+            if parsed.text.strip().lower() == "/new":
+                _active_sessions[hashed_phone] = f"wa:{hashed_phone}:{uuid4().hex[:8]}"
+                await send_whatsapp_message_async(phone_number, _SESSION_RESET_MESSAGE, config)
+                return
+
             log_info(f"Processing message from {hashed_phone[:12]}: {parsed.text}")
+
+            session_id = _active_sessions.get(hashed_phone, f"wa:{hashed_phone}")
 
             # Download media from Meta servers and wrap as Agno media objects
             run_kwargs: dict = {
                 "user_id": hashed_phone,
-                "session_id": f"wa:{hashed_phone}",
+                "session_id": session_id,
             }
             if parsed.image_id:
                 run_kwargs["images"] = [Image(content=await get_media_async(parsed.image_id, config))]
