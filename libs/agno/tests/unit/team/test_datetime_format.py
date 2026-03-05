@@ -7,7 +7,6 @@ from agno.session import TeamSession
 from agno.team._messages import get_system_message
 from agno.team.team import Team
 
-
 # =============================================================================
 # Config tests
 # =============================================================================

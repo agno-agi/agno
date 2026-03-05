@@ -7,7 +7,6 @@ from agno.agent._messages import get_system_message
 from agno.agent.agent import Agent
 from agno.session import AgentSession
 
-
 # =============================================================================
 # Config tests
 # =============================================================================
