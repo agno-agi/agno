@@ -1,4 +1,5 @@
 import asyncio
+import re
 from os import getenv
 from typing import Optional, Union
 
@@ -10,14 +11,14 @@ from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.whatsapp.helpers import (
-    extract_earliest_timestamp,
+    parse_whatsapp_message,
     send_whatsapp_message_async,
     upload_response_audio_async,
     upload_response_audio_single_async,
     upload_response_files_async,
     upload_response_images_async,
 )
-from agno.os.interfaces.whatsapp.security import validate_webhook_signature
+from agno.os.interfaces.whatsapp.security import extract_earliest_timestamp, validate_webhook_signature
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_error, log_info, log_warning
@@ -25,6 +26,26 @@ from agno.utils.whatsapp import get_media_async, typing_indicator_async
 from agno.workflow import RemoteWorkflow, Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
+
+# Metadata lines from ReasoningTools that aren't useful to end users
+_REASONING_SKIP_PREFIXES = ("Action:", "Next Action:", "Confidence:")
+
+
+def _format_reasoning(text: str) -> str:
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped in ("—", "---"):
+            continue
+        if stripped.startswith(_REASONING_SKIP_PREFIXES):
+            continue
+        # Convert markdown headers to WhatsApp bold
+        header = re.match(r"^#{1,3}\s+(.+)$", stripped)
+        if header:
+            lines.append(f"*{header.group(1)}*")
+        else:
+            lines.append(stripped)
+    return "\n".join(lines)
 
 
 class WhatsAppWebhookResponse(BaseModel):
@@ -40,7 +61,7 @@ def attach_routes(
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
-    show_reasoning: bool = True,
+    show_reasoning: bool = False,
     send_user_number_to_context: bool = False,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
@@ -53,7 +74,7 @@ def attach_routes(
     # Unique suffix prevents operation_id collisions across mounted routers
     op_suffix = entity_name.lower().replace(" ", "_")
 
-    @router.get("/status")
+    @router.get("/status", operation_id=f"whatsapp_status_{op_suffix}")
     async def status():
         return {"status": "available"}
 
@@ -64,6 +85,7 @@ def attach_routes(
         description="Handle WhatsApp webhook verification",
     )
     async def verify_webhook(request: Request):
+        """Handle WhatsApp webhook verification"""
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
@@ -91,6 +113,7 @@ def attach_routes(
         },
     )
     async def webhook(request: Request, background_tasks: BackgroundTasks):
+        """Handle incoming WhatsApp messages"""
         payload = await request.body()
         signature = request.headers.get("X-Hub-Signature-256")
 
@@ -117,67 +140,22 @@ def attach_routes(
     async def process_message(message: dict):
         phone_number = message["from"]
         try:
-            message_image = None
-            message_video = None
-            message_audio = None
-            message_doc = None
-
             message_id = message.get("id")
             await typing_indicator_async(message_id)
 
-            msg_type = message.get("type")
-
-            if msg_type == "text":
-                message_text = message["text"]["body"]
-                log_info(message_text)
-
-            elif msg_type == "image":
-                message_text = message.get("image", {}).get("caption", "Describe the image")
-                message_image = message["image"]["id"]
-
-            elif msg_type == "video":
-                message_text = message.get("video", {}).get("caption", "Describe the video")
-                message_video = message["video"]["id"]
-
-            elif msg_type == "audio":
-                message_text = "Reply to audio"
-                message_audio = message["audio"]["id"]
-
-            elif msg_type == "document":
-                message_text = message.get("document", {}).get("caption", "Process the document")
-                message_doc = message["document"]["id"]
-
-            elif msg_type == "interactive":
-                interactive = message.get("interactive", {})
-                interactive_type = interactive.get("type")
-                if interactive_type == "button_reply":
-                    reply = interactive.get("button_reply", {})
-                    message_text = reply.get("title", "")
-                    log_info(f"Button reply: id={reply.get('id')} title={message_text}")
-                elif interactive_type == "list_reply":
-                    reply = interactive.get("list_reply", {})
-                    message_text = reply.get("title", "")
-                    description = reply.get("description", "")
-                    if description:
-                        message_text = f"{message_text}: {description}"
-                    log_info(f"List reply: id={reply.get('id')} title={message_text}")
-                else:
-                    log_warning(f"Unknown interactive type: {interactive_type}")
-                    return
-
-            else:
-                log_warning(f"Unknown message type: {msg_type}")
+            parsed = parse_whatsapp_message(message)
+            if parsed is None:
                 return
 
-            log_info(f"Processing message from {phone_number}: {message_text}")
+            log_info(f"Processing message from {phone_number}: {parsed.text}")
 
             run_kwargs = {
                 "user_id": phone_number,
                 "session_id": f"wa:{phone_number}",
-                "images": [Image(content=await get_media_async(message_image))] if message_image else None,
-                "files": [File(content=await get_media_async(message_doc))] if message_doc else None,
-                "videos": [Video(content=await get_media_async(message_video))] if message_video else None,
-                "audio": [Audio(content=await get_media_async(message_audio))] if message_audio else None,
+                "images": [Image(content=await get_media_async(parsed.image_id))] if parsed.image_id else None,
+                "files": [File(content=await get_media_async(parsed.doc_id))] if parsed.doc_id else None,
+                "videos": [Video(content=await get_media_async(parsed.video_id))] if parsed.video_id else None,
+                "audio": [Audio(content=await get_media_async(parsed.audio_id))] if parsed.audio_id else None,
             }
 
             if send_user_number_to_context:
@@ -196,7 +174,7 @@ def attach_routes(
 
             typing_task = asyncio.create_task(_keep_typing())
             try:
-                response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+                response = await entity.arun(parsed.text, **run_kwargs)  # type: ignore[union-attr]
             finally:
                 typing_task.cancel()
 
@@ -206,11 +184,9 @@ def attach_routes(
                 return
 
             if show_reasoning and hasattr(response, "reasoning_content") and response.reasoning_content:
-                await send_whatsapp_message_async(
-                    phone_number,
-                    f"Reasoning:\n{response.reasoning_content}",
-                    italics=True,
-                )
+                reasoning = _format_reasoning(response.reasoning_content)
+                if reasoning:
+                    await send_whatsapp_message_async(phone_number, reasoning, italics=True)
 
             has_media = False
             if response.images:
@@ -225,7 +201,23 @@ def attach_routes(
             if response.response_audio:
                 await upload_response_audio_single_async(response.response_audio, phone_number)
                 has_media = True
-            if not has_media:
+
+            # WhatsApp tools (send_list_message, send_reply_buttons, etc.) send
+            # messages directly during agent execution — skip duplicate content
+            _WA_TOOL_NAMES = {
+                "send_reply_buttons",
+                "send_list_message",
+                "send_image",
+                "send_document",
+                "send_location",
+                "send_reaction",
+                "mark_as_read",
+            }
+            response_tools = getattr(response, "tools", None)
+            tools_sent_message = response_tools and any(
+                t.tool_name in _WA_TOOL_NAMES for t in response_tools
+            )
+            if not has_media and not tools_sent_message:
                 await send_whatsapp_message_async(phone_number, response.content or "")
 
         except Exception as e:

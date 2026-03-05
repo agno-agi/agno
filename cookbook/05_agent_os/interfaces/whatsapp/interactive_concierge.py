@@ -72,9 +72,7 @@ concierge_agent = Agent(
 
 agent_os = AgentOS(
     agents=[concierge_agent],
-    interfaces=[
-        Whatsapp(agent=concierge_agent, send_user_number_to_context=True)
-    ],
+    interfaces=[Whatsapp(agent=concierge_agent, send_user_number_to_context=True)],
 )
 app = agent_os.get_app()
 

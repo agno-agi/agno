@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 from pydantic import BaseModel, Field
@@ -218,6 +218,10 @@ class WhatsAppTools(Toolkit):
             if len(buttons) > 3:
                 return json.dumps({"error": "WhatsApp allows a maximum of 3 reply buttons"})
 
+            # WhatsApp enforces max 20 chars for button titles
+            for btn in buttons:
+                btn.title = btn.title[:20]
+
             action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title}} for btn in buttons]
 
             interactive: Dict[str, Any] = {
@@ -272,6 +276,12 @@ class WhatsAppTools(Toolkit):
 
             if len(sections) > 10:
                 return json.dumps({"error": "WhatsApp allows a maximum of 10 sections"})
+
+            # WhatsApp enforces max 20 chars for button text, 24 for row titles
+            button_text = button_text[:20]
+            for section in sections:
+                for row in section.rows:
+                    row.title = row.title[:24]
 
             total_rows = sum(len(s.rows) for s in sections)
             if total_rows > 10:
@@ -407,8 +417,8 @@ class WhatsAppTools(Toolkit):
 
     def send_location(
         self,
-        latitude: str,
-        longitude: str,
+        latitude: Union[str, float],
+        longitude: Union[str, float],
         name: Optional[str] = None,
         address: Optional[str] = None,
         recipient: Optional[str] = None,
@@ -416,8 +426,8 @@ class WhatsAppTools(Toolkit):
         """Send a location pin to a WhatsApp user.
 
         Args:
-            latitude: Latitude of the location.
-            longitude: Longitude of the location.
+            latitude: Latitude of the location (string or number).
+            longitude: Longitude of the location (string or number).
             name: Optional name of the location.
             address: Optional address text.
             recipient: Recipient phone number. Uses default if not provided.

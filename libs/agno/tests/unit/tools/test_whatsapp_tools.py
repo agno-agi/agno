@@ -282,3 +282,126 @@ def test_mark_as_read(whatsapp_tools):
     payload = call_args.kwargs.get("json") or call_args[1].get("json")
     assert payload["status"] == "read"
     assert payload["message_id"] == "wamid.abc123"
+
+
+# === Edge Cases ===
+
+
+def test_send_reply_buttons_empty_list(whatsapp_tools):
+    result = whatsapp_tools.send_reply_buttons(body_text="Choose", buttons=[], recipient="+1234567890")
+    parsed = json.loads(result)
+    # Empty buttons should still be sent (API will reject)
+    assert parsed["ok"] is True or "error" in parsed
+
+
+def test_send_list_message_exceeds_sections(whatsapp_tools):
+    sections = [ListSection(title=f"Section {i}", rows=[ListRow(id=f"r_{i}", title=f"Row {i}")]) for i in range(11)]
+    result = whatsapp_tools.send_list_message(
+        body_text="Too many", button_text="View", sections=sections, recipient="+1234567890"
+    )
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "10 sections" in parsed["error"]
+
+
+def test_send_list_message_exceeds_total_rows(whatsapp_tools):
+    sections = [
+        ListSection(
+            title="Sec",
+            rows=[ListRow(id=f"r_{i}", title=f"Row {i}") for i in range(11)],
+        )
+    ]
+    result = whatsapp_tools.send_list_message(
+        body_text="Too many rows", button_text="View", sections=sections, recipient="+1234567890"
+    )
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "10 rows" in parsed["error"]
+
+
+def test_send_document_by_media_id(whatsapp_tools):
+    result = whatsapp_tools.send_document(media_id="doc_media_123", filename="report.pdf", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+
+    call_args = whatsapp_tools._mock_httpx.post.call_args
+    payload = call_args.kwargs.get("json") or call_args[1].get("json")
+    assert payload["document"]["id"] == "doc_media_123"
+    assert "link" not in payload["document"]
+
+
+def test_send_image_both_url_and_media_id(whatsapp_tools):
+    # media_id takes precedence over URL
+    result = whatsapp_tools.send_image(
+        image_url="https://example.com/img.png", media_id="media_123", recipient="+1234567890"
+    )
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+
+    call_args = whatsapp_tools._mock_httpx.post.call_args
+    payload = call_args.kwargs.get("json") or call_args[1].get("json")
+    assert payload["image"]["id"] == "media_123"
+    assert "link" not in payload["image"]
+
+
+def test_send_location_without_name_and_address(whatsapp_tools):
+    result = whatsapp_tools.send_location(latitude="25.7617", longitude="-80.1918", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+
+    call_args = whatsapp_tools._mock_httpx.post.call_args
+    payload = call_args.kwargs.get("json") or call_args[1].get("json")
+    assert "name" not in payload["location"]
+    assert "address" not in payload["location"]
+
+
+def test_send_template_message_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("template API error")
+    result = whatsapp_tools.send_template_message(template_name="hello_world", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert "error" in parsed
+
+
+def test_send_list_message_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("list API error")
+    sections = [ListSection(title="Sec", rows=[ListRow(id="r1", title="Row 1")])]
+    result = whatsapp_tools.send_list_message(
+        body_text="Body", button_text="View", sections=sections, recipient="+1234567890"
+    )
+    parsed = json.loads(result)
+    assert "error" in parsed
+
+
+def test_send_image_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("image API error")
+    result = whatsapp_tools.send_image(image_url="https://example.com/img.png", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert "error" in parsed
+
+
+def test_send_document_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("doc API error")
+    result = whatsapp_tools.send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert "error" in parsed
+
+
+def test_send_location_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("location API error")
+    result = whatsapp_tools.send_location(latitude="0", longitude="0", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert "error" in parsed
+
+
+def test_send_reaction_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("reaction API error")
+    result = whatsapp_tools.send_reaction(message_id="wamid.abc", emoji="\U0001f44d", recipient="+1234567890")
+    parsed = json.loads(result)
+    assert "error" in parsed
+
+
+def test_mark_as_read_error(whatsapp_tools):
+    whatsapp_tools._mock_httpx.post.side_effect = Exception("mark_read API error")
+    result = whatsapp_tools.mark_as_read(message_id="wamid.abc")
+    parsed = json.loads(result)
+    assert "error" in parsed

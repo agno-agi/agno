@@ -21,7 +21,7 @@ class Whatsapp(BaseInterface):
         workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
         prefix: str = "/whatsapp",
         tags: Optional[List[str]] = None,
-        show_reasoning: bool = True,
+        show_reasoning: bool = False,
         send_user_number_to_context: bool = False,
     ):
         self.agent = agent

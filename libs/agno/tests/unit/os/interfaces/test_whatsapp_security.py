@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.os.interfaces.whatsapp.security import get_app_secret, validate_webhook_signature
+from agno.os.interfaces.whatsapp.security import validate_webhook_signature
 
 APP_SECRET = "test-app-secret"
 
@@ -19,19 +19,6 @@ def _make_signature(payload: bytes, secret: str = APP_SECRET) -> str:
 def _set_env():
     with patch.dict("os.environ", {"WHATSAPP_APP_SECRET": APP_SECRET}):
         yield
-
-
-# === get_app_secret ===
-
-
-def test_get_app_secret():
-    assert get_app_secret() == APP_SECRET
-
-
-def test_get_app_secret_missing():
-    with patch.dict("os.environ", {}, clear=True):
-        with pytest.raises(ValueError, match="WHATSAPP_APP_SECRET"):
-            get_app_secret()
 
 
 # === Signature validation ===
@@ -101,7 +88,16 @@ def test_replay_protection_none_timestamp_skips_check():
     assert validate_webhook_signature(payload, signature, timestamp=None) is True
 
 
-def test_no_dev_mode_bypass():
+# === Dev bypass: skip validation when APP_SECRET is unset ===
+
+
+def test_no_secret_bypasses_validation():
+    with patch.dict("os.environ", {}, clear=True):
+        assert validate_webhook_signature(b"anything", None) is True
+        assert validate_webhook_signature(b"anything", "sha256=invalid") is True
+
+
+def test_app_env_development_does_not_bypass():
     payload = b'{"test": "data"}'
     with patch.dict("os.environ", {"WHATSAPP_APP_SECRET": APP_SECRET, "APP_ENV": "development"}):
         assert validate_webhook_signature(payload, None) is False

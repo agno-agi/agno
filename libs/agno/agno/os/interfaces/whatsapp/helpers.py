@@ -1,9 +1,11 @@
 import base64
 import io
+import mimetypes
 import wave
+from dataclasses import dataclass
 from typing import Optional
 
-from agno.utils.log import log_warning
+from agno.utils.log import log_info, log_warning
 from agno.utils.whatsapp import (
     send_audio_message_async,
     send_document_message_async,
@@ -12,19 +14,66 @@ from agno.utils.whatsapp import (
     upload_media_async,
 )
 
-_MIME_MAP = {
-    ".pdf": "application/pdf",
-    ".doc": "application/msword",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xls": "application/vnd.ms-excel",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".ppt": "application/vnd.ms-powerpoint",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".csv": "text/csv",
-    ".txt": "text/plain",
-    ".json": "application/json",
-    ".zip": "application/zip",
-}
+
+@dataclass
+class ParsedMessage:
+    text: str
+    image_id: Optional[str] = None
+    video_id: Optional[str] = None
+    audio_id: Optional[str] = None
+    doc_id: Optional[str] = None
+
+
+def parse_whatsapp_message(message: dict) -> Optional[ParsedMessage]:
+    msg_type = message.get("type")
+
+    if msg_type == "text":
+        text = message["text"]["body"]
+        log_info(text)
+        return ParsedMessage(text=text)
+
+    if msg_type == "image":
+        return ParsedMessage(
+            text=message.get("image", {}).get("caption", "Describe the image"),
+            image_id=message["image"]["id"],
+        )
+
+    if msg_type == "video":
+        return ParsedMessage(
+            text=message.get("video", {}).get("caption", "Describe the video"),
+            video_id=message["video"]["id"],
+        )
+
+    if msg_type == "audio":
+        return ParsedMessage(text="Reply to audio", audio_id=message["audio"]["id"])
+
+    if msg_type == "document":
+        return ParsedMessage(
+            text=message.get("document", {}).get("caption", "Process the document"),
+            doc_id=message["document"]["id"],
+        )
+
+    if msg_type == "interactive":
+        interactive = message.get("interactive", {})
+        interactive_type = interactive.get("type")
+        if interactive_type == "button_reply":
+            reply = interactive.get("button_reply", {})
+            text = reply.get("title", "")
+            log_info(f"Button reply: id={reply.get('id')} title={text}")
+            return ParsedMessage(text=text)
+        if interactive_type == "list_reply":
+            reply = interactive.get("list_reply", {})
+            text = reply.get("title", "")
+            description = reply.get("description", "")
+            if description:
+                text = f"{text}: {description}"
+            log_info(f"List reply: id={reply.get('id')} title={text}")
+            return ParsedMessage(text=text)
+        log_warning(f"Unknown interactive type: {interactive_type}")
+        return None
+
+    log_warning(f"Unknown message type: {msg_type}")
+    return None
 
 
 def extract_media_bytes(media_obj) -> Optional[bytes]:
@@ -70,20 +119,6 @@ def prepare_audio_for_whatsapp(audio_bytes: bytes, mime_type: str, audio_obj) ->
     return buf.getvalue(), "audio/wav", "audio.wav"
 
 
-def extract_earliest_timestamp(body: dict) -> Optional[int]:
-    timestamps = []
-    for entry in body.get("entry", []):
-        for change in entry.get("changes", []):
-            for msg in change.get("value", {}).get("messages", []):
-                ts = msg.get("timestamp")
-                if ts:
-                    try:
-                        timestamps.append(int(ts))
-                    except (ValueError, TypeError):
-                        pass
-    return min(timestamps) if timestamps else None
-
-
 async def send_whatsapp_message_async(recipient: str, message: str, italics: bool = False) -> None:
     def _format(text: str) -> str:
         if italics:
@@ -120,10 +155,7 @@ async def upload_response_files_async(response, recipient: str) -> None:
         file_bytes = extract_media_bytes(file)
         if file_bytes:
             filename = getattr(file, "name", None) or getattr(file, "filename", None) or "document"
-            ext = ""
-            if "." in filename:
-                ext = "." + filename.rsplit(".", 1)[-1].lower()
-            mime_type = _MIME_MAP.get(ext, "application/octet-stream")
+            mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
             media_id = await upload_media_async(media_data=file_bytes, mime_type=mime_type, filename=filename)
             if isinstance(media_id, dict):

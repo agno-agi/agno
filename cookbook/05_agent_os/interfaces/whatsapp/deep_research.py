@@ -78,9 +78,7 @@ deep_research_agent = Agent(
 
 agent_os = AgentOS(
     agents=[deep_research_agent],
-    interfaces=[
-        Whatsapp(agent=deep_research_agent, send_user_number_to_context=True)
-    ],
+    interfaces=[Whatsapp(agent=deep_research_agent, send_user_number_to_context=True)],
 )
 app = agent_os.get_app()
 
