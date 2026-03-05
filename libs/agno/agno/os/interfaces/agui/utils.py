@@ -11,11 +11,15 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
+    RawEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunFinishedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
-    StepFinishedEvent,
-    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -76,6 +80,7 @@ class EventBuffer:
     current_text_message_id: str = ""  # ID of the current text message context (for tool call parenting)
     next_text_message_id: str = ""  # Pre-generated ID for the next text message
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
+    reasoning_message_id: str = ""  # ID of the active reasoning message (empty = no reasoning in progress)
     _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
     def __init__(self):
@@ -84,6 +89,7 @@ class EventBuffer:
         self.current_text_message_id = ""
         self.next_text_message_id = str(uuid.uuid4())
         self.pending_tool_calls_parent_id = ""
+        self.reasoning_message_id = ""
         self._last_snapshot = None
 
     def start_tool_call(self, tool_call_id: str) -> None:
@@ -256,12 +262,15 @@ def _create_events_from_chunk(
         Tuple of (events_to_emit, new_message_started_state, message_id)
     """
     events_to_emit: List[BaseEvent] = []
+    is_content_event = False
 
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_content:
         content = extract_response_chunk_content(chunk)  # type: ignore
+        is_content_event = True
     elif chunk.event == TeamRunEvent.run_content:
         content = extract_team_response_chunk_content(chunk)  # type: ignore
+        is_content_event = True
     else:
         content = None
 
@@ -374,16 +383,91 @@ def _create_events_from_chunk(
                 # Emit state delta after tool call completion (state may have been mutated by the tool)
                 events_to_emit.extend(_create_state_delta_events(run_state, event_buffer))
 
-    # Handle reasoning
-    elif chunk.event == RunEvent.reasoning_started:
-        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        events_to_emit.append(step_started_event)
-    elif chunk.event == RunEvent.reasoning_completed:
-        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-        events_to_emit.append(step_finished_event)
+    # Handle reasoning events (agent + team)
+    elif chunk.event in (RunEvent.reasoning_started, TeamRunEvent.reasoning_started):
+        reasoning_msg_id = str(uuid.uuid4())
+        event_buffer.reasoning_message_id = reasoning_msg_id
+        events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_msg_id))
+        events_to_emit.append(
+            ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_msg_id, role="assistant"
+            )
+        )
+
+    elif chunk.event in (RunEvent.reasoning_content_delta, TeamRunEvent.reasoning_content_delta):
+        delta_text = getattr(chunk, "reasoning_content", "") or ""
+        if delta_text:
+            # Auto-start reasoning if delta arrives without prior reasoning_started
+            if not event_buffer.reasoning_message_id:
+                reasoning_msg_id = str(uuid.uuid4())
+                event_buffer.reasoning_message_id = reasoning_msg_id
+                events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_msg_id))
+                events_to_emit.append(
+                    ReasoningMessageStartEvent(
+                        type=EventType.REASONING_MESSAGE_START, message_id=reasoning_msg_id, role="assistant"
+                    )
+                )
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT,
+                    message_id=event_buffer.reasoning_message_id,
+                    delta=delta_text,
+                )
+            )
+
+    elif chunk.event in (RunEvent.reasoning_step, TeamRunEvent.reasoning_step):
+        # reasoning_step may carry content in reasoning_content or content fields
+        delta_text = getattr(chunk, "reasoning_content", "") or ""
+        if not delta_text:
+            raw_content = getattr(chunk, "content", None)
+            if raw_content is not None:
+                delta_text = get_text_from_message(raw_content)
+        if delta_text:
+            # Auto-start reasoning if step arrives without prior reasoning_started
+            if not event_buffer.reasoning_message_id:
+                reasoning_msg_id = str(uuid.uuid4())
+                event_buffer.reasoning_message_id = reasoning_msg_id
+                events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_msg_id))
+                events_to_emit.append(
+                    ReasoningMessageStartEvent(
+                        type=EventType.REASONING_MESSAGE_START, message_id=reasoning_msg_id, role="assistant"
+                    )
+                )
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT,
+                    message_id=event_buffer.reasoning_message_id,
+                    delta=delta_text,
+                )
+            )
+
+    elif chunk.event in (RunEvent.reasoning_completed, TeamRunEvent.reasoning_completed):
+        # Emit any final content from the completion event
+        raw_content = getattr(chunk, "content", None)
+        if raw_content is not None:
+            final_text = get_text_from_message(raw_content)
+            if final_text and event_buffer.reasoning_message_id:
+                events_to_emit.append(
+                    ReasoningMessageContentEvent(
+                        type=EventType.REASONING_MESSAGE_CONTENT,
+                        message_id=event_buffer.reasoning_message_id,
+                        delta=final_text,
+                    )
+                )
+        # Close reasoning phase
+        if event_buffer.reasoning_message_id:
+            events_to_emit.append(
+                ReasoningMessageEndEvent(
+                    type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id
+                )
+            )
+            events_to_emit.append(
+                ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id)
+            )
+            event_buffer.reasoning_message_id = ""
 
     # Handle custom events
-    elif chunk.event == RunEvent.custom_event:
+    elif chunk.event in (RunEvent.custom_event, TeamRunEvent.custom_event):
         # Use the name of the event class if available, otherwise default to the CustomEvent
         try:
             custom_event_name = chunk.__class__.__name__
@@ -398,6 +482,14 @@ def _create_events_from_chunk(
 
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
+
+    # Catch-all: emit unmapped events as RawEvent (skip content events which may have None content)
+    elif not is_content_event:
+        try:
+            raw_dict = chunk.to_dict()
+        except Exception:
+            raw_dict = {"event": str(chunk.event)}
+        events_to_emit.append(RawEvent(type=EventType.RAW, event=raw_dict, source="agno"))
 
     return events_to_emit, message_started, message_id
 
@@ -422,6 +514,16 @@ def _create_completion_events(
                 tool_call_id=tool_call_id,
             )
             events_to_emit.append(end_event)
+
+    # Close any in-progress reasoning phase
+    if event_buffer.reasoning_message_id:
+        events_to_emit.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id)
+        )
+        events_to_emit.append(
+            ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id)
+        )
+        event_buffer.reasoning_message_id = ""
 
     # End the message and run, denoting the end of the session
     if message_started:
@@ -538,6 +640,7 @@ def stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
@@ -603,6 +706,7 @@ async def async_stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
