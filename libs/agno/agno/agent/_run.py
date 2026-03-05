@@ -1917,6 +1917,8 @@ async def _arun_background_stream(
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     run_id = run_response.run_id
+    if not run_id:
+        raise ValueError("run_id is required for background streaming")
 
     # 1. Persist RUNNING status so the run is visible in the DB immediately
     run_response.status = RunStatus.running
