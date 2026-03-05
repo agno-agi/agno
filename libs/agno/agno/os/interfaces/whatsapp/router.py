@@ -13,13 +13,13 @@ from agno.agent.remote import RemoteAgent
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
-    get_media_async,
     extract_message_content,
+    get_media_async,
     send_whatsapp_message_async,
     typing_indicator_async,
     upload_and_send_media_async,
 )
-from agno.os.interfaces.whatsapp.security import extract_earliest_timestamp, validate_webhook_signature
+from agno.os.interfaces.whatsapp.security import validate_webhook_signature
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_error, log_info, log_warning
@@ -143,10 +143,7 @@ def attach_routes(
 
         body = await request.json()
 
-        # Extract earliest message timestamp for replay protection
-        timestamp = extract_earliest_timestamp(body)
-
-        if not validate_webhook_signature(payload, signature, timestamp=timestamp):
+        if not validate_webhook_signature(payload, signature):
             log_warning("Invalid webhook signature")
             raise HTTPException(status_code=403, detail="Invalid signature")
 

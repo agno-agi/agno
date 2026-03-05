@@ -84,6 +84,15 @@ async def _wait_for_agent_call(agent_mock: AsyncMock, timeout: float = 5.0):
         elapsed += 0.1
 
 
+async def _wait_for_mock_call(mock, timeout: float = 5.0):
+    elapsed = 0.0
+    while not mock.called and elapsed < timeout:
+        await asyncio.sleep(0.1)
+        elapsed += 0.1
+    # Yield once more so the coroutine finishes any remaining sync work
+    await asyncio.sleep(0)
+
+
 # === Webhook Verification (GET) ===
 
 
@@ -400,40 +409,66 @@ async def test_document_message_processing():
 @pytest.mark.asyncio
 async def test_unknown_message_type_agent_not_called():
     agent_mock = _make_agent_mock()
+    done = asyncio.Event()
+    original_extract = None
+
+    def _extract_and_signal(message):
+        result = original_extract(message)
+        if result is None:
+            done.set()
+        return result
+
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        app = _build_app(agent_mock)
-        client = TestClient(app)
-        body = _make_whatsapp_webhook("sticker", sticker={"id": "sticker_123"})
-        response = client.post("/webhook", json=body)
-        assert response.status_code == 200
+        from agno.os.interfaces.whatsapp.helpers import extract_message_content
 
-        await asyncio.sleep(0.5)
-        agent_mock.arun.assert_not_called()
+        original_extract = extract_message_content
+        with patch("agno.os.interfaces.whatsapp.router.extract_message_content", side_effect=_extract_and_signal):
+            app = _build_app(agent_mock)
+            client = TestClient(app)
+            body = _make_whatsapp_webhook("sticker", sticker={"id": "sticker_123"})
+            response = client.post("/webhook", json=body)
+            assert response.status_code == 200
+
+            await asyncio.wait_for(done.wait(), timeout=5.0)
+            agent_mock.arun.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_unknown_interactive_type_agent_not_called():
     agent_mock = _make_agent_mock()
+    done = asyncio.Event()
+    original_extract = None
+
+    def _extract_and_signal(message):
+        result = original_extract(message)
+        if result is None:
+            done.set()
+        return result
+
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        app = _build_app(agent_mock)
-        client = TestClient(app)
-        body = _make_whatsapp_webhook(
-            "interactive",
-            interactive={"type": "nfm_reply", "nfm_reply": {"body": "flow data"}},
-        )
-        response = client.post("/webhook", json=body)
-        assert response.status_code == 200
+        from agno.os.interfaces.whatsapp.helpers import extract_message_content
 
-        await asyncio.sleep(0.5)
-        agent_mock.arun.assert_not_called()
+        original_extract = extract_message_content
+        with patch("agno.os.interfaces.whatsapp.router.extract_message_content", side_effect=_extract_and_signal):
+            app = _build_app(agent_mock)
+            client = TestClient(app)
+            body = _make_whatsapp_webhook(
+                "interactive",
+                interactive={"type": "nfm_reply", "nfm_reply": {"body": "flow data"}},
+            )
+            response = client.post("/webhook", json=body)
+            assert response.status_code == 200
+
+            await asyncio.wait_for(done.wait(), timeout=5.0)
+            agent_mock.arun.assert_not_called()
 
 
 # === Error Handling ===
@@ -467,8 +502,8 @@ async def test_agent_error_response_sends_error_message():
         assert response.status_code == 200
 
         await _wait_for_agent_call(agent_mock)
+        await _wait_for_mock_call(mock_send_text)
 
-        await asyncio.sleep(0.3)
         # Verify error message was sent to user
         mock_send_text.assert_called()
         error_call = mock_send_text.call_args_list[0]
@@ -491,7 +526,7 @@ async def test_agent_exception_sends_fallback_error():
         response = client.post("/webhook", json=body)
         assert response.status_code == 200
 
-        await asyncio.sleep(1.0)
+        await _wait_for_mock_call(mock_send_text)
         # Exception path sends error message to user
         mock_send_text.assert_called()
 
@@ -625,7 +660,7 @@ async def test_image_response_short_caption_no_extra_text():
         assert response.status_code == 200
 
         await _wait_for_agent_call(agent_mock)
-        await asyncio.sleep(0.3)
+        await _wait_for_mock_call(mock_upload)
 
         mock_upload.assert_called_once()
         # Short content — no separate text message
@@ -663,7 +698,7 @@ async def test_image_response_long_caption_sends_full_text():
         assert response.status_code == 200
 
         await _wait_for_agent_call(agent_mock)
-        await asyncio.sleep(0.3)
+        await _wait_for_mock_call(mock_upload)
 
         mock_upload.assert_called_once()
         # Long content — full text sent as separate message after media
@@ -788,7 +823,7 @@ async def test_new_command_starts_fresh_session():
         body = _make_whatsapp_webhook("text", text={"body": "/new"})
         client.post("/webhook", json=body)
 
-        await asyncio.sleep(0.5)
+        await _wait_for_mock_call(mock_send_text)
 
         # Agent should NOT be called — /new is intercepted
         agent_mock.arun.assert_not_called()
@@ -831,9 +866,7 @@ async def test_new_command_case_insensitive():
             body = _make_whatsapp_webhook("text", text={"body": variant})
             client.post("/webhook", json=body)
 
-            import asyncio
-
-            await asyncio.sleep(0.5)
+            await _wait_for_mock_call(mock_send_text)
 
             agent_mock.arun.assert_not_called(), f"arun should not be called for '{variant}'"
             mock_send_text.assert_called_once()

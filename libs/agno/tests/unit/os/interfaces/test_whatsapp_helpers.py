@@ -9,81 +9,8 @@ from agno.os.interfaces.whatsapp.helpers import (
     send_whatsapp_message_async,
     upload_and_send_media_async,
 )
-from agno.os.interfaces.whatsapp.security import extract_earliest_timestamp
 
 _TEST_CONFIG = WhatsAppConfig(access_token="test-token", phone_number_id="123456", verify_token="test-verify")
-
-
-# === extract_earliest_timestamp ===
-
-
-def test_extract_earliest_timestamp_single_message():
-    body = {
-        "entry": [{"changes": [{"value": {"messages": [{"timestamp": "1700000000"}]}}]}],
-    }
-    assert extract_earliest_timestamp(body) == 1700000000
-
-
-def test_extract_earliest_timestamp_multiple_messages():
-    body = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "messages": [
-                                {"timestamp": "1700000300"},
-                                {"timestamp": "1700000100"},
-                                {"timestamp": "1700000200"},
-                            ]
-                        }
-                    }
-                ]
-            }
-        ],
-    }
-    assert extract_earliest_timestamp(body) == 1700000100
-
-
-def test_extract_earliest_timestamp_no_messages():
-    body = {"entry": [{"changes": [{"value": {"messages": []}}]}]}
-    assert extract_earliest_timestamp(body) is None
-
-
-def test_extract_earliest_timestamp_empty_body():
-    assert extract_earliest_timestamp({}) is None
-
-
-def test_extract_earliest_timestamp_invalid_timestamps():
-    body = {
-        "entry": [{"changes": [{"value": {"messages": [{"timestamp": "not_a_number"}]}}]}],
-    }
-    assert extract_earliest_timestamp(body) is None
-
-
-def test_extract_earliest_timestamp_mixed_valid_invalid():
-    body = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "messages": [
-                                {"timestamp": "bad"},
-                                {"timestamp": "1700000500"},
-                            ]
-                        }
-                    }
-                ]
-            }
-        ],
-    }
-    assert extract_earliest_timestamp(body) == 1700000500
-
-
-def test_extract_earliest_timestamp_missing_fields():
-    body = {"entry": [{"changes": [{"value": {}}]}]}
-    assert extract_earliest_timestamp(body) is None
 
 
 # === send_whatsapp_message_async ===

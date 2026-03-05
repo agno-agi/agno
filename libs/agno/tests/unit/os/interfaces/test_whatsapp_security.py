@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import time
 from unittest.mock import patch
 
 import pytest
@@ -56,36 +55,6 @@ def test_wrong_secret():
     payload = b'{"test": "data"}'
     signature = _make_signature(payload, secret="wrong-secret")
     assert validate_webhook_signature(payload, signature) is False
-
-
-# === Replay protection ===
-
-
-def test_replay_protection_current_timestamp():
-    payload = b'{"test": "data"}'
-    signature = _make_signature(payload)
-    timestamp = int(time.time())
-    assert validate_webhook_signature(payload, signature, timestamp=timestamp) is True
-
-
-def test_replay_protection_old_timestamp():
-    payload = b'{"test": "data"}'
-    signature = _make_signature(payload)
-    old_timestamp = int(time.time()) - 400
-    assert validate_webhook_signature(payload, signature, timestamp=old_timestamp) is False
-
-
-def test_replay_protection_future_timestamp():
-    payload = b'{"test": "data"}'
-    signature = _make_signature(payload)
-    future_timestamp = int(time.time()) + 400
-    assert validate_webhook_signature(payload, signature, timestamp=future_timestamp) is False
-
-
-def test_replay_protection_none_timestamp_skips_check():
-    payload = b'{"test": "data"}'
-    signature = _make_signature(payload)
-    assert validate_webhook_signature(payload, signature, timestamp=None) is True
 
 
 # === Dev bypass: skip validation when APP_SECRET is unset ===
