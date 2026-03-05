@@ -4398,64 +4398,60 @@ def cleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
+    import copy
+
     from agno.agent import _session
     from agno.run.approval import update_approval_run_status
 
-    # Save output media before scrubbing so they remain available to the caller.
-    # store_media=False only prevents persistence, not in-run availability.
-    saved_images = run_response.images
-    saved_videos = run_response.videos
-    saved_audio = run_response.audio
-    saved_files = run_response.files
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
+    if not agent.store_media:
+        storage_copy.images = None
+        storage_copy.videos = None
+        storage_copy.audio = None
+        storage_copy.files = None
 
-    try:
-        # Scrub the stored run based on storage flags
-        scrub_run_output_for_storage(agent, run_response)
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
 
-        if not agent.store_media:
-            run_response.images = None
-            run_response.videos = None
-            run_response.audio = None
-            run_response.files = None
+    # Update run_response.session_state before saving
+    # This ensures RunOutput reflects all tool modifications
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-        # Stop the timer for the Run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=storage_copy,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
 
-        # Update run_response.session_state before saving
-        if run_context is not None and run_context.session_state is not None:
-            run_response.session_state = run_context.session_state
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
-        save_run_response_to_file(
-            agent,
-            run_response=run_response,
-            input=run_response.input.input_content_string() if run_response.input else "",
-            session_id=session.session_id,
-            user_id=user_id,
-        )
+    # Calculate session metrics
+    update_session_metrics(agent, session=session, run_response=run_response)
 
-        # Shallow copy breaks aliasing so the finally-block restore
-        # doesn't rehydrate media on the cached session's run list
-        import copy
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
 
-        session.upsert_run(run=copy.copy(run_response))
-        update_session_metrics(agent, session=session, run_response=run_response)
+    # Save session to memory
+    _session.save_session(agent, session=session)
 
-        if run_context is not None and run_context.session_state is not None:
-            if session.session_data is not None:
-                session.session_data["session_state"] = run_context.session_state
-            else:
-                session.session_data = {"session_state": run_context.session_state}
-
-        _session.save_session(agent, session=session)
-
-        if run_response.status is not None and run_response.run_id is not None:
-            update_approval_run_status(agent.db, run_response.run_id, run_response.status)
-    finally:
-        run_response.images = saved_images
-        run_response.videos = saved_videos
-        run_response.audio = saved_audio
-        run_response.files = saved_files
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
 
 async def acleanup_and_store(
@@ -4465,57 +4461,59 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
+    import copy
+
     from agno.agent import _session
     from agno.run.approval import aupdate_approval_run_status
 
-    saved_images = run_response.images
-    saved_videos = run_response.videos
-    saved_audio = run_response.audio
-    saved_files = run_response.files
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
+    if not agent.store_media:
+        storage_copy.images = None
+        storage_copy.videos = None
+        storage_copy.audio = None
+        storage_copy.files = None
 
-    try:
-        scrub_run_output_for_storage(agent, run_response)
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
 
-        if not agent.store_media:
-            run_response.images = None
-            run_response.videos = None
-            run_response.audio = None
-            run_response.files = None
+    # Update run_response.session_state before saving
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=storage_copy,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
 
-        if run_context is not None and run_context.session_state is not None:
-            run_response.session_state = run_context.session_state
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
-        save_run_response_to_file(
-            agent,
-            run_response=run_response,
-            input=run_response.input.input_content_string() if run_response.input else "",
-            session_id=session.session_id,
-            user_id=user_id,
-        )
+    # Calculate session metrics
+    update_session_metrics(agent, session=session, run_response=run_response)
 
-        import copy
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
 
-        session.upsert_run(run=copy.copy(run_response))
-        update_session_metrics(agent, session=session, run_response=run_response)
+    # Save session to memory
+    await _session.asave_session(agent, session=session)
 
-        if run_context is not None and run_context.session_state is not None:
-            if session.session_data is not None:
-                session.session_data["session_state"] = run_context.session_state
-            else:
-                session.session_data = {"session_state": run_context.session_state}
-
-        await _session.asave_session(agent, session=session)
-
-        if run_response.status is not None and run_response.run_id is not None:
-            await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
-    finally:
-        run_response.images = saved_images
-        run_response.videos = saved_videos
-        run_response.audio = saved_audio
-        run_response.files = saved_files
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
 
 # ---------------------------------------------------------------------------

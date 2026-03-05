@@ -3914,51 +3914,49 @@ def _cleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
+    import copy
+
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
-    # Save output media before scrubbing so they remain available to the caller.
-    # store_media=False only prevents persistence, not in-run availability.
-    saved_images = run_response.images
-    saved_videos = run_response.videos
-    saved_audio = run_response.audio
-    saved_files = run_response.files
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
+    if not team.store_media:
+        storage_copy.images = None
+        storage_copy.videos = None
+        storage_copy.audio = None
+        storage_copy.files = None
 
-    try:
-        scrub_run_output_for_storage(team, run_response)
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
 
-        if not team.store_media:
-            run_response.images = None
-            run_response.videos = None
-            run_response.audio = None
-            run_response.files = None
+    # Update run_response.session_state before saving
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
-        if run_context is not None and run_context.session_state is not None:
-            run_response.session_state = run_context.session_state
+    # Calculate session metrics
+    update_session_metrics(team, session=session, run_response=run_response)
 
-        import copy
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
 
-        session.upsert_run(run_response=copy.copy(run_response))
-        update_session_metrics(team, session=session, run_response=run_response)
+    # Save session to memory
+    team.save_session(session=session)
 
-        if run_context is not None and run_context.session_state is not None:
-            if session.session_data is not None:
-                session.session_data["session_state"] = run_context.session_state
-            else:
-                session.session_data = {"session_state": run_context.session_state}
-
-        team.save_session(session=session)
-
-        if run_response.status is not None and run_response.run_id is not None:
-            update_approval_run_status(team.db, run_response.run_id, run_response.status)
-    finally:
-        run_response.images = saved_images
-        run_response.videos = saved_videos
-        run_response.audio = saved_audio
-        run_response.files = saved_files
+    # Update approval run_status if this run has an associated approval.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 async def _acleanup_and_store(
@@ -3967,49 +3965,49 @@ async def _acleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
+    import copy
+
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    saved_images = run_response.images
-    saved_videos = run_response.videos
-    saved_audio = run_response.audio
-    saved_files = run_response.files
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
+    if not team.store_media:
+        storage_copy.images = None
+        storage_copy.videos = None
+        storage_copy.audio = None
+        storage_copy.files = None
 
-    try:
-        scrub_run_output_for_storage(team, run_response)
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
 
-        if not team.store_media:
-            run_response.images = None
-            run_response.videos = None
-            run_response.audio = None
-            run_response.files = None
+    # Update run_response.session_state before saving
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
-        if run_context is not None and run_context.session_state is not None:
-            run_response.session_state = run_context.session_state
+    # Calculate session metrics
+    update_session_metrics(team, session=session, run_response=run_response)
 
-        import copy
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
 
-        session.upsert_run(run_response=copy.copy(run_response))
-        update_session_metrics(team, session=session, run_response=run_response)
+    # Save session to memory
+    await team.asave_session(session=session)
 
-        if run_context is not None and run_context.session_state is not None:
-            if session.session_data is not None:
-                session.session_data["session_state"] = run_context.session_state
-            else:
-                session.session_data = {"session_state": run_context.session_state}
-
-        await team.asave_session(session=session)
-
-        if run_response.status is not None and run_response.run_id is not None:
-            await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
-    finally:
-        run_response.images = saved_images
-        run_response.videos = saved_videos
-        run_response.audio = saved_audio
-        run_response.files = saved_files
+    # Update approval run_status if this run has an associated approval.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
