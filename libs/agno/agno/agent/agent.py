@@ -299,13 +299,13 @@ class Agent:
     # Save the response to a file
     save_response_to_file: Optional[str] = None
 
-    # --- Follow-Up Suggestions ---
-    # If True, generate follow-up suggestions after the main response
-    follow_up_suggestions: bool = False
-    # Number of follow-up suggestions to generate (default 3)
-    num_follow_up_suggestions: int = 3
-    # Optional model to use for generating follow-up suggestions (defaults to agent's model)
-    follow_up_model: Optional[Model] = None
+    # --- Followups ---
+    # If True, generate followup prompts after the main response
+    followups: bool = False
+    # Number of followup prompts to generate (default 3)
+    num_followups: int = 3
+    # Optional model to use for generating followups (defaults to agent's model)
+    followups_model: Optional[Model] = None
 
     # --- Agent Streaming ---
     # Stream the response from the Agent
@@ -462,6 +462,9 @@ class Agent:
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
+        followups: bool = False,
+        num_followups: int = 3,
+        followups_model: Optional[Model] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -623,6 +626,10 @@ class Agent:
 
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
+
+        self.followups = followups
+        self.num_followups = num_followups
+        self.followups_model = followups_model
 
         self.stream = stream
         self.stream_events = stream_events

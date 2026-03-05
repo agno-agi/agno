@@ -25,19 +25,19 @@ if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
 
 
-class FollowUpSuggestion(BaseModel):
-    """A single follow-up suggestion returned by the agent."""
+class Followup(BaseModel):
+    """A single followup prompt suggested after the agent's response."""
 
     title: str = Field(..., description="Short action-oriented suggestion (5-10 words)")
     reason: str = Field(..., description="One sentence explaining why this is a good follow-up")
 
 
-class FollowUpSuggestions(BaseModel):
-    """Container for follow-up suggestions generated after the main response."""
+class Followups(BaseModel):
+    """Container for followup prompts generated after the main response."""
 
-    suggestions: List[FollowUpSuggestion] = Field(
+    suggestions: List[Followup] = Field(
         ...,
-        description="Follow-up suggestions based on the response",
+        description="Followup prompts based on the response",
     )
 
 
@@ -194,8 +194,8 @@ class RunEvent(str, Enum):
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
 
-    follow_up_suggestions_started = "FollowUpSuggestionsStarted"
-    follow_up_suggestions_completed = "FollowUpSuggestionsCompleted"
+    followups_started = "FollowupsStarted"
+    followups_completed = "FollowupsCompleted"
 
     custom_event = "CustomEvent"
 
@@ -502,14 +502,14 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
-class FollowUpSuggestionsStartedEvent(BaseAgentRunEvent):
-    event: str = RunEvent.follow_up_suggestions_started.value
+class FollowupsStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_started.value
 
 
 @dataclass
-class FollowUpSuggestionsCompletedEvent(BaseAgentRunEvent):
-    event: str = RunEvent.follow_up_suggestions_completed.value
-    follow_up_suggestions: Optional[FollowUpSuggestions] = None
+class FollowupsCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_completed.value
+    followups: Optional[Followups] = None
 
 
 @dataclass
@@ -557,8 +557,8 @@ RunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
-    FollowUpSuggestionsStartedEvent,
-    FollowUpSuggestionsCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     CustomEvent,
 ]
 
@@ -597,8 +597,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
-    RunEvent.follow_up_suggestions_started.value: FollowUpSuggestionsStartedEvent,
-    RunEvent.follow_up_suggestions_completed.value: FollowUpSuggestionsCompletedEvent,
+    RunEvent.followups_started.value: FollowupsStartedEvent,
+    RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
@@ -652,7 +652,7 @@ class RunOutput:
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
 
-    follow_up_suggestions: Optional[FollowUpSuggestions] = None
+    followups: Optional[Followups] = None
 
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None

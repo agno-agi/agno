@@ -29,7 +29,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import FollowUpSuggestions, RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
@@ -38,8 +38,8 @@ from agno.tools.function import Function
 from agno.utils.events import (
     create_compression_completed_event,
     create_compression_started_event,
-    create_follow_up_suggestions_completed_event,
-    create_follow_up_suggestions_started_event,
+    create_followups_completed_event,
+    create_followups_started_event,
     create_model_request_completed_event,
     create_model_request_started_event,
     create_parser_model_response_completed_event,
@@ -1689,24 +1689,24 @@ def handle_model_response_chunk(
 # ---------------------------------------------------------------------------
 
 
-def _get_follow_up_response_format(model: Model) -> Optional[Union[Dict, Type[BaseModel]]]:
-    """Get the response format for FollowUpSuggestions based on model capabilities."""
+def _get_followups_response_format(model: Model) -> Optional[Union[Dict, Type[BaseModel]]]:
+    """Get the response format for Followups based on model capabilities."""
     if model.supports_native_structured_outputs:
-        return FollowUpSuggestions
+        return Followups
     elif model.supports_json_schema_outputs:
         return {
             "type": "json_schema",
             "json_schema": {
-                "name": "FollowUpSuggestions",
-                "schema": FollowUpSuggestions.model_json_schema(),
+                "name": "Followups",
+                "schema": Followups.model_json_schema(),
             },
         }
     else:
         return {"type": "json_object"}
 
 
-def _build_follow_up_messages(response_content: Any, num_suggestions: int) -> List[Message]:
-    """Build the messages for the follow-up suggestions model call."""
+def _build_followup_messages(response_content: Any, num_suggestions: int) -> List[Message]:
+    """Build the messages for the followups model call."""
     import json
 
     system_prompt = (
@@ -1734,17 +1734,17 @@ def _build_follow_up_messages(response_content: Any, num_suggestions: int) -> Li
     ]
 
 
-def _parse_follow_up_response(model_response: ModelResponse) -> Optional[FollowUpSuggestions]:
-    """Parse the model response into FollowUpSuggestions."""
+def _parse_followups_response(model_response: ModelResponse) -> Optional[Followups]:
+    """Parse the model response into Followups."""
     import json
 
     if model_response.parsed is not None:
-        if isinstance(model_response.parsed, FollowUpSuggestions):
+        if isinstance(model_response.parsed, Followups):
             return model_response.parsed
         # If parsed is a dict, try to construct
         if isinstance(model_response.parsed, dict):
             try:
-                return FollowUpSuggestions.model_validate(model_response.parsed)
+                return Followups.model_validate(model_response.parsed)
             except Exception:
                 pass
 
@@ -1752,145 +1752,141 @@ def _parse_follow_up_response(model_response: ModelResponse) -> Optional[FollowU
     if model_response.content:
         try:
             data = json.loads(model_response.content)
-            return FollowUpSuggestions.model_validate(data)
+            return Followups.model_validate(data)
         except Exception:
-            log_warning("Failed to parse follow-up suggestions from model response")
+            log_warning("Failed to parse followups from model response")
 
     return None
 
 
-def generate_follow_up_suggestions(
+def generate_followups(
     agent: Agent,
     run_response: RunOutput,
 ) -> None:
-    """Generate follow-up suggestions after the main response (sync, non-streaming)."""
-    if not agent.follow_up_suggestions or run_response.content is None:
+    """Generate followups after the main response (sync, non-streaming)."""
+    if not agent.followups or run_response.content is None:
         return
 
-    model = agent.follow_up_model or agent.model
+    model = agent.followups_model or agent.model
     if model is None:
         return
 
-    response_format = _get_follow_up_response_format(model)
-    messages = _build_follow_up_messages(run_response.content, agent.num_follow_up_suggestions)
+    response_format = _get_followups_response_format(model)
+    messages = _build_followup_messages(run_response.content, agent.num_followups)
 
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
             response_format=response_format,
         )
-        run_response.follow_up_suggestions = _parse_follow_up_response(model_response)
+        run_response.followups = _parse_followups_response(model_response)
     except Exception as e:
-        log_warning(f"Error generating follow-up suggestions: {e}")
+        log_warning(f"Error generating followups: {e}")
 
 
-async def agenerate_follow_up_suggestions(
+async def agenerate_followups(
     agent: Agent,
     run_response: RunOutput,
 ) -> None:
-    """Generate follow-up suggestions after the main response (async, non-streaming)."""
-    if not agent.follow_up_suggestions or run_response.content is None:
+    """Generate followups after the main response (async, non-streaming)."""
+    if not agent.followups or run_response.content is None:
         return
 
-    model = agent.follow_up_model or agent.model
+    model = agent.followups_model or agent.model
     if model is None:
         return
 
-    response_format = _get_follow_up_response_format(model)
-    messages = _build_follow_up_messages(run_response.content, agent.num_follow_up_suggestions)
+    response_format = _get_followups_response_format(model)
+    messages = _build_followup_messages(run_response.content, agent.num_followups)
 
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,
             response_format=response_format,
         )
-        run_response.follow_up_suggestions = _parse_follow_up_response(model_response)
+        run_response.followups = _parse_followups_response(model_response)
     except Exception as e:
-        log_warning(f"Error generating follow-up suggestions: {e}")
+        log_warning(f"Error generating followups: {e}")
 
 
-def generate_follow_up_suggestions_stream(
+def generate_followups_stream(
     agent: Agent,
     run_response: RunOutput,
     stream_events: bool = True,
 ) -> Iterator[RunOutputEvent]:
-    """Generate follow-up suggestions after the main response (sync, streaming)."""
-    if not agent.follow_up_suggestions or run_response.content is None:
+    """Generate followups after the main response (sync, streaming)."""
+    if not agent.followups or run_response.content is None:
         return
 
-    model = agent.follow_up_model or agent.model
+    model = agent.followups_model or agent.model
     if model is None:
         return
 
     if stream_events:
         yield handle_event(
-            create_follow_up_suggestions_started_event(run_response),
+            create_followups_started_event(run_response),
             run_response,
             events_to_skip=agent.events_to_skip,  # type: ignore
             store_events=agent.store_events,
         )
 
-    response_format = _get_follow_up_response_format(model)
-    messages = _build_follow_up_messages(run_response.content, agent.num_follow_up_suggestions)
+    response_format = _get_followups_response_format(model)
+    messages = _build_followup_messages(run_response.content, agent.num_followups)
 
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
             response_format=response_format,
         )
-        run_response.follow_up_suggestions = _parse_follow_up_response(model_response)
+        run_response.followups = _parse_followups_response(model_response)
     except Exception as e:
-        log_warning(f"Error generating follow-up suggestions: {e}")
+        log_warning(f"Error generating followups: {e}")
 
     if stream_events:
         yield handle_event(
-            create_follow_up_suggestions_completed_event(
-                run_response, follow_up_suggestions=run_response.follow_up_suggestions
-            ),
+            create_followups_completed_event(run_response, followups=run_response.followups),
             run_response,
             events_to_skip=agent.events_to_skip,  # type: ignore
             store_events=agent.store_events,
         )
 
 
-async def agenerate_follow_up_suggestions_stream(
+async def agenerate_followups_stream(
     agent: Agent,
     run_response: RunOutput,
     stream_events: bool = True,
 ) -> AsyncIterator[RunOutputEvent]:
-    """Generate follow-up suggestions after the main response (async, streaming)."""
-    if not agent.follow_up_suggestions or run_response.content is None:
+    """Generate followups after the main response (async, streaming)."""
+    if not agent.followups or run_response.content is None:
         return
 
-    model = agent.follow_up_model or agent.model
+    model = agent.followups_model or agent.model
     if model is None:
         return
 
     if stream_events:
         yield handle_event(
-            create_follow_up_suggestions_started_event(run_response),
+            create_followups_started_event(run_response),
             run_response,
             events_to_skip=agent.events_to_skip,  # type: ignore
             store_events=agent.store_events,
         )
 
-    response_format = _get_follow_up_response_format(model)
-    messages = _build_follow_up_messages(run_response.content, agent.num_follow_up_suggestions)
+    response_format = _get_followups_response_format(model)
+    messages = _build_followup_messages(run_response.content, agent.num_followups)
 
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,
             response_format=response_format,
         )
-        run_response.follow_up_suggestions = _parse_follow_up_response(model_response)
+        run_response.followups = _parse_followups_response(model_response)
     except Exception as e:
-        log_warning(f"Error generating follow-up suggestions: {e}")
+        log_warning(f"Error generating followups: {e}")
 
     if stream_events:
         yield handle_event(
-            create_follow_up_suggestions_completed_event(
-                run_response, follow_up_suggestions=run_response.follow_up_suggestions
-            ),
+            create_followups_completed_event(run_response, followups=run_response.followups),
             run_response,
             events_to_skip=agent.events_to_skip,  # type: ignore
             store_events=agent.store_events,
