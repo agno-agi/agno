@@ -3,7 +3,8 @@
 import copy
 import json
 import uuid
-from dataclasses import asdict, dataclass, is_dataclass
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
 from ag_ui.core import (
@@ -24,7 +25,6 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.core.types import Message as AGUIMessage
-from jsonpatch import make_patch
 from pydantic import BaseModel
 
 from agno.models.message import Message
@@ -76,8 +76,7 @@ class EventBuffer:
     current_text_message_id: str = ""  # ID of the current text message context (for tool call parenting)
     next_text_message_id: str = ""  # Pre-generated ID for the next text message
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
-    current_session_state: Optional[Dict[str, Any]] = None  # Current session state
-    previous_session_state: Optional[Dict[str, Any]] = None  # Previous session state for delta tracking
+    _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
     def __init__(self):
         self.active_tool_call_ids = set()
@@ -85,8 +84,7 @@ class EventBuffer:
         self.current_text_message_id = ""
         self.next_text_message_id = str(uuid.uuid4())
         self.pending_tool_calls_parent_id = ""
-        self.current_session_state = None
-        self.previous_session_state = None
+        self._last_snapshot = None
 
     def start_tool_call(self, tool_call_id: str) -> None:
         """Start a new tool call."""
@@ -119,6 +117,29 @@ class EventBuffer:
     def clear_pending_tool_calls_parent_id(self) -> None:
         """Clear the pending parent ID when a new text message starts."""
         self.pending_tool_calls_parent_id = ""
+
+    def set_state_snapshot(self, state: Dict[str, Any]) -> None:
+        """Store deep copy of current state for delta computation."""
+        self._last_snapshot = copy.deepcopy(state)
+
+    def compute_state_delta(self, current_state: Dict[str, Any]) -> Optional[List[Any]]:
+        """Compute JSON Patch delta between last snapshot and current state.
+
+        Returns a list of JSON Patch ops (RFC 6902) or None if unchanged/error.
+        """
+        if self._last_snapshot is None:
+            return None
+        try:
+            import jsonpatch
+
+            patch = jsonpatch.make_patch(self._last_snapshot, current_state)
+            ops = patch.patch
+            if not ops:
+                return None
+            return ops
+        except Exception as e:
+            log_warning(f"Failed to compute state delta: {e}")
+            return None
 
 
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
@@ -199,11 +220,27 @@ def extract_response_chunk_content(response: RunContentEvent) -> str:
     return get_text_from_message(response.content) if response.content is not None else ""
 
 
+def _create_state_delta_events(
+    run_state: Optional[Dict[str, Any]],
+    event_buffer: EventBuffer,
+) -> List[BaseEvent]:
+    """Compute state delta and return StateDeltaEvent if state changed."""
+    if run_state is None:
+        return []
+    ops = event_buffer.compute_state_delta(run_state)
+    if ops is None:
+        return []
+    # Update the snapshot to current state for next delta computation
+    event_buffer.set_state_snapshot(run_state)
+    return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
+
+
 def _create_events_from_chunk(
     chunk: Union[RunOutputEvent, TeamRunOutputEvent],
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[BaseEvent], bool, str]:
     """
     Process a single chunk and return events to emit + updated message_started state.
@@ -213,6 +250,7 @@ def _create_events_from_chunk(
         message_id: Current message identifier
         message_started: Whether a message is currently active
         event_buffer: Event buffer for tracking tool call state
+        run_state: Mutable dict reference to the agent's session state (for delta tracking)
 
     Returns:
         Tuple of (events_to_emit, new_message_started_state, message_id)
@@ -333,30 +371,8 @@ def _create_events_from_chunk(
                     )
                     events_to_emit.append(result_event)
 
-                    # Emit StateDeltaEvent if state has changed.
-                    if (
-                        event_buffer.current_session_state is not None
-                        or event_buffer.previous_session_state is not None
-                    ):
-                        try:
-                            # Generate JSON patch between previous and current state
-                            patch = make_patch(event_buffer.previous_session_state, event_buffer.current_session_state)
-                            patch_list = list(patch)
-
-                            # Only emit if there are actual changes
-                            if patch_list:
-                                state_delta_event = StateDeltaEvent(
-                                    type=EventType.STATE_DELTA,
-                                    delta=patch_list,
-                                )
-                                events_to_emit.append(state_delta_event)
-
-                                # Update the event buffer's previous state for next delta
-                                event_buffer.previous_session_state = copy.deepcopy(event_buffer.current_session_state)
-
-                        except Exception:
-                            # If delta generation fails, fall back to snapshot only
-                            pass
+                # Emit state delta after tool call completion (state may have been mutated by the tool)
+                events_to_emit.extend(_create_state_delta_events(run_state, event_buffer))
 
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
@@ -393,6 +409,7 @@ def _create_completion_events(
     message_id: str,
     thread_id: str,
     run_id: str,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit: List[BaseEvent] = []
@@ -466,13 +483,12 @@ def _create_completion_events(
                 )
                 events_to_emit.append(end_event)
 
-    # Always emit StateSnapshotEvent for full state if exists.
-    if event_buffer.current_session_state:
-        state_snapshot_event = StateSnapshotEvent(
-            type=EventType.STATE_SNAPSHOT,
-            snapshot=event_buffer.current_session_state,
-        )
-        events_to_emit.append(state_snapshot_event)
+    # Emit final state snapshot before finishing the run (only if frontend opted into state tracking)
+    if run_state is not None:
+        # Use session_state from RunCompletedEvent (authoritative) if available, otherwise fall back to run_state
+        final_state = getattr(chunk, "session_state", None) or run_state
+        snapshot_event = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=final_state)
+        events_to_emit.append(snapshot_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
@@ -497,6 +513,70 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
     return events_to_emit
 
 
+def stream_agno_response_as_agui_events(
+    response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent]],
+    thread_id: str,
+    run_id: str,
+    run_state: Optional[Dict[str, Any]] = None,
+) -> Iterator[BaseEvent]:
+    """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
+    message_id = ""  # Will be set by EventBuffer when text message starts
+    message_started = False
+    event_buffer = EventBuffer()
+    stream_completed = False
+
+    # Establish baseline state snapshot for delta tracking
+    if run_state is not None:
+        event_buffer.set_state_snapshot(run_state)
+
+    completion_chunk = None
+
+    for chunk in response_stream:
+        # Check if this is a completion event
+        if (
+            chunk.event == RunEvent.run_completed
+            or chunk.event == TeamRunEvent.run_completed
+            or chunk.event == RunEvent.run_paused
+        ):
+            # Store completion chunk but don't process it yet
+            completion_chunk = chunk
+            stream_completed = True
+        else:
+            # Process regular chunk immediately
+            events_from_chunk, message_started, message_id = _create_events_from_chunk(
+                chunk, message_id, message_started, event_buffer, run_state=run_state
+            )
+
+            for event in events_from_chunk:
+                events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+                for emit_event in events_to_emit:
+                    yield emit_event
+
+    # Process ONLY completion cleanup events, not content from completion chunk
+    if completion_chunk:
+        completion_events = _create_completion_events(
+            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
+        )
+        for event in completion_events:
+            events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+            for emit_event in events_to_emit:
+                yield emit_event
+
+    # Ensure completion events are always emitted even when stream ends naturally
+    if not stream_completed:
+        # Create a synthetic completion event to ensure proper cleanup
+        from agno.run.agent import RunCompletedEvent
+
+        synthetic_completion = RunCompletedEvent()
+        completion_events = _create_completion_events(
+            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
+        )
+        for event in completion_events:
+            events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+            for emit_event in events_to_emit:
+                yield emit_event
+
+
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
     response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
@@ -508,10 +588,11 @@ async def async_stream_agno_response_as_agui_events(
     message_id = ""  # Will be set by EventBuffer when text message starts
     message_started = False
     event_buffer = EventBuffer()
-    event_buffer.current_session_state = run_state
-    event_buffer.previous_session_state = copy.deepcopy(run_state)
-
     stream_completed = False
+
+    # Establish baseline state snapshot for delta tracking
+    if run_state is not None:
+        event_buffer.set_state_snapshot(run_state)
 
     completion_chunk = None
 
@@ -528,7 +609,7 @@ async def async_stream_agno_response_as_agui_events(
         else:
             # Process regular chunk immediately
             events_from_chunk, message_started, message_id = _create_events_from_chunk(
-                chunk, message_id, message_started, event_buffer
+                chunk, message_id, message_started, event_buffer, run_state=run_state
             )
 
             for event in events_from_chunk:
@@ -539,7 +620,7 @@ async def async_stream_agno_response_as_agui_events(
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk:
         completion_events = _create_completion_events(
-            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
+            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
@@ -553,7 +634,7 @@ async def async_stream_agno_response_as_agui_events(
 
         synthetic_completion = RunCompletedEvent()
         completion_events = _create_completion_events(
-            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id
+            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)

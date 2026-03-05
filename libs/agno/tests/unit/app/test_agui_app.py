@@ -1360,109 +1360,209 @@ def test_validate_agui_state_with_invalid_to_dict():
     assert result is None
 
 
-@pytest.mark.asyncio
-async def test_state_snapshot_event():
-    """Test that StateSnapshotEvent is emitted when run_state is provided."""
-    from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events
-    from agno.run.agent import RunCompletedEvent, RunContentEvent, RunEvent
+# --- State Events Tests ---
 
-    async def mock_agent_response():
-        """Mock agent response stream."""
-        yield RunContentEvent(
-            event=RunEvent.run_content.value,
-            content="Test response",
-        )
-        yield RunCompletedEvent(
-            event=RunEvent.run_completed.value,
-            content="Complete",
-        )
 
-    thread_id = "test-thread-123"
-    run_id = "test-run-456"
-    run_state = {"user_name": "Alice", "counter": 42}
+def test_event_buffer_state_snapshot_deep_copy():
+    """Test EventBuffer state snapshot stores a deep copy and computes deltas correctly."""
+    buffer = EventBuffer()
 
-    state_snapshot_found = False
-    state_snapshot_data = None
+    state = {"score": 0, "items": ["a"]}
+    buffer.set_state_snapshot(state)
 
-    async for event in async_stream_agno_response_as_agui_events(
-        response_stream=mock_agent_response(),
-        thread_id=thread_id,
-        run_id=run_id,
-        run_state=run_state,
-    ):
-        if event.type == EventType.STATE_SNAPSHOT:
-            state_snapshot_found = True
-            state_snapshot_data = event.snapshot
+    # Verify deep copy: mutating original dict should not affect snapshot
+    state["score"] = 10
+    state["items"].append("b")
 
-    assert state_snapshot_found, "StateSnapshotEvent should be emitted"
-    assert state_snapshot_data == {"user_name": "Alice", "counter": 42}
+    delta = buffer.compute_state_delta(state)
+    assert delta is not None
+    # Should have ops for score change and items change
+    ops_paths = [op["path"] for op in delta]
+    assert "/score" in ops_paths
+
+    # No change should return None
+    buffer.set_state_snapshot(state)
+    delta = buffer.compute_state_delta(state)
+    assert delta is None
+
+
+def test_event_buffer_compute_delta_no_snapshot():
+    """Test compute_state_delta returns None when no snapshot has been set."""
+    buffer = EventBuffer()
+    result = buffer.compute_state_delta({"key": "value"})
+    assert result is None
 
 
 @pytest.mark.asyncio
-async def test_state_delta_event():
-    """Test that StateDeltaEvent is emitted when state changes after tool call results."""
-    from agno.models.response import ToolExecution
-    from agno.os.interfaces.agui.utils import EventBuffer, _create_events_from_chunk
-    from agno.run.agent import RunEvent, ToolCallCompletedEvent
-
-    # Create event buffer with initial state
-    event_buffer = EventBuffer()
-    event_buffer.previous_session_state = {"counter": 1, "user": "Alice"}
-    event_buffer.current_session_state = {"counter": 2, "user": "Alice", "new_field": "added"}
-
-    # Start a tool call first (required for tool_call_completed to work)
-    event_buffer.start_tool_call("tool-123")
-
-    # Create a tool execution with a result
-    tool_execution = ToolExecution(
-        tool_call_id="tool-123",
-        tool_name="test_tool",
-        tool_args={"arg": "value"},
-        result="Tool result",
-    )
-
-    chunk = ToolCallCompletedEvent(
-        event=RunEvent.tool_call_completed.value,
-        tool=tool_execution,
-    )
-
-    events, message_started, message_id = _create_events_from_chunk(
-        chunk=chunk,
-        message_id="msg-123",
-        message_started=False,
-        event_buffer=event_buffer,
-    )
-
-    deltas = [e for e in events if e.type == EventType.STATE_DELTA]
-
-    assert len(deltas) == 1, "StateDeltaEvent should be emitted after tool call with state change"
-
-    # Verify delta contains expected operations
-    delta = deltas[0].delta
-    ops = {op["op"] for op in delta}
-    paths = {op["path"] for op in delta}
-
-    assert "replace" in ops or "add" in ops, "Delta should contain replace or add operations"
-    assert "/counter" in paths or "/new_field" in paths, "Delta should reference changed fields"
-
-
-@pytest.mark.asyncio
-async def test_state_snapshot_without_delta():
-    """Test that StateSnapshotEvent is emitted even when there's no previous state."""
-    from agno.os.interfaces.agui.utils import EventBuffer, _create_completion_events
+async def test_final_state_snapshot_at_completion():
+    """Test that a StateSnapshotEvent is emitted before RUN_FINISHED when state is provided."""
     from agno.run.agent import RunCompletedEvent, RunEvent
 
-    event_buffer = EventBuffer()
-    event_buffer.current_session_state = {"test": "data"}
+    final_state = {"score": 42, "done": True}
 
-    completion = RunCompletedEvent(
-        event=RunEvent.run_completed.value,
-        content="Complete",
-    )
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Done"
+        yield text_response
 
-    events = _create_completion_events(completion, event_buffer, False, "", "test-thread", "test-run")
+        completed = RunCompletedEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        completed.session_state = final_state
+        yield completed
 
-    snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state={"score": 0}
+    ):
+        events.append(event)
 
-    assert len(snapshots) == 1, "StateSnapshotEvent should always be emitted"
-    assert snapshots[0].snapshot == {"test": "data"}
+    event_types = [e.type for e in events]
+    assert EventType.STATE_SNAPSHOT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # StateSnapshotEvent must come before RUN_FINISHED
+    snapshot_idx = event_types.index(EventType.STATE_SNAPSHOT)
+    finished_idx = event_types.index(EventType.RUN_FINISHED)
+    assert snapshot_idx < finished_idx
+
+    # The snapshot should use the authoritative session_state from RunCompletedEvent
+    snapshot_event = events[snapshot_idx]
+    assert snapshot_event.snapshot == final_state
+
+
+@pytest.mark.asyncio
+async def test_state_delta_after_tool_call():
+    """Test that a StateDeltaEvent is emitted when state changes during a tool call."""
+    from agno.run.agent import RunEvent
+
+    # Shared mutable state dict (same reference the agent would use)
+    run_state = {"counter": 0, "status": "idle"}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing"
+        yield text_response
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = MagicMock()
+        tool.tool_call_id = "tool_1"
+        tool.tool_name = "increment"
+        tool.tool_args = {}
+        tool_start.tool = tool
+        yield tool_start
+
+        # Simulate agent mutating state during tool execution (before tool_call_completed)
+        run_state["counter"] = 1
+        run_state["status"] = "active"
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = "incremented"
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_DELTA in event_types
+
+    # StateDelta should come after ToolCallResult
+    delta_idx = event_types.index(EventType.STATE_DELTA)
+    result_idx = event_types.index(EventType.TOOL_CALL_RESULT)
+    assert delta_idx > result_idx
+
+    # Verify the delta contains the right operations
+    delta_event = events[delta_idx]
+    delta_paths = [op["path"] for op in delta_event.delta]
+    assert "/counter" in delta_paths
+    assert "/status" in delta_paths
+
+
+@pytest.mark.asyncio
+async def test_no_state_events_when_no_state():
+    """Test backward compatibility: no state events when run_state is None."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_SNAPSHOT not in event_types
+    assert EventType.STATE_DELTA not in event_types
+
+
+@pytest.mark.asyncio
+async def test_no_delta_when_state_unchanged():
+    """Test that no StateDeltaEvent is emitted when a tool call does not mutate state."""
+    from agno.run.agent import RunEvent
+
+    run_state = {"counter": 0}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing"
+        yield text_response
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = MagicMock()
+        tool.tool_call_id = "tool_1"
+        tool.tool_name = "noop"
+        tool.tool_args = {}
+        tool_start.tool = tool
+        yield tool_start
+
+        # State is NOT mutated here
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = "done"
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    # No delta should be emitted since state was not changed
+    assert EventType.STATE_DELTA not in event_types
+    # But a final snapshot should still be emitted (run_state fallback)
+    assert EventType.STATE_SNAPSHOT in event_types
