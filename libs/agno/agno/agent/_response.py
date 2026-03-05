@@ -1771,7 +1771,7 @@ def _accumulate_followups_metrics(model_response: ModelResponse, model: Model, r
     accumulate_model_metrics(
         model_response,
         model,
-        ModelType.FOLLOWUPS_MODEL,
+        ModelType.FOLLOWUP_MODEL,
         run_response.metrics if run_response is not None else None,
     )
 
@@ -1784,7 +1784,7 @@ def generate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followups_model or agent.model
+    model = agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1811,7 +1811,7 @@ async def agenerate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followups_model or agent.model
+    model = agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1839,7 +1839,7 @@ def generate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followups_model or agent.model
+    model = agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1883,7 +1883,7 @@ async def agenerate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followups_model or agent.model
+    model = agent.followup_model or agent.model
     if model is None:
         return
 

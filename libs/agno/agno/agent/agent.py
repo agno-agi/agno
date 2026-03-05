@@ -305,7 +305,7 @@ class Agent:
     # Number of followup prompts to generate (default 3)
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to agent's model)
-    followups_model: Optional[Model] = None
+    followup_model: Optional[Model] = None
 
     # --- Agent Streaming ---
     # Stream the response from the Agent
@@ -464,7 +464,7 @@ class Agent:
         save_response_to_file: Optional[str] = None,
         followups: bool = False,
         num_followups: int = 3,
-        followups_model: Optional[Union[Model, str]] = None,
+        followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -629,7 +629,7 @@ class Agent:
 
         self.followups = followups
         self.num_followups = num_followups
-        self.followups_model = followups_model  # type: ignore[assignment]
+        self.followup_model = followup_model  # type: ignore[assignment]
 
         self.stream = stream
         self.stream_events = stream_events

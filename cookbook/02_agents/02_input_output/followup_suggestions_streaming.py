@@ -15,6 +15,9 @@ import asyncio
 
 from agno.agent import Agent, RunEvent
 from agno.models.openai import OpenAIResponses
+from agno.db.sqlite import SqliteDb
+
+db = SqliteDb(db_file="agno.db")
 
 # ---------------------------------------------------------------------------
 # Create the Agent
@@ -25,6 +28,7 @@ agent = Agent(
     followups=True,
     num_followups=3,
     markdown=True,
+    db=db,
 )
 
 
@@ -55,6 +59,11 @@ async def main():
             if event.followups:  # type: ignore
                 for i, suggestion in enumerate(event.followups.suggestions, 1):  # type: ignore
                     print(f"  {i}. {suggestion}")
+
+    
+    ro = agent.get_last_run_output()
+    if ro:
+        print(ro)
 
     print()
 

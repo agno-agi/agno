@@ -714,6 +714,7 @@ class RunOutput:
                 "reasoning_messages",
                 "references",
                 "requirements",
+                "followups",
             ]
         }
 
@@ -743,6 +744,9 @@ class RunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups.model_dump()
 
         if self.images is not None:
             _dict["images"] = []

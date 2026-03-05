@@ -10,7 +10,7 @@ to generate structured followup prompts and attaches them to RunOutput.
 Key concepts:
 - followups=True: enables the feature
 - num_followups: controls how many suggestions (default 3)
-- followups_model: optional cheaper model for generating followups
+- followup_model: optional cheaper model for generating followups
 - run_response.followups: the structured result
 
 The main response is never constrained — it streams freely as normal text.
@@ -34,7 +34,7 @@ agent = Agent(
     followups=True,
     num_followups=3,
     # Optionally use a cheaper model for followups
-    # followups_model=OpenAIResponses(id="gpt-4o-mini"),
+    # followup_model=OpenAIResponses(id="gpt-4o-mini"),
     markdown=True,
 )
 
