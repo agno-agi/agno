@@ -17,7 +17,7 @@ from agno.agent import Agent, RunEvent
 from agno.models.openai import OpenAIResponses
 from agno.db.sqlite import SqliteDb
 
-db = SqliteDb(db_file="agno.db")
+db = SqliteDb(db_file="tmp/agents.db")
 
 # ---------------------------------------------------------------------------
 # Create the Agent
@@ -25,10 +25,12 @@ db = SqliteDb(db_file="agno.db")
 agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
     instructions="You are a knowledgeable assistant. Answer questions thoroughly.",
+    session_id="test-session",
     followups=True,
     num_followups=3,
     markdown=True,
     db=db,
+    add_history_to_context=True,
 )
 
 
@@ -61,9 +63,6 @@ async def main():
                     print(f"  {i}. {suggestion}")
 
     
-    ro = agent.get_last_run_output()
-    if ro:
-        print(ro)
 
     print()
 
