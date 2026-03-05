@@ -477,6 +477,26 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
+    def _build_fc_id_to_call_id_map(self, messages: List[Message]) -> Dict[str, str]:
+        """Build a mapping from function_call id (fc_*) to call_id (call_*) from assistant tool_calls.
+
+        The OpenAI Responses API uses two ID systems:
+        - `id` (e.g. "fc_xxx"): internal function call identifier
+        - `call_id` (e.g. "call_xxx"): the ID expected by the API for function_call_output
+
+        This mapping is needed to translate between the two when formatting tool results.
+        """
+        fc_id_to_call_id: Dict[str, str] = {}
+        for msg in messages:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    fc_id = tc.get("id")
+                    call_id = tc.get("call_id") or fc_id
+                    if isinstance(fc_id, str) and isinstance(call_id, str):
+                        fc_id_to_call_id[fc_id] = call_id
+        return fc_id_to_call_id
+
     def _format_messages(
         self,
         messages: List[Message],
@@ -519,16 +539,7 @@ class OpenAIResponses(Model):
 
                     break
 
-        # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
-        fc_id_to_call_id: Dict[str, str] = {}
-        for msg in messages:
-            tool_calls = getattr(msg, "tool_calls", None)
-            if tool_calls:
-                for tc in tool_calls:
-                    fc_id = tc.get("id")
-                    call_id = tc.get("call_id") or fc_id
-                    if isinstance(fc_id, str) and isinstance(call_id, str):
-                        fc_id_to_call_id[fc_id] = call_id
+        fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
             if message.role in ["user", "system"]:
@@ -943,21 +954,30 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        tool_call_ids: List[str],
         compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
         Handle the results of function calls.
 
+        Translates each result's tool_call_id from fc_id format (fc_*) to call_id format (call_*)
+        using fc_id-based lookup from the assistant message's tool_calls. This is necessary because
+        index-based mapping breaks when external_execution tools are present — tool_call_ids has
+        entries for ALL tool calls while function_call_results only has internally-executed ones.
+
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
             compress_tool_results (bool): Whether to compress tool results.
+            **kwargs: Additional keyword arguments (e.g. tool_call_ids) passed from base class.
         """
         if len(function_call_results) > 0:
-            for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+            fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
+
+            for _fc_message in function_call_results:
+                # Translate fc_id to call_id if needed
+                if _fc_message.tool_call_id and _fc_message.tool_call_id in fc_id_to_call_id:
+                    _fc_message.tool_call_id = fc_id_to_call_id[_fc_message.tool_call_id]
                 messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
