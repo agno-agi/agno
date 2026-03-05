@@ -1,6 +1,6 @@
 # Integrations
 
-Specific reader, cloud storage, and vector database integrations.
+Specific reader, cloud storage, vector database, and external provider integrations.
 
 ## Prerequisites
 
@@ -8,6 +8,7 @@ Specific reader, cloud storage, and vector database integrations.
 2. Set `OPENAI_API_KEY` environment variable
 3. For cloud: set provider-specific credentials (see each file)
 4. For managed DBs: install provider packages (see each file)
+5. For external providers: run the provider server (see each file)
 
 ## Readers
 
@@ -33,6 +34,15 @@ Specific reader, cloud storage, and vector database integrations.
 | [vector_dbs/01_qdrant.py](./vector_dbs/01_qdrant.py) | Qdrant (recommended for production) |
 | [vector_dbs/02_local.py](./vector_dbs/02_local.py) | ChromaDB + LanceDB (local development) |
 | [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone + PgVector (managed/production) |
+
+## External Providers
+
+External providers manage their own indexing pipeline (chunking, embedding, storage).
+You send documents to them and they handle everything internally.
+
+| File | Provider |
+|------|----------|
+| [external_providers/01_lightrag.py](./external_providers/01_lightrag.py) | LightRAG (graph-based RAG) |
 
 ## Running
 
