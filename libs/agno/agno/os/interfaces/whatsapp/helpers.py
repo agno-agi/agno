@@ -119,7 +119,7 @@ def extract_media_bytes(media_obj) -> Optional[bytes]:
         try:
             decoded_string = content.decode("utf-8")
             return base64.b64decode(decoded_string)
-        except (UnicodeDecodeError, Exception):
+        except Exception:
             return content
     elif isinstance(content, str):
         return base64.b64decode(content)

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import time
 from unittest.mock import AsyncMock, Mock, patch
@@ -77,8 +78,6 @@ WHATSAPP_ENV = {
 
 
 async def _wait_for_agent_call(agent_mock: AsyncMock, timeout: float = 5.0):
-    import asyncio
-
     elapsed = 0.0
     while not agent_mock.arun.called and elapsed < timeout:
         await asyncio.sleep(0.1)
@@ -412,8 +411,6 @@ async def test_unknown_message_type_agent_not_called():
         response = client.post("/webhook", json=body)
         assert response.status_code == 200
 
-        import asyncio
-
         await asyncio.sleep(0.5)
         agent_mock.arun.assert_not_called()
 
@@ -434,8 +431,6 @@ async def test_unknown_interactive_type_agent_not_called():
         )
         response = client.post("/webhook", json=body)
         assert response.status_code == 200
-
-        import asyncio
 
         await asyncio.sleep(0.5)
         agent_mock.arun.assert_not_called()
@@ -473,8 +468,6 @@ async def test_agent_error_response_sends_error_message():
 
         await _wait_for_agent_call(agent_mock)
 
-        import asyncio
-
         await asyncio.sleep(0.3)
         # Verify error message was sent to user
         mock_send_text.assert_called()
@@ -497,8 +490,6 @@ async def test_agent_exception_sends_fallback_error():
         body = _make_whatsapp_webhook("text", text={"body": "crash me"})
         response = client.post("/webhook", json=body)
         assert response.status_code == 200
-
-        import asyncio
 
         await asyncio.sleep(1.0)
         # Exception path sends error message to user
@@ -634,8 +625,6 @@ async def test_image_response_short_caption_no_extra_text():
         assert response.status_code == 200
 
         await _wait_for_agent_call(agent_mock)
-        import asyncio
-
         await asyncio.sleep(0.3)
 
         mock_upload.assert_called_once()
@@ -674,8 +663,6 @@ async def test_image_response_long_caption_sends_full_text():
         assert response.status_code == 200
 
         await _wait_for_agent_call(agent_mock)
-        import asyncio
-
         await asyncio.sleep(0.3)
 
         mock_upload.assert_called_once()
@@ -800,8 +787,6 @@ async def test_new_command_starts_fresh_session():
         mock_send_text.reset_mock()
         body = _make_whatsapp_webhook("text", text={"body": "/new"})
         client.post("/webhook", json=body)
-
-        import asyncio
 
         await asyncio.sleep(0.5)
 

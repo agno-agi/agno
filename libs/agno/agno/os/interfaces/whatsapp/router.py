@@ -31,6 +31,20 @@ _SESSION_RESET_MESSAGE = "New conversation started!"
 # Metadata lines from ReasoningTools that aren't useful to end users
 _REASONING_SKIP_PREFIXES = ("Action:", "Next Action:", "Confidence:")
 
+# WhatsApp tools that send messages directly during agent execution;
+# router skips duplicate text when any of these ran
+_WA_TOOL_NAMES = frozenset(
+    {
+        "send_reply_buttons",
+        "send_list_message",
+        "send_image",
+        "send_document",
+        "send_location",
+        "send_reaction",
+        "mark_as_read",
+    }
+)
+
 
 def _format_reasoning(text: str) -> str:
     lines = []
@@ -51,10 +65,6 @@ def _format_reasoning(text: str) -> str:
 
 class WhatsAppWebhookResponse(BaseModel):
     status: str = Field(default="ok", description="Processing status")
-
-
-class WhatsAppVerifyResponse(BaseModel):
-    challenge: str = Field(description="Challenge string echoed back to Meta")
 
 
 def attach_routes(
@@ -126,7 +136,6 @@ def attach_routes(
         },
     )
     async def webhook(request: Request, background_tasks: BackgroundTasks):
-        """Handle incoming WhatsApp messages"""
         payload = await request.body()
         signature = request.headers.get("X-Hub-Signature-256")
 
@@ -238,17 +247,6 @@ def attach_routes(
                 )
                 has_media = True
 
-            # WhatsApp tools (send_list_message, send_reply_buttons, etc.) send
-            # messages directly during agent execution — skip duplicate content
-            _WA_TOOL_NAMES = {
-                "send_reply_buttons",
-                "send_list_message",
-                "send_image",
-                "send_document",
-                "send_location",
-                "send_reaction",
-                "mark_as_read",
-            }
             response_tools = getattr(response, "tools", None)
             tools_sent_message = response_tools and any(t.tool_name in _WA_TOOL_NAMES for t in response_tools)
             # Only send text if no media was uploaded and no tool already messaged the user
@@ -259,10 +257,10 @@ def attach_routes(
                 await send_whatsapp_message_async(phone_number, response.content, config)
 
         except Exception as e:
-            log_error(f"Error processing message: {str(e)}")
+            log_error(f"Error processing message: {e}")
             try:
                 await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
             except Exception as send_error:
-                log_error(f"Error sending error message: {str(send_error)}")
+                log_error(f"Error sending error message: {send_error}")
 
     return router
