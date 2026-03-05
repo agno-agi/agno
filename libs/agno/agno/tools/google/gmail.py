@@ -690,6 +690,7 @@ class GmailTools(Toolkit):
                     if not Path(file_path).exists():
                         return f"Error: Attachment file not found: {file_path}"
 
+            body = body.replace("\n", "<br>")
             message = self._create_message(
                 to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
             )
