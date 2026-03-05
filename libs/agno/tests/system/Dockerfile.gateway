@@ -37,7 +37,8 @@ RUN pip install --no-cache-dir \
     a2a-sdk \
     agui \
     ag-ui-protocol \
-    slack-sdk
+    slack-sdk \
+    aiohttp
 
 # Copy the gateway server script
 WORKDIR /app
