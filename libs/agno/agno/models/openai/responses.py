@@ -956,8 +956,7 @@ class OpenAIResponses(Model):
             compress_tool_results (bool): Whether to compress tool results.
         """
         if len(function_call_results) > 0:
-            for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+            for _fc_message in function_call_results:
                 messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:

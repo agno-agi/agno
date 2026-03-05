@@ -1550,6 +1550,8 @@ async def aget_run_messages(
 def get_continue_run_messages(
     agent: Agent,
     input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1557,6 +1559,8 @@ def get_continue_run_messages(
         - messages: List of messages to send to the model
 
     It continues from a previous run and completes a tool call that was paused.
+    If add_history_to_context is True and a session is provided, history messages
+    from previous runs are prepended before the current run messages.
     """
 
     # Initialize the RunMessages object
@@ -1578,7 +1582,45 @@ def get_continue_run_messages(
 
     run_messages.system_message = system_message
     run_messages.user_message = user_message
-    run_messages.messages = input
+
+    # Load history from session and prepend before current run messages
+    if add_history_to_context and session is not None:
+        from copy import deepcopy
+
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = (
+            agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+        )
+
+        history: List[Message] = session.get_messages(
+            last_n_runs=agent.num_history_runs,
+            limit=agent.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            agent_id=agent.id if agent.team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            # Create a deep copy of the history messages to avoid modifying the original messages
+            history_copy = [deepcopy(msg) for msg in history]
+
+            # Tag each message as coming from history
+            for _msg in history_copy:
+                _msg.from_history = True
+
+            # Filter tool calls from history if limit is set (before adding to run_messages)
+            if agent.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            log_debug(f"Adding {len(history_copy)} messages from history to continue_run")
+
+            # Prepend history before the current run messages
+            run_messages.messages = history_copy + input
+        else:
+            run_messages.messages = input
+    else:
+        run_messages.messages = input
 
     return run_messages
 
