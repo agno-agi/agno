@@ -14,8 +14,7 @@ Prerequisites:
 
     3. Set environment variables:
         export OPENAI_API_KEY=your-openai-api-key
-        export GOOGLE_WORKSPACE_CLI_CLIENT_ID=your-client-id
-        export GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=your-client-secret
+        export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
 
 Usage:
     .venvs/demo/bin/python cookbook/05_agent_os/integrations/google_workspace/workspace_standalone.py
@@ -28,6 +27,63 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 
+# ---------------------------------------------------------------------------
+# gws params fix
+# ---------------------------------------------------------------------------
+# gws MCP tools accept all path/query parameters inside a 'params' dict,
+# but models sometimes pass them at the top level or omit required params.
+# GWSTools auto-wraps stray args into params and injects sensible defaults.
+
+KNOWN_GWS_KEYS = {"params", "body", "page_all", "upload"}
+
+# Default params injected when the model omits required path parameters.
+GWS_DEFAULT_PARAMS: dict = {
+    "gmail_users_messages_list": {"userId": "me"},
+    "gmail_users_messages_get": {"userId": "me", "format": "metadata"},
+    "gmail_users_messages_send": {"userId": "me"},
+    "gmail_users_labels_list": {"userId": "me"},
+    "calendar_events_list": {"calendarId": "primary"},
+    "calendar_events_get": {"calendarId": "primary"},
+    "calendar_events_insert": {"calendarId": "primary"},
+}
+
+
+def _make_pre_hook(tool_name: str):
+    """Create a pre-hook for *tool_name* that normalises arguments."""
+    defaults = GWS_DEFAULT_PARAMS.get(tool_name, {})
+
+    def hook(fc):
+        args = fc.arguments or {}
+
+        # 1. Wrap stray top-level keys into params
+        if "params" not in args:
+            stray = {k: v for k, v in args.items() if k not in KNOWN_GWS_KEYS}
+            if stray:
+                kept = {k: v for k, v in args.items() if k in KNOWN_GWS_KEYS}
+                kept["params"] = stray
+                args = kept
+
+        # 2. Ensure defaults are present
+        if defaults:
+            params = args.get("params", {})
+            for k, v in defaults.items():
+                params.setdefault(k, v)
+            args["params"] = params
+
+        fc.arguments = args
+
+    return hook
+
+
+class GWSTools(MCPTools):
+    """MCPTools subclass that auto-fixes the params pattern for gws CLI tools."""
+
+    async def build_tools(self):
+        await super().build_tools()
+        for name, fn in self.functions.items():
+            fn.pre_hook = _make_pre_hook(name)
+
+
 # Pass relevant env vars to the gws MCP subprocess.
 # GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE lets gws find stored OAuth tokens.
 GWS_ENV = {
@@ -39,19 +95,17 @@ GWS_ENV = {
 # Common instructions for all gws-based agents.
 # gws tools accept a 'params' object for path and query parameters.
 GWS_INSTRUCTIONS = [
-    "All gws tools accept a 'params' object for path/query parameters.",
-    "For Gmail, always pass params={'userId': 'me'} to refer to the authenticated user.",
-    "For Calendar, always pass params={'calendarId': 'primary'} for the main calendar.",
-    "To list messages: gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
-    "To get a message: gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
+    "IMPORTANT: Every tool call MUST use the 'params' key. Never pass arguments at the top level.",
+    "  gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
+    "  gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
     "Always use format='metadata' when reading messages to keep responses small.",
 ]
 
 
 async def main():
-    # MCPTools requires async context management for stdio transport.
+    # GWSTools requires async context management for stdio transport.
     # Use include_tools to limit which tools are registered (keeps context small).
-    async with MCPTools(
+    async with GWSTools(
         command="gws mcp -s gmail",
         env=GWS_ENV,
         include_tools=[
@@ -61,7 +115,7 @@ async def main():
         ],
     ) as tools:
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-4.1"),
             tools=[tools],
             instructions=[
                 "You are a helpful Workspace assistant.",

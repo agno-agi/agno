@@ -29,6 +29,63 @@ from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
+# gws params fix
+# ---------------------------------------------------------------------------
+# gws MCP tools accept all path/query parameters inside a 'params' dict,
+# but models sometimes pass them at the top level or omit required params.
+# GWSTools auto-wraps stray args into params and injects sensible defaults.
+
+KNOWN_GWS_KEYS = {"params", "body", "page_all", "upload"}
+
+# Default params injected when the model omits required path parameters.
+GWS_DEFAULT_PARAMS: dict = {
+    "gmail_users_messages_list": {"userId": "me"},
+    "gmail_users_messages_get": {"userId": "me", "format": "metadata"},
+    "gmail_users_messages_send": {"userId": "me"},
+    "gmail_users_labels_list": {"userId": "me"},
+    "calendar_events_list": {"calendarId": "primary"},
+    "calendar_events_get": {"calendarId": "primary"},
+    "calendar_events_insert": {"calendarId": "primary"},
+}
+
+
+def _make_pre_hook(tool_name: str):
+    """Create a pre-hook for *tool_name* that normalises arguments."""
+    defaults = GWS_DEFAULT_PARAMS.get(tool_name, {})
+
+    def hook(fc):
+        args = fc.arguments or {}
+
+        # 1. Wrap stray top-level keys into params
+        if "params" not in args:
+            stray = {k: v for k, v in args.items() if k not in KNOWN_GWS_KEYS}
+            if stray:
+                kept = {k: v for k, v in args.items() if k in KNOWN_GWS_KEYS}
+                kept["params"] = stray
+                args = kept
+
+        # 2. Ensure defaults are present
+        if defaults:
+            params = args.get("params", {})
+            for k, v in defaults.items():
+                params.setdefault(k, v)
+            args["params"] = params
+
+        fc.arguments = args
+
+    return hook
+
+
+class GWSTools(MCPTools):
+    """MCPTools subclass that auto-fixes the params pattern for gws CLI tools."""
+
+    async def build_tools(self):
+        await super().build_tools()
+        for name, fn in self.functions.items():
+            fn.pre_hook = _make_pre_hook(name)
+
+
+# ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
@@ -43,7 +100,7 @@ gws_env = {
 
 # Use include_tools to keep the tool count under OpenAI's 128 limit.
 # gmail + drive + calendar exposes ~173 tools total; pick the most useful ones.
-workspace_tools = MCPTools(
+workspace_tools = GWSTools(
     command="gws mcp -s gmail,drive,calendar",
     env=gws_env,
     include_tools=[
@@ -66,20 +123,20 @@ workspace_tools = MCPTools(
 workspace_agent = Agent(
     id="workspace-agent",
     name="Workspace Assistant",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4.1"),
     db=db,
     tools=[workspace_tools],
     instructions=[
         "You are a personal workspace assistant with access to Gmail, Google Drive, and Google Calendar.",
-        "All gws tools accept a 'params' object for path/query parameters.",
-        "Every parameter (path and query) must go inside the params dict.",
-        "To list messages: gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
-        "To get a message: gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
-        "Always use format='metadata' when reading messages to keep responses small.",
-        "For Calendar, always pass params={'calendarId': 'primary'}.",
-        "For Drive, no special path params needed for listing files.",
+        "IMPORTANT: Every tool call MUST use the 'params' key. Never pass arguments at the top level.",
+        "Examples of correct tool calls:",
+        "  gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
+        "  gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
+        "  calendar_events_list(params={'calendarId': 'primary', 'maxResults': 10})",
+        "  calendar_events_get(params={'calendarId': 'primary', 'eventId': '<eventId>'})",
+        "  drive_files_list(params={'pageSize': 10})",
+        "Always use format='metadata' when reading Gmail messages to keep responses small.",
         "Always summarize results clearly and highlight actionable items.",
-        "If a request spans multiple services, combine tools to fulfill it.",
     ],
     add_history_to_context=True,
     num_history_runs=5,

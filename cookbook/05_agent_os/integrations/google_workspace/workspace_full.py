@@ -3,7 +3,7 @@ Google Workspace Agent — Full Suite
 ====================================
 
 Same as workspace_agent.py but with tools from all major Workspace services:
-Gmail, Drive, Calendar, Sheets, Docs, and Chat.
+Gmail, Drive, Calendar, Sheets, and Docs.
 
 Uses include_tools to select specific tools from each service,
 keeping the total count under OpenAI's 128 tool limit.
@@ -32,6 +32,60 @@ from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
+# gws params fix (see workspace_agent.py for details)
+# ---------------------------------------------------------------------------
+
+KNOWN_GWS_KEYS = {"params", "body", "page_all", "upload"}
+
+# Default params injected when the model omits required path parameters.
+GWS_DEFAULT_PARAMS: dict = {
+    "gmail_users_messages_list": {"userId": "me"},
+    "gmail_users_messages_get": {"userId": "me", "format": "metadata"},
+    "gmail_users_messages_send": {"userId": "me"},
+    "gmail_users_labels_list": {"userId": "me"},
+    "calendar_events_list": {"calendarId": "primary"},
+    "calendar_events_get": {"calendarId": "primary"},
+    "calendar_events_insert": {"calendarId": "primary"},
+}
+
+
+def _make_pre_hook(tool_name: str):
+    """Create a pre-hook for *tool_name* that normalises arguments."""
+    defaults = GWS_DEFAULT_PARAMS.get(tool_name, {})
+
+    def hook(fc):
+        args = fc.arguments or {}
+
+        # 1. Wrap stray top-level keys into params
+        if "params" not in args:
+            stray = {k: v for k, v in args.items() if k not in KNOWN_GWS_KEYS}
+            if stray:
+                kept = {k: v for k, v in args.items() if k in KNOWN_GWS_KEYS}
+                kept["params"] = stray
+                args = kept
+
+        # 2. Ensure defaults are present
+        if defaults:
+            params = args.get("params", {})
+            for k, v in defaults.items():
+                params.setdefault(k, v)
+            args["params"] = params
+
+        fc.arguments = args
+
+    return hook
+
+
+class GWSTools(MCPTools):
+    """MCPTools subclass that auto-fixes the params pattern for gws CLI tools."""
+
+    async def build_tools(self):
+        await super().build_tools()
+        for name, fn in self.functions.items():
+            fn.pre_hook = _make_pre_hook(name)
+
+
+# ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
@@ -44,7 +98,7 @@ gws_env = {
 }
 
 # Expose all major Workspace services via MCP, but limit tools per service.
-workspace_tools = MCPTools(
+workspace_tools = GWSTools(
     command="gws mcp -s gmail,drive,calendar,sheets,docs",
     env=gws_env,
     include_tools=[
@@ -74,20 +128,20 @@ workspace_tools = MCPTools(
 workspace_agent = Agent(
     id="workspace-full-agent",
     name="Workspace Assistant",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4.1"),
     db=db,
     tools=[workspace_tools],
     instructions=[
         "You are a full-featured Google Workspace assistant.",
-        "All gws tools accept a 'params' object for path/query parameters.",
-        "Every parameter (path and query) must go inside the params dict.",
-        "To list messages: gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
-        "To get a message: gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
-        "Always use format='metadata' when reading messages to keep responses small.",
-        "For Calendar, always pass params={'calendarId': 'primary'}.",
-        "For Sheets, pass params={'spreadsheetId': '...'} and params={'range': 'Sheet1!A1:Z'}.",
-        "For Docs, pass params={'documentId': '...'} to get a document.",
-        "For multi-step tasks, plan your approach and execute step by step.",
+        "IMPORTANT: Every tool call MUST use the 'params' key. Never pass arguments at the top level.",
+        "Examples of correct tool calls:",
+        "  gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
+        "  gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
+        "  calendar_events_list(params={'calendarId': 'primary', 'maxResults': 10})",
+        "  drive_files_list(params={'pageSize': 10})",
+        "  sheets_spreadsheets_values_get(params={'spreadsheetId': '...', 'range': 'Sheet1!A1:Z'})",
+        "  docs_documents_get(params={'documentId': '...'})",
+        "Always use format='metadata' when reading Gmail messages to keep responses small.",
         "Always confirm before sending emails, creating events, or modifying documents.",
     ],
     add_history_to_context=True,

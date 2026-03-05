@@ -33,11 +33,65 @@ from agno.team import Team
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
+# gws params fix (see workspace_agent.py for details)
+# ---------------------------------------------------------------------------
+
+KNOWN_GWS_KEYS = {"params", "body", "page_all", "upload"}
+
+# Default params injected when the model omits required path parameters.
+GWS_DEFAULT_PARAMS: dict = {
+    "gmail_users_messages_list": {"userId": "me"},
+    "gmail_users_messages_get": {"userId": "me", "format": "metadata"},
+    "gmail_users_messages_send": {"userId": "me"},
+    "gmail_users_labels_list": {"userId": "me"},
+    "calendar_events_list": {"calendarId": "primary"},
+    "calendar_events_get": {"calendarId": "primary"},
+    "calendar_events_insert": {"calendarId": "primary"},
+}
+
+
+def _make_pre_hook(tool_name: str):
+    """Create a pre-hook for *tool_name* that normalises arguments."""
+    defaults = GWS_DEFAULT_PARAMS.get(tool_name, {})
+
+    def hook(fc):
+        args = fc.arguments or {}
+
+        # 1. Wrap stray top-level keys into params
+        if "params" not in args:
+            stray = {k: v for k, v in args.items() if k not in KNOWN_GWS_KEYS}
+            if stray:
+                kept = {k: v for k, v in args.items() if k in KNOWN_GWS_KEYS}
+                kept["params"] = stray
+                args = kept
+
+        # 2. Ensure defaults are present
+        if defaults:
+            params = args.get("params", {})
+            for k, v in defaults.items():
+                params.setdefault(k, v)
+            args["params"] = params
+
+        fc.arguments = args
+
+    return hook
+
+
+class GWSTools(MCPTools):
+    """MCPTools subclass that auto-fixes the params pattern for gws CLI tools."""
+
+    async def build_tools(self):
+        await super().build_tools()
+        for name, fn in self.functions.items():
+            fn.pre_hook = _make_pre_hook(name)
+
+
+# ---------------------------------------------------------------------------
 # Shared config
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/workspace_team.db")
-model = OpenAIChat(id="gpt-4o")
+model = OpenAIChat(id="gpt-4.1")
 
 gws_env = {
     k: v
@@ -54,13 +108,12 @@ gmail_agent = Agent(
     name="Gmail Assistant",
     role="Email management specialist",
     model=model,
-    tools=[MCPTools(command="gws mcp -s gmail", env=gws_env)],
+    tools=[GWSTools(command="gws mcp -s gmail", env=gws_env)],
     instructions=[
         "You handle all email-related tasks: reading, searching, composing, and managing labels.",
-        "All gws tools accept a 'params' object for path/query parameters.",
-        "Every parameter (path and query) must go inside the params dict.",
-        "To list messages: gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
-        "To get a message: gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
+        "IMPORTANT: Every tool call MUST use the 'params' key. Never pass arguments at the top level.",
+        "  gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
+        "  gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
         "Always use format='metadata' when reading messages to keep responses small.",
         "Summarize emails concisely, highlighting sender, subject, and action items.",
         "Always confirm before sending or deleting emails.",
@@ -74,12 +127,12 @@ drive_agent = Agent(
     name="Drive Assistant",
     role="File management specialist",
     model=model,
-    tools=[MCPTools(command="gws mcp -s drive", env=gws_env)],
+    tools=[GWSTools(command="gws mcp -s drive", env=gws_env)],
     instructions=[
         "You handle all file and document tasks: searching, listing, uploading, and organizing files.",
-        "All gws tools accept a 'params' object for path/query parameters.",
+        "IMPORTANT: Every tool call MUST use the 'params' key. Never pass arguments at the top level.",
+        "  drive_files_list(params={'pageSize': 10})",
         "When listing files, show name, type, last modified date, and sharing status.",
-        "Help users find files by name, type, or content.",
     ],
     add_datetime_to_context=True,
     markdown=True,
@@ -90,11 +143,12 @@ calendar_agent = Agent(
     name="Calendar Assistant",
     role="Scheduling specialist",
     model=model,
-    tools=[MCPTools(command="gws mcp -s calendar", env=gws_env)],
+    tools=[GWSTools(command="gws mcp -s calendar", env=gws_env)],
     instructions=[
         "You handle all calendar tasks: viewing events, creating meetings, and finding free time.",
-        "All gws tools accept a 'params' object for path/query parameters.",
-        "Always pass params={'calendarId': 'primary'} for Calendar API calls.",
+        "IMPORTANT: Every tool call MUST use the 'params' key. Never pass arguments at the top level.",
+        "  calendar_events_list(params={'calendarId': 'primary', 'maxResults': 10})",
+        "  calendar_events_get(params={'calendarId': 'primary', 'eventId': '<eventId>'})",
         "When showing events, include title, time, location, and attendees.",
         "Always confirm before creating, modifying, or deleting events.",
     ],
