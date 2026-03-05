@@ -302,8 +302,15 @@ class LightRagProvider:
                         status_message="External provider processing failed",
                     )
 
+                # Still processing if any documents are pending or in-progress
+                if status_summary.get("processing", 0) > 0 or status_summary.get("pending", 0) > 0:
+                    return ProcessingResult(
+                        processing_id=processing_id,
+                        status=ContentStatus.PROCESSING,
+                    )
+
                 documents = result.get("documents", [])
-                if documents:
+                if documents and status_summary.get("completed", 0) > 0:
                     external_id = documents[0]["id"]
                     return ProcessingResult(
                         processing_id=processing_id,
