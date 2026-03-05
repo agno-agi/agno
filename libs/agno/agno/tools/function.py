@@ -489,15 +489,21 @@ class Function(BaseModel):
                         param_descriptions[param_name] = f"({param_type}) {param.description}"
                         param_descriptions_clean[param_name] = param.description
 
-            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            # If the function requires user input, build the user_input_schema.
+            # When user_input_fields is specified and non-empty, only include those fields
+            # so that defaulted parameters owned by the agent are not surfaced for user input.
             if self.requires_user_input:
+                if self.user_input_fields:
+                    schema_param_names = [name for name in sig.parameters if name in self.user_input_fields]
+                else:
+                    schema_param_names = list(sig.parameters)
                 self.user_input_schema = [
                     UserInputField(
                         name=name,
                         description=param_descriptions_clean.get(name),
                         field_type=type_hints.get(name, str),
                     )
-                    for name in sig.parameters
+                    for name in schema_param_names
                 ]
 
             # Get JSON schema for parameters only

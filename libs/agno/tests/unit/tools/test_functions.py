@@ -184,12 +184,11 @@ def test_function_process_entrypoint_with_user_input():
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
-    assert len(func.user_input_schema) == 2
+    # Only fields in user_input_fields should appear in user_input_schema
+    assert len(func.user_input_schema) == 1
 
     assert func.user_input_schema[0].name == "param1"
     assert func.user_input_schema[0].field_type is str
-    assert func.user_input_schema[1].name == "param2"
-    assert func.user_input_schema[1].field_type is int
 
 
 def test_function_process_entrypoint_skip_processing():
@@ -598,11 +597,10 @@ def test_tool_decorator_with_user_input():
     assert user_input_func.user_input_fields == ["param1"]
     user_input_func.process_entrypoint()
     assert user_input_func.user_input_schema is not None
-    assert len(user_input_func.user_input_schema) == 2
+    # Only fields in user_input_fields should appear in user_input_schema
+    assert len(user_input_func.user_input_schema) == 1
     assert user_input_func.user_input_schema[0].name == "param1"
     assert user_input_func.user_input_schema[0].field_type is str
-    assert user_input_func.user_input_schema[1].name == "param2"
-    assert user_input_func.user_input_schema[1].field_type is int
 
 
 def test_tool_decorator_with_hooks():
@@ -811,3 +809,106 @@ def test_function_cache_pydantic_model_nested(tmp_path):
 
     retrieved_result = func._get_cached_result(cache_file)
     assert retrieved_result == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+
+
+def test_user_input_fields_filters_defaulted_params():
+    """Test that user_input_schema only contains fields in user_input_fields,
+    excluding defaulted parameters owned by the agent (issue #6870)."""
+
+    @tool(requires_user_input=True, user_input_fields=["to_address"])
+    def send_email(
+        subject: str,
+        body: str,
+        to_address: str,
+        priority: str = "normal",
+        cc: Optional[str] = None,
+    ) -> str:
+        """Send an email.
+
+        Args:
+            subject: Email subject
+            body: Email body
+            to_address: Recipient address
+            priority: Email priority
+            cc: CC address
+        """
+        return "sent"
+
+    assert isinstance(send_email, Function)
+    send_email.process_entrypoint()
+
+    # user_input_schema should only contain 'to_address'
+    assert send_email.user_input_schema is not None
+    schema_names = [f.name for f in send_email.user_input_schema]
+    assert schema_names == ["to_address"]
+    assert send_email.user_input_schema[0].field_type is str
+
+    # Defaulted parameters should NOT appear in user_input_schema
+    assert "priority" not in schema_names
+    assert "cc" not in schema_names
+    # Agent-provided params should also NOT appear
+    assert "subject" not in schema_names
+    assert "body" not in schema_names
+
+
+def test_user_input_fields_empty_list_includes_all_params():
+    """Test that an empty user_input_fields list results in all params in user_input_schema."""
+
+    @tool(requires_user_input=True, user_input_fields=[])
+    def my_tool(param1: str, param2: int = 10) -> str:
+        """A tool."""
+        return "done"
+
+    assert isinstance(my_tool, Function)
+    my_tool.process_entrypoint()
+
+    # Empty user_input_fields means all fields should be in the schema
+    assert my_tool.user_input_schema is not None
+    schema_names = [f.name for f in my_tool.user_input_schema]
+    assert "param1" in schema_names
+    assert "param2" in schema_names
+
+
+def test_user_input_no_fields_specified_includes_all_params():
+    """Test that when user_input_fields is None, all params appear in user_input_schema."""
+
+    @tool(requires_user_input=True)
+    def my_tool(param1: str, param2: int = 10) -> str:
+        """A tool."""
+        return "done"
+
+    assert isinstance(my_tool, Function)
+    my_tool.process_entrypoint()
+
+    # No user_input_fields means all fields should be in the schema
+    assert my_tool.user_input_schema is not None
+    schema_names = [f.name for f in my_tool.user_input_schema]
+    assert "param1" in schema_names
+    assert "param2" in schema_names
+
+
+def test_user_input_fields_multiple_fields():
+    """Test user_input_fields with multiple specified fields."""
+
+    @tool(requires_user_input=True, user_input_fields=["to_address", "subject"])
+    def send_email(
+        subject: str,
+        body: str,
+        to_address: str,
+        priority: str = "normal",
+        cc: Optional[str] = None,
+    ) -> str:
+        """Send an email."""
+        return "sent"
+
+    assert isinstance(send_email, Function)
+    send_email.process_entrypoint()
+
+    assert send_email.user_input_schema is not None
+    schema_names = [f.name for f in send_email.user_input_schema]
+    assert len(schema_names) == 2
+    assert "subject" in schema_names
+    assert "to_address" in schema_names
+    assert "body" not in schema_names
+    assert "priority" not in schema_names
+    assert "cc" not in schema_names
