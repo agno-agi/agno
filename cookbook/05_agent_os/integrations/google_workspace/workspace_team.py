@@ -41,7 +41,7 @@ gmail_agent = Agent(
     name="Gmail Assistant",
     role="Email management specialist",
     model=model,
-    tools=[MCPTools(command="gws", args=["mcp", "-s", "gmail"])],
+    tools=[MCPTools(command="gws mcp -s gmail")],
     instructions=[
         "You handle all email-related tasks: reading, searching, composing, and managing labels.",
         "Summarize emails concisely, highlighting sender, subject, and action items.",
@@ -56,7 +56,7 @@ drive_agent = Agent(
     name="Drive Assistant",
     role="File management specialist",
     model=model,
-    tools=[MCPTools(command="gws", args=["mcp", "-s", "drive"])],
+    tools=[MCPTools(command="gws mcp -s drive")],
     instructions=[
         "You handle all file and document tasks: searching, listing, uploading, and organizing files.",
         "When listing files, show name, type, last modified date, and sharing status.",
@@ -71,7 +71,7 @@ calendar_agent = Agent(
     name="Calendar Assistant",
     role="Scheduling specialist",
     model=model,
-    tools=[MCPTools(command="gws", args=["mcp", "-s", "calendar"])],
+    tools=[MCPTools(command="gws mcp -s calendar")],
     instructions=[
         "You handle all calendar tasks: viewing events, creating meetings, and finding free time.",
         "When showing events, include title, time, location, and attendees.",

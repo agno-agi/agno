@@ -36,10 +36,7 @@ from agno.tools.mcp import MCPTools
 db = SqliteDb(db_file="tmp/workspace_full.db")
 
 # Expose all major Workspace services via MCP
-workspace_tools = MCPTools(
-    command="gws",
-    args=["mcp", "-s", "gmail,drive,calendar,sheets,docs,chat"],
-)
+workspace_tools = MCPTools(command="gws mcp -s gmail,drive,calendar,sheets,docs,chat")
 
 workspace_agent = Agent(
     id="workspace-full-agent",

@@ -34,10 +34,7 @@ db = SqliteDb(db_file="tmp/workspace_agent.db")
 # Connect to Google Workspace via gws MCP server
 # gws dynamically discovers all available API methods and exposes them as tools.
 # Use -s to select which services to expose (keeps tool count manageable).
-workspace_tools = MCPTools(
-    command="gws",
-    args=["mcp", "-s", "gmail,drive,calendar"],
-)
+workspace_tools = MCPTools(command="gws mcp -s gmail,drive,calendar")
 
 workspace_agent = Agent(
     id="workspace-agent",

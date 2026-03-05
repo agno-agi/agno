@@ -38,7 +38,6 @@ gws calendar events list --params '{"calendarId": "primary", "maxResults": 3}'
 | `workspace_agent.py` | AgentOS app with Gmail + Drive + Calendar. The standard setup. |
 | `workspace_full.py` | All Workspace services enabled (Gmail, Drive, Calendar, Sheets, Docs, Chat). |
 | `workspace_team.py` | Team of specialist agents — one per service, with a coordinator. Avoids tool count limits. |
-| `workspace_telegram.py` | Workspace agent deployed to Telegram. Manage emails and calendar from your phone. |
 
 ## How It Works
 
@@ -55,7 +54,7 @@ from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 
 agent = Agent(
-    tools=[MCPTools(command="gws", args=["mcp", "-s", "gmail,drive,calendar"])],
+    tools=[MCPTools(command="gws mcp -s gmail,drive,calendar")],
 )
 ```
 
@@ -67,7 +66,7 @@ More services means more tools. If you hit tool count limits, either:
 
 1. **Select fewer services** with `-s`:
    ```python
-   MCPTools(command="gws", args=["mcp", "-s", "gmail,calendar"])
+   MCPTools(command="gws mcp -s gmail,calendar")
    ```
 
 2. **Use a team** (see `workspace_team.py`): each agent gets its own service, and the coordinator routes requests.

@@ -28,9 +28,7 @@ from agno.tools.mcp import MCPTools
 
 async def main():
     # MCPTools requires async context management for stdio transport
-    async with MCPTools(
-        command="gws", args=["mcp", "-s", "gmail,drive,calendar"]
-    ) as tools:
+    async with MCPTools(command="gws mcp -s gmail,drive,calendar") as tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             tools=[tools],
