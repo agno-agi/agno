@@ -2,12 +2,11 @@
 Google Workspace Agent — Full Suite
 ====================================
 
-Same as workspace_agent.py but with all major Workspace services enabled:
+Same as workspace_agent.py but with tools from all major Workspace services:
 Gmail, Drive, Calendar, Sheets, Docs, and Chat.
 
-Note: More services = more tools exposed. Some MCP clients have tool limits
-(typically 50-100). Use the selective version (workspace_agent.py) if you
-hit tool count limits.
+Uses include_tools to select specific tools from each service,
+keeping the total count under OpenAI's 128 tool limit.
 
 Prerequisites:
     1. Install gws CLI:
@@ -18,10 +17,13 @@ Prerequisites:
 
     3. Set environment variables:
         export OPENAI_API_KEY=your-openai-api-key
+        export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
 
 Usage:
     .venvs/demo/bin/python cookbook/05_agent_os/integrations/google_workspace/workspace_full.py
 """
+
+import os
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -35,8 +37,39 @@ from agno.tools.mcp import MCPTools
 
 db = SqliteDb(db_file="tmp/workspace_full.db")
 
-# Expose all major Workspace services via MCP
-workspace_tools = MCPTools(command="gws mcp -s gmail,drive,calendar,sheets,docs,chat")
+gws_env = {
+    k: v
+    for k, v in os.environ.items()
+    if k.startswith("GOOGLE_WORKSPACE_CLI_") or k in ("HOME", "PATH", "USER")
+}
+
+# Expose all major Workspace services via MCP, but limit tools per service.
+workspace_tools = MCPTools(
+    command="gws mcp -s gmail,drive,calendar,sheets,docs",
+    env=gws_env,
+    include_tools=[
+        # Gmail
+        "gmail_users_messages_list",
+        "gmail_users_messages_get",
+        "gmail_users_messages_send",
+        "gmail_users_labels_list",
+        # Drive
+        "drive_files_list",
+        "drive_files_get",
+        "drive_files_create",
+        # Calendar
+        "calendar_events_list",
+        "calendar_events_get",
+        "calendar_events_insert",
+        # Sheets
+        "sheets_spreadsheets_get",
+        "sheets_spreadsheets_values_get",
+        "sheets_spreadsheets_values_update",
+        # Docs
+        "docs_documents_get",
+        "docs_documents_create",
+    ],
+)
 
 workspace_agent = Agent(
     id="workspace-full-agent",
@@ -46,11 +79,14 @@ workspace_agent = Agent(
     tools=[workspace_tools],
     instructions=[
         "You are a full-featured Google Workspace assistant.",
-        "You can manage emails (Gmail), files (Drive), events (Calendar), "
-        "spreadsheets (Sheets), documents (Docs), and messages (Chat).",
-        "When asked to create a spreadsheet, use Sheets tools.",
-        "When asked to draft a document, use Docs tools.",
-        "When asked to send a chat message, use Chat tools.",
+        "All gws tools accept a 'params' object for path/query parameters.",
+        "Every parameter (path and query) must go inside the params dict.",
+        "To list messages: gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
+        "To get a message: gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
+        "Always use format='metadata' when reading messages to keep responses small.",
+        "For Calendar, always pass params={'calendarId': 'primary'}.",
+        "For Sheets, pass params={'spreadsheetId': '...'} and params={'range': 'Sheet1!A1:Z'}.",
+        "For Docs, pass params={'documentId': '...'} to get a document.",
         "For multi-step tasks, plan your approach and execute step by step.",
         "Always confirm before sending emails, creating events, or modifying documents.",
     ],

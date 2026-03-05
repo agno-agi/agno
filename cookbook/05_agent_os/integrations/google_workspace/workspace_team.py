@@ -17,10 +17,13 @@ Prerequisites:
 
     3. Set environment variables:
         export OPENAI_API_KEY=your-openai-api-key
+        export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
 
 Usage:
     .venvs/demo/bin/python cookbook/05_agent_os/integrations/google_workspace/workspace_team.py
 """
+
+import os
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -30,20 +33,35 @@ from agno.team import Team
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
-# Specialist Agents
+# Shared config
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/workspace_team.db")
 model = OpenAIChat(id="gpt-4o")
+
+gws_env = {
+    k: v
+    for k, v in os.environ.items()
+    if k.startswith("GOOGLE_WORKSPACE_CLI_") or k in ("HOME", "PATH", "USER")
+}
+
+# ---------------------------------------------------------------------------
+# Specialist Agents
+# ---------------------------------------------------------------------------
 
 gmail_agent = Agent(
     id="gmail-agent",
     name="Gmail Assistant",
     role="Email management specialist",
     model=model,
-    tools=[MCPTools(command="gws mcp -s gmail")],
+    tools=[MCPTools(command="gws mcp -s gmail", env=gws_env)],
     instructions=[
         "You handle all email-related tasks: reading, searching, composing, and managing labels.",
+        "All gws tools accept a 'params' object for path/query parameters.",
+        "Every parameter (path and query) must go inside the params dict.",
+        "To list messages: gmail_users_messages_list(params={'userId': 'me', 'maxResults': 5})",
+        "To get a message: gmail_users_messages_get(params={'userId': 'me', 'id': '<messageId>', 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date']})",
+        "Always use format='metadata' when reading messages to keep responses small.",
         "Summarize emails concisely, highlighting sender, subject, and action items.",
         "Always confirm before sending or deleting emails.",
     ],
@@ -56,9 +74,10 @@ drive_agent = Agent(
     name="Drive Assistant",
     role="File management specialist",
     model=model,
-    tools=[MCPTools(command="gws mcp -s drive")],
+    tools=[MCPTools(command="gws mcp -s drive", env=gws_env)],
     instructions=[
         "You handle all file and document tasks: searching, listing, uploading, and organizing files.",
+        "All gws tools accept a 'params' object for path/query parameters.",
         "When listing files, show name, type, last modified date, and sharing status.",
         "Help users find files by name, type, or content.",
     ],
@@ -71,9 +90,11 @@ calendar_agent = Agent(
     name="Calendar Assistant",
     role="Scheduling specialist",
     model=model,
-    tools=[MCPTools(command="gws mcp -s calendar")],
+    tools=[MCPTools(command="gws mcp -s calendar", env=gws_env)],
     instructions=[
         "You handle all calendar tasks: viewing events, creating meetings, and finding free time.",
+        "All gws tools accept a 'params' object for path/query parameters.",
+        "Always pass params={'calendarId': 'primary'} for Calendar API calls.",
         "When showing events, include title, time, location, and attendees.",
         "Always confirm before creating, modifying, or deleting events.",
     ],
