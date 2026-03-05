@@ -215,6 +215,7 @@ class Loop:
             steps=[deserialize_step(step) for step in data.get("steps", [])],
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
+            forward_iteration_output=data.get("forward_iteration_output", False),
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             on_reject=data.get("on_reject", OnReject.skip),
