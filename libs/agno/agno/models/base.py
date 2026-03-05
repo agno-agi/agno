@@ -2697,7 +2697,7 @@ class Model(ABC):
 
             try:
                 async for item in function_call.result:
-                    output_delta, show_response, skip_raw, set_tcid = Model._process_generator_item(
+                    output_delta, show_response, skip_raw, set_tcid = self._process_generator_item(
                         item, function_call, event_types
                     )
                     function_call_output += output_delta
