@@ -5,7 +5,7 @@ Provides FastAPI endpoints that Microsoft 365 Copilot uses to
 discover and invoke Agno agents.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -33,68 +33,90 @@ from agno.workflow import RemoteWorkflow, Workflow
 security = HTTPBearer()
 
 
-async def get_validated_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    tenant_id: str = None,
-    client_id: str = None,
-) -> Dict[str, Any]:
+def _get_validated_token_dependency(
+    tenant_id: str,
+    client_id: str,
+) -> callable:
     """
-    Validate Microsoft Entra ID JWT token from request.
+    Factory to create a validated token dependency with proper tenant_id and client_id.
 
-    FastAPI dependency that validates the bearer token and returns
-    the decoded claims with JWKS signature verification.
+    This function creates and returns a FastAPI dependency that validates
+    Microsoft Entra ID JWT tokens. The factory captures tenant_id and client_id
+    in a closure, ensuring they are always provided to the validation function.
 
     Args:
-        credentials: Bearer token from Authorization header
-        tenant_id: Expected tenant ID
-        client_id: Expected client ID
+        tenant_id: Microsoft Entra ID tenant ID for token validation
+        client_id: Application (client) ID for token validation
 
     Returns:
-        Dict containing validated token claims
-
-    Raises:
-        HTTPException: 401 if token is invalid
+        Async dependency function that validates tokens and returns claims
 
     Example:
         ```python
-        @router.get("/protected")
-        async def protected_endpoint(
-            token: Dict[str, Any] = Depends(get_validated_token)
+        # In attach_routes, create the dependency
+        validated_token_dep = _get_validated_token_dependency(tenant_id, client_id)
+
+        # Use it in routes
+        @router.get("/agents")
+        async def list_agents(
+            token: Dict[str, Any] = Depends(validated_token_dep)
         ):
+            # token is pre-validated with correct tenant_id and client_id
             user_email = token.get("upn")
-            return {"message": f"Hello {user_email}"}
+            ...
         ```
     """
-    # Handle missing credentials
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        log_warning("Missing or invalid authorization scheme")
-        raise HTTPException(
-            status_code=401,
-            detail="Missing Bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    async def dependency(
+        credentials: HTTPAuthorizationCredentials = Depends(security),
+    ) -> Dict[str, Any]:
+        """
+        Validate Microsoft Entra ID JWT token from request.
 
-    try:
-        # Extract token without "Bearer " prefix
-        token_string = credentials.credentials
+        FastAPI dependency that validates the bearer token and returns
+        the decoded claims with JWKS signature verification.
 
-        # Validate token with JWKS signature verification
-        claims = await validate_m365_token(
-            token=token_string,
-            expected_tenant_id=tenant_id,
-            expected_client_id=client_id,
-            enable_signature_verification=True,  # Always verify signatures in production
-        )
+        Args:
+            credentials: Bearer token from Authorization header
 
-        return claims
+        Returns:
+            Dict containing validated token claims
 
-    except ValueError as e:
-        log_error(f"Token validation failed: {e}")
-        raise HTTPException(
-            status_code=401,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        Raises:
+            HTTPException: 401 if token is invalid
+        """
+        # Handle missing credentials
+        if credentials is None or credentials.scheme not in ("Bearer", "bearer"):
+            log_warning("Authentication failed: Invalid credentials format")
+            raise HTTPException(
+                status_code=401,
+                detail="Missing Bearer token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        try:
+            # Extract token without "Bearer " prefix
+            token_string = credentials.credentials
+
+            # Validate token with JWKS signature verification
+            # tenant_id and client_id are captured from the factory closure
+            claims = await validate_m365_token(
+                token=token_string,
+                expected_tenant_id=tenant_id,
+                expected_client_id=client_id,
+                enable_signature_verification=True,  # Always verify signatures in production
+            )
+
+            return claims
+
+        except ValueError as e:
+            log_error(f"Token validation failed: {e}")
+            raise HTTPException(
+                status_code=401,
+                detail=str(e),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    return dependency
 
 
 def attach_routes(
@@ -140,6 +162,9 @@ def attach_routes(
         - POST /m365/invoke: Invoke an agent
         - GET /m365/health: Health check
     """
+    # Create validated token dependency with proper tenant_id and client_id
+    # This ensures the dependency always has the correct values for validation
+    validated_token_dep = _get_validated_token_dependency(tenant_id, client_id)
 
     @router.get(
         "/manifest",
@@ -195,7 +220,7 @@ def attach_routes(
         ),
     )
     async def list_agents(
-        token: Dict[str, Any] = Depends(get_validated_token),
+        token: Dict[str, Any] = Depends(validated_token_dep),
     ) -> List[AgentManifest]:
         """
         List all available Agno agents.
@@ -285,7 +310,7 @@ def attach_routes(
     )
     async def invoke(
         request: InvokeRequest,
-        token: Dict[str, Any] = Depends(get_validated_token),
+        token: Dict[str, Any] = Depends(validated_token_dep),
     ) -> InvokeResponse:
         """
         Invoke an Agno agent from Microsoft 365 Copilot.
@@ -367,24 +392,16 @@ def attach_routes(
 
         except ValueError as e:
             log_error(f"M365: Component not found: {request.component_id}")
-            return InvokeResponse(
-                component_id=request.component_id,
-                component_type="unknown",
-                output="",
-                session_id=request.session_id,
-                status="error",
-                error=f"Component not found: {str(e)}",
+            raise HTTPException(
+                status_code=404,
+                detail=f"Component not found: {str(e)}",
             )
 
         except Exception as e:
             log_error(f"M365: Invoke failed for {request.component_id}: {e}")
-            return InvokeResponse(
-                component_id=request.component_id,
-                component_type="unknown",
-                output="",
-                session_id=request.session_id,
-                status="error",
-                error=str(e),
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error during agent execution",
             )
 
     @router.get(
@@ -425,7 +442,7 @@ def _resolve_component(
     agent: Optional[Union[Agent, RemoteAgent]],
     team: Optional[Union[Team, RemoteTeam]],
     workflow: Optional[Union[Workflow, RemoteWorkflow]],
-) -> tuple:
+) -> Tuple[Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow], str]:
     """
     Resolve component by ID and return (component, type).
 
