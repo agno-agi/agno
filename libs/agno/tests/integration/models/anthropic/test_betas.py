@@ -58,13 +58,13 @@ def mock_anthropic_client():
 @pytest.fixture(scope="module")
 def claude_model():
     """Fixture that provides a Claude model and reuses it across all tests in the module."""
-    return Claude(id="claude-sonnet-4-5-20250929", betas=["context-1m-2025-08-07"])
+    return Claude(id="claude-sonnet-4-20250514", betas=["context-1m-2025-08-07"])
 
 
 def test_betas_parameter_in_request_params():
     """Test that betas parameter is included in request params when provided."""
     betas = ["context-1m-2025-08-07", "custom-beta-feature"]
-    model = Claude(id="claude-sonnet-4-5-20250929", betas=betas)
+    model = Claude(id="claude-sonnet-4-20250514", betas=betas)
 
     request_params = model.get_request_params()
 
@@ -74,7 +74,7 @@ def test_betas_parameter_in_request_params():
 
 def test_no_betas_parameter_when_not_provided():
     """Test that betas parameter is not included when not provided."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-4-20250514")
 
     request_params = model.get_request_params()
 
@@ -83,14 +83,14 @@ def test_no_betas_parameter_when_not_provided():
 
 def test_has_beta_features_with_betas():
     """Test that _has_beta_features returns True when betas are provided."""
-    model = Claude(id="claude-sonnet-4-5-20250929", betas=["context-1m-2025-08-07"])
+    model = Claude(id="claude-sonnet-4-20250514", betas=["context-1m-2025-08-07"])
 
     assert model._has_beta_features() is True
 
 
 def test_has_beta_features_without_betas():
     """Test that _has_beta_features returns False when no beta features are enabled."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-4-20250514")
 
     # Should return False when no beta features are enabled
     assert model._has_beta_features() is False
@@ -99,7 +99,7 @@ def test_has_beta_features_without_betas():
 def test_beta_client_used_when_betas_provided(mock_anthropic_client):
     """Test that beta client is used when betas parameter is provided."""
     betas = ["context-1m-2025-08-07"]
-    model = Claude(id="claude-sonnet-4-5-20250929", betas=betas)
+    model = Claude(id="claude-sonnet-4-20250514", betas=betas)
     agent = Agent(model=model, telemetry=False)
 
     # Run the agent
@@ -119,7 +119,7 @@ def test_beta_client_used_when_betas_provided(mock_anthropic_client):
 
 def test_regular_client_used_without_betas(mock_anthropic_client):
     """Test that regular client is used when no betas are provided."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-4-20250514")
     agent = Agent(model=model, telemetry=False)
 
     # Run the agent
@@ -139,7 +139,7 @@ def test_regular_client_used_without_betas(mock_anthropic_client):
 def test_multiple_betas():
     """Test that multiple beta features can be specified."""
     betas = ["context-1m-2025-08-07", "feature-a", "feature-b"]
-    model = Claude(id="claude-sonnet-4-5-20250929", betas=betas)
+    model = Claude(id="claude-sonnet-4-20250514", betas=betas)
 
     request_params = model.get_request_params()
 
@@ -151,7 +151,7 @@ def test_betas_with_skills():
     """Test that betas work alongside skills configuration."""
     betas = ["custom-beta"]
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-4-20250514",
         betas=betas,
         skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
     )
@@ -203,7 +203,7 @@ async def test_async_beta_client_used_when_betas_provided():
         mock_async_client_class.return_value = mock_async_client
 
         betas = ["context-1m-2025-08-07"]
-        model = Claude(id="claude-sonnet-4-5-20250929", betas=betas)
+        model = Claude(id="claude-sonnet-4-20250514", betas=betas)
         agent = Agent(model=model, telemetry=False)
 
         # Run the agent asynchronously
@@ -253,6 +253,6 @@ async def test_betas_with_real_client_async(claude_model):
 
     # Verify the model was set correctly
     assert response.model is not None, "Response model should not be None"
-    assert response.model == "claude-sonnet-4-5-20250929" or response.model.startswith("claude-"), (
+    assert response.model == "claude-sonnet-4-20250514" or response.model.startswith("claude-"), (
         f"Expected Claude model, got {response.model}"
     )

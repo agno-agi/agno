@@ -1,6 +1,6 @@
 """Integration tests for agent retry functionality."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -11,24 +11,26 @@ from agno.run.base import RunStatus
 
 def test_agent_retry():
     """Test that agent retries on failure and eventually succeeds."""
+    model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
         name="Retry Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=2,
         delay_between_retries=0,
     )
 
     # Mock that fails once, then succeeds
     attempt_count = {"count": 0}
-    original_run = agent._run
+    original_response = model.response
 
-    def mock_run(*args, **kwargs):
+    def mock_response(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return original_run(*args, **kwargs)
+        return original_response(*args, **kwargs)
 
-    with patch.object(agent, "_run", side_effect=mock_run):
+    # Mock the model's response method so _run's retry logic can still work
+    with patch.object(model, "response", side_effect=mock_response):
         response = agent.run("Test message")
 
     # Should succeed on the 2nd attempt
@@ -39,25 +41,28 @@ def test_agent_retry():
 
 def test_agent_exponential_backoff():
     """Test that exponential backoff increases delay between retries."""
+    model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
         name="Retry Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=2,
         delay_between_retries=1,
         exponential_backoff=True,
     )
 
     attempt_count = {"count": 0}
+    original_response = model.response
 
-    def mock_run(*args, **kwargs):
+    def mock_response(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 3:  # Fail first 2 attempts (attempts 1 and 2)
             raise Exception("Simulated failure")
         # Succeed on 3rd attempt
-        return Mock(status=RunStatus.completed)
+        return original_response(*args, **kwargs)
 
-    with patch.object(agent, "_run", side_effect=mock_run):
-        with patch("agno.agent.agent.time.sleep") as mock_sleep:
+    # Mock the model's response method so _run's retry logic can still work
+    with patch.object(model, "response", side_effect=mock_response):
+        with patch("agno.agent._run.time.sleep") as mock_sleep:
             _ = agent.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays
@@ -68,20 +73,22 @@ def test_agent_exponential_backoff():
 
 def test_agent_keyboard_interrupt_stops_retries():
     """Test that KeyboardInterrupt stops retries immediately."""
+    model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
         name="Retry Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=5,
         delay_between_retries=0,
     )
 
     attempt_count = {"count": 0}
 
-    def mock_run(*args, **kwargs):
+    def mock_response(*args, **kwargs):
         attempt_count["count"] += 1
         raise KeyboardInterrupt()
 
-    with patch.object(agent, "_run", side_effect=mock_run):
+    # Mock the model's response method so _run's KeyboardInterrupt handling can work
+    with patch.object(model, "response", side_effect=mock_response):
         response = agent.run("Test message")
 
     # Should stop on first attempt without retrying
@@ -93,27 +100,26 @@ def test_agent_keyboard_interrupt_stops_retries():
 @pytest.mark.asyncio
 async def test_agent_async_retry():
     """Test that async agent retries on failure and eventually succeeds."""
-    import types
-
+    model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
         name="Async Retry Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=2,
         delay_between_retries=0,
     )
 
     attempt_count = {"count": 0}
-    original_arun = agent._arun
+    original_aresponse = model.aresponse
 
-    def mock_arun(self, *args, **kwargs):
+    async def mock_aresponse(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return original_arun(*args, **kwargs)
+        return await original_aresponse(*args, **kwargs)
 
-    # Properly bind the async method
-    agent._arun = types.MethodType(mock_arun, agent)
-    response = await agent.arun("Test message")
+    # Mock the model's aresponse method so _arun's retry logic can still work
+    with patch.object(model, "aresponse", side_effect=mock_aresponse):
+        response = await agent.arun("Test message")
 
     # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2

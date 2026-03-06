@@ -1,10 +1,13 @@
 import uuid
 from typing import Any, Dict, Optional
 
+import pytest
+
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
 from agno.run import RunContext
+from agno.run.agent import RunEvent
 
 
 def add_item(run_context: RunContext, item: str) -> str:
@@ -390,7 +393,7 @@ def test_session_state_in_run_completed_event_stream(shared_db):
 
     run_completed_event = None
 
-    for event in agent.run("Add oranges to my shopping list", stream=True, stream_intermediate_steps=True):
+    for event in agent.run("Add oranges to my shopping list", stream=True, stream_events=True):
         if hasattr(event, "event") and event.event == "RunCompleted":
             run_completed_event = event
             break
@@ -444,15 +447,17 @@ async def test_session_state_in_run_completed_event_stream_async(shared_db):
         markdown=True,
     )
 
-    run_completed_event = None
+    events = {}
+    async for event in agent.arun("Add oranges to my shopping list", stream=True, stream_events=True):
+        if event.event not in events:
+            events[event.event] = []
+        events[event.event].append(event)
 
-    async for event in agent.arun("Add oranges to my shopping list", stream=True, stream_intermediate_steps=True):
-        if hasattr(event, "event") and event.event == "RunCompleted":
-            run_completed_event = event
-            break
+    # Get the RunCompleted event
+    assert RunEvent.run_completed in events, "Should receive RunCompleted event"
+    run_completed_event = events[RunEvent.run_completed][0]
 
     # Verify RunCompletedEvent structure
-    assert run_completed_event is not None, "Should receive RunCompleted event"
     assert run_completed_event.session_state is not None, "RunCompletedEvent should have session_state"
     assert isinstance(run_completed_event.session_state, dict), "session_state should be a dict"
     assert "shopping_list" in run_completed_event.session_state, "shopping_list key should be present"
@@ -461,3 +466,315 @@ async def test_session_state_in_run_completed_event_stream_async(shared_db):
     # Verify state was updated by the tool
     assert len(run_completed_event.session_state.get("shopping_list", [])) == 2, "Shopping list should have 2 items"
     assert "oranges" in run_completed_event.session_state["shopping_list"], "Shopping list should contain oranges"
+
+
+@pytest.mark.asyncio
+async def test_async_run_with_async_db(async_shared_db):
+    """Test async arun() with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+    response = await agent.arun("Hello", session_id=session_id)
+    assert response is not None
+    assert response.content is not None
+
+
+@pytest.mark.asyncio
+async def test_async_run_stream_with_async_db(async_shared_db):
+    """Test async arun() streaming with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+    final_response = None
+    async for response in agent.arun("Hello", session_id=session_id, stream=True):
+        final_response = response
+
+    assert final_response is not None
+    assert final_response.content is not None
+
+
+@pytest.mark.asyncio
+async def test_async_run_stream_events_with_async_db(async_shared_db):
+    """Test async arun() with stream_events=True and async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    events = {}
+    async for run_response_delta in agent.arun("Hello", session_id=session_id, stream=True, stream_events=True):
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert RunEvent.run_completed in events
+    assert len(events[RunEvent.run_completed]) == 1
+    assert events[RunEvent.run_completed][0].content is not None
+
+
+@pytest.mark.asyncio
+async def test_aget_session_with_async_db(async_shared_db):
+    """Test aget_session with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+
+    session = await agent.aget_session(session_id=session_id)
+    assert session is not None
+    assert session.session_id == session_id
+    assert len(session.runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_asave_session_with_async_db(async_shared_db):
+    """Test asave_session with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+
+    session = await agent.aget_session(session_id=session_id)
+    session.session_data["custom_key"] = "custom_value"
+
+    await agent.asave_session(session)
+
+    retrieved_session = await agent.aget_session(session_id=session_id)
+    assert retrieved_session.session_data["custom_key"] == "custom_value"
+
+
+@pytest.mark.asyncio
+async def test_aget_last_run_output_with_async_db(async_shared_db):
+    """Test aget_last_run_output with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("First message", session_id=session_id)
+    response2 = await agent.arun("Second message", session_id=session_id)
+
+    last_output = await agent.aget_last_run_output(session_id=session_id)
+    assert last_output is not None
+    assert last_output.run_id == response2.run_id
+
+
+@pytest.mark.asyncio
+async def test_aget_run_output_with_async_db(async_shared_db):
+    """Test aget_run_output with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    response = await agent.arun("Hello", session_id=session_id)
+    run_id = response.run_id
+
+    retrieved_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+    assert retrieved_output is not None
+    assert retrieved_output.run_id == run_id
+
+
+@pytest.mark.asyncio
+async def test_aget_chat_history_with_async_db(async_shared_db):
+    """Test aget_chat_history with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+    await agent.arun("How are you?", session_id=session_id)
+
+    chat_history = await agent.aget_chat_history(session_id=session_id)
+    assert len(chat_history) >= 4
+
+
+@pytest.mark.asyncio
+async def test_aget_session_messages_with_async_db(async_shared_db):
+    """Test aget_session_messages with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+    await agent.arun("How are you?", session_id=session_id)
+
+    messages = await agent.aget_session_messages(session_id=session_id)
+    assert len(messages) >= 4
+
+
+@pytest.mark.asyncio
+async def test_aget_session_state_with_async_db(async_shared_db):
+    """Test aget_session_state with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id, session_state={"counter": 5, "name": "test"})
+
+    state = await agent.aget_session_state(session_id=session_id)
+    assert state == {"counter": 5, "name": "test"}
+
+
+@pytest.mark.asyncio
+async def test_aupdate_session_state_with_async_db(async_shared_db):
+    """Test aupdate_session_state with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id, session_state={"counter": 0, "items": []})
+
+    result = await agent.aupdate_session_state({"counter": 10}, session_id=session_id)
+    assert result == {"counter": 10, "items": []}
+
+    updated_state = await agent.aget_session_state(session_id=session_id)
+    assert updated_state["counter"] == 10
+
+
+@pytest.mark.asyncio
+async def test_aget_session_name_with_async_db(async_shared_db):
+    """Test aget_session_name with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+    await agent.aset_session_name(session_id=session_id, session_name="Async Session")
+
+    name = await agent.aget_session_name(session_id=session_id)
+    assert name == "Async Session"
+
+
+@pytest.mark.asyncio
+async def test_aset_session_name_with_async_db(async_shared_db):
+    """Test aset_session_name with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+
+    updated_session = await agent.aset_session_name(session_id=session_id, session_name="Test Session")
+    assert updated_session.session_data["session_name"] == "Test Session"
+
+
+@pytest.mark.asyncio
+async def test_aget_session_metrics_with_async_db(async_shared_db):
+    """Test aget_session_metrics with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+
+    metrics = await agent.aget_session_metrics(session_id=session_id)
+    assert metrics is not None
+    assert metrics.total_tokens > 0
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_with_async_db(async_shared_db):
+    """Test adelete_session with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+
+    # Verify session exists
+    session = await agent.aget_session(session_id=session_id)
+    assert session is not None
+
+    # Delete session
+    await agent.adelete_session(session_id=session_id)
+
+    # Verify session is deleted
+    session = await agent.aget_session(session_id=session_id)
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_session_persistence_across_async_runs(async_shared_db):
+    """Test that session persists correctly across different async run types."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    # Async run
+    await agent.arun("First message", session_id=session_id)
+
+    # Async streaming run
+    async for response in agent.arun("Second message", session_id=session_id, stream=True):
+        pass
+
+    # Async run again
+    await agent.arun("Third message", session_id=session_id)
+
+    # Verify all runs are in session
+    session = await agent.aget_session(session_id=session_id)
+    assert session is not None
+    assert len(session.runs) == 3
+
+
+@pytest.mark.asyncio
+async def test_aget_session_summary_with_async_db(async_shared_db):
+    """Test aget_session_summary with async database."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+        markdown=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    await agent.arun("Hello", session_id=session_id)
+
+    summary = await agent.aget_session_summary(session_id=session_id)
+    assert summary is None  # Summaries not enabled by default

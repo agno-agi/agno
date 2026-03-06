@@ -354,9 +354,11 @@ class File(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def check_at_least_one_source(cls, data):
-        """Ensure at least one of url, filepath, or content is provided."""
-        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content", "external"]):
-            raise ValueError("At least one of url, filepath, content or external must be provided")
+        """Ensure at least one of id, url, filepath, content, or external is provided."""
+        if isinstance(data, dict) and not any(
+            data.get(field) for field in ["id", "url", "filepath", "content", "external"]
+        ):
+            raise ValueError("At least one of id, url, filepath, content or external must be provided")
         return data
 
     @field_validator("mime_type")
@@ -435,6 +437,22 @@ class File(BaseModel):
                 return None
         else:
             return None
+
+    def get_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            if isinstance(self.content, bytes):
+                return self.content
+            elif isinstance(self.content, str):
+                return self.content.encode("utf-8")
+            return None
+        elif self.url:
+            import httpx
+
+            return httpx.get(self.url).content
+        elif self.filepath:
+            with open(self.filepath, "rb") as f:
+                return f.read()
+        return None
 
     def _normalise_content(self) -> Optional[Union[str, bytes]]:
         if self.content is None:

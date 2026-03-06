@@ -10,7 +10,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Engine, Table
+    from sqlalchemy import Engine, Table, func
     from sqlalchemy.dialects import mysql
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
     from sqlalchemy.inspection import inspect
@@ -32,6 +32,11 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
 
     Returns:
         The modified statement with sorting applied
+
+    Note:
+        For 'updated_at' sorting, uses COALESCE(updated_at, created_at) to fall back
+        to created_at when updated_at is NULL. This ensures pre-2.0 records (which may
+        have NULL updated_at) are sorted correctly by their creation time.
     """
     if sort_by is None:
         return stmt
@@ -40,8 +45,13 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
         return stmt
 
-    # Apply the given sorting
-    sort_column = getattr(table.c, sort_by)
+    # For updated_at, use COALESCE to fall back to created_at if updated_at is NULL
+    # This handles pre-2.0 records that may have NULL updated_at values
+    if sort_by == "updated_at" and hasattr(table.c, "created_at"):
+        sort_column = func.coalesce(table.c.updated_at, table.c.created_at)
+    else:
+        sort_column = getattr(table.c, sort_by)
+
     if sort_order and sort_order == "asc":
         return stmt.order_by(sort_column.asc())
     else:

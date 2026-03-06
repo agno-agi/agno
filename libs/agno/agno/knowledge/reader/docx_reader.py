@@ -23,10 +23,11 @@ class DocxReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for DOCX readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
@@ -34,7 +35,7 @@ class DocxReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.DOCX, ContentType.DOC]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -47,11 +48,9 @@ class DocxReader(Reader):
                 docx_document = DocxDocument(str(file))
                 doc_name = name or file.stem
             else:
-                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'docx_file')}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 docx_document = DocxDocument(file)
-                doc_name = name or (
-                    getattr(file, "name", "docx_file").split(".")[0] if hasattr(file, "name") else "docx_file"
-                )
+                doc_name = name or getattr(file, "name", "docx_file").split(".")[0]
 
             doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
 

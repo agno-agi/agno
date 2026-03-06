@@ -2,31 +2,36 @@
 
 import logging
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Union
 
-from ag_ui.core import (
-    BaseEvent,
-    EventType,
-    RunAgentInput,
-    RunErrorEvent,
-    RunStartedEvent,
-)
-from ag_ui.encoder import EventEncoder
+try:
+    from ag_ui.core import (
+        BaseEvent,
+        EventType,
+        RunAgentInput,
+        RunErrorEvent,
+        RunStartedEvent,
+    )
+    from ag_ui.encoder import EventEncoder
+except ImportError as e:
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
     convert_agui_messages_to_agno_messages,
     validate_agui_state,
 )
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
 
 
-async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
@@ -45,7 +50,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
 
         # Request streaming response from agent
-        response_stream = agent.arun(
+        response_stream = agent.arun(  # type: ignore
             input=messages,
             session_id=run_input.thread_id,
             stream=True,
@@ -69,7 +74,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
@@ -86,7 +91,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         session_state = validate_agui_state(input.state, input.thread_id)
 
         # Request streaming response from team
-        response_stream = team.arun(
+        response_stream = team.arun(  # type: ignore
             input=messages,
             session_id=input.thread_id,
             stream=True,
@@ -107,7 +112,9 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 

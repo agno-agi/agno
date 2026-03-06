@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from agno.knowledge.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
@@ -32,7 +32,7 @@ class WebsiteReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(),
         max_depth: int = 3,
         max_links: int = 10,
         timeout: int = 10,
@@ -49,9 +49,10 @@ class WebsiteReader(Reader):
         self._urls_to_crawl = []
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Website readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,
@@ -60,7 +61,7 @@ class WebsiteReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
     def delay(self, min_seconds=1, max_seconds=3):
@@ -163,8 +164,10 @@ class WebsiteReader(Reader):
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Add starting URL with its depth to the global list
-        self._urls_to_crawl.append((url, starting_depth))
+
+        # Clear state so URLs from previous crawls aren't incorrectly skipped (matches async_crawl)
+        self._visited = set()
+        self._urls_to_crawl = [(url, starting_depth)]
         while self._urls_to_crawl:
             # Unpack URL and depth from the global list
             current_url, current_depth = self._urls_to_crawl.pop(0)
@@ -427,7 +430,8 @@ class WebsiteReader(Reader):
                         meta_data={"url": str(crawled_url)},
                         content=crawled_content,
                     )
-                    return self.chunk_document(doc)
+                    chunks = self.chunk_document(doc)
+                    return chunks
                 else:
                     return [
                         Document(
@@ -443,6 +447,7 @@ class WebsiteReader(Reader):
                 process_document(crawled_url, crawled_content)
                 for crawled_url, crawled_content in crawler_result.items()
             ]
+
             results = await asyncio.gather(*tasks)
 
             # Flatten the results

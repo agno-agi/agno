@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - "main"
+      - "v2.4.0"
+      - "v2.5-phase1"
+      - "v2.5-phase1-prerelease-fixes"
   pull_request:
     types:
       - opened
@@ -11,6 +14,9 @@ on:
       - reopened
     branches:
       - "main"
+      - "v2.4.0"
+      - "v2.5-phase1"
+      - "v2.5-phase1-prerelease-fixes"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

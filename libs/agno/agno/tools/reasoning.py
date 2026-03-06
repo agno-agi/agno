@@ -1,7 +1,8 @@
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from agno.reasoning.step import NextAction, ReasoningStep
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -49,7 +50,7 @@ class ReasoningTools(Toolkit):
 
     def think(
         self,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
         title: str,
         thought: str,
         action: Optional[str] = None,
@@ -80,21 +81,24 @@ class ReasoningTools(Toolkit):
                 confidence=confidence,
             )
 
-            current_run_id = session_state.get("current_run_id", None)
+            current_run_id = run_context.run_id
 
             # Add this step to the Agent's session state
-            if session_state is None:
-                session_state = {}
-            if "reasoning_steps" not in session_state:
-                session_state["reasoning_steps"] = {}
-            if current_run_id not in session_state["reasoning_steps"]:
-                session_state["reasoning_steps"][current_run_id] = []
-            session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "reasoning_steps" not in run_context.session_state:
+                run_context.session_state["reasoning_steps"] = {}
+            if current_run_id not in run_context.session_state["reasoning_steps"]:
+                run_context.session_state["reasoning_steps"][current_run_id] = []
+            run_context.session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in session_state and current_run_id in session_state["reasoning_steps"]:
+            if (
+                "reasoning_steps" in run_context.session_state
+                and current_run_id in run_context.session_state["reasoning_steps"]
+            ):
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(session_state["reasoning_steps"][current_run_id], 1):
+                for i, step in enumerate(run_context.session_state["reasoning_steps"][current_run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = dedent(f"""\
 Step {i}:
@@ -112,7 +116,7 @@ Confidence: {step_parsed.confidence}
 
     def analyze(
         self,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
         title: str,
         result: str,
         analysis: str,
@@ -150,20 +154,23 @@ Confidence: {step_parsed.confidence}
                 confidence=confidence,
             )
 
-            current_run_id = session_state.get("current_run_id", None)
+            current_run_id = run_context.run_id
             # Add this step to the Agent's session state
-            if session_state is None:
-                session_state = {}
-            if "reasoning_steps" not in session_state:
-                session_state["reasoning_steps"] = {}
-            if current_run_id not in session_state["reasoning_steps"]:
-                session_state["reasoning_steps"][current_run_id] = []
-            session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "reasoning_steps" not in run_context.session_state:
+                run_context.session_state["reasoning_steps"] = {}
+            if current_run_id not in run_context.session_state["reasoning_steps"]:
+                run_context.session_state["reasoning_steps"][current_run_id] = []
+            run_context.session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in session_state and current_run_id in session_state["reasoning_steps"]:
+            if (
+                "reasoning_steps" in run_context.session_state
+                and current_run_id in run_context.session_state["reasoning_steps"]
+            ):
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(session_state["reasoning_steps"][current_run_id], 1):
+                for i, step in enumerate(run_context.session_state["reasoning_steps"][current_run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = dedent(f"""\
 Step {i}:

@@ -1,0 +1,39 @@
+{
+  "table_name": "constructors_championship",
+  "table_description": "Contains data for the constructor's championship from 1958 to 2020, capturing championship positions from when it was introduced.",
+  "use_cases": [
+    "Constructor standings by year",
+    "Team performance over time"
+  ],
+  "data_quality_notes": [
+    "position is INTEGER type - can compare directly with numbers (position = 1)",
+    "This differs from drivers_championship where position is TEXT"
+  ],
+  "table_columns": [
+    {
+      "name": "index",
+      "type": "int",
+      "description": "Index of the row."
+    },
+    {
+      "name": "year",
+      "type": "int",
+      "description": "Year of the championship."
+    },
+    {
+      "name": "position",
+      "type": "int",
+      "description": "Final standing position of the team in the championship. Use position = 1 to get the champion team."
+    },
+    {
+      "name": "team",
+      "type": "text",
+      "description": "Name of the Formula 1 team."
+    },
+    {
+      "name": "points",
+      "type": "int",
+      "description": "Total points accumulated by the team during the championship year."
+    }
+  ]
+}

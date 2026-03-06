@@ -37,7 +37,7 @@ class MistralEmbedder(Embedder):
             "api_key": self.api_key,
             "endpoint": self.endpoint,
             "max_retries": self.max_retries,
-            "timeout": self.timeout,
+            "timeout_ms": self.timeout * 1000 if self.timeout else None,
         }
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
 

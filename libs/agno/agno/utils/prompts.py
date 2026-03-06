@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.utils.log import log_warning
 
 
-def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
+def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> str:
     """Return the JSON output prompt for the Agent.
 
     This is added to the system prompt when the output_schema is set and structured_outputs is False.
@@ -22,11 +22,13 @@ def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
             json_output_prompt += "\n<json_fields>"
             json_output_prompt += f"\n{json.dumps(output_schema)}"
             json_output_prompt += "\n</json_fields>"
-        elif (
-            issubclass(type(output_schema), BaseModel)
-            or issubclass(output_schema, BaseModel)  # type: ignore
-            or isinstance(output_schema, BaseModel)
-        ):  # type: ignore
+        elif isinstance(output_schema, dict):
+            json_output_prompt += "\n<json_fields>"
+            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += "\n</json_fields>"
+        elif (isinstance(output_schema, type) and issubclass(output_schema, BaseModel)) or isinstance(
+            output_schema, BaseModel
+        ):
             json_schema = output_schema.model_json_schema()
             if json_schema is not None:
                 response_model_properties = {}

@@ -1,7 +1,10 @@
-from datetime import datetime, timezone
+import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+from agno.os.utils import to_utc_datetime
 
 
 class DeleteMemoriesRequest(BaseModel):
@@ -25,12 +28,24 @@ class UserMemorySchema(BaseModel):
         if memory_dict["memory"] == "":
             return None
 
+        # Handle nested memory content (relevant for some memories migrated from v1)
+        if isinstance(memory_dict["memory"], dict):
+            if memory_dict["memory"].get("memory") is not None:
+                memory = str(memory_dict["memory"]["memory"])
+            else:
+                try:
+                    memory = json.dumps(memory_dict["memory"])
+                except json.JSONDecodeError:
+                    memory = str(memory_dict["memory"])
+        else:
+            memory = memory_dict["memory"]
+
         return cls(
             memory_id=memory_dict["memory_id"],
             user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
-            memory=memory_dict["memory"],
+            memory=memory,
             topics=memory_dict.get("topics", []),
             updated_at=memory_dict["updated_at"],
         )
@@ -58,7 +73,7 @@ class UserStatsSchema(BaseModel):
         return cls(
             user_id=str(user_stats_dict["user_id"]),
             total_memories=user_stats_dict["total_memories"],
-            last_memory_updated_at=datetime.fromtimestamp(updated_at, tz=timezone.utc) if updated_at else None,
+            last_memory_updated_at=to_utc_datetime(updated_at),
         )
 
 

@@ -23,10 +23,11 @@ class YouTubeReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for YouTube readers."""
         return [
             ChunkingStrategyType.RECURSIVE_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
@@ -34,7 +35,7 @@ class YouTubeReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.YOUTUBE]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
