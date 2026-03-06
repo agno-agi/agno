@@ -22,6 +22,7 @@ class TeamResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
+    mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -36,9 +37,16 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_component: bool = False
+    current_version: Optional[int] = None
+    stage: Optional[str] = None
 
     @classmethod
-    async def from_team(cls, team: Team) -> "TeamResponse":
+    async def from_team(
+        cls,
+        team: Team,
+        is_component: bool = False,
+    ) -> "TeamResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -65,7 +73,7 @@ class TeamResponse(BaseModel):
             "enable_agentic_knowledge_filters": False,
             # Memory defaults
             "enable_agentic_memory": False,
-            "enable_user_memories": False,
+            "update_memory_on_run": False,
             # Reasoning defaults
             "reasoning": False,
             "reasoning_min_steps": 1,
@@ -137,11 +145,16 @@ class TeamResponse(BaseModel):
             "cache_session": team.cache_session,
         }
 
+        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
         knowledge_info = {
-            "db_id": team.knowledge.contents_db.id if team.knowledge and team.knowledge.contents_db else None,
+            "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
-            "knowledge_filters": team.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in team.knowledge_filters]
+                if isinstance(team.knowledge_filters, list)
+                else team.knowledge_filters
+            ),
             "references_format": team.references_format,
         }
 
@@ -149,9 +162,10 @@ class TeamResponse(BaseModel):
         if team.memory_manager is not None:
             memory_info = {
                 "enable_agentic_memory": team.enable_agentic_memory,
-                "enable_user_memories": team.enable_user_memories,
+                "update_memory_on_run": team.update_memory_on_run,
+                "enable_user_memories": team.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": team.metadata,
-                "memory_table": team.db.memory_table_name if team.db and team.enable_user_memories else None,
+                "memory_table": team.db.memory_table_name if team.db and team.update_memory_on_run else None,
             }
 
             if team.memory_manager.model is not None:
@@ -247,7 +261,7 @@ class TeamResponse(BaseModel):
             _team_model_data["provider"] = team.model.provider
 
         members: List[Union[AgentResponse, TeamResponse]] = []
-        for member in team.members:
+        for member in team.members if isinstance(team.members, list) else []:
             if isinstance(member, Agent):
                 agent_response = await AgentResponse.from_agent(member)
                 members.append(agent_response)
@@ -261,6 +275,7 @@ class TeamResponse(BaseModel):
             db_id=team.db.id if team.db else None,
             description=team.description,
             role=team.role,
+            mode=team.mode.value if team.mode else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
@@ -275,4 +290,7 @@ class TeamResponse(BaseModel):
             members=members if members else None,
             metadata=team.metadata,
             input_schema=input_schema_dict,
+            is_component=is_component,
+            current_version=getattr(team, "_version", None),
+            stage=getattr(team, "_stage", None),
         )

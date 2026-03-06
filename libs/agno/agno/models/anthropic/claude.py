@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -406,6 +406,30 @@ class Claude(Model):
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "max_tokens": self.max_tokens,
+                "thinking": self.thinking,
+                "temperature": self.temperature,
+                "stop_sequences": self.stop_sequences,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "cache_system_prompt": self.cache_system_prompt,
+                "extended_cache_time": self.extended_cache_time,
+                "betas": self.betas,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
     def count_tokens(
         self,
         messages: List[Message],
@@ -569,9 +593,6 @@ class Claude(Model):
         Send a request to the Anthropic API to generate a response.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -640,9 +661,6 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -694,9 +712,6 @@ class Claude(Model):
         Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -760,9 +775,6 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -1063,7 +1075,12 @@ class Claude(Model):
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
 
-        if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
+        if (
+            isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent))
+            and hasattr(response, "message")
+            and hasattr(response.message, "usage")
+            and response.message.usage is not None  # type: ignore
+        ):
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
 
         # Capture the Beta response
@@ -1079,17 +1096,17 @@ class Claude(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> MessageMetrics:
         """
-        Parse the given Anthropic-specific usage into an Agno Metrics object.
+        Parse the given Anthropic-specific usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Anthropic
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0

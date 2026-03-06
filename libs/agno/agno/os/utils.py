@@ -14,6 +14,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -22,6 +23,28 @@ from agno.team import RemoteTeam, Team
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
+
+
+def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp, ISO 8601 string, or datetime to a UTC datetime."""
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        # If already a datetime, make sure the timezone is UTC
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    if isinstance(value, str):
+        try:
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            return datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+
+    return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -245,23 +268,90 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def get_knowledge_instance_by_db_id(
-    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], db_id: Optional[str] = None
+def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:
+    """Generate a deterministic unique ID for a knowledge instance.
+
+    Uses db_id, table_name, and name to ensure uniqueness across all knowledge instances.
+    """
+    import hashlib
+
+    id_seed = f"{db_id}:{table_name}:{name}"
+    # Use SHA256 instead of MD5 for FIPS compliance
+    hash_hex = hashlib.sha256(id_seed.encode()).hexdigest()
+    return f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
+
+
+def get_knowledge_instance(
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]],
+    db_id: Optional[str] = None,
+    knowledge_id: Optional[str] = None,
 ) -> Union[Knowledge, RemoteKnowledge]:
-    """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
-    if not db_id and len(knowledge_instances) == 1:
+    """Return the knowledge instance matching the given criteria.
+
+    Args:
+        knowledge_instances: List of knowledge instances to search
+        db_id: Database ID to filter by (for backward compatibility)
+        knowledge_id: Unique generated ID to filter by (preferred)
+
+    Returns:
+        The matching knowledge instance
+
+    Raises:
+        HTTPException: If no matching instance is found or parameters are invalid
+    """
+    # If only one instance and no specific identifier requested, return it (backwards compatible)
+    if len(knowledge_instances) == 1 and not knowledge_id and not db_id:
         return next(iter(knowledge_instances))
 
-    if not db_id:
+    # If knowledge_id provided, find by unique ID (preferred)
+    if knowledge_id:
+        for knowledge in knowledge_instances:
+            if not knowledge.contents_db:
+                continue
+            # Use knowledge name or generate fallback name from db_id
+            name = getattr(knowledge, "name", None) or f"knowledge_{knowledge.contents_db.id}"
+            kb_table_name = knowledge.contents_db.knowledge_table_name or "unknown"
+            # Generate the unique ID for this knowledge instance
+            generated_id = _generate_knowledge_id(name, knowledge.contents_db.id, kb_table_name)
+
+            # Match by unique generated ID
+            if generated_id == knowledge_id:
+                return knowledge
+
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{knowledge_id}' not found")
+
+    # If db_id provided, find by database ID (backward compatible)
+    if db_id:
+        matches = [k for k in knowledge_instances if k.contents_db and k.contents_db.id == db_id]
+        if not matches:
+            raise HTTPException(status_code=404, detail=f"Knowledge instance with db_id '{db_id}' not found")
+        if len(matches) == 1:
+            return matches[0]
+        # Multiple matches - recommend using knowledge_id
+        knowledge_ids = []
+        for k in matches:
+            if k.contents_db:
+                name = getattr(k, "name", None) or f"knowledge_{k.contents_db.id}"
+                table_name = k.contents_db.knowledge_table_name or "unknown"
+                knowledge_ids.append(_generate_knowledge_id(name, k.contents_db.id, table_name))
         raise HTTPException(
-            status_code=400, detail="The db_id query parameter is required when using multiple databases"
+            status_code=400,
+            detail=f"Multiple knowledge instances found for db_id '{db_id}'. "
+            f"Please specify knowledge_id parameter. Available IDs: {knowledge_ids}",
         )
 
-    for knowledge in knowledge_instances:
-        if knowledge.contents_db and knowledge.contents_db.id == db_id:
-            return knowledge
-
-    raise HTTPException(status_code=404, detail=f"Knowledge instance with id '{db_id}' not found")
+    # No identifiers provided - list available IDs
+    knowledge_ids = []
+    for k in knowledge_instances:
+        if k.contents_db:
+            name = getattr(k, "name", None) or f"knowledge_{k.contents_db.id}"
+            table_name = k.contents_db.knowledge_table_name or "unknown"
+            knowledge_ids.append(_generate_knowledge_id(name, k.contents_db.id, table_name))
+    raise HTTPException(
+        status_code=400,
+        detail=f"db_id or knowledge_id query parameter is required when using multiple knowledge bases. "
+        f"Available IDs: {knowledge_ids}",
+    )
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
@@ -278,9 +368,9 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
 
     if is_workflow_run:
         # Check the input field directly
-        if run_dict.get("input") is not None:
-            input_value = run_dict.get("input")
-            return str(input_value)
+        input_value = run_dict.get("input")
+        if input_value is not None:
+            return stringify_input_content(input_value)
 
         # Check the step executor runs for fallback
         step_executor_runs = run_dict.get("step_executor_runs", [])
@@ -416,6 +506,9 @@ def extract_format(file: UploadFile) -> Optional[str]:
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
     create_fresh: bool = False,
 ) -> Optional[Union[Agent, RemoteAgent]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
@@ -432,14 +525,32 @@ def get_agent_by_id(
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
     """
-    if agent_id is None or agents is None:
+    if agent_id is None:
         return None
 
-    for agent in agents:
-        if agent.id == agent_id:
-            if create_fresh and isinstance(agent, Agent):
-                return agent.deep_copy()
-            return agent
+    # Try to get the agent from the list of agents
+    if agents:
+        for agent in agents:
+            if agent.id == agent_id:
+                if create_fresh and isinstance(agent, Agent):
+                    fresh_agent = agent.deep_copy()
+                    # Clear team/workflow context — this is a standalone agent copy
+                    fresh_agent.team_id = None
+                    fresh_agent.workflow_id = None
+                    return fresh_agent
+                return agent
+
+    # Try to get the agent from the database
+    if db and isinstance(db, BaseDb):
+        from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
+
+        try:
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            return db_agent
+        except Exception as e:
+            logger.error(f"Error getting agent {agent_id} from database: {e}")
+            return None
+
     return None
 
 
@@ -447,6 +558,9 @@ def get_team_by_id(
     team_id: str,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -461,14 +575,26 @@ def get_team_by_id(
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
     """
-    if team_id is None or teams is None:
+    if team_id is None:
         return None
 
-    for team in teams:
-        if team.id == team_id:
-            if create_fresh and isinstance(team, Team):
-                return team.deep_copy()
-            return team
+    if teams:
+        for team in teams:
+            if team.id == team_id:
+                if create_fresh and isinstance(team, Team):
+                    return team.deep_copy()
+                return team
+
+    if db and isinstance(db, BaseDb):
+        from agno.team.team import get_team_by_id as get_team_by_id_db
+
+        try:
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            return db_team
+        except Exception as e:
+            logger.error(f"Error getting team {team_id} from database: {e}")
+            return None
+
     return None
 
 
@@ -476,6 +602,9 @@ def get_workflow_by_id(
     workflow_id: str,
     workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
     create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -486,18 +615,33 @@ def get_workflow_by_id(
         workflow_id: The workflow ID to look up
         workflows: List of workflows to search
         create_fresh: If True, creates a new instance using deep_copy()
+        db: Optional database interface
+        version: Workflow version, if needed
+        registry: Optional Registry instance
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
     """
-    if workflow_id is None or workflows is None:
+    if workflow_id is None:
         return None
 
-    for workflow in workflows:
-        if workflow.id == workflow_id:
-            if create_fresh and isinstance(workflow, Workflow):
-                return workflow.deep_copy()
-            return workflow
+    if workflows:
+        for workflow in workflows:
+            if workflow.id == workflow_id:
+                if create_fresh and isinstance(workflow, Workflow):
+                    return workflow.deep_copy()
+                return workflow
+
+    if db and isinstance(db, BaseDb):
+        from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
+
+        try:
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            return db_workflow
+        except Exception as e:
+            logger.error(f"Error getting workflow {workflow_id} from database: {e}")
+            return None
+
     return None
 
 
@@ -623,7 +767,7 @@ def load_yaml_config(config_file_path: str) -> AgentOSConfig:
 def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     """Recursively collect MCP tools from a team and its members."""
     # Check the team tools
-    if team.tools:
+    if team.tools and isinstance(team.tools, list):
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
@@ -633,10 +777,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
                     mcp_tools.append(tool)
 
     # Recursively check team members
-    if team.members:
+    if team.members and isinstance(team.members, list):
         for member in team.members:
             if isinstance(member, Agent):
-                if member.tools:
+                if member.tools and isinstance(member.tools, list):
                     for tool in member.tools:
                         # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                         if hasattr(type(tool), "__mro__") and any(
@@ -683,7 +827,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     if isinstance(step, Step):
         # Check step's agent
         if step.agent:
-            if step.agent.tools:
+            if step.agent.tools and isinstance(step.agent.tools, list):
                 for tool in step.agent.tools:
                     # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                     if hasattr(type(tool), "__mro__") and any(
@@ -708,7 +852,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
 
     elif isinstance(step, Agent):
         # Direct agent in workflow steps
-        if step.tools:
+        if step.tools and isinstance(step.tools, list):
             for tool in step.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if hasattr(type(tool), "__mro__") and any(
@@ -871,7 +1015,7 @@ def format_duration_ms(duration_ms: Optional[int]) -> str:
     return f"{duration_ms / 1000:.2f}s"
 
 
-def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "datetime":
     """Parse an ISO 8601 datetime string and convert to UTC.
 
     Args:

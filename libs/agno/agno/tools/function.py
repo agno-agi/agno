@@ -70,6 +70,65 @@ class UserInputField:
         )
 
 
+@dataclass
+class UserFeedbackOption:
+    """An option for a user feedback question."""
+
+    label: str
+    description: Optional[str] = None
+    selected: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "label": self.label,
+            "description": self.description,
+            "selected": self.selected,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserFeedbackOption":
+        return cls(
+            label=data["label"],
+            description=data.get("description"),
+            selected=data.get("selected", False),
+        )
+
+
+@dataclass
+class UserFeedbackQuestion:
+    """A structured question with predefined options for user feedback."""
+
+    question: str
+    header: Optional[str] = None
+    options: Optional[List["UserFeedbackOption"]] = None
+    multi_select: bool = False
+    selected_options: Optional[List[str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "question": self.question,
+            "header": self.header,
+            "multi_select": self.multi_select,
+            "selected_options": self.selected_options,
+        }
+        if self.options is not None:
+            result["options"] = [opt.to_dict() for opt in self.options]
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserFeedbackQuestion":
+        options = None
+        if data.get("options") is not None:
+            options = [UserFeedbackOption.from_dict(opt) if isinstance(opt, dict) else opt for opt in data["options"]]
+        return cls(
+            question=data["question"],
+            header=data.get("header"),
+            options=options,
+            multi_select=data.get("multi_select", False),
+            selected_options=data.get("selected_options"),
+        )
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 
@@ -121,6 +180,13 @@ class Function(BaseModel):
     # If True, the function will be executed outside the agent's control.
     external_execution: Optional[bool] = None
 
+    # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
+    external_execution_silent: Optional[bool] = None
+
+    # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
+    # Set via the @approval decorator, not directly via @tool().
+    approval_type: Optional[str] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -133,10 +199,6 @@ class Function(BaseModel):
     _team: Optional[Any] = None
     # The run context that the function is associated with
     _run_context: Optional[RunContext] = None
-    # The session state that the function is associated with
-    _session_state: Optional[Dict[str, Any]] = None
-    # The dependencies that the function is associated with
-    _dependencies: Optional[Dict[str, Any]] = None
 
     # Media context that the function is associated with
     _images: Optional[Sequence[Image]] = None
@@ -147,7 +209,29 @@ class Function(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
-            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+            include={
+                "name",
+                "description",
+                "parameters",
+                "strict",
+                "requires_confirmation",
+                "external_execution",
+                "approval_type",
+            },
+        )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Function":
+        """Reconstruct a Function from a dictionary."""
+
+        return cls(
+            name=data.get("name"),
+            description=data.get("description"),
+            parameters=data.get("parameters"),
+            strict=data.get("strict"),
+            requires_confirmation=data.get("requires_confirmation", False),
+            external_execution=data.get("external_execution", False),
+            approval_type=data.get("approval_type"),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":
@@ -209,10 +293,6 @@ class Function(BaseModel):
                 del type_hints["team"]
             if "run_context" in sig.parameters and "run_context" in type_hints:
                 del type_hints["run_context"]
-            if "session_state" in sig.parameters and "session_state" in type_hints:
-                del type_hints["session_state"]
-            if "dependencies" in sig.parameters and "dependencies" in type_hints:
-                del type_hints["dependencies"]
 
             # Remove media parameters from type hints as they are injected automatically
             if "images" in sig.parameters and "images" in type_hints:
@@ -235,8 +315,6 @@ class Function(BaseModel):
                     "agent",
                     "team",
                     "run_context",
-                    "session_state",
-                    "dependencies",
                     "self",
                     "images",
                     "videos",
@@ -276,8 +354,6 @@ class Function(BaseModel):
                         "agent",
                         "team",
                         "run_context",
-                        "session_state",
-                        "dependencies",
                         "self",
                         "images",
                         "videos",
@@ -296,8 +372,6 @@ class Function(BaseModel):
                         "agent",
                         "team",
                         "run_context",
-                        "session_state",
-                        "dependencies",
                         "self",
                         "images",
                         "videos",
@@ -354,10 +428,6 @@ class Function(BaseModel):
                 del type_hints["team"]
             if "run_context" in sig.parameters and "run_context" in type_hints:
                 del type_hints["run_context"]
-            if "session_state" in sig.parameters and "session_state" in type_hints:
-                del type_hints["session_state"]
-            if "dependencies" in sig.parameters and "dependencies" in type_hints:
-                del type_hints["dependencies"]
             if "images" in sig.parameters and "images" in type_hints:
                 del type_hints["images"]
             if "videos" in sig.parameters and "videos" in type_hints:
@@ -366,7 +436,6 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
             excluded_params = [
@@ -374,14 +443,26 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
-                "session_state",
-                "dependencies",
                 "self",
                 "images",
                 "videos",
                 "audios",
                 "files",
             ]
+
+            # Also exclude parameters whose types are Agent or Team,
+            # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
+            try:
+                from agno.agent.agent import Agent
+                from agno.team.team import Team
+
+                framework_types = (Agent, Team)
+                for param_name, hint in list(type_hints.items()):
+                    if isinstance(hint, type) and issubclass(hint, framework_types):
+                        del type_hints[param_name]
+                        excluded_params.append(param_name)
+            except Exception:
+                pass
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -488,15 +569,35 @@ class Function(BaseModel):
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
             return func
-        # Don't wrap functions with session_state parameter
-        # session_state needs to be passed by reference, not copied by pydantic's validation
-        elif "session_state" in signature(func).parameters:
+
+        # Don't wrap functions with framework-injected parameters
+        # These parameters (agent, team) are
+        # injected by the framework at runtime and shouldn't be validated by Pydantic
+        sig = signature(func)
+        framework_params = {"agent", "team"}
+        if framework_params & set(sig.parameters.keys()):
             return func
+
+        # Also skip validation when parameter types include Agent or Team,
+        # even if the parameter name differs (e.g. my_agent: Agent).
+        # validate_call uses get_type_hints() which fails to resolve types
+        # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
+        try:
+            hints = get_type_hints(func)
+            from agno.agent.agent import Agent
+            from agno.team.team import Team
+
+            framework_types = (Agent, Team)
+            for hint in hints.values():
+                if isinstance(hint, type) and issubclass(hint, framework_types):
+                    return func
+        except Exception:
+            pass
+
         # Wrap the callable with validate_call
-        else:
-            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
-            return wrapped
+        wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+        return wrapped
 
     def process_schema_for_strict(self):
         """Process the schema to make it strict mode compliant."""
@@ -546,8 +647,6 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
-                "session_state",
-                "dependencies",
                 "images",
                 "videos",
                 "audios",
@@ -569,10 +668,6 @@ class Function(BaseModel):
             del copy_entrypoint_args["team"]
         if "run_context" in copy_entrypoint_args:
             del copy_entrypoint_args["run_context"]
-        if "session_state" in copy_entrypoint_args:
-            del copy_entrypoint_args["session_state"]
-        if "dependencies" in copy_entrypoint_args:
-            del copy_entrypoint_args["dependencies"]
         if "images" in copy_entrypoint_args:
             del copy_entrypoint_args["images"]
         if "videos" in copy_entrypoint_args:
@@ -631,8 +726,9 @@ class Function(BaseModel):
         from time import time
 
         try:
+            serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
             with open(cache_file, "w") as f:
-                json.dump({"timestamp": time(), "result": result}, f)
+                json.dump({"timestamp": time(), "result": serializable_result}, f)
         except Exception as e:
             log_error(f"Error writing cache: {e}")
 
@@ -699,21 +795,15 @@ class FunctionCall(BaseModel):
                 from inspect import signature
 
                 pre_hook_args = {}
-                # Check if the pre-hook has and agent argument
+                # Check if the pre-hook has an agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
-                # Check if the pre-hook has an team argument
+                # Check if the pre-hook has a team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
-                # Check if the pre-hook has an session_state argument
+                # Check if the pre-hook has a run_context argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["run_context"] = self.function._run_context
-                # Check if the pre-hook has an session_state argument
-                if "session_state" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["session_state"] = self.function._session_state
-                # Check if the pre-hook has an dependencies argument
-                if "dependencies" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["dependencies"] = self.function._dependencies
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -733,21 +823,15 @@ class FunctionCall(BaseModel):
                 from inspect import signature
 
                 post_hook_args = {}
-                # Check if the post-hook has and agent argument
+                # Check if the post-hook has an agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
-                # Check if the post-hook has an team argument
+                # Check if the post-hook has a team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
-                # Check if the post-hook has an session_state argument
+                # Check if the post-hook has a run_context argument
                 if "run_context" in signature(self.function.post_hook).parameters:
                     post_hook_args["run_context"] = self.function._run_context
-                # Check if the post-hook has an session_state argument
-                if "session_state" in signature(self.function.post_hook).parameters:
-                    post_hook_args["session_state"] = self.function._session_state
-                # Check if the post-hook has an dependencies argument
-                if "dependencies" in signature(self.function.post_hook).parameters:
-                    post_hook_args["dependencies"] = self.function._dependencies
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -764,35 +848,51 @@ class FunctionCall(BaseModel):
         """Builds the arguments for the entrypoint."""
         from inspect import signature
 
+        sig = signature(self.function.entrypoint)  # type: ignore
         entrypoint_args = {}
-        # Check if the entrypoint has an agent argument
-        if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
+
+        # Check if the entrypoint has an agent argument (by name)
+        if "agent" in sig.parameters:
             entrypoint_args["agent"] = self.function._agent
-        # Check if the entrypoint has an team argument
-        if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
+        # Check if the entrypoint has a team argument (by name)
+        if "team" in sig.parameters:
             entrypoint_args["team"] = self.function._team
-        # Check if the entrypoint has an run_context argument
-        if "run_context" in signature(self.function.entrypoint).parameters:  # type: ignore
+        # Check if the entrypoint has a run_context argument
+        if "run_context" in sig.parameters:
             entrypoint_args["run_context"] = self.function._run_context
-        # Check if the entrypoint has an session_state argument
-        if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
-            entrypoint_args["session_state"] = self.function._session_state
-        # Check if the entrypoint has an dependencies argument
-        if "dependencies" in signature(self.function.entrypoint).parameters:  # type: ignore
-            entrypoint_args["dependencies"] = self.function._dependencies
         # Check if the entrypoint has an fc argument
-        if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
 
         # Check if the entrypoint has media arguments
-        if "images" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "images" in sig.parameters:
             entrypoint_args["images"] = self.function._images
-        if "videos" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "videos" in sig.parameters:
             entrypoint_args["videos"] = self.function._videos
-        if "audios" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "audios" in sig.parameters:
             entrypoint_args["audios"] = self.function._audios
-        if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "files" in sig.parameters:
             entrypoint_args["files"] = self.function._files
+
+        # Also inject Agent/Team instances based on TYPE, not just name.
+        # This handles cases like `my_agent: Agent` or `custom_team: Team`.
+        # See issue #6344.
+        try:
+            from agno.agent.agent import Agent
+            from agno.team.team import Team
+
+            hints = get_type_hints(self.function.entrypoint)  # type: ignore
+            for param_name, hint in hints.items():
+                if param_name in entrypoint_args:
+                    continue  # Already handled by name-based injection
+                if isinstance(hint, type):
+                    if issubclass(hint, Agent) and self.function._agent is not None:
+                        entrypoint_args[param_name] = self.function._agent
+                    elif issubclass(hint, Team) and self.function._team is not None:
+                        entrypoint_args[param_name] = self.function._team
+        except Exception:
+            pass
+
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -803,18 +903,12 @@ class FunctionCall(BaseModel):
         # Check if the hook has an agent argument
         if "agent" in signature(hook).parameters:
             hook_args["agent"] = self.function._agent
-        # Check if the hook has an team argument
+        # Check if the hook has a team argument
         if "team" in signature(hook).parameters:
             hook_args["team"] = self.function._team
-        # Check if the hook has an run_context argument
+        # Check if the hook has a run_context argument
         if "run_context" in signature(hook).parameters:
             hook_args["run_context"] = self.function._run_context
-        # Check if the hook has an session_state argument
-        if "session_state" in signature(hook).parameters:
-            hook_args["session_state"] = self.function._session_state
-        # Check if the hook has an dependencies argument
-        if "dependencies" in signature(hook).parameters:
-            hook_args["dependencies"] = self.function._dependencies
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
         if "function_name" in signature(hook).parameters:
@@ -942,9 +1036,6 @@ class FunctionCall(BaseModel):
                         if run_context is not None and run_context.session_state is not None
                         else None
                     )
-                else:
-                    if self.function._session_state is not None:
-                        updated_session_state = self.function._session_state
 
                 execution_result = FunctionExecutionResult(
                     status="success", result=self.result, updated_session_state=updated_session_state
@@ -979,18 +1070,12 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
-                # Check if the pre-hook has an team argument
+                # Check if the pre-hook has a team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
-                # Check if the pre-hook has an run_context argument
+                # Check if the pre-hook has a run_context argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["run_context"] = self.function._run_context
-                # Check if the pre-hook has an session_state argument
-                if "session_state" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["session_state"] = self.function._session_state
-                # Check if the pre-hook has an dependencies argument
-                if "dependencies" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["dependencies"] = self.function._dependencies
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -1014,19 +1099,12 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
-                # Check if the post-hook has an team argument
+                # Check if the post-hook has a team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
-                # Check if the post-hook has an run_context argument
+                # Check if the post-hook has a run_context argument
                 if "run_context" in signature(self.function.post_hook).parameters:
                     post_hook_args["run_context"] = self.function._run_context
-                # Check if the post-hook has an session_state argument
-                if "session_state" in signature(self.function.post_hook).parameters:
-                    post_hook_args["session_state"] = self.function._session_state
-                # Check if the post-hook has an dependencies argument
-                if "dependencies" in signature(self.function.post_hook).parameters:
-                    post_hook_args["dependencies"] = self.function._dependencies
-
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self

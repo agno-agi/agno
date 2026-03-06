@@ -53,7 +53,7 @@ class WebSearchReader(Reader):
     chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking()
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Web Search readers."""
         return [
             ChunkingStrategyType.CODE_CHUNKER,
@@ -65,7 +65,7 @@ class WebSearchReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TOPIC]
 
     def _respect_rate_limits(self):
@@ -208,6 +208,9 @@ class WebSearchReader(Reader):
 
     def read(self, query: str) -> List[Document]:
         """Read content for a given query by performing web search and fetching content"""
+        # Clear so URLs from previous queries aren't incorrectly skipped
+        self._visited_urls.clear()
+
         if not query:
             raise ValueError("Query cannot be empty")
 
@@ -259,6 +262,9 @@ class WebSearchReader(Reader):
 
     async def async_read(self, query: str) -> List[Document]:
         """Asynchronously read content for a given query"""
+        # Clear so URLs from previous queries aren't incorrectly skipped
+        self._visited_urls.clear()
+
         if not query:
             raise ValueError("Query cannot be empty")
 

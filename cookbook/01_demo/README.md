@@ -1,113 +1,121 @@
-# Agno AgentOS Demo
+# Agno Demo
 
-This demo shows how to run a multi-agent system using the **Agno AgentOS: a high performance runtime for multi-agent systems**:
+5 agents, 1 team, 1 workflow served via AgentOS. Each agent learns from interactions and improves with every use.
+
+## Overview
+
+### Agents
+
+| Agent | Description |
+|-------|-------------|
+| **Dash** | An adaptive data agent that queries and interprets your data — improving its understanding of your schema, metrics, and priorities with every interaction. |
+| **Pal** | A personal agent that learns your preferences, context, and history. |
+| **Gcode** | A lightweight coding agent that writes, reviews, and iterates on code. No bloat, no IDE lock-in — just a fast agent that gets sharper the more you use it. |
+| **Scout** | A self-managing context agent that researches, drafts, and refines information stored in s3 buckets. |
+| **Seek** | A self-learning research agent that investigates complex topics over time, building persistent knowledge that compounds across sessions. |
+
+### Team
+
+| Team | Description |
+|------|-------------|
+| **Research Team** | Seek and Scout working together as a team. |
+
+### Workflow
+
+| Workflow | Description |
+|----------|-------------|
+| **Daily Brief** | A workflow that sources and surfaces new developments (using seek), tracks metrics (using dash), and produces a daily digest (using scout). |
+
+## Architecture
+
+All agents share a common foundation:
+
+- **Model**: `OpenAIResponses(id="gpt-5.2")`
+- **Storage**: PostgreSQL + PgVector for knowledge, learnings, and chat history
+- **Knowledge**: Dual knowledge system — static curated knowledge + dynamic learnings discovered at runtime
+- **Search**: Hybrid search (semantic + keyword) with OpenAI embeddings (`text-embedding-3-small`)
+- **Learning**: `LearningMachine` in `AGENTIC` mode — agents decide when to save learnings
 
 ## Getting Started
 
-### 0. Clone the repository
+### 1. Clone the repo
 
-```shell
+```bash
 git clone https://github.com/agno-agi/agno.git
 cd agno
 ```
 
-### 1. Create a virtual environment
+### 2. Create and activate the demo virtual environment
 
-```shell
-uv venv .demoenv --python 3.12
-source .demoenv/bin/activate
+```bash
+./scripts/demo_setup.sh
+source .venvs/demo/bin/activate
 ```
 
-### 2. Install dependencies
+### 3. Run PgVector
 
-```shell
-uv pip install -r cookbook/01_demo/requirements.txt
-```
-
-### 3. Run Postgres with PgVector
-
-We'll use postgres for storing agent sessions, memories, metrics, evals and knowledge. Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) and run the following command to start a postgres container with PgVector.
-
-```shell
+```bash
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-OR use the docker run command directly:
+### 4. Export environment variables
 
-```shell
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql \
-  -v pgvolume:/var/lib/postgresql \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:18
+```bash
+export OPENAI_API_KEY="..."      # Required for all agents
+export EXA_API_KEY="..."         # Optional (Exa MCP is currently free)
 ```
 
-### 4. Export API Keys
+### 5. Load data and knowledge
 
-We'll use OpenAI, Anthropic and Parallel Search services. Please export the following environment variables:
+```bash
+cd cookbook/01_demo
 
-```shell
-export ANTHROPIC_API_KEY=***
-export OPENAI_API_KEY=***
-export PARALLEL_API_KEY=***
+python -m agents.dash.scripts.load_data
+python -m agents.dash.scripts.load_knowledge
+python -m agents.scout.scripts.load_knowledge
 ```
 
-### 5. Run the demo AgentOS
+### 6. Run the demo
 
-```shell
-python cookbook/01_demo/run.py
+```bash
+python -m run
 ```
 
-### 6. Connect to the AgentOS UI
+### 7. Connect via AgentOS
 
-- Open the web interface: [os.agno.com](https://os.agno.com/)
-- Connect to http://localhost:7777 to interact with the demo AgentOS.
+- Open [os.agno.com](https://os.agno.com) in your browser
+- Click "Add AgentOS"
+- Add `http://localhost:7777` as an endpoint
+- Click "Connect"
 
-### Load Knowledge Base for the Agno Knowledge Agent
+## Evals
 
-The Agno Knowledge Agent is a great example of building a knowledge agent using Agentic RAG. It loads the Agno documentation into pgvector and answers questions from the docs. It uses the OpenAI embedding model to embed the docs and the pgvector to store the embeddings.
+Test cases covering all agents, team, and workflow. Uses string-matching validation with `all` or `any` match modes.
 
-To populate the knowledge base, run the following command:
+```bash
+# Run all evals
+python -m evals.run_evals
 
-```sh
-python cookbook/01_demo/agents/agno_knowledge_agent.py
+# Filter by agent
+python -m evals.run_evals --agent dash
+python -m evals.run_evals --agent seek
+
+# Verbose mode (show full responses on failure)
+python -m evals.run_evals --verbose
 ```
 
-### Load data for the SQL Agent
+## Agno Features Demonstrated
 
-To load the data for the SQL Agent, run:
-
-```sh
-python cookbook/01_demo/agents/sql/load_f1_data.py
-```
-
-To populate the knowledge base, run:
-
-```sh
-python cookbook/01_demo/agents/sql/load_sql_knowledge.py
-```
-
-### Load Knowledge Base for the Deep Knowledge Agent
-
-The Deep Knowledge Agent is a great example of building a deep research agent using Agno.
-
-To populate the knowledge base, run the following command:
-
-```sh
-python cookbook/01_demo/agents/deep_knowledge_agent.py
-```
-
----
-
-## Additional Resources
-
-Need help, have a question, or want to connect with the community?
-
-- 📚 **[Read the Agno Docs](https://docs.agno.com)** for more in-depth information.
-- 💬 **Chat with us on [Discord](https://agno.link/discord)** for live discussions.
-- ❓ **Ask a question on [Discourse](https://agno.link/community)** for community support.
-- 🐛 **[Report an Issue](https://github.com/agno-agi/agno/issues)** on GitHub if you find a bug or have a feature request.
+| Feature | Where |
+|---------|-------|
+| LearningMachine (AGENTIC mode) | All 5 agents |
+| CodingTools | Gcode |
+| ReasoningTools | Gcode |
+| SQL Tools | Dash, Pal |
+| MCP Tools | Seek (Exa), Scout (Exa), Dash (Exa), Pal (Exa) |
+| Knowledge (hybrid search) | All agents |
+| Persistent Memory | Pal, Seek |
+| Teams (coordinate mode) | Research Team |
+| Workflows (parallel steps) | Daily Brief |
+| Scheduled Tasks | Daily Brief |
+| AgentOS | run.py |

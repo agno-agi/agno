@@ -25,11 +25,11 @@ agent.print_response("Your query", stream=True)
 
 Agent with Tools:
 ```python
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Search the web for information",
 )
 ```
@@ -72,7 +72,7 @@ from agno.team.team import Team
 web_agent = Agent(
     name="Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 writer_agent = Agent(

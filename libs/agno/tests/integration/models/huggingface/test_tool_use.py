@@ -2,8 +2,8 @@ import pytest
 
 from agno.agent import Agent, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.models.huggingface import HuggingFace
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -111,7 +111,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=HuggingFace(id="openai/gpt-oss-120b"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

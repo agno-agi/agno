@@ -15,6 +15,7 @@ class TavilyTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        api_base_url: Optional[str] = None,
         enable_search: bool = True,
         enable_search_context: bool = False,
         enable_extract: bool = False,
@@ -34,6 +35,7 @@ class TavilyTools(Toolkit):
 
         Args:
             api_key: Tavily API key. If not provided, will use TAVILY_API_KEY env var.
+            api_base_url: Tavily API base URL. If not provided, will use TAVILY_API_BASE_URL env var. Defaults to None. If None - will use https://api.tavily.com.
             enable_search: Enable web search functionality. Defaults to True.
             enable_search_context: Use search context mode instead of regular search. Defaults to False.
             enable_extract: Enable URL content extraction functionality. Defaults to False.
@@ -52,8 +54,9 @@ class TavilyTools(Toolkit):
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:
             logger.error("TAVILY_API_KEY not provided")
+        self.api_base_url = api_base_url or getenv("TAVILY_API_BASE_URL")
 
-        self.client: TavilyClient = TavilyClient(api_key=self.api_key)
+        self.client: TavilyClient = TavilyClient(api_key=self.api_key, api_base_url=self.api_base_url)
         self.search_depth: Literal["basic", "advanced"] = search_depth
         self.extract_depth: Literal["basic", "advanced"] = extract_depth
         self.max_tokens: int = max_tokens
@@ -136,9 +139,7 @@ class TavilyTools(Toolkit):
             str: JSON string of results related to the query.
         """
 
-        return self.client.get_search_context(
-            query=query, search_depth=self.search_depth, max_tokens=self.max_tokens, include_answer=self.include_answer
-        )
+        return self.client.get_search_context(query=query, search_depth=self.search_depth, max_tokens=self.max_tokens)
 
     def extract_url_content(self, urls: str) -> str:
         """Extract content from one or more URLs using Tavily's Extract API.
