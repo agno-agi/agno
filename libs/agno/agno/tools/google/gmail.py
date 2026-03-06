@@ -346,6 +346,8 @@ class GmailTools(Toolkit):
             "get_thread",
             "search_threads",
             "list_labels",
+            "get_draft",
+            "list_drafts",
             "download_attachment",
         }
         if any(op in self.functions for op in read_operations):
