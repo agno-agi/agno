@@ -368,8 +368,8 @@ def _run_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -1152,9 +1152,8 @@ def _run(
                         team, run_response=run_response, session=session, run_context=run_context
                     )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -2143,8 +2142,8 @@ async def _arun_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -2986,9 +2985,8 @@ async def _arun(
                         team, run_response=run_response, session=team_session, run_context=run_context
                     )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -3916,11 +3914,15 @@ def _cleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    #  Scrub the stored run based on storage flags
+    import copy
+
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3929,9 +3931,10 @@ def _cleanup_and_store(
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -3947,7 +3950,6 @@ def _cleanup_and_store(
     team.save_session(session=session)
 
     # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         update_approval_run_status(team.db, run_response.run_id, run_response.status)
 
@@ -3958,11 +3960,15 @@ async def _acleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    #  Scrub the stored run based on storage flags
+    import copy
+
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3971,9 +3977,10 @@ async def _acleanup_and_store(
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -3989,7 +3996,6 @@ async def _acleanup_and_store(
     await team.asave_session(session=session)
 
     # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
@@ -4967,9 +4973,8 @@ def _continue_run(
                 # Convert to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                # Store media
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -5621,8 +5626,7 @@ async def _acontinue_run(
 
                     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                    if team.store_media:
-                        store_media_util(run_response, model_response)
+                    store_media_util(run_response, model_response)
 
                 elif member_results:
                     # Member-only: re-run team with results
