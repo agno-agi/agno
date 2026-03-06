@@ -25,6 +25,11 @@ Describe key changes, mention related issues or motivation for the changes.
 - [ ] Tested in clean environment
 - [ ] Tests added/updated (if applicable)
 
+### Duplicate Check
+
+- [ ] I have searched existing [open pull requests](../../pulls) and confirmed that no other PR already addresses this issue
+- [ ] If a similar PR exists, I have explained below why this PR is a better approach
+
 ---
 
 ## Additional Notes
