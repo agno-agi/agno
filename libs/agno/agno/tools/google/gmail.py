@@ -662,19 +662,21 @@ class GmailTools(Toolkit):
         subject: str,
         body: str,
         cc: Optional[str] = None,
+        bcc: Optional[str] = None,
         attachments: Optional[Union[str, List[str]]] = None,
         thread_id: Optional[str] = None,
         message_id: Optional[str] = None,
     ) -> str:
         """
         Create and save a draft email. To reply to a thread, provide thread_id and message_id.
-        to and cc are comma separated string of email ids.
+        to, cc and bcc are comma separated string of email ids.
 
         Args:
             to (str): Comma separated string of recipient email addresses
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
+            bcc (Optional[str]): Comma separated string of BCC email addresses (optional)
             attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
             thread_id (Optional[str]): Thread ID to reply to (optional, makes this a reply draft)
             message_id (Optional[str]): Message ID being replied to (optional, used with thread_id)
@@ -705,13 +707,14 @@ class GmailTools(Toolkit):
                 subject,
                 body,
                 cc.split(",") if cc else None,
+                bcc=bcc.split(",") if bcc else None,
                 thread_id=thread_id,
                 message_id=message_id,
                 attachments=attachment_files,
             )
             draft = {"message": message}
             draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
-            return str(draft)
+            return json.dumps(draft)
         except HttpError as error:
             return f"HTTP Error creating draft: {error}"
         except Exception as error:
@@ -775,7 +778,7 @@ class GmailTools(Toolkit):
                 attachments=attachment_files,
             )
             message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
-            return str(message)
+            return json.dumps(message)
         except HttpError as error:
             return f"HTTP Error sending email: {error}"
         except Exception as error:
@@ -835,7 +838,7 @@ class GmailTools(Toolkit):
                 attachments=attachment_files,
             )
             message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
-            return str(message)
+            return json.dumps(message)
         except HttpError as error:
             return f"HTTP Error sending reply: {error}"
         except Exception as error:
@@ -1626,11 +1629,11 @@ class GmailTools(Toolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def list_drafts(self, count: int = 20) -> str:
+    def list_drafts(self, count: int = 10) -> str:
         """List draft emails in the mailbox.
 
         Args:
-            count: Maximum number of drafts to return (default 20, max 500).
+            count: Maximum number of drafts to return (default 10, max 500).
 
         Returns:
             JSON string with list of draft IDs and estimated total count.
