@@ -235,8 +235,21 @@ class AwsBedrock(Model):
 
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
+        # Buffer consecutive tool-role messages so that parallel tool call results
+        # (multiple toolUse blocks in one assistant turn) are grouped into a single
+        # user message. Bedrock's ConverseStream API requires all toolResult blocks
+        # for a given assistant turn to appear in one user message; sending them as
+        # separate messages causes a ValidationException.
+        pending_tool_results: List[Dict[str, Any]] = []
+
+        def _flush_tool_results() -> None:
+            if pending_tool_results:
+                formatted_messages.append({"role": "user", "content": list(pending_tool_results)})
+                pending_tool_results.clear()
+
         for message in messages:
             if message.role == "system":
+                _flush_tool_results()
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
                 content = message.get_content(use_compressed_content=compress_tool_results)
@@ -244,9 +257,9 @@ class AwsBedrock(Model):
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
                 }
-                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
-                formatted_messages.append(formatted_message)
+                pending_tool_results.append({"toolResult": tool_result})
             else:
+                _flush_tool_results()
                 formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
@@ -355,6 +368,10 @@ class AwsBedrock(Model):
                         )
 
                 formatted_messages.append(formatted_message)
+
+        # Flush any tool results that appear at the end of the message list
+        _flush_tool_results()
+
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
 
