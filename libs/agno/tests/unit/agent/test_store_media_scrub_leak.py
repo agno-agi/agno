@@ -19,7 +19,6 @@ from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
-from agno.session.agent import AgentSession
 from agno.utils.agent import scrub_media_from_run_output
 
 
