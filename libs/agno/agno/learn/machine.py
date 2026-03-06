@@ -343,6 +343,11 @@ class LearningMachine:
         """True if any store was updated in the last operation."""
         return any(getattr(store, "was_updated", False) for store in self.stores.values())
 
+    @property
+    def requires_history(self) -> bool:
+        """True if learned_knowledge uses PROPOSE mode, which needs chat history."""
+        return isinstance(self.learned_knowledge, LearnedKnowledgeConfig) and self.learned_knowledge.mode == LearningMode.PROPOSE
+
     # =========================================================================
     # Main API
     # =========================================================================

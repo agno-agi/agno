@@ -151,6 +151,10 @@ def set_learning_machine(agent: Agent) -> None:
             agent.learning.model = agent.model
         agent._learning = agent.learning
 
+        # PROPOSE mode requires chat history so the model can see its previous proposals
+        if agent.learning.requires_history and not agent.add_history_to_context:
+            agent.add_history_to_context = True
+
 
 def set_session_summary_manager(agent: Agent) -> None:
     if agent.enable_session_summaries and agent.session_summary_manager is None:

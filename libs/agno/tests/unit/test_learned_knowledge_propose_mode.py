@@ -1,8 +1,18 @@
-"""Tests for LearningMode.PROPOSE confirmation behavior in LearnedKnowledgeStore."""
+"""Tests for LearningMode.PROPOSE behavior in LearnedKnowledgeStore.
+
+PROPOSE mode uses a text-based confirmation flow driven by the system prompt:
+- The model proposes learnings in its response text
+- The user confirms in the next message
+- The model then calls save_learning (a plain callable, same as AGENTIC mode)
+
+The difference between PROPOSE and AGENTIC is in the system prompt instructions,
+not in the tool signatures. Both modes return identical plain callables.
+"""
 
 import pytest
 
 from agno.learn.config import LearnedKnowledgeConfig, LearningMode
+from agno.learn.machine import LearningMachine
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.tools.function import Function
 
@@ -21,12 +31,12 @@ class MockKnowledge:
 
 
 # ---------------------------------------------------------------------------
-# PROPOSE mode: save_learning must require confirmation
+# PROPOSE mode: tools are plain callables (text-based confirmation via prompt)
 # ---------------------------------------------------------------------------
 
 
-def test_propose_mode_save_tool_requires_confirmation():
-    """PROPOSE mode should return a Function with requires_confirmation=True for save_learning."""
+def test_propose_mode_save_tool_is_plain_callable():
+    """PROPOSE mode should return a plain callable for save_learning (no Function wrapper)."""
     config = LearnedKnowledgeConfig(
         mode=LearningMode.PROPOSE,
         knowledge=MockKnowledge(),
@@ -37,16 +47,13 @@ def test_propose_mode_save_tool_requires_confirmation():
     store = LearnedKnowledgeStore(config=config)
     tools = store.get_agent_tools(namespace="global")
 
-    # Find the save_learning tool
-    save_tools = [t for t in tools if isinstance(t, Function) and t.name == "save_learning"]
-    assert len(save_tools) == 1, f"Expected exactly 1 Function-based save_learning, got {len(save_tools)}"
-
-    save_func = save_tools[0]
-    assert save_func.requires_confirmation is True, "PROPOSE mode save_learning must set requires_confirmation=True"
+    save_tools = [t for t in tools if callable(t) and getattr(t, "__name__", "") == "save_learning"]
+    assert len(save_tools) == 1, f"Expected exactly 1 save_learning callable, got {len(save_tools)}"
+    assert not isinstance(save_tools[0], Function), "PROPOSE mode save_learning must be a plain callable, not Function"
 
 
 def test_propose_mode_search_tool_is_plain_callable():
-    """PROPOSE mode should NOT wrap search_learnings in a Function with confirmation."""
+    """PROPOSE mode should return a plain callable for search_learnings."""
     config = LearnedKnowledgeConfig(
         mode=LearningMode.PROPOSE,
         knowledge=MockKnowledge(),
@@ -57,41 +64,46 @@ def test_propose_mode_search_tool_is_plain_callable():
     store = LearnedKnowledgeStore(config=config)
     tools = store.get_agent_tools(namespace="global")
 
-    # The search tool should be a plain callable, not a Function with confirmation
-    non_function_tools = [t for t in tools if not isinstance(t, Function)]
-    assert len(non_function_tools) == 1, "search_learnings should remain a plain callable"
+    search_tools = [t for t in tools if callable(t) and getattr(t, "__name__", "") == "search_learnings"]
+    assert len(search_tools) == 1, "Expected exactly 1 search_learnings callable"
+    assert not isinstance(search_tools[0], Function), "search_learnings should be a plain callable"
 
 
 # ---------------------------------------------------------------------------
-# AGENTIC mode: save_learning must NOT require confirmation (regression guard)
+# PROPOSE and AGENTIC return identical tool signatures
 # ---------------------------------------------------------------------------
 
 
-def test_agentic_mode_save_tool_no_confirmation():
-    """AGENTIC mode should return a plain callable for save_learning (no confirmation)."""
-    config = LearnedKnowledgeConfig(
-        mode=LearningMode.AGENTIC,
-        knowledge=MockKnowledge(),
-        enable_agent_tools=True,
-        agent_can_save=True,
-        agent_can_search=True,
-    )
-    store = LearnedKnowledgeStore(config=config)
-    tools = store.get_agent_tools(namespace="global")
+def test_propose_and_agentic_return_same_tool_types():
+    """PROPOSE and AGENTIC modes should both return plain callables with the same names."""
+    for mode in [LearningMode.PROPOSE, LearningMode.AGENTIC]:
+        config = LearnedKnowledgeConfig(
+            mode=mode,
+            knowledge=MockKnowledge(),
+            enable_agent_tools=True,
+            agent_can_save=True,
+            agent_can_search=True,
+        )
+        store = LearnedKnowledgeStore(config=config)
+        tools = store.get_agent_tools(namespace="global")
 
-    # In AGENTIC mode, save_learning should be a plain callable
-    function_tools = [t for t in tools if isinstance(t, Function)]
-    assert len(function_tools) == 0, "AGENTIC mode should not wrap tools in Function objects"
+        assert len(tools) == 2, f"{mode} mode should return 2 tools"
+        for tool in tools:
+            assert callable(tool), f"Tool must be callable in {mode} mode"
+            assert not isinstance(tool, Function), f"Tool must be a plain callable in {mode} mode"
+
+        names = {getattr(t, "__name__", "") for t in tools}
+        assert names == {"search_learnings", "save_learning"}, f"Unexpected tool names in {mode} mode: {names}"
 
 
 # ---------------------------------------------------------------------------
-# Async variant: PROPOSE mode
+# Async variant
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_propose_mode_async_save_tool_requires_confirmation():
-    """Async PROPOSE mode should also return a Function with requires_confirmation=True."""
+async def test_propose_mode_async_tools_are_plain_callables():
+    """Async PROPOSE mode should also return plain callables."""
     config = LearnedKnowledgeConfig(
         mode=LearningMode.PROPOSE,
         knowledge=MockKnowledge(),
@@ -102,13 +114,10 @@ async def test_propose_mode_async_save_tool_requires_confirmation():
     store = LearnedKnowledgeStore(config=config)
     tools = await store.aget_agent_tools(namespace="global")
 
-    save_tools = [t for t in tools if isinstance(t, Function) and t.name == "save_learning"]
-    assert len(save_tools) == 1, f"Expected exactly 1 Function-based save_learning (async), got {len(save_tools)}"
-
-    save_func = save_tools[0]
-    assert save_func.requires_confirmation is True, (
-        "Async PROPOSE mode save_learning must set requires_confirmation=True"
-    )
+    assert len(tools) == 2
+    for tool in tools:
+        assert callable(tool), "Async tool must be callable"
+        assert not isinstance(tool, Function), "Async tool must be a plain callable"
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +126,7 @@ async def test_propose_mode_async_save_tool_requires_confirmation():
 
 
 def test_propose_mode_get_tools_respects_enable_flag():
-    """get_tools should return empty when enable_agent_tools=False, even in PROPOSE mode."""
+    """get_tools should return empty when enable_agent_tools=False."""
     config = LearnedKnowledgeConfig(
         mode=LearningMode.PROPOSE,
         knowledge=MockKnowledge(),
@@ -129,7 +138,7 @@ def test_propose_mode_get_tools_respects_enable_flag():
 
 
 def test_propose_mode_get_tools_delegates_correctly():
-    """get_tools should delegate to get_agent_tools and return the confirmation-wrapped tool."""
+    """get_tools should delegate to get_agent_tools and return plain callables."""
     config = LearnedKnowledgeConfig(
         mode=LearningMode.PROPOSE,
         knowledge=MockKnowledge(),
@@ -141,5 +150,32 @@ def test_propose_mode_get_tools_delegates_correctly():
     tools = store.get_tools(namespace="global")
 
     assert len(tools) == 1
-    assert isinstance(tools[0], Function)
-    assert tools[0].requires_confirmation is True
+    assert callable(tools[0])
+    assert not isinstance(tools[0], Function)
+
+
+# ---------------------------------------------------------------------------
+# LearningMachine.requires_history
+# ---------------------------------------------------------------------------
+
+
+def test_learning_machine_requires_history_for_propose_mode():
+    """LearningMachine should report requires_history=True when a store uses PROPOSE mode."""
+    lm = LearningMachine(
+        learned_knowledge=LearnedKnowledgeConfig(
+            mode=LearningMode.PROPOSE,
+            knowledge=MockKnowledge(),
+        ),
+    )
+    assert lm.requires_history is True
+
+
+def test_learning_machine_no_history_for_agentic_mode():
+    """LearningMachine should report requires_history=False for AGENTIC mode."""
+    lm = LearningMachine(
+        learned_knowledge=LearnedKnowledgeConfig(
+            mode=LearningMode.AGENTIC,
+            knowledge=MockKnowledge(),
+        ),
+    )
+    assert lm.requires_history is False
