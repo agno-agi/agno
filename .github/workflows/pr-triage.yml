@@ -1,0 +1,140 @@
+name: PR Triage
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions:
+  pull-requests: write
+  issues: read
+
+jobs:
+  triage:
+    name: Triage PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label first-time contributors
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            // Check if this is the author's first PR to this repo
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              per_page: 2,
+            });
+            const authorPrs = prs.filter(p => p.user.login === author);
+            if (authorPrs.length <= 1) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['first-time-contributor'],
+              });
+            }
+
+      - name: Check for missing issue link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = (pr.body || '').toLowerCase();
+
+            const hasIssueRef = /(?:fixes|closes|resolves|fix|close|resolve)\s+#\d+/.test(body)
+              || /#\d+/.test(body)
+              || /github\.com\/agno-agi\/agno\/issues\/\d+/.test(body);
+
+            if (!hasIssueRef) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['missing-issue-link'],
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: 'This PR does not reference an issue. Please link the issue it addresses using `fixes #<issue_number>`, `closes #<issue_number>`, or `resolves #<issue_number>` in the PR description. If there is no existing issue, please create one first.',
+              });
+            }
+
+      - name: Check for missing tests
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            // Get the list of changed files
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const changedFiles = files.map(f => f.filename);
+            const touchesSource = changedFiles.some(f =>
+              f.startsWith('libs/agno/agno/') && f.endsWith('.py')
+            );
+            const touchesTests = changedFiles.some(f =>
+              f.includes('/tests/') && f.endsWith('.py')
+            );
+
+            // Only flag missing tests when source code is changed but no test files are touched
+            if (touchesSource && !touchesTests) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['missing-tests'],
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: 'This PR modifies source code but does not include any test changes. Please add or update tests to cover your changes.',
+              });
+            }
+
+      - name: Detect low-context PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = (pr.body || '').trim();
+
+            // Flag PRs with very short or empty descriptions
+            const strippedBody = body
+              .replace(/## Summary/g, '')
+              .replace(/## Type of change/g, '')
+              .replace(/## Checklist/g, '')
+              .replace(/## Additional Notes/g, '')
+              .replace(/### Duplicate and AI-Generated PR Check/g, '')
+              .replace(/- \[ \] .*/g, '')
+              .replace(/- \[x\] .*/g, '')
+              .replace(/---/g, '')
+              .replace(/\(If applicable.*\)/g, '')
+              .replace(/Add any important context.*/g, '')
+              .replace(/Describe key changes.*/g, '')
+              .trim();
+
+            if (strippedBody.length < 30) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['needs-description'],
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: 'This PR has little or no description beyond the template defaults. Please fill in the Summary section explaining what this PR does and why. PRs without adequate context may be closed without review.',
+              });
+            }

@@ -1,4 +1,4 @@
-name: "Mark Stale Issues"
+name: "Mark Stale Issues and PRs"
 
 on:
   schedule:
@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
 
     steps:
       - uses: actions/stale@v9
@@ -17,11 +18,23 @@ jobs:
           stale-issue-message: >
             This issue has been automatically marked as stale due to 30 days of inactivity.
 
+          stale-pr-message: >
+            This pull request has been automatically marked as stale due to 14 days of inactivity.
+            If this is still relevant, please update it or leave a comment. It will be closed in 7 days if no further activity occurs.
+
+          close-pr-message: >
+            This pull request has been closed due to 21 days of inactivity. Feel free to reopen if still relevant.
+
           # Mark issues as stale after 30 days
           days-before-issue-stale: 30
 
           # Effectively never close issues
           days-before-issue-close: 99999
 
+          # Mark PRs as stale after 14 days, close after 7 more
+          days-before-pr-stale: 14
+          days-before-pr-close: 7
+
           stale-issue-label: "stale"
+          stale-pr-label: "stale"
           remove-stale-when-updated: true
