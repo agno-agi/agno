@@ -100,10 +100,24 @@ agent = Agent(
         "While showing email contents, you can summarize the email contents, extract key details and dates.",
         "Show the email contents in a structured markdown format.",
         "Attachments can be added to the email",
-        "When you need to modify an email, make sure to find its message_id and thread_id in order to do modificaiton operations.",
+        "When you need to modify an email, make sure to find its message_id and thread_id in order to do modification operations.",
     ],
     markdown=True,
     output_schema=FindEmailOutput,
+)
+
+# Example 5: Draft a reply to a conversation thread
+thread_reply_agent = Agent(
+    name="Thread Reply Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GmailTools()],
+    description="You are a Gmail agent that finds conversations and drafts threaded replies.",
+    instructions=[
+        "Search for the requested thread, load full context, then draft a reply.",
+        "Always create a draft -- never send directly.",
+        "Summarize the thread context so the user knows what the reply addresses.",
+    ],
+    markdown=True,
 )
 
 
@@ -163,3 +177,9 @@ if __name__ == "__main__":
         markdown=True,
         stream=True,
     )
+
+    # Example 5: Draft a reply to a conversation thread
+    # thread_reply_agent.print_response(
+    #     "Find the latest thread about 'project update' and draft a reply asking about next steps",
+    #     stream=True,
+    # )
