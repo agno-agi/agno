@@ -5,9 +5,10 @@ Defines Pydantic models for requests, responses, and manifests used
 in the M365 Copilot integration.
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentManifest(BaseModel):
@@ -97,6 +98,46 @@ class InvokeRequest(BaseModel):
         None,
         description="Additional context (user info, metadata, etc.)"
     )
+
+    @field_validator('message')
+    @classmethod
+    def message_not_empty(cls, v: str) -> str:
+        """
+        Validate that message is not empty or whitespace only.
+
+        Args:
+            v: Message value to validate
+
+        Returns:
+            The validated message
+
+        Raises:
+            ValueError: If message is empty or whitespace only
+        """
+        if not v or not v.strip():
+            raise ValueError('message cannot be empty or whitespace only')
+        return v
+
+    @field_validator('session_id')
+    @classmethod
+    def session_id_format(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Validate that session_id contains only allowed characters.
+
+        Args:
+            v: session_id value to validate
+
+        Returns:
+            The validated session_id
+
+        Raises:
+            ValueError: If session_id contains invalid characters
+        """
+        if v and not re.match(r'^[a-zA-Z0-9\-_]+$', v):
+            raise ValueError(
+                'session_id must contain only alphanumeric characters, hyphens, and underscores'
+            )
+        return v
 
 
 class InvokeResponse(BaseModel):

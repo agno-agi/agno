@@ -5,6 +5,7 @@ Generates OpenAPI specifications that Copilot Studio uses to register
 Agno agents as plugins.
 """
 
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from agno.agent import Agent, RemoteAgent
@@ -73,12 +74,17 @@ def generate_openapi_spec(
         )
         ```
     """
-    # Use placeholder if server_url not provided
-    # Users should replace this with their actual server URL
+    # Configure server URL from parameter, environment variable, or placeholder
     if not server_url:
-        server_url = "https://your-agno-server.com"
-        # TODO: Make this configurable via environment variable
-        log_warning("Using placeholder server_url. Configure with AGNO_SERVER_URL env var.")
+        server_url = os.getenv("AGNO_SERVER_URL", "https://your-agno-server.com")
+
+    # Warn if using placeholder URL
+    if server_url == "https://your-agno-server.com":
+        log_warning(
+            "Using placeholder server_url 'https://your-agno-server.com'. "
+            "Set AGNO_SERVER_URL environment variable or pass server_url parameter "
+            "with your actual Agno server URL before deploying to production."
+        )
 
     spec: Dict[str, Any] = {
         "openapi": "3.0.1",  # Use 3.0.1 (latest stable)
@@ -135,7 +141,12 @@ def generate_openapi_spec(
                         "context": {
                             "type": "object",
                             "description": "Additional context (user info, metadata, preferences)",
-                            "additionalProperties": True
+                            "additionalProperties": True,
+                            "example": {
+                                "user_locale": "en-US",
+                                "time_zone": "America/New_York",
+                                "preferences": {"format": "detailed"}
+                            }
                         }
                     }
                 },
@@ -292,6 +303,14 @@ def _create_invoke_path(
                                 },
                             },
                             "required": ["message"],
+                        },
+                        "example": {
+                            "message": "Analyze Q3 revenue trends and provide insights",
+                            "session_id": "user-session-123",
+                            "context": {
+                                "user_locale": "en-US",
+                                "time_zone": "America/New_York"
+                            }
                         }
                     }
                 }

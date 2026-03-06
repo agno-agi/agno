@@ -120,6 +120,7 @@ class M365Copilot(BaseInterface):
 
     type = "m365"
     version = "1.0"
+    router: APIRouter  # Type annotation for FastAPI router
 
     def __init__(
         self,
@@ -210,7 +211,7 @@ class M365Copilot(BaseInterface):
                 "Example: M365Copilot(agent=my_agent, client_id='your-client-id')"
             )
 
-    def get_router(self) -> APIRouter:
+    def get_router(self, use_async: bool = True) -> APIRouter:
         """
         Build and return the FastAPI router for M365 Copilot integration.
 
@@ -219,6 +220,10 @@ class M365Copilot(BaseInterface):
         - GET /m365/agents - List available Agno agents
         - POST /m365/invoke - Execute an Agno agent
         - GET /m365/health - Health check endpoint
+
+        Args:
+            use_async: Use async endpoints (currently always True for M365 interface).
+                       This parameter is accepted for BaseInterface compatibility.
 
         Returns:
             APIRouter: Configured FastAPI router with all M365 endpoints

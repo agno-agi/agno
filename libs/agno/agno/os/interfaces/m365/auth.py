@@ -341,8 +341,9 @@ def validate_token_for_component(
     """
     Validate that the token has permission to access the component.
 
-    This is a placeholder for future authorization logic.
-    Currently, all authenticated users can access all components.
+    WARNING: This is a placeholder implementation that allows all authenticated
+    users to access all components. You MUST implement proper authorization
+    logic before deploying to production.
 
     Args:
         token_claims: Validated JWT token claims
@@ -352,27 +353,58 @@ def validate_token_for_component(
     Returns:
         True if access is allowed, False otherwise
 
-    Note:
-        This is a placeholder. Implement proper authorization based on
-        your security requirements (e.g., role-based access control).
+    Raises:
+        None (currently always returns True)
 
-    Example implementations:
+    Security Warning:
+        THIS FUNCTION CURRENTLY ALLOWS ALL AUTHENTICATED USERS TO ACCESS ALL
+        COMPONENTS WITHOUT AUTHORIZATION CHECKS. This is a security risk in
+        production environments.
+
+    Note:
+        Implement proper authorization based on your security requirements.
+        Common patterns include:
+
+        Role-based access control:
         ```python
-        # Role-based access control
         user_roles = token_claims.get("roles", [])
         if "Admin" not in user_roles and component_id.startswith("admin-"):
             return False
+        ```
 
-        # Scope-based access control
+        Scope-based access control:
+        ```python
         required_scope = f"Agno_{component_id}"
         if required_scope not in token_claims.get("scp", "").split():
             return False
+        ```
 
-        return True
+        User-specific access:
+        ```python
+        user_id = token_claims.get("oid")
+        # Check database for user's granted components
+        return check_user_access(user_id, component_id)
+        ```
+
+    Example:
+        ```python
+        from agno.os.interfaces.m365.auth import validate_token_for_component
+
+        # After implementing your authorization logic
+        if not validate_token_for_component(token_claims, "financial-analyst"):
+            raise HTTPException(status_code=403, detail="Access denied")
         ```
     """
-    # TODO: Implement proper authorization logic
-    # For now, all authenticated users can access all components
+    # SECURITY WARNING: Authorization placeholder - all users currently granted access
+    # TODO: Implement proper authorization logic before production deployment
+    user_email = token_claims.get("upn", "unknown")
+    log_warning(
+        f"Authorization check performed for user '{user_email}' on component "
+        f"'{component_id}' - ALL USERS CURRENTLY GRANTED ACCESS. "
+        f"Implement proper authorization before production."
+    )
+
+    # Placeholder: All authenticated users can access all components
     return True
 
 
