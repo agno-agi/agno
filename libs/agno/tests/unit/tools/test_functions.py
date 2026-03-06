@@ -180,16 +180,10 @@ def test_function_process_entrypoint_with_user_input():
         return f"{param1}-{param2}"
 
     func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"])
-
     func.process_entrypoint()
-
-    assert func.user_input_schema is not None
-    assert len(func.user_input_schema) == 2
-
+    assert len(func.user_input_schema) == 1  # only the declared user_input_field
     assert func.user_input_schema[0].name == "param1"
     assert func.user_input_schema[0].field_type is str
-    assert func.user_input_schema[1].name == "param2"
-    assert func.user_input_schema[1].field_type is int
 
 
 def test_function_process_entrypoint_skip_processing():
@@ -598,11 +592,9 @@ def test_tool_decorator_with_user_input():
     assert user_input_func.user_input_fields == ["param1"]
     user_input_func.process_entrypoint()
     assert user_input_func.user_input_schema is not None
-    assert len(user_input_func.user_input_schema) == 2
+    assert len(user_input_func.user_input_schema) == 1  # only the declared user_input_field
     assert user_input_func.user_input_schema[0].name == "param1"
     assert user_input_func.user_input_schema[0].field_type is str
-    assert user_input_func.user_input_schema[1].name == "param2"
-    assert user_input_func.user_input_schema[1].field_type is int
 
 
 def test_tool_decorator_with_hooks():
@@ -726,3 +718,36 @@ def test_tool_decorator_with_complex_types():
     assert complex_types_func.parameters["properties"]["param2"]["type"] == "object"
     assert complex_types_func.parameters["properties"]["param3"]["type"] == "boolean"
     assert "param3" not in complex_types_func.parameters["required"]
+
+
+def test_function_process_entrypoint_with_user_input_excludes_injected_params():
+    """
+    When user_input_fields is set, user_input_schema must contain ONLY those fields.
+    Injected parameters like run_context must never appear in the schema,
+    even if they are present in the function signature.
+    """
+    from agno.run import RunContext
+
+    def test_func(run_context: RunContext, confirmed: str) -> str:
+        """Test function with run_context and a user field.
+
+        Args:
+            confirmed (str): Confirm the action (yes/no).
+        """
+        return confirmed
+
+    func = Function(
+        name="test_func",
+        entrypoint=test_func,
+        requires_user_input=True,
+        user_input_fields=["confirmed"],
+    )
+    func.process_entrypoint()
+
+    assert func.user_input_schema is not None
+    schema_names = [f.name for f in func.user_input_schema]
+
+    # Only the explicitly declared field should appear
+    assert schema_names == ["confirmed"]
+    assert "run_context" not in schema_names
+    assert func.user_input_schema[0].field_type is str
