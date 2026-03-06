@@ -218,11 +218,11 @@ def generate_openapi_spec(
     # Note: operationId must be stable (no changes after plugin registration)
     if agent:
         agent_desc = agent_descriptions.get(
-            agent.agent_id,
+            agent.id,
             agent.instructions if hasattr(agent, 'instructions') else f"Agent: {agent.name}"
         )
-        spec["paths"][f"/m365/invoke/{agent.agent_id}"] = _create_invoke_path(
-            agent_id=agent.agent_id,
+        spec["paths"][f"/m365/invoke/{agent.id}"] = _create_invoke_path(
+            agent_id=agent.id,
             name=agent.name,
             description=agent_desc,
             component_type="agent",
@@ -231,8 +231,8 @@ def generate_openapi_spec(
 
     if team:
         team_desc = team.instructions if hasattr(team, 'instructions') else f"Team: {team.name}"
-        spec["paths"][f"/m365/invoke/{team.team_id}"] = _create_invoke_path(
-            agent_id=team.team_id,
+        spec["paths"][f"/m365/invoke/{team.id}"] = _create_invoke_path(
+            agent_id=team.id,
             name=team.name,
             description=team_desc,
             component_type="team",
@@ -241,8 +241,8 @@ def generate_openapi_spec(
 
     if workflow:
         workflow_desc = workflow.instructions if hasattr(workflow, 'instructions') else f"Workflow: {workflow.name}"
-        spec["paths"][f"/m365/invoke/{workflow.workflow_id}"] = _create_invoke_path(
-            agent_id=workflow.workflow_id,
+        spec["paths"][f"/m365/invoke/{workflow.id}"] = _create_invoke_path(
+            agent_id=workflow.id,
             name=workflow.name,
             description=workflow_desc,
             component_type="workflow",

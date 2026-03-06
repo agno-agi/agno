@@ -16,7 +16,7 @@ References:
 import json
 import time
 from functools import lru_cache
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 import jwt
