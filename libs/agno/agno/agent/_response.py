@@ -1517,12 +1517,12 @@ def handle_model_response_chunk(
                 if model_response.images is None:
                     model_response.images = []
                 model_response.images.extend(model_response_event.images)
-                # Store media in run_response if store_media is enabled
-                if agent.store_media:
-                    for image in model_response_event.images:
-                        if run_response.images is None:
-                            run_response.images = []
-                        run_response.images.append(image)
+                # Always store media in run_response for the caller;
+                # store_media only controls DB persistence (handled by cleanup_and_store)
+                for image in model_response_event.images:
+                    if run_response.images is None:
+                        run_response.images = []
+                    run_response.images.append(image)
 
         # Handle tool interruption events (HITL flow)
         elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
