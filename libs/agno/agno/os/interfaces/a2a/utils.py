@@ -348,11 +348,14 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            from pydantic import BaseModel as _BaseModel
+
+            content_str = event.content.model_dump_json() if isinstance(event.content, _BaseModel) else str(event.content)
+            accumulated_content += content_str
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=content_str))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
