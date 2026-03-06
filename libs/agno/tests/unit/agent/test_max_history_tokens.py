@@ -20,8 +20,8 @@ class TestEstimateMessageTokens:
     def test_list_content(self):
         msg = Message(role="user", content=[{"type": "text", "text": "Hello"}])
         tokens = _estimate_message_tokens(msg)
-        # JSON of list + "user" role; should be reasonable for the payload size
-        assert 5 <= tokens <= 20
+        # json.dumps([{"type": "text", "text": "Hello"}]) = 35 chars + "user" = 4 => (39+3)//4 = 10
+        assert tokens == 10
 
     def test_with_tool_calls(self):
         msg = Message(
@@ -35,6 +35,13 @@ class TestEstimateMessageTokens:
         assert tokens_with > tokens_without
         # tool_calls JSON adds significant chars, so the difference should be meaningful
         assert tokens_with - tokens_without >= 5
+
+    def test_none_content(self):
+        """None content should be skipped, not passed to json.dumps."""
+        msg = Message(role="user", content=None)
+        tokens = _estimate_message_tokens(msg)
+        # Only "user" role = 4 chars => (4 + 3) // 4 = 1
+        assert tokens == 1
 
     def test_non_serializable_content(self):
         """Ensure non-JSON-serializable content does not raise."""

@@ -1479,13 +1479,14 @@ async def aget_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            # After truncation, ensure history does not start with a tool message.
+            # Truncate history by token budget if set
+            if agent.max_history_tokens is not None:
+                truncate_history_by_tokens(history_copy, agent.max_history_tokens)
+            # After truncation, ensure history does not start with orphan tool messages.
             # Some providers require that tool messages are preceded by an assistant message,
             # so we drop any leading tool-role messages that may have been left at the front.
             while history_copy and getattr(history_copy[0], "role", None) == "tool":
                 history_copy.pop(0)
-            if agent.max_history_tokens is not None:
-                truncate_history_by_tokens(history_copy, agent.max_history_tokens)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 

@@ -81,10 +81,11 @@ def _safe_json_length(value: object) -> int:
 def _estimate_message_tokens(message: Message) -> int:
     """Estimate the token count for a message using the ~4 chars per token heuristic."""
     char_count = 0
-    if isinstance(message.content, str):
-        char_count += len(message.content)
-    elif isinstance(message.content, list):
-        char_count += _safe_json_length(message.content)
+    if message.content is not None:
+        if isinstance(message.content, str):
+            char_count += len(message.content)
+        else:
+            char_count += _safe_json_length(message.content)
     if message.tool_calls:
         char_count += _safe_json_length(message.tool_calls)
     if message.role:
