@@ -1,9 +1,20 @@
+"""
+Ibm Structured Output
+=====================
+
+Cookbook example for `ibm/watsonx/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ibm import WatsonX
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -36,3 +47,10 @@ movie_agent = Agent(
 # pprint(movie_agent.content)
 
 movie_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

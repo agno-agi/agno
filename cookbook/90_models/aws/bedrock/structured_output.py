@@ -1,9 +1,20 @@
+"""
+Aws Structured Output
+=====================
+
+Cookbook example for `aws/bedrock/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.aws import AwsBedrock
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -26,7 +37,7 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=AwsBedrock(id="mistral.mistral-large-2402-v1:0"),
+    model=AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )
@@ -36,3 +47,10 @@ movie_agent = Agent(
 # pprint(movie_agent.content)
 
 movie_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

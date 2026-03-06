@@ -15,6 +15,10 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Claude(
         id="claude-sonnet-4-5",
@@ -62,3 +66,10 @@ if response and response.messages:
                 break
 
 print("\n" + "=" * 60)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

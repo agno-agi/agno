@@ -1,9 +1,20 @@
+"""
+Fireworks Structured Output
+===========================
+
+Cookbook example for `fireworks/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.fireworks import Fireworks
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -37,3 +48,10 @@ response: RunOutput = agent.run("New York")
 pprint(response.content)
 
 # agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

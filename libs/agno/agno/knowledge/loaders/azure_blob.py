@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Optional, cast
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import AzureBlobConfig, RemoteContentConfig
+from agno.knowledge.remote_content.azure_blob import AzureBlobConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import AzureBlobContent
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -27,7 +28,7 @@ class AzureBlobLoader(BaseLoader):
     def _validate_azure_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[AzureBlobConfig]:
         """Validate and extract Azure Blob config.
 
@@ -137,7 +138,7 @@ class AzureBlobLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from Azure Blob Storage (async).
 
@@ -283,7 +284,7 @@ class AzureBlobLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from Azure Blob Storage (sync).
 

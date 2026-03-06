@@ -1,5 +1,16 @@
+"""
+Google Vertexai With Credentials
+================================
+
+Cookbook example for `google/gemini/vertexai_with_credentials.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.google import Gemini
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # To use Vertex AI with explicit credentials, you can pass a
 # google.oauth2.service_account.Credentials object to the Gemini class.
@@ -27,3 +38,10 @@ agent = Agent(model=model, markdown=True)
 agent.print_response(
     "Explain how explicit credentials help in production environments."
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

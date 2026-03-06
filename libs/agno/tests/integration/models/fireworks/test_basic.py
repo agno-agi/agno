@@ -158,6 +158,7 @@ def test_history():
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
         db=SqliteDb(db_file="tmp/fireworks/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

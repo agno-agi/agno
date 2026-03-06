@@ -1,3 +1,10 @@
+"""
+Reasoning Agent
+===============
+
+Demonstrates reasoning agent.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic.claude import Claude
@@ -5,6 +12,10 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
@@ -14,12 +25,7 @@ reasoning_finance_agent = Agent(
     db=agent_db,
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables to display data. When you use thinking tools, keep the thinking brief.",
     add_datetime_to_context=True,
@@ -34,6 +40,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.
