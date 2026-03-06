@@ -3923,11 +3923,6 @@ def _cleanup_and_store(
     # mutated so the caller always sees generated media regardless of store_media.
     storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(team, storage_copy)
-    if not team.store_media:
-        storage_copy.images = None
-        storage_copy.videos = None
-        storage_copy.audio = None
-        storage_copy.files = None
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3974,11 +3969,6 @@ async def _acleanup_and_store(
     # mutated so the caller always sees generated media regardless of store_media.
     storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(team, storage_copy)
-    if not team.store_media:
-        storage_copy.images = None
-        storage_copy.videos = None
-        storage_copy.audio = None
-        storage_copy.files = None
 
     # Stop the timer for the Run duration
     if run_response.metrics:
