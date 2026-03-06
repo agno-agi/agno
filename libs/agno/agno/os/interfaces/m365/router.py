@@ -42,7 +42,7 @@ async def get_validated_token(
     Validate Microsoft Entra ID JWT token from request.
 
     FastAPI dependency that validates the bearer token and returns
-    the decoded claims.
+    the decoded claims with JWKS signature verification.
 
     Args:
         credentials: Bearer token from Authorization header
@@ -65,15 +65,25 @@ async def get_validated_token(
             return {"message": f"Hello {user_email}"}
         ```
     """
+    # Handle missing credentials
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        log_warning("Missing or invalid authorization scheme")
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     try:
         # Extract token without "Bearer " prefix
         token_string = credentials.credentials
 
-        # Validate token
+        # Validate token with JWKS signature verification
         claims = await validate_m365_token(
             token=token_string,
             expected_tenant_id=tenant_id,
             expected_client_id=client_id,
+            enable_signature_verification=True,  # Always verify signatures in production
         )
 
         return claims

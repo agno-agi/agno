@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from agno.agent import Agent, RemoteAgent
 from agno.team import RemoteTeam, Team
+from agno.utils.log import log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 
@@ -21,40 +22,54 @@ def generate_openapi_spec(
     workflow: Optional[Union[Workflow, RemoteWorkflow]],
     agent_descriptions: Dict[str, str],
     server_url: Optional[str] = None,
+    contact_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Generate OpenAPI specification for M365 Copilot plugin.
+    Generate OpenAPI 3.0.1 specification for M365 Copilot plugin.
 
     This specification is used by Copilot Studio to register the Agno
     agents as a plugin, allowing Microsoft 365 Copilot to invoke them.
 
+    The generated OpenAPI spec follows Microsoft's best practices:
+    - OpenAPI 3.0.1 (latest stable)
+    - Rich descriptions for Copilot's LLM understanding
+    - Stable operationIds (critical for plugin manifest mapping)
+    - Well-defined schemas with examples
+    - Proper security schemes for JWT authentication
+    - Contact information for support
+
     Args:
         title: API title (e.g., "CENF Financial Agents")
-        description: API description for Copilot Studio
+        description: API description for Copilot Studio (should be rich and specific)
         version: API version (e.g., "1.0.0")
         agent: Agno agent to expose
         team: Agno team to expose
         workflow: Agno workflow to expose
         agent_descriptions: Custom descriptions for agents (overrides agent.instructions)
         server_url: Base URL for the Agno server (default: uses placeholder)
+        contact_email: Contact email for API support
 
     Returns:
-        OpenAPI specification as a dictionary
+        OpenAPI 3.0.1 specification as a dictionary
 
     Note:
         The server_url should be configured to your actual Agno server URL
-        before deploying to production.
+        before deploying to production. The description field is critical
+        as Copilot's LLM uses it to understand when to invoke the plugin.
 
     Example:
         ```python
         spec = generate_openapi_spec(
             title="CENF Financial Agents",
-            description="Specialized financial analysis agents",
+            description="Specialized financial analysis agents for CENF operations. "
+                        "Provides expert analysis of financial reports, trend identification, "
+                        "and actionable insights for stakeholders.",
             version="1.0.0",
             agent=financial_agent,
             team=None,
             workflow=None,
-            agent_descriptions={"fin-agent": "Financial analysis expert"}
+            agent_descriptions={"fin-agent": "Financial analysis expert"},
+            contact_email="support@cenf.com"
         )
         ```
     """
@@ -63,18 +78,22 @@ def generate_openapi_spec(
     if not server_url:
         server_url = "https://your-agno-server.com"
         # TODO: Make this configurable via environment variable
+        log_warning("Using placeholder server_url. Configure with AGNO_SERVER_URL env var.")
 
     spec: Dict[str, Any] = {
-        "openapi": "3.0.0",
+        "openapi": "3.0.1",  # Use 3.0.1 (latest stable)
         "info": {
             "title": title,
             "description": description,
             "version": version,
+            "contact": {
+                "email": contact_email or "support@example.com"
+            } if contact_email else None,
         },
         "servers": [
             {
                 "url": server_url,
-                "description": "Agno Agent Server",
+                "description": "Agno Agent Server - Production endpoint",
             }
         ],
         "security": [
@@ -88,7 +107,72 @@ def generate_openapi_spec(
                     "type": "http",
                     "scheme": "bearer",
                     "bearerFormat": "JWT",
-                    "description": "Microsoft Entra ID JWT token",
+                    "description": (
+                        "Microsoft Entra ID JWT token (RS256). "
+                        "Token must have the correct audience (client_id) "
+                        "and be from the configured tenant."
+                    ),
+                }
+            },
+            "schemas": {
+                "InvokeRequest": {
+                    "type": "object",
+                    "required": ["message"],
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "The user message or task for the agent to process",
+                            "minLength": 1,
+                            "maxLength": 10000,
+                            "example": "Analyze Q3 revenue trends and provide insights"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session ID for maintaining conversation context",
+                            "pattern": "^[a-zA-Z0-9-_]+$",
+                            "example": "user-session-123"
+                        },
+                        "context": {
+                            "type": "object",
+                            "description": "Additional context (user info, metadata, preferences)",
+                            "additionalProperties": True
+                        }
+                    }
+                },
+                "InvokeResponse": {
+                    "type": "object",
+                    "properties": {
+                        "component_id": {
+                            "type": "string",
+                            "description": "ID of the component that was invoked"
+                        },
+                        "component_type": {
+                            "type": "string",
+                            "enum": ["agent", "team", "workflow"],
+                            "description": "Type of component that was invoked"
+                        },
+                        "output": {
+                            "type": "string",
+                            "description": "The agent's response content"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session ID for this invocation"
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["success", "error"],
+                            "description": "Status of the invocation"
+                        },
+                        "error": {
+                            "type": "string",
+                            "description": "Error message if status is 'error'"
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Optional metadata (timing, tools used, etc.)"
+                        }
+                    }
                 }
             }
         },
@@ -96,26 +180,31 @@ def generate_openapi_spec(
         "tags": [],
     }
 
-    # Add tags for organization
+    # Add tags for organization (important for Copilot Studio UX)
     if agent:
         spec["tags"].append({
             "name": "Agents",
-            "description": "Individual AI agents for specialized tasks"
+            "description": "Individual AI agents for specialized tasks",
+            "externalDocs": {
+                "description": "Learn about Agno agents",
+                "url": "https://github.com/agno-agi/agno"
+            }
         })
 
     if team:
         spec["tags"].append({
             "name": "Teams",
-            "description": "Multi-agent teams for collaborative tasks"
+            "description": "Multi-agent teams for collaborative problem-solving",
         })
 
     if workflow:
         spec["tags"].append({
             "name": "Workflows",
-            "description": "Automated workflows for orchestrated tasks"
+            "description": "Automated workflows for orchestrated multi-step tasks",
         })
 
     # Add invoke endpoint for each component
+    # Note: operationId must be stable (no changes after plugin registration)
     if agent:
         agent_desc = agent_descriptions.get(
             agent.agent_id,
