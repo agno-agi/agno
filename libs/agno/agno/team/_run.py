@@ -51,6 +51,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -367,8 +368,8 @@ def _run_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -724,11 +725,26 @@ def _run_tasks_stream(
 
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for frontend
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -1136,9 +1152,8 @@ def _run(
                         team, run_response=run_response, session=session, run_context=run_context
                     )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -2127,8 +2142,8 @@ async def _arun_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -2505,11 +2520,26 @@ async def _arun_tasks_stream(
 
             # Yield task state updated event
             if stream_events:
+                # Convert task list to TaskData for creating detailed events
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
                         task_summary=task_list.get_summary_string(),
                         goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -2955,9 +2985,8 @@ async def _arun(
                         team, run_response=run_response, session=team_session, run_context=run_context
                     )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -3885,10 +3914,15 @@ def _cleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    #  Scrub the stored run based on storage flags
+    import copy
+
+    from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3897,9 +3931,10 @@ def _cleanup_and_store(
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -3914,6 +3949,10 @@ def _cleanup_and_store(
     # Save session to memory
     team.save_session(session=session)
 
+    # Update approval run_status if this run has an associated approval.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(team.db, run_response.run_id, run_response.status)
+
 
 async def _acleanup_and_store(
     team: "Team",
@@ -3921,10 +3960,15 @@ async def _acleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    #  Scrub the stored run based on storage flags
+    import copy
+
+    from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3933,9 +3977,10 @@ async def _acleanup_and_store(
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -3949,6 +3994,10 @@ async def _acleanup_and_store(
 
     # Save session to memory
     await team.asave_session(session=session)
+
+    # Update approval run_status if this run has an associated approval.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
@@ -4924,9 +4973,8 @@ def _continue_run(
                 # Convert to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                # Store media
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -5216,6 +5264,7 @@ def _continue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,
@@ -5577,8 +5626,7 @@ async def _acontinue_run(
 
                     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                    if team.store_media:
-                        store_media_util(run_response, model_response)
+                    store_media_util(run_response, model_response)
 
                 elif member_results:
                     # Member-only: re-run team with results
@@ -5641,6 +5689,7 @@ async def _acontinue_run(
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -5651,6 +5700,7 @@ async def _acontinue_run(
                 if run_response.content is None:
                     run_response.content = str(e)
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -6029,6 +6079,7 @@ async def _acontinue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,

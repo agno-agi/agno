@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from google.oauth2.credentials import Credentials
 
-from agno.tools.googlecalendar import GoogleCalendarTools
+from agno.tools.google.calendar import GoogleCalendarTools
 
 
 @pytest.fixture
@@ -33,8 +33,8 @@ def calendar_tools(mock_credentials, mock_calendar_service):
     """Create GoogleCalendarTools instance with mocked dependencies."""
     # Patch both build and the authenticate decorator to completely bypass auth
     with (
-        patch("agno.tools.googlecalendar.build") as mock_build,
-        patch("agno.tools.googlecalendar.authenticate", lambda func: func),
+        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(access_token="test_token")
