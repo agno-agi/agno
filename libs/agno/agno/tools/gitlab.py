@@ -3,17 +3,16 @@ from os import getenv
 from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote_plus
 
-import httpx
-
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
+    import httpx
     import gitlab
     from gitlab import Gitlab
     from gitlab.exceptions import GitlabAuthenticationError, GitlabError
 except ImportError:
-    raise ImportError("`python-gitlab` not installed. Please install using `pip install python-gitlab`")
+    raise ImportError("`python-gitlab` and `httpx` not installed. Please install using `pip install python-gitlab httpx`")
 
 
 class GitlabTools(Toolkit):
@@ -33,6 +32,7 @@ class GitlabTools(Toolkit):
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout
         self.client: Gitlab = self._create_client()
+        self._async_client: Optional[httpx.AsyncClient] = None
 
         tools: List[Any] = []
         async_tools: List[tuple[Any, str]] = []
@@ -117,11 +117,16 @@ class GitlabTools(Toolkit):
 
         return f"{response.status_code}: {detail}"
 
+    def _get_async_client(self) -> httpx.AsyncClient:
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(timeout=self.timeout)
+        return self._async_client
+
     async def _aget(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = self._build_api_url(endpoint)
         headers = self._build_headers()
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(url, params=params, headers=headers)
+        client = self._get_async_client()
+        response = await client.get(url, params=params, headers=headers)
         response.raise_for_status()
         return response.json()
 
@@ -224,6 +229,19 @@ class GitlabTools(Toolkit):
         page: int = 1,
         per_page: int = 20,
     ) -> str:
+        """
+        List projects visible to the authenticated user using async HTTP requests.
+
+        Args:
+            search: Optional search query for project name.
+            owned: If True, return only projects owned by the current user.
+            membership: If True, return only projects the user is a member of.
+            page: Page number for pagination.
+            per_page: Items per page (max 100).
+
+        Returns:
+            JSON string containing project data and pagination metadata.
+        """
         try:
             per_page = self._bound_page_size(per_page)
             params: Dict[str, Any] = {"page": page, "per_page": per_page, "owned": owned, "membership": membership}
@@ -267,6 +285,15 @@ class GitlabTools(Toolkit):
             return self._json_error(str(e))
 
     async def aget_project(self, project_id_or_path: str) -> str:
+        """
+        Get details for a single project using async HTTP requests.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path (e.g. group/project).
+
+        Returns:
+            JSON string containing project details.
+        """
         try:
             project_ref = self._encode_project_ref(project_id_or_path)
             log_debug(f"Getting GitLab project: {project_id_or_path}")
@@ -340,6 +367,21 @@ class GitlabTools(Toolkit):
         page: int = 1,
         per_page: int = 20,
     ) -> str:
+        """
+        List merge requests for a project using async HTTP requests.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            state: Merge request state (`opened`, `closed`, `merged`, `all`).
+            source_branch: Optional source branch filter.
+            target_branch: Optional target branch filter.
+            author_username: Optional author username filter.
+            page: Page number for pagination.
+            per_page: Items per page (max 100).
+
+        Returns:
+            JSON string containing merge request data and pagination metadata.
+        """
         try:
             per_page = self._bound_page_size(per_page)
             project_ref = self._encode_project_ref(project_id_or_path)
@@ -390,6 +432,16 @@ class GitlabTools(Toolkit):
             return self._json_error(str(e))
 
     async def aget_merge_request(self, project_id_or_path: str, merge_request_iid: int) -> str:
+        """
+        Get details for a single merge request in a project using async HTTP requests.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            merge_request_iid: Internal merge request IID in the project.
+
+        Returns:
+            JSON string containing merge request details.
+        """
         try:
             project_ref = self._encode_project_ref(project_id_or_path)
             log_debug(f"Getting merge request {merge_request_iid} from project {project_id_or_path}")
@@ -468,6 +520,22 @@ class GitlabTools(Toolkit):
         page: int = 1,
         per_page: int = 20,
     ) -> str:
+        """
+        List issues for a project using async HTTP requests.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            state: Issue state (`opened`, `closed`, `all`).
+            labels: Optional comma-separated label filter.
+            author_username: Optional author username filter.
+            assignee_username: Optional assignee username filter.
+            search: Optional full-text search query.
+            page: Page number for pagination.
+            per_page: Items per page (max 100).
+
+        Returns:
+            JSON string containing issue data and pagination metadata.
+        """
         try:
             per_page = self._bound_page_size(per_page)
             project_ref = self._encode_project_ref(project_id_or_path)

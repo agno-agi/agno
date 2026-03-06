@@ -1,6 +1,6 @@
 import json
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -55,31 +55,36 @@ class TestGitlabTools:
 
     @pytest.mark.asyncio
     async def test_aget_uses_internal_async_client(self):
-        response = httpx.Response(
+        response_one = httpx.Response(
             status_code=200,
             json={"ok": True},
             request=httpx.Request("GET", "https://gitlab.com/api/v4/projects"),
         )
-        mock_http_client = MagicMock()
-        mock_http_client.get = AsyncMock(return_value=response)
-        mock_async_context = MagicMock()
-        mock_async_context.__aenter__ = AsyncMock(return_value=mock_http_client)
-        mock_async_context.__aexit__ = AsyncMock(return_value=None)
+        response_two = httpx.Response(
+            status_code=200,
+            json={"ok": "again"},
+            request=httpx.Request("GET", "https://gitlab.com/api/v4/projects"),
+        )
+        mock_async_client = MagicMock()
+        mock_async_client.get = AsyncMock(side_effect=[response_one, response_two])
 
         with patch("agno.tools.gitlab.gitlab.Gitlab") as mock_gitlab:
             mock_gitlab.return_value = MagicMock()
             tools = GitlabTools(access_token="token")
 
-        with patch("agno.tools.gitlab.httpx.AsyncClient", return_value=mock_async_context) as mock_async_client:
-            payload = await tools._aget("/projects", params={"page": 1})
+        with patch("agno.tools.gitlab.httpx.AsyncClient", return_value=mock_async_client) as mock_async_client_factory:
+            first_payload = await tools._aget("/projects", params={"page": 1})
+            second_payload = await tools._aget("/projects", params={"page": 2})
 
-        mock_async_client.assert_called_once_with(timeout=30)
-        mock_http_client.get.assert_awaited_once_with(
-            "https://gitlab.com/api/v4/projects",
-            params={"page": 1},
-            headers={"PRIVATE-TOKEN": "token"},
+        mock_async_client_factory.assert_called_once_with(timeout=30)
+        mock_async_client.get.assert_has_awaits(
+            [
+                call("https://gitlab.com/api/v4/projects", params={"page": 1}, headers={"PRIVATE-TOKEN": "token"}),
+                call("https://gitlab.com/api/v4/projects", params={"page": 2}, headers={"PRIVATE-TOKEN": "token"}),
+            ]
         )
-        assert payload == {"ok": True}
+        assert first_payload == {"ok": True}
+        assert second_payload == {"ok": "again"}
 
     def test_async_tools_registered_with_sync_names(self):
         with patch("agno.tools.gitlab.gitlab.Gitlab") as mock_gitlab:
