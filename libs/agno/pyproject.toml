@@ -116,6 +116,7 @@ firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 github = ["PyGithub"]
+gitlab = ["python-gitlab", "httpx"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
 googlemaps = ["googlemaps", "google-maps-places"]
@@ -242,6 +243,7 @@ tools = [
   "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
+  "agno[gitlab]",
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
@@ -464,6 +466,7 @@ module = [
   "filetype.*",
   "firecrawl.*",
   "github.*",
+  "gitlab.*",
   "google.*",
   "googlemaps.*",
   "google_maps_places.*",
