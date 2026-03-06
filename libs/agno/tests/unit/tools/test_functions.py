@@ -779,5 +779,4 @@ def test_function_process_entrypoint_with_user_input_excludes_injected_params():
 
     # Only the explicitly declared field should appear
     assert schema_names == ["confirmed"]
-    assert "run_context" not in schema_names
     assert func.user_input_schema[0].field_type is str
