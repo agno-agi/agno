@@ -130,6 +130,12 @@ class GitlabTools(Toolkit):
         response.raise_for_status()
         return response.json()
 
+    async def aclose(self) -> None:
+        """Close the async HTTP client and release resources."""
+        if self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None
+
     def _get_project(self, project_id_or_path: str):
         return self.client.projects.get(project_id_or_path)
 
