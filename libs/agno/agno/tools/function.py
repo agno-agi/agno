@@ -879,8 +879,9 @@ class FunctionCall(BaseModel):
                 # This makes it clear which names conflict and prevents
                 # accidental clobbering of framework objects.
                 overlapping_list = ", ".join(sorted(overlapping))
+                entrypoint_name = getattr(self.function.entrypoint, "__name__", self.function.name)
                 raise TypeError(
-                    f"{self.function.entrypoint.__name__}() got multiple values for "
+                    f"{entrypoint_name}() got multiple values for "
                     f"argument(s): {overlapping_list}"
                 )
             # No overlap guaranteed by the check above; safe to merge.
