@@ -1568,7 +1568,37 @@ def get_continue_run_messages(
     if add_history_to_context is None:
         add_history_to_context = agent.add_history_to_context
 
-    if add_history_to_context and session is not None:
+    # Extract most recent user message from messages as the original user message
+    user_message = None
+    for msg in reversed(input):
+        if msg.role == agent.user_message_role:
+            user_message = msg
+            break
+
+    # Extract system message from messages
+    system_message = None
+    for msg in input:
+        if msg.role == agent.system_message_role:
+            system_message = msg
+            break
+
+    run_messages.system_message = system_message
+    run_messages.user_message = user_message
+
+    # Skip re-fetching history if input already contains it (run_response path).
+    input_has_history = any(msg.from_history for msg in input)
+
+    # Build messages in the correct order:
+    # 1. System message first
+    # 2. History messages (from previous runs, only if not already in input)
+    # 3. Remaining input messages (current run's messages, excluding the system message)
+
+    # 1. Add the system message first
+    if system_message is not None:
+        run_messages.messages.append(system_message)
+
+    # 2. Add history messages if not already present in input
+    if add_history_to_context and session is not None and not input_has_history:
         from copy import deepcopy
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
@@ -1600,23 +1630,10 @@ def get_continue_run_messages(
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
 
-    # Extract most recent user message from messages as the original user message
-    user_message = None
-    for msg in reversed(input):
-        if msg.role == agent.user_message_role:
-            user_message = msg
-            break
-
-    # Extract system message from messages
-    system_message = None
+    # 3. Add the remaining input messages (skip the system message to avoid duplication)
     for msg in input:
-        if msg.role == agent.system_message_role:
-            system_message = msg
-            break
-
-    run_messages.system_message = system_message
-    run_messages.user_message = user_message
-    run_messages.messages += input
+        if msg is not system_message:
+            run_messages.messages.append(msg)
 
     return run_messages
 

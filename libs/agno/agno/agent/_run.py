@@ -3624,8 +3624,6 @@ async def _acontinue_run(
 
                 run_response = cast(RunOutput, run_response)
 
-                run_response.status = RunStatus.running
-
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
                 processed_tools = await agent.aget_tools(
@@ -3652,6 +3650,9 @@ async def _acontinue_run(
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -3990,8 +3991,6 @@ async def _acontinue_run_stream(
 
                 run_response = cast(RunOutput, run_response)
 
-                run_response.status = RunStatus.running
-
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
                 processed_tools = await agent.aget_tools(
@@ -4018,6 +4017,9 @@ async def _acontinue_run_stream(
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
