@@ -4145,6 +4145,8 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 def _get_continue_run_messages(
     team: "Team",
     input: List[Message],
+    session: Optional[TeamSession] = None,
+    add_history_to_context: Optional[bool] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -4152,6 +4154,9 @@ def _get_continue_run_messages(
     from the existing message list for the continuation run.
     """
     run_messages = RunMessages()
+
+    if add_history_to_context is None:
+        add_history_to_context = team.add_history_to_context
 
     # Extract most recent user message
     user_message = None
@@ -4170,7 +4175,41 @@ def _get_continue_run_messages(
 
     run_messages.system_message = system_message
     run_messages.user_message = user_message
-    run_messages.messages = input
+
+    # Skip re-fetching history if input already contains it (run_response path).
+    input_has_history = any(msg.from_history for msg in input)
+
+    # Build messages: system first, then history (if needed), then remaining input
+    if system_message is not None:
+        run_messages.messages.append(system_message)
+
+    if add_history_to_context and session is not None and not input_has_history:
+        from copy import deepcopy
+
+        from agno.utils.message import filter_tool_calls
+
+        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+
+        history: List[Message] = session.get_messages(
+            last_n_runs=team.num_history_runs,
+            limit=team.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            team_id=team.id if team.parent_team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            history_copy = [deepcopy(msg) for msg in history]
+            for _msg in history_copy:
+                _msg.from_history = True
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+            log_debug(f"Adding {len(history_copy)} messages from history")
+            run_messages.messages += history_copy
+
+    # Add remaining input messages (skip system to avoid duplication)
+    for msg in input:
+        if msg is not system_message:
+            run_messages.messages.append(msg)
 
     return run_messages
 
@@ -4799,7 +4838,9 @@ def continue_run_dispatch(
 
         # Get continue run messages from existing conversation
         input_messages = run_response.messages or []
-        run_messages = _get_continue_run_messages(team, input=input_messages)
+        run_messages = _get_continue_run_messages(
+            team, input=input_messages, session=team_session, add_history_to_context=team.add_history_to_context
+        )
 
         # Handle tool call updates (execute confirmed tools, etc.)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -5582,7 +5623,12 @@ async def _acontinue_run(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(team, input=input_messages)
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                    )
 
                     await _ahandle_team_tool_call_updates(
                         team, run_response=run_response, run_messages=run_messages, tools=_tools
@@ -5880,7 +5926,12 @@ async def _acontinue_run_stream(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(team, input=input_messages)
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                    )
 
                     run_response.status = RunStatus.running
                     run_response.content = None
