@@ -3649,6 +3649,8 @@ async def _acontinue_run(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
 
                 # Register run for cancellation tracking
@@ -4013,6 +4015,8 @@ async def _acontinue_run_stream(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
 
                 # Register run for cancellation tracking
