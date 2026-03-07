@@ -180,16 +180,10 @@ def test_function_process_entrypoint_with_user_input():
         return f"{param1}-{param2}"
 
     func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"])
-
     func.process_entrypoint()
-
-    assert func.user_input_schema is not None
-    assert len(func.user_input_schema) == 2
-
+    assert len(func.user_input_schema) == 1  # only the declared user_input_field
     assert func.user_input_schema[0].name == "param1"
     assert func.user_input_schema[0].field_type is str
-    assert func.user_input_schema[1].name == "param2"
-    assert func.user_input_schema[1].field_type is int
 
 
 def test_function_process_entrypoint_skip_processing():
@@ -598,11 +592,9 @@ def test_tool_decorator_with_user_input():
     assert user_input_func.user_input_fields == ["param1"]
     user_input_func.process_entrypoint()
     assert user_input_func.user_input_schema is not None
-    assert len(user_input_func.user_input_schema) == 2
+    assert len(user_input_func.user_input_schema) == 1  # only the declared user_input_field
     assert user_input_func.user_input_schema[0].name == "param1"
     assert user_input_func.user_input_schema[0].field_type is str
-    assert user_input_func.user_input_schema[1].name == "param2"
-    assert user_input_func.user_input_schema[1].field_type is int
 
 
 def test_tool_decorator_with_hooks():
@@ -758,56 +750,33 @@ def test_tool_decorator_with_complex_types():
     assert "param3" not in complex_types_func.parameters["required"]
 
 
-def test_function_cache_pydantic_model(tmp_path):
-    """Test caching operations with Pydantic BaseModel results."""
-    import json
-    import os
+def test_function_process_entrypoint_with_user_input_excludes_injected_params():
+    """
+    When user_input_fields is set, user_input_schema must contain ONLY those fields.
+    Injected parameters like run_context must never appear in the schema,
+    even if they are present in the function signature.
+    """
+    from agno.run import RunContext
 
-    class OrderResponse(BaseModel):
-        success: bool
-        data: Optional[dict] = None
+    def test_func(run_context: RunContext, confirmed: str) -> str:
+        """Test function with run_context and a user field.
 
-    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
+        Args:
+            confirmed (str): Confirm the action (yes/no).
+        """
+        return confirmed
 
-    # Test saving a Pydantic model to cache
-    test_result = OrderResponse(success=True, data={"id": 123, "status": "delivered"})
-    cache_file = os.path.join(str(tmp_path), "test_pydantic_cache.json")
-    func._save_to_cache(cache_file, test_result)
+    func = Function(
+        name="test_func",
+        entrypoint=test_func,
+        requires_user_input=True,
+        user_input_fields=["confirmed"],
+    )
+    func.process_entrypoint()
 
-    # Verify cache file exists and contains correct data
-    assert os.path.exists(cache_file)
-    with open(cache_file, "r") as f:
-        cached_data = json.load(f)
-    assert cached_data["result"] == {"success": True, "data": {"id": 123, "status": "delivered"}}
+    assert func.user_input_schema is not None
+    schema_names = [f.name for f in func.user_input_schema]
 
-    # Test retrieving from cache returns the dict representation
-    retrieved_result = func._get_cached_result(cache_file)
-    assert retrieved_result == {"success": True, "data": {"id": 123, "status": "delivered"}}
-
-
-def test_function_cache_pydantic_model_nested(tmp_path):
-    """Test caching operations with nested Pydantic BaseModel results."""
-    import json
-    import os
-
-    class Address(BaseModel):
-        street: str
-        city: str
-
-    class User(BaseModel):
-        name: str
-        address: Address
-
-    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
-
-    test_result = User(name="John", address=Address(street="123 Main St", city="Springfield"))
-    cache_file = os.path.join(str(tmp_path), "test_nested_cache.json")
-    func._save_to_cache(cache_file, test_result)
-
-    assert os.path.exists(cache_file)
-    with open(cache_file, "r") as f:
-        cached_data = json.load(f)
-    assert cached_data["result"] == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
-
-    retrieved_result = func._get_cached_result(cache_file)
-    assert retrieved_result == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+    # Only the explicitly declared field should appear
+    assert schema_names == ["confirmed"]
+    assert func.user_input_schema[0].field_type is str

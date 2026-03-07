@@ -489,15 +489,20 @@ class Function(BaseModel):
                         param_descriptions[param_name] = f"({param_type}) {param.description}"
                         param_descriptions_clean[param_name] = param.description
 
-            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            # If the function requires user input, build user_input_schema from user_input_fields
+            # (when specified) or from all non-excluded parameters.
             if self.requires_user_input:
+                if self.user_input_fields:
+                    user_input_names = self.user_input_fields
+                else:
+                    user_input_names = [name for name in sig.parameters if name not in excluded_params]
                 self.user_input_schema = [
                     UserInputField(
                         name=name,
                         description=param_descriptions_clean.get(name),
                         field_type=type_hints.get(name, str),
                     )
-                    for name in sig.parameters
+                    for name in user_input_names
                 ]
 
             # Get JSON schema for parameters only
