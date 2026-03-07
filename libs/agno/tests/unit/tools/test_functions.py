@@ -186,12 +186,42 @@ def test_function_process_entrypoint_with_user_input():
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
-    assert len(func.user_input_schema) == 2
+    assert len(func.user_input_schema) == 1
 
     assert func.user_input_schema[0].name == "param1"
     assert func.user_input_schema[0].field_type is str
-    assert func.user_input_schema[1].name == "param2"
-    assert func.user_input_schema[1].field_type is int
+
+
+def test_function_user_input_schema_excludes_agent_owned_defaults():
+    """Test that user_input_schema only contains user_input_fields,
+    so agent-owned defaulted params don't leak with value=None."""
+
+    def send_email(
+        subject: str,
+        body: str,
+        to_address: str,
+        priority: str = "normal",
+        cc: str = "",
+    ) -> str:
+        """Send an email."""
+        return "sent"
+
+    func = Function(
+        name="send_email",
+        entrypoint=send_email,
+        requires_user_input=True,
+        user_input_fields=["to_address"],
+    )
+    func.process_entrypoint()
+
+    assert func.user_input_schema is not None
+    schema_names = [f.name for f in func.user_input_schema]
+    assert schema_names == ["to_address"]
+    # Agent-owned params must NOT appear in the schema
+    assert "priority" not in schema_names
+    assert "cc" not in schema_names
+    assert "subject" not in schema_names
+    assert "body" not in schema_names
 
 
 def test_function_process_entrypoint_skip_processing():
@@ -600,11 +630,10 @@ def test_tool_decorator_with_user_input():
     assert user_input_func.user_input_fields == ["param1"]
     user_input_func.process_entrypoint()
     assert user_input_func.user_input_schema is not None
-    assert len(user_input_func.user_input_schema) == 2
+    # With user_input_fields=["param1"], only param1 should be in schema
+    assert len(user_input_func.user_input_schema) == 1
     assert user_input_func.user_input_schema[0].name == "param1"
     assert user_input_func.user_input_schema[0].field_type is str
-    assert user_input_func.user_input_schema[1].name == "param2"
-    assert user_input_func.user_input_schema[1].field_type is int
 
 
 def test_tool_decorator_with_hooks():
