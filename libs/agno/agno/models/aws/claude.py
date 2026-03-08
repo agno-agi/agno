@@ -74,11 +74,27 @@ class Claude(AnthropicClaude):
             self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
             if self.api_key:
                 self.aws_region = self.aws_region or getenv("AWS_REGION")
-                client_params = {
-                    "api_key": self.api_key,
-                }
-                if self.aws_region:
-                    client_params["aws_region"] = self.aws_region
+                # AnthropicBedrock does not accept an `api_key` parameter.
+                # AWS Bedrock API keys are bearer tokens (launched July 2025) and
+                # must be supplied via the AWS_BEARER_TOKEN_BEDROCK environment
+                # variable so that the underlying botocore SigV4 machinery can
+                # pick them up automatically.  Passing the token as a constructor
+                # keyword would raise:
+                #   TypeError: AnthropicBedrock.__init__() got an unexpected
+                #   keyword argument 'api_key'
+                raise ValueError(
+                    "Agno's AWS Bedrock Claude integration uses the `anthropic[bedrock]` "
+                    "library which currently does not accept a bearer-token `api_key` as "
+                    "a constructor parameter.\n\n"
+                    "To authenticate with an AWS Bedrock API key (bearer token), set the "
+                    "environment variable AWS_BEARER_TOKEN_BEDROCK instead of "
+                    "AWS_BEDROCK_API_KEY, and leave `api_key` unset:\n\n"
+                    "    export AWS_BEARER_TOKEN_BEDROCK=<your-bedrock-api-key>\n\n"
+                    "Alternatively, use standard IAM credentials:\n"
+                    "    export AWS_ACCESS_KEY_ID=...\n"
+                    "    export AWS_SECRET_ACCESS_KEY=...\n"
+                    "    export AWS_REGION=..."
+                )
             else:
                 self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
                 self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
@@ -92,9 +108,11 @@ class Claude(AnthropicClaude):
                     "aws_region": self.aws_region,
                 }
 
-            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+            if not (self.aws_access_key and self.aws_secret_key):
                 log_warning(
-                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+                    "environment variables or provide a boto3 session. "
+                    "If using Bedrock API keys (bearer tokens), set AWS_BEARER_TOKEN_BEDROCK instead of AWS_BEDROCK_API_KEY."
                 )
 
         if self.timeout is not None:
