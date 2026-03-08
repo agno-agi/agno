@@ -187,7 +187,7 @@ def test_message_stream_with_pydantic_content(agent_with_schema: Agent, test_cli
         for event_block in events:
             if "event: Message" in event_block:
                 has_message_event = True
-                data_line = [l for l in event_block.split("\n") if l.startswith("data:")][0]
+                data_line = [line for line in event_block.split("\n") if line.startswith("data:")][0]
                 data = json.loads(data_line[5:])
                 text = data["result"]["parts"][0]["text"]
                 parsed = json.loads(text)
