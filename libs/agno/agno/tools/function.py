@@ -484,10 +484,11 @@ class Function(BaseModel):
                         param_name = param.arg_name
                         param_type = param.type_name
 
-                        # TODO: We should use type hints first, then map param types in docs to json schema types.
-                        # This is temporary to not lose information
-                        param_descriptions[param_name] = f"({param_type}) {param.description}"
-                        param_descriptions_clean[param_name] = param.description
+                        if param_type:
+                            param_descriptions[param_name] = f"({param_type}) {param.description or ''}"
+                        else:
+                            param_descriptions[param_name] = param.description or ""
+                        param_descriptions_clean[param_name] = param.description or ""
 
             # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
             if self.requires_user_input:
