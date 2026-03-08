@@ -28,6 +28,7 @@ from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_warning, logger
 from agno.vectordb.base import VectorDb
+from agno.vectordb.search import SearchType
 
 
 class PineconeDb(VectorDb):
@@ -727,4 +728,6 @@ class PineconeDb(VectorDb):
 
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""
-        return []  # PineconeDb doesn't use SearchType enum
+        if self.use_hybrid_search:
+            return [SearchType.vector, SearchType.hybrid]
+        return [SearchType.vector]
