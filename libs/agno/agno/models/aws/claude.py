@@ -74,8 +74,11 @@ class Claude(AnthropicClaude):
             self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
             if self.api_key:
                 self.aws_region = self.aws_region or getenv("AWS_REGION")
+                # Bedrock API keys are bearer tokens — pass via Authorization
+                # header, not as a constructor parameter (AnthropicBedrock
+                # does not accept an `api_key` kwarg).
                 client_params = {
-                    "api_key": self.api_key,
+                    "default_headers": {"Authorization": f"Bearer {self.api_key}"},
                 }
                 if self.aws_region:
                     client_params["aws_region"] = self.aws_region
