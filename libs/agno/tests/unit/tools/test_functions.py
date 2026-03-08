@@ -63,7 +63,7 @@ def test_decorator_instantiation():
     assert test_func.description == "Test function with parameters."
     assert test_func.entrypoint is not None
     assert test_func.parameters["properties"]["param1"]["type"] == "string"
-    assert test_func.parameters["properties"]["param2"]["type"] == "number"
+    assert test_func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in test_func.parameters["required"]
     assert "param2" not in test_func.parameters["required"]
 
@@ -110,7 +110,7 @@ def test_function_from_callable():
     assert "param1" in func.parameters["properties"]
     assert "param2" in func.parameters["properties"]
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]  # Because it has a default value
 
@@ -167,7 +167,7 @@ def test_function_process_entrypoint():
 
     func.process_entrypoint()
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]
 
@@ -811,3 +811,45 @@ def test_function_cache_pydantic_model_nested(tmp_path):
 
     retrieved_result = func._get_cached_result(cache_file)
     assert retrieved_result == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+
+
+def test_param_description_without_docstring_type():
+    """Test that parameter descriptions don't get a '(None)' prefix when the docstring omits type annotations."""
+
+    def my_tool(currency_code: str, amount: float) -> dict:
+        """Convert currency.
+
+        Args:
+            currency_code: The ISO currency code.
+            amount: The amount to convert.
+        """
+        return {}
+
+    func = Function.from_callable(my_tool)
+    props = func.parameters["properties"]
+
+    # Descriptions should NOT start with "(None)"
+    assert not props["currency_code"]["description"].startswith("(None)")
+    assert not props["amount"]["description"].startswith("(None)")
+    assert props["currency_code"]["description"] == "The ISO currency code."
+    assert props["amount"]["description"] == "The amount to convert."
+
+
+def test_param_description_with_docstring_type():
+    """Test that parameter descriptions preserve the type prefix when the docstring includes type annotations."""
+
+    def my_tool(currency_code: str, amount: float) -> dict:
+        """Convert currency.
+
+        Args:
+            currency_code (str): The ISO currency code.
+            amount (float): The amount to convert.
+        """
+        return {}
+
+    func = Function.from_callable(my_tool)
+    props = func.parameters["properties"]
+
+    # Descriptions should include the docstring type prefix
+    assert props["currency_code"]["description"] == "(str) The ISO currency code."
+    assert props["amount"]["description"] == "(float) The amount to convert."

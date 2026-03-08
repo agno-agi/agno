@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from typing import Dict
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -64,7 +65,7 @@ async def test_session_id_namespaced_with_entity_id():
 
 
 @pytest.mark.asyncio
-async def test_user_id_is_none_for_shared_thread():
+async def test_user_id_always_passed():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
     with (
@@ -80,7 +81,7 @@ async def test_user_id_is_none_for_shared_thread():
             "type": "event_callback",
             "event": {
                 "type": "message",
-                "channel_type": "im",
+                "channel_type": "channel",
                 "text": "hello",
                 "user": "U456",
                 "channel": "C123",
@@ -93,7 +94,7 @@ async def test_user_id_is_none_for_shared_thread():
 
         call_kwargs = agent_mock.arun.call_args
         user_id = call_kwargs.kwargs.get("user_id") or call_kwargs[1].get("user_id")
-        assert user_id is None
+        assert user_id == "U456"
 
 
 @pytest.mark.asyncio
@@ -486,6 +487,42 @@ class TestRecipientUserId:
             call_kwargs = mock_client.chat_stream.call_args.kwargs
             assert call_kwargs["recipient_user_id"] == "U_HUMAN"
             assert call_kwargs["recipient_team_id"] == "T123"
+
+
+class TestStreamingUserIsolation:
+    @pytest.mark.asyncio
+    async def test_user_id_always_passed(self):
+        captured: Dict = {}
+
+        async def _capturing_arun(*args, **kwargs):
+            captured.update(kwargs)
+            yield content_chunk("done")
+
+        agent = AsyncMock()
+        agent.name = "Test Agent"
+        agent.arun = _capturing_arun
+        mock_slack = make_slack_mock(token="xoxb-test")
+        mock_stream = make_stream_mock()
+        mock_client = AsyncMock()
+        mock_client.assistant_threads_setStatus = AsyncMock()
+        mock_client.assistant_threads_setTitle = AsyncMock()
+        mock_client.chat_stream = AsyncMock(return_value=mock_stream)
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(agent, streaming=True, reply_to_mentions_only=False)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            body = make_streaming_body(user="U123")
+            resp = make_signed_request(client, body)
+            assert resp.status_code == 200
+
+            await wait_for_call(mock_stream.stop)
+            assert captured.get("user_id") == "U123"
 
 
 class TestStreamingFallbacks:
