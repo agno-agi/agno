@@ -1,3 +1,66 @@
+"""
+Gmail Toolkit for interacting with Gmail API
+
+Required Environment Variables:
+-----------------------------
+- GOOGLE_CLIENT_ID: Google OAuth client ID
+- GOOGLE_CLIENT_SECRET: Google OAuth client secret
+- GOOGLE_PROJECT_ID: Google Cloud project ID
+- GOOGLE_REDIRECT_URI: Google OAuth redirect URI (default: http://localhost)
+
+How to Get These Credentials:
+---------------------------
+1. Go to Google Cloud Console (https://console.cloud.google.com)
+2. Create a new project or select an existing one
+3. Enable the Gmail API:
+   - Go to "APIs & Services" > "Enable APIs and Services"
+   - Search for "Gmail API"
+   - Click "Enable"
+
+4. Create OAuth 2.0 credentials:
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "OAuth client ID"
+   - Go through the OAuth consent screen setup
+   - Give it a name and click "Create"
+   - You'll receive:
+     * Client ID (GOOGLE_CLIENT_ID)
+     * Client Secret (GOOGLE_CLIENT_SECRET)
+   - The Project ID (GOOGLE_PROJECT_ID) is visible in the project dropdown at the top of the page
+
+5. Add auth redirect URI:
+   - Go to https://console.cloud.google.com/auth/clients and add the redirect URI as http://127.0.0.1/
+
+6. Set up environment variables:
+   Create a .envrc file in your project root with:
+   ```
+   export GOOGLE_CLIENT_ID=your_client_id_here
+   export GOOGLE_CLIENT_SECRET=your_client_secret_here
+   export GOOGLE_PROJECT_ID=your_project_id_here
+   export GOOGLE_REDIRECT_URI=http://127.0.0.1/  # Default value
+   ```
+
+Note: The first time you run the application, it will open a browser window for OAuth authentication.
+A token.json file will be created to store the authentication credentials for future use.
+
+Service Account Authentication (Alternative):
+---------------------------------------------
+For server/bot deployments where no browser is available, use a Google service account
+with domain-wide delegation instead of OAuth.
+
+1. Create a service account in Google Cloud Console > "IAM & Admin" > "Service Accounts"
+2. Download the JSON key file
+3. In Google Workspace Admin Console, go to Security > API Controls > Domain-wide Delegation
+4. Add the service account's client_id with the Gmail scopes your agent needs
+5. Set environment variables:
+   ```
+   export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
+   export GOOGLE_DELEGATED_USER=user@yourdomain.com
+   ```
+
+When service_account_path (or GOOGLE_SERVICE_ACCOUNT_FILE) is set, OAuth is skipped entirely.
+The delegated_user specifies which mailbox the service account will access.
+"""
+
 import base64
 import json
 import mimetypes
@@ -175,83 +238,78 @@ class GmailTools(Toolkit):
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
 
-        # When include_tools is specified, expose the full catalog and let
-        # Toolkit's whitelist filter select the requested tools.
-        if kwargs.get("include_tools"):
-            tools = self._all_tools()
-        else:
-            tools: List[Any] = []  # type: ignore
-            # Reading emails
-            if get_latest_emails:
-                tools.append(self.get_latest_emails)
-            if get_emails_from_user:
-                tools.append(self.get_emails_from_user)
-            if get_unread_emails:
-                tools.append(self.get_unread_emails)
-            if get_starred_emails:
-                tools.append(self.get_starred_emails)
-            if get_emails_by_context:
-                tools.append(self.get_emails_by_context)
-            if get_emails_by_date:
-                tools.append(self.get_emails_by_date)
-            if get_emails_by_thread:
-                tools.append(self.get_emails_by_thread)
-            if search_emails:
-                tools.append(self.search_emails)
-            # Email management
-            if mark_email_as_read:
-                tools.append(self.mark_email_as_read)
-            if mark_email_as_unread:
-                tools.append(self.mark_email_as_unread)
-            if star_email:
-                tools.append(self.star_email)
-            if unstar_email:
-                tools.append(self.unstar_email)
-            if archive_email:
-                tools.append(self.archive_email)
-            # Composing emails
-            if create_draft_email:
-                tools.append(self.create_draft_email)
-            if send_email:
-                tools.append(self.send_email)
-            if send_email_reply:
-                tools.append(self.send_email_reply)
-            # Label management
-            if list_custom_labels:
-                tools.append(self.list_custom_labels)
-            if apply_label:
-                tools.append(self.apply_label)
-            if remove_label:
-                tools.append(self.remove_label)
-            if delete_custom_label:
-                tools.append(self.delete_custom_label)
-            # New tools
-            if get_message:
-                tools.append(self.get_message)
-            if get_thread:
-                tools.append(self.get_thread)
-            if search_threads:
-                tools.append(self.search_threads)
-            if modify_thread_labels:
-                tools.append(self.modify_thread_labels)
-            if trash_thread:
-                tools.append(self.trash_thread)
-            if get_draft:
-                tools.append(self.get_draft)
-            if list_drafts:
-                tools.append(self.list_drafts)
-            if send_draft:
-                tools.append(self.send_draft)
-            if update_draft:
-                tools.append(self.update_draft)
-            if list_labels:
-                tools.append(self.list_labels)
-            if modify_message_labels:
-                tools.append(self.modify_message_labels)
-            if trash_message:
-                tools.append(self.trash_message)
-            if download_attachment:
-                tools.append(self.download_attachment)
+        tools: List[Any] = []
+        # Reading emails
+        if get_latest_emails:
+            tools.append(self.get_latest_emails)
+        if get_emails_from_user:
+            tools.append(self.get_emails_from_user)
+        if get_unread_emails:
+            tools.append(self.get_unread_emails)
+        if get_starred_emails:
+            tools.append(self.get_starred_emails)
+        if get_emails_by_context:
+            tools.append(self.get_emails_by_context)
+        if get_emails_by_date:
+            tools.append(self.get_emails_by_date)
+        if get_emails_by_thread:
+            tools.append(self.get_emails_by_thread)
+        if search_emails:
+            tools.append(self.search_emails)
+        # Email management
+        if mark_email_as_read:
+            tools.append(self.mark_email_as_read)
+        if mark_email_as_unread:
+            tools.append(self.mark_email_as_unread)
+        if star_email:
+            tools.append(self.star_email)
+        if unstar_email:
+            tools.append(self.unstar_email)
+        if archive_email:
+            tools.append(self.archive_email)
+        # Composing emails
+        if create_draft_email:
+            tools.append(self.create_draft_email)
+        if send_email:
+            tools.append(self.send_email)
+        if send_email_reply:
+            tools.append(self.send_email_reply)
+        # Label management
+        if list_custom_labels:
+            tools.append(self.list_custom_labels)
+        if apply_label:
+            tools.append(self.apply_label)
+        if remove_label:
+            tools.append(self.remove_label)
+        if delete_custom_label:
+            tools.append(self.delete_custom_label)
+        # Thread & message tools
+        if get_message:
+            tools.append(self.get_message)
+        if get_thread:
+            tools.append(self.get_thread)
+        if search_threads:
+            tools.append(self.search_threads)
+        if modify_thread_labels:
+            tools.append(self.modify_thread_labels)
+        if trash_thread:
+            tools.append(self.trash_thread)
+        if get_draft:
+            tools.append(self.get_draft)
+        if list_drafts:
+            tools.append(self.list_drafts)
+        if send_draft:
+            tools.append(self.send_draft)
+        if update_draft:
+            tools.append(self.update_draft)
+        if list_labels:
+            tools.append(self.list_labels)
+        if modify_message_labels:
+            tools.append(self.modify_message_labels)
+        if trash_message:
+            tools.append(self.trash_message)
+        if download_attachment:
+            tools.append(self.download_attachment)
 
         super().__init__(
             name="gmail_tools",
@@ -311,43 +369,6 @@ class GmailTools(Toolkit):
             modify_scope = "https://www.googleapis.com/auth/gmail.modify"
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
-
-    def _all_tools(self) -> list:
-        return [
-            self.get_latest_emails,
-            self.get_emails_from_user,
-            self.get_unread_emails,
-            self.get_starred_emails,
-            self.get_emails_by_context,
-            self.get_emails_by_date,
-            self.get_emails_by_thread,
-            self.search_emails,
-            self.send_email,
-            self.send_email_reply,
-            self.create_draft_email,
-            self.mark_email_as_read,
-            self.mark_email_as_unread,
-            self.star_email,
-            self.unstar_email,
-            self.archive_email,
-            self.list_custom_labels,
-            self.apply_label,
-            self.remove_label,
-            self.delete_custom_label,
-            self.get_message,
-            self.get_thread,
-            self.search_threads,
-            self.modify_thread_labels,
-            self.trash_thread,
-            self.get_draft,
-            self.list_drafts,
-            self.send_draft,
-            self.update_draft,
-            self.list_labels,
-            self.modify_message_labels,
-            self.trash_message,
-            self.download_attachment,
-        ]
 
     def _auth(self) -> None:
         """Authenticate with Gmail API using service account (priority) or OAuth flow."""

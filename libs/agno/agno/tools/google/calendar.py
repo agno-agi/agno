@@ -67,7 +67,7 @@ class GoogleCalendarTools(Toolkit):
         self,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
-        token_path: Optional[str] = None,
+        token_path: Optional[str] = "token.json",
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
@@ -131,41 +131,37 @@ class GoogleCalendarTools(Toolkit):
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
 
-        # include_tools: pass full catalog, let Toolkit base class filter by name
-        if kwargs.get("include_tools"):
-            tools = self._all_tools()
-        else:
-            tools: List[Any] = []  # type: ignore[no-redef]
+        tools: List[Any] = []
 
-            if list_events:
-                tools.append(self.list_events)
-            if get_event:
-                tools.append(self.get_event)
-            if fetch_all_events:
-                tools.append(self.fetch_all_events)
-            if find_available_slots:
-                tools.append(self.find_available_slots)
-            if list_calendars:
-                tools.append(self.list_calendars)
-            if check_availability:
-                tools.append(self.check_availability)
-            if get_event_attendees:
-                tools.append(self.get_event_attendees)
-            if search_events:
-                tools.append(self.search_events)
+        if list_events:
+            tools.append(self.list_events)
+        if get_event:
+            tools.append(self.get_event)
+        if fetch_all_events:
+            tools.append(self.fetch_all_events)
+        if find_available_slots:
+            tools.append(self.find_available_slots)
+        if list_calendars:
+            tools.append(self.list_calendars)
+        if check_availability:
+            tools.append(self.check_availability)
+        if get_event_attendees:
+            tools.append(self.get_event_attendees)
+        if search_events:
+            tools.append(self.search_events)
 
-            if create_event:
-                tools.append(self.create_event)
-            if update_event:
-                tools.append(self.update_event)
-            if delete_event:
-                tools.append(self.delete_event)
-            if quick_add_event:
-                tools.append(self.quick_add_event)
-            if move_event:
-                tools.append(self.move_event)
-            if respond_to_event:
-                tools.append(self.respond_to_event)
+        if create_event:
+            tools.append(self.create_event)
+        if update_event:
+            tools.append(self.update_event)
+        if delete_event:
+            tools.append(self.delete_event)
+        if quick_add_event:
+            tools.append(self.quick_add_event)
+        if move_event:
+            tools.append(self.move_event)
+        if respond_to_event:
+            tools.append(self.respond_to_event)
 
         super().__init__(
             name="google_calendar_tools",
@@ -204,24 +200,6 @@ class GoogleCalendarTools(Toolkit):
             write_scope = "https://www.googleapis.com/auth/calendar"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
-
-    def _all_tools(self) -> list:
-        return [
-            self.list_events,
-            self.get_event,
-            self.create_event,
-            self.update_event,
-            self.delete_event,
-            self.fetch_all_events,
-            self.find_available_slots,
-            self.list_calendars,
-            self.quick_add_event,
-            self.check_availability,
-            self.move_event,
-            self.get_event_attendees,
-            self.respond_to_event,
-            self.search_events,
-        ]
 
     def _auth(self) -> None:
         """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
