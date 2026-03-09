@@ -1,6 +1,8 @@
+import hashlib
 import json
 import shlex
 from os import getenv
+from os.path import normpath
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Union
@@ -295,8 +297,9 @@ class DaytonaTools(Toolkit):
                     current_abs_path = Path(result.result.strip())
                     new_path = current_abs_path / new_path
 
-                # Normalize the path
-                new_path_str = str(new_path.resolve())
+                # Normalize the path (use normpath instead of resolve to avoid
+                # resolving symlinks on the local machine — the path runs remotely)
+                new_path_str = normpath(str(new_path))
 
                 # Test if directory exists
                 test_result = current_sandbox.process.exec(
@@ -344,10 +347,12 @@ class DaytonaTools(Toolkit):
                 if result.exit_code != 0:
                     return json.dumps({"status": "error", "message": f"Failed to create directory: {result.result}"})
 
-            # Write the file using shell command
-            # Use cat with heredoc for better handling of special characters
-            escaped_content = content.replace("'", "'\"'\"'")
-            command = f"cat > {shlex.quote(path_str)} << 'EOF'\n{escaped_content}\nEOF"
+            # Write the file using shell command with heredoc.
+            # Use a unique delimiter to prevent content containing 'EOF' from
+            # terminating the heredoc early.
+            content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
+            delimiter = f"AGNO_EOF_{content_hash}"
+            command = f"cat > {shlex.quote(path_str)} << '{delimiter}'\n{content}\n{delimiter}"
             result = current_sandbox.process.exec(command)
 
             if result.exit_code != 0:
