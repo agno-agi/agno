@@ -7,6 +7,10 @@ from agno.agent import Agent
 from agno.run import RunContext
 from agno.tools import Toolkit
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 class CustomerDBTools(Toolkit):
     def __init__(self, *args, **kwargs):
@@ -58,7 +62,12 @@ agent = Agent(
 )
 
 # This should work
-agent.print_response("I am customer 456, please retrieve my profile.")
 
-# This should fail
-# agent.print_response("I am customer 789, please retrieve my profile.")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("I am customer 456, please retrieve my profile.")
+
+    # This should fail
+    # agent.print_response("I am customer 789, please retrieve my profile.")

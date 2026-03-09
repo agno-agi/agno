@@ -141,10 +141,26 @@ def test_prepare_documents_for_insert_with_metadata():
     # Call _prepare_documents_for_insert with metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
-    # Verify metadata was merged
-    assert result[0].meta_data == {"existing": "value1", "document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
-    assert result[1].meta_data == {"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
-    assert result[2].meta_data == {"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"}
+    # Verify metadata was merged (linked_to is always added, empty string for unnamed knowledge)
+    assert result[0].meta_data == {
+        "existing": "value1",
+        "document_id": "123",
+        "knowledge_base_id": "456",
+        "filename": "test.txt",
+        "linked_to": "",
+    }
+    assert result[1].meta_data == {
+        "document_id": "123",
+        "knowledge_base_id": "456",
+        "filename": "test.txt",
+        "linked_to": "",
+    }
+    assert result[2].meta_data == {
+        "document_id": "123",
+        "knowledge_base_id": "456",
+        "filename": "test.txt",
+        "linked_to": "",
+    }
 
     # Verify content_id was set
     for doc in result:
@@ -165,9 +181,9 @@ def test_prepare_documents_for_insert_without_metadata():
     # Call _prepare_documents_for_insert without metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1")
 
-    # Verify existing metadata is preserved
-    assert result[0].meta_data == {"existing": "value1"}
-    assert result[1].meta_data == {}
+    # Verify existing metadata is preserved (linked_to is always added)
+    assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
+    assert result[1].meta_data == {"linked_to": ""}
 
     # Verify content_id was set
     for doc in result:
@@ -187,8 +203,8 @@ def test_prepare_documents_for_insert_with_empty_metadata():
     # Call _prepare_documents_for_insert with empty metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata={})
 
-    # Verify existing metadata is preserved (empty dict doesn't add anything)
-    assert result[0].meta_data == {"existing": "value1"}
+    # Verify existing metadata is preserved (linked_to is always added)
+    assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
 
 
 @pytest.mark.asyncio
@@ -293,13 +309,15 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     )
     content.content_hash = knowledge._build_content_hash(content)
 
-    with patch.object(knowledge, "_read", return_value=[Document(name="test", content="Test content", meta_data={"original": "data"})]):
+    with patch.object(
+        knowledge, "_read", return_value=[Document(name="test", content="Test content", meta_data={"original": "data"})]
+    ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
-    # Verify documents were inserted with original metadata preserved
+    # Verify documents were inserted with original metadata preserved (linked_to is always added)
     assert len(mock_vector_db.inserted_documents) == 1
     doc = mock_vector_db.inserted_documents[0]
-    assert doc.meta_data == {"original": "data"}
+    assert doc.meta_data == {"original": "data", "linked_to": ""}
 
 
 def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_vector_db):
@@ -318,7 +336,13 @@ def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_ve
     with patch.object(
         knowledge,
         "_read",
-        return_value=[Document(name="test", content="Test content", meta_data={"existing_field": "existing_value", "shared_field": "doc_value"})],
+        return_value=[
+            Document(
+                name="test",
+                content="Test content",
+                meta_data={"existing_field": "existing_value", "shared_field": "doc_value"},
+            )
+        ],
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 

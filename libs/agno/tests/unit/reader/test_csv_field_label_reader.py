@@ -227,10 +227,10 @@ Item3,Value3"""
 
 
 def test_read_nonexistent_file(field_labeled_reader, temp_dir):
-    """Test reading nonexistent file."""
+    """Test reading nonexistent file raises FileNotFoundError."""
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = field_labeled_reader.read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError):
+        field_labeled_reader.read(nonexistent_path)
 
 
 def test_read_empty_csv_file(field_labeled_reader, temp_dir):
@@ -357,10 +357,10 @@ async def test_async_read_empty_file(field_labeled_reader, temp_dir):
 
 @pytest.mark.asyncio
 async def test_async_read_nonexistent_file(field_labeled_reader, temp_dir):
-    """Test async reading of nonexistent file."""
+    """Test async reading of nonexistent file raises FileNotFoundError."""
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = await field_labeled_reader.async_read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError):
+        await field_labeled_reader.async_read(nonexistent_path)
 
 
 def test_custom_delimiter():
@@ -449,12 +449,12 @@ def test_format_headers_disabled(underscore_csv_file):
 
 
 def test_get_supported_content_types():
-    """Test supported content types."""
+    """Test supported content types - CSV only (Excel uses ExcelReader)."""
     content_types = FieldLabeledCSVReader.get_supported_content_types()
 
     from agno.knowledge.types import ContentType
 
-    expected_types = [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
+    expected_types = [ContentType.CSV]
     assert content_types == expected_types
 
 
@@ -546,10 +546,7 @@ LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
 
 
 def test_read_bytesio_with_custom_encoding():
-    """Test reading BytesIO with custom encoding (Latin-1).
-
-    This tests the fix for BUG-007 where BytesIO reads were hardcoded to UTF-8.
-    """
+    """Test reading BytesIO with custom encoding (Latin-1)."""
     latin1_bytes = LATIN1_CSV.encode("latin-1")
     file_obj = io.BytesIO(latin1_bytes)
     file_obj.name = "latin1.csv"
@@ -588,10 +585,7 @@ def test_read_bytesio_wrong_encoding_fails():
 
 @pytest.mark.asyncio
 async def test_async_read_bytesio_with_custom_encoding():
-    """Test async reading BytesIO with custom encoding (Latin-1).
-
-    This tests the fix for BUG-007 in the async path.
-    """
+    """Test async reading BytesIO with custom encoding (Latin-1)."""
     latin1_bytes = LATIN1_CSV.encode("latin-1")
     file_obj = io.BytesIO(latin1_bytes)
     file_obj.name = "latin1.csv"
@@ -603,3 +597,19 @@ async def test_async_read_bytesio_with_custom_encoding():
     content = documents[0].content
     assert "José" in content
     assert "São Paulo" in content
+
+
+def test_read_csv_carriage_return_normalized():
+    """Test that carriage returns in CSV cells are normalized to spaces."""
+    csv_content = 'name,notes\nAlice,"line1\rline2"\nBob,"line1\r\nline2"'
+
+    file_obj = io.BytesIO(csv_content.encode("utf-8"))
+    file_obj.name = "cr_test.csv"
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"

@@ -1,9 +1,20 @@
+"""
+Multiple Knowledge Bases
+========================
+
+Demonstrates multiple knowledge bases.
+"""
+
 from agno.agent import Agent
 from agno.db.json import JsonDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -38,6 +49,10 @@ agent_os = AgentOS(
     agents=[main_agent],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """ Run your AgentOS:

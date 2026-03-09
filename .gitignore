@@ -75,10 +75,16 @@ agno_json_data/
 # AI
 .claude/
 .cursor/
+.conductor/
+.context/
+.codex/
 
 # Private design documents (symlinked)
-specs
-projects
+/specs
+/docs
+/projects
+/agno-os
+/apps
 
 # Private Claude coding session preferences
 CLAUDE_PRIVATE.md

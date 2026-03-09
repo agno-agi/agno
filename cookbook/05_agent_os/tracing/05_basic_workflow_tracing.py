@@ -13,6 +13,10 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")
 
@@ -98,6 +102,10 @@ agent_os = AgentOS(
     tracing=True,
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="05_basic_workflow_tracing:app", reload=True)

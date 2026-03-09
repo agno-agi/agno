@@ -1,6 +1,7 @@
 """Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
 
 from agno.knowledge.content import Content, FileData
+from agno.knowledge.document.base import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
@@ -237,11 +238,6 @@ def test_hash_with_only_description():
     assert hash1 != hash2
     assert hash1 != hash3
     assert hash2 != hash3
-
-
-# ============================================================================
-# FileData Hash Tests
-# ============================================================================
 
 
 def test_file_data_hash_with_filename():
@@ -487,3 +483,104 @@ def test_file_data_hash_empty_hash_parts_fallback():
     # Verify hash is valid SHA256
     assert isinstance(hash1, str)
     assert len(hash1) == 64
+
+
+def test_document_content_hash_uses_document_url():
+    """Documents from different URLs get unique content hashes."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content = Content(url="https://example.com")
+
+    doc1 = Document(content="Page 1 content", meta_data={"url": "https://example.com/page1"})
+    doc2 = Document(content="Page 2 content", meta_data={"url": "https://example.com/page2"})
+    doc3 = Document(content="Page 3 content", meta_data={"url": "https://example.com/page3"})
+
+    hash1 = knowledge._build_document_content_hash(doc1, content)
+    hash2 = knowledge._build_document_content_hash(doc2, content)
+    hash3 = knowledge._build_document_content_hash(doc3, content)
+
+    # Different URLs should produce different hashes
+    assert hash1 != hash2
+    assert hash2 != hash3
+    assert hash1 != hash3
+
+    # Verify hashes are valid SHA256
+    assert len(hash1) == 64
+    assert len(hash2) == 64
+    assert len(hash3) == 64
+
+
+def test_document_content_hash_is_deterministic():
+    """Same document URL produces same hash (deterministic)."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content = Content(url="https://example.com")
+
+    doc1 = Document(content="Page 1 content", meta_data={"url": "https://example.com/page1"})
+    doc2 = Document(content="Different content", meta_data={"url": "https://example.com/page1"})
+
+    hash1 = knowledge._build_document_content_hash(doc1, content)
+    hash2 = knowledge._build_document_content_hash(doc2, content)
+
+    # Same URL should produce same hash regardless of content
+    assert hash1 == hash2
+
+
+def test_document_content_hash_includes_content_name():
+    """Document hash includes content name for uniqueness."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(url="https://example.com", name="Site A")
+    content2 = Content(url="https://example.com", name="Site B")
+
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    hash1 = knowledge._build_document_content_hash(doc, content1)
+    hash2 = knowledge._build_document_content_hash(doc, content2)
+
+    # Different content names should produce different hashes
+    assert hash1 != hash2
+
+
+def test_document_content_hash_includes_content_description():
+    """Document hash includes content description for uniqueness."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(url="https://example.com", description="Description A")
+    content2 = Content(url="https://example.com", description="Description B")
+
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    hash1 = knowledge._build_document_content_hash(doc, content1)
+    hash2 = knowledge._build_document_content_hash(doc, content2)
+
+    # Different descriptions should produce different hashes
+    assert hash1 != hash2
+
+
+def test_document_content_hash_fallback_to_content_url():
+    """Document without URL in meta_data falls back to content URL."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content = Content(url="https://example.com/fallback")
+
+    doc = Document(content="Page content", meta_data={})
+
+    hash1 = knowledge._build_document_content_hash(doc, content)
+
+    # Should produce a valid hash using content URL
+    assert len(hash1) == 64
+
+
+def test_document_content_hash_fallback_to_content_hash():
+    """Document without any URL falls back to document content hash."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content = Content()  # No URL or path
+
+    doc1 = Document(content="Page 1 content", meta_data={})
+    doc2 = Document(content="Page 2 content", meta_data={})
+    doc3 = Document(content="Page 1 content", meta_data={})
+
+    hash1 = knowledge._build_document_content_hash(doc1, content)
+    hash2 = knowledge._build_document_content_hash(doc2, content)
+    hash3 = knowledge._build_document_content_hash(doc3, content)
+
+    # Different content should produce different hashes
+    assert hash1 != hash2
+    # Same content should produce same hash
+    assert hash1 == hash3

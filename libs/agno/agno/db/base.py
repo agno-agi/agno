@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -11,6 +11,7 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.base import RunStatus
 from agno.session import Session
 
 
@@ -47,6 +48,9 @@ class BaseDb(ABC):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -63,6 +67,9 @@ class BaseDb(ABC):
         self.component_configs_table_name = component_configs_table or "agno_component_configs"
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.schedules_table_name = schedules_table or "agno_schedules"
+        self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.approvals_table_name = approvals_table or "agno_approvals"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -82,6 +89,10 @@ class BaseDb(ABC):
             "components_table": self.components_table_name,
             "component_configs_table": self.component_configs_table_name,
             "component_links_table": self.component_links_table_name,
+            "learnings_table": self.learnings_table_name,
+            "schedules_table": self.schedules_table_name,
+            "schedule_runs_table": self.schedule_runs_table_name,
+            "approvals_table": self.approvals_table_name,
         }
 
     @classmethod
@@ -102,6 +113,10 @@ class BaseDb(ABC):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
             id=data.get("id"),
         )
 
@@ -133,11 +148,11 @@ class BaseDb(ABC):
 
     # --- Sessions ---
     @abstractmethod
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -173,6 +188,7 @@ class BaseDb(ABC):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
@@ -302,6 +318,7 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -310,6 +327,7 @@ class BaseDb(ABC):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -420,6 +438,7 @@ class BaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -435,6 +454,9 @@ class BaseDb(ABC):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+                Supports composable queries with AND/OR/NOT logic and operators
+                like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -452,6 +474,7 @@ class BaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -464,6 +487,7 @@ class BaseDb(ABC):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -576,6 +600,7 @@ class BaseDb(ABC):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -585,6 +610,7 @@ class BaseDb(ABC):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:
@@ -617,6 +643,7 @@ class BaseDb(ABC):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -625,6 +652,7 @@ class BaseDb(ABC):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -943,6 +971,132 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Schedules (Optional) ---
+    # These methods are optional. Override in subclasses to enable scheduler persistence.
+
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by ID."""
+        raise NotImplementedError
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name."""
+        raise NotImplementedError
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List schedules with optional filtering.
+
+        Returns:
+            Tuple of (schedules, total_count)
+        """
+        raise NotImplementedError
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new schedule."""
+        raise NotImplementedError
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule by ID."""
+        raise NotImplementedError
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim a due schedule for execution."""
+        raise NotImplementedError
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        """Release a claimed schedule and optionally update next_run_at."""
+        raise NotImplementedError
+
+    # --- Schedule Runs (Optional) ---
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a schedule run record."""
+        raise NotImplementedError
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule run record."""
+        raise NotImplementedError
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List runs for a schedule.
+
+        Returns:
+            Tuple of (runs, total_count)
+        """
+        raise NotImplementedError
+
+    # --- Approvals (Optional) ---
+    # These methods are optional. Override in subclasses to enable approval persistence.
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create an approval record."""
+        raise NotImplementedError
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Get an approval by ID."""
+        raise NotImplementedError
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List approvals with optional filtering. Returns (items, total_count)."""
+        raise NotImplementedError
+
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update an approval. If expected_status is set, only updates if current status matches (atomic guard)."""
+        raise NotImplementedError
+
+    def delete_approval(self, approval_id: str) -> bool:
+        """Delete an approval by ID."""
+        raise NotImplementedError
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        """Get count of pending approvals."""
+        raise NotImplementedError
+
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -960,6 +1114,9 @@ class AsyncBaseDb(ABC):
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -972,6 +1129,9 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.schedules_table_name = schedules_table or "agno_schedules"
+        self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.approvals_table_name = approvals_table or "agno_approvals"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1011,11 +1171,11 @@ class AsyncBaseDb(ABC):
 
     # --- Sessions ---
     @abstractmethod
-    async def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -1051,6 +1211,7 @@ class AsyncBaseDb(ABC):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
@@ -1158,6 +1319,7 @@ class AsyncBaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1166,6 +1328,7 @@ class AsyncBaseDb(ABC):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1276,6 +1439,7 @@ class AsyncBaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -1291,6 +1455,9 @@ class AsyncBaseDb(ABC):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+                Supports composable queries with AND/OR/NOT logic and operators
+                like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -1308,6 +1475,7 @@ class AsyncBaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1320,6 +1488,7 @@ class AsyncBaseDb(ABC):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -1515,5 +1684,131 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    # --- Schedules (Optional) ---
+    # These methods are optional. Override in subclasses to enable scheduler persistence.
+
+    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by ID."""
+        raise NotImplementedError
+
+    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name."""
+        raise NotImplementedError
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List schedules with optional filtering.
+
+        Returns:
+            Tuple of (schedules, total_count)
+        """
+        raise NotImplementedError
+
+    async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new schedule."""
+        raise NotImplementedError
+
+    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule by ID."""
+        raise NotImplementedError
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim a due schedule for execution."""
+        raise NotImplementedError
+
+    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        """Release a claimed schedule and optionally update next_run_at."""
+        raise NotImplementedError
+
+    # --- Schedule Runs (Optional) ---
+
+    async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a schedule run record."""
+        raise NotImplementedError
+
+    async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a schedule run record."""
+        raise NotImplementedError
+
+    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List runs for a schedule.
+
+        Returns:
+            Tuple of (runs, total_count)
+        """
+        raise NotImplementedError
+
+    # --- Approvals (Optional) ---
+    # These methods are optional. Override in subclasses to enable approval persistence.
+
+    async def create_approval(self, approval_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create an approval record."""
+        raise NotImplementedError
+
+    async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Get an approval by ID."""
+        raise NotImplementedError
+
+    async def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List approvals with optional filtering. Returns (items, total_count)."""
+        raise NotImplementedError
+
+    async def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update an approval. If expected_status is set, only updates if current status matches (atomic guard)."""
+        raise NotImplementedError
+
+    async def delete_approval(self, approval_id: str) -> bool:
+        """Delete an approval by ID."""
+        raise NotImplementedError
+
+    async def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        """Get count of pending approvals."""
+        raise NotImplementedError
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
         """
         raise NotImplementedError

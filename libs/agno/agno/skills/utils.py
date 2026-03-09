@@ -1,8 +1,10 @@
 """Utility functions for the skills module."""
 
 import os
+import platform
 import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -41,6 +43,95 @@ def ensure_executable(file_path: Path) -> None:
         os.chmod(file_path, current_mode | stat.S_IXUSR)
 
 
+def parse_shebang(script_path: Path) -> Optional[str]:
+    """Parse the shebang line from a script file to determine the interpreter.
+
+    Handles various shebang formats:
+    - #!/usr/bin/env python3  -> "python3"
+    - #!/usr/bin/python3      -> "python3"
+    - #!/bin/bash             -> "bash"
+    - #!/usr/bin/env -S node  -> "node"
+
+    Args:
+        script_path: Path to the script file.
+
+    Returns:
+        The interpreter name (e.g., "python3", "bash") or None if no valid shebang.
+    """
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            first_line = f.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    if not first_line.startswith("#!"):
+        return None
+
+    shebang = first_line[2:].strip()
+    if not shebang:
+        return None
+
+    parts = shebang.split()
+
+    # Handle /usr/bin/env style shebangs
+    if Path(parts[0]).name == "env":
+        # Skip any flags (like -S) and get the interpreter
+        for part in parts[1:]:
+            if not part.startswith("-"):
+                return part
+        return None
+
+    # Handle direct path shebangs like #!/bin/bash or #!/usr/bin/python3
+    # Extract the basename of the path
+    interpreter_path = parts[0]
+    return Path(interpreter_path).name
+
+
+def get_interpreter_command(interpreter: str) -> List[str]:
+    """Map an interpreter name to a Windows-compatible command.
+
+    Args:
+        interpreter: The interpreter name from shebang (e.g., "python3", "bash").
+
+    Returns:
+        A list representing the command to invoke the interpreter.
+    """
+    # Normalize interpreter name
+    interpreter_lower = interpreter.lower()
+
+    # Python interpreters - use current Python executable
+    if interpreter_lower in ("python", "python3", "python2"):
+        return [sys.executable]
+
+    # Other interpreters - pass through as-is
+    # This includes: bash, sh, node, ruby, perl, etc.
+    # These need to be available in PATH on Windows
+    return [interpreter]
+
+
+def _build_windows_command(script_path: Path, args: List[str]) -> List[str]:
+    """Build the command list for executing a script on Windows.
+
+    On Windows, shebang lines are not processed by the OS, so we need to
+    parse the shebang and explicitly invoke the interpreter.
+
+    Args:
+        script_path: Path to the script file.
+        args: Arguments to pass to the script.
+
+    Returns:
+        A list representing the full command to execute.
+    """
+    interpreter = parse_shebang(script_path)
+
+    if interpreter:
+        cmd_prefix = get_interpreter_command(interpreter)
+        return [*cmd_prefix, str(script_path), *args]
+
+    # Fallback: try direct execution (may fail, but provides clear error)
+    return [str(script_path), *args]
+
+
 @dataclass
 class ScriptResult:
     """Result of a script execution."""
@@ -58,6 +149,10 @@ def run_script(
 ) -> ScriptResult:
     """Execute a script and return the result.
 
+    On Unix-like systems, scripts are executed directly using their shebang.
+    On Windows, the shebang is parsed to determine the interpreter since
+    Windows does not natively support shebang lines.
+
     Args:
         script_path: Path to the script to execute.
         args: Optional list of arguments to pass to the script.
@@ -71,8 +166,11 @@ def run_script(
         subprocess.TimeoutExpired: If script exceeds timeout.
         FileNotFoundError: If script or interpreter not found.
     """
-    ensure_executable(script_path)
-    cmd = [str(script_path), *(args or [])]
+    if platform.system() == "Windows":
+        cmd = _build_windows_command(script_path, args or [])
+    else:
+        ensure_executable(script_path)
+        cmd = [str(script_path), *(args or [])]
 
     result = subprocess.run(
         cmd,

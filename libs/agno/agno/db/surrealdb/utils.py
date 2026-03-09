@@ -63,6 +63,8 @@ def query_one(
     response = _query_aux(client, query, vars)
     if response is None:
         return None
+    elif isinstance(response, str):
+        return None
     elif not isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return getattr(record_type, "from_dict").__call__(response)

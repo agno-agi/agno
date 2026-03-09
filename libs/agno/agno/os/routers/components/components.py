@@ -25,7 +25,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id_from_name
 
 logger = logging.getLogger(__name__)
@@ -122,10 +122,14 @@ def attach_routes(
             start_time_ms = time.time() * 1000
             offset = (page - 1) * limit
 
+            # Exclude components whose IDs are owned by the registry
+            exclude_ids = registry.get_all_component_ids() if registry else None
+
             components, total_count = db.list_components(
                 component_type=DbComponentType(component_type.value) if component_type else None,
                 limit=limit,
                 offset=offset,
+                exclude_component_ids=exclude_ids or None,
             )
 
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
@@ -166,6 +170,15 @@ def attach_routes(
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
             config = _resolve_db_in_config(config, db, registry)
+
+            # Warn if creating a team without members
+            if body.component_type == ComponentType.TEAM:
+                members = config.get("members")
+                if not members or len(members) == 0:
+                    log_warning(
+                        f"Creating team '{body.name}' without members. "
+                        "If this is unintended, add members to the config."
+                    )
 
             component, _config = db.create_component_with_config(
                 component_id=component_id,
@@ -234,6 +247,8 @@ def attach_routes(
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
                 update_kwargs["metadata"] = body.metadata
+            if body.current_version is not None:
+                update_kwargs["current_version"] = body.current_version
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
 

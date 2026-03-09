@@ -9,6 +9,11 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.file_generation import FileGenerationTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=SqliteDb(db_file="tmp/test.db"),
@@ -82,6 +87,10 @@ def example_text_generation():
                 print(f"File location: {file.url}")
     print()
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("File Generation Tool Cookbook Example")

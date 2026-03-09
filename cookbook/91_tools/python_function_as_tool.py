@@ -1,7 +1,18 @@
+"""
+Python Function As Tool
+=============================
+
+Demonstrates python function as tool.
+"""
+
 import json
 
 import httpx
 from agno.agent import Agent
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 def get_top_hackernews_stories(num_stories: int = 10) -> str:
@@ -32,4 +43,9 @@ def get_top_hackernews_stories(num_stories: int = 10) -> str:
 
 
 agent = Agent(tools=[get_top_hackernews_stories], markdown=True)
-agent.print_response("Summarize the top 5 stories on hackernews?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Summarize the top 5 stories on hackernews?", stream=True)

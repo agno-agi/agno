@@ -1,9 +1,20 @@
+"""
+Deepseek Structured Output
+==========================
+
+Cookbook example for `deepseek/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.deepseek import DeepSeek
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -37,3 +48,10 @@ json_mode_response: RunOutput = json_mode_agent.run("New York")
 pprint(json_mode_response.content)
 
 # json_mode_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

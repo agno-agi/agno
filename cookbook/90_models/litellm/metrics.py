@@ -1,8 +1,19 @@
+"""
+Litellm Metrics
+===============
+
+Cookbook example for `litellm/metrics.py`.
+"""
+
 from agno.agent import Agent, RunOutput
 from agno.models.litellm import LiteLLM
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LiteLLM(
@@ -30,3 +41,10 @@ if run_output.messages:
 # Print the metrics
 print("---" * 5, "Collected Metrics", "---" * 5)
 pprint(run_output.metrics)  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

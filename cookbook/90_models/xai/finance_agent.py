@@ -1,4 +1,4 @@
-"""🗞️ Finance Agent - Your Personal Market Analyst!
+"""️ Finance Agent - Your Personal Market Analyst!
 
 This example shows how to create a sophisticated financial analyst that provides
 comprehensive market insights using real-time data. The agent combines stock market data,
@@ -21,11 +21,15 @@ from agno.agent import Agent
 from agno.models.xai import xAI
 from agno.tools.yfinance import YFinanceTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 finance_agent = Agent(
     model=xAI(id="grok-3-mini-beta"),
     tools=[YFinanceTools()],
     instructions=dedent("""\
-        You are a seasoned Wall Street analyst with deep expertise in market analysis! 📊
+        You are a seasoned Wall Street analyst with deep expertise in market analysis! 
 
         Follow these steps for comprehensive financial analysis:
         1. Market Overview
@@ -46,7 +50,7 @@ finance_agent = Agent(
         - Begin with an executive summary
         - Use tables for data presentation
         - Include clear section headers
-        - Add emoji indicators for trends (📈 📉)
+        - Add emoji indicators for trends ( )
         - Highlight key insights with bullet points
         - Compare metrics to industry averages
         - Include technical term explanations
@@ -113,3 +117,10 @@ Automotive Industry:
 3. "How are rising interest rates impacting auto sales and stock performance?"
 4. "Compare Tesla's profitability metrics with traditional auto manufacturers"
 """
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

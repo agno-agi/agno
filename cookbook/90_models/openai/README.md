@@ -1,0 +1,9 @@
+# Openai
+
+Cookbook examples for `cookbook/90_models/openai`.
+
+Run examples with:
+
+```bash
+.venvs/demo/bin/python cookbook/90_models/openai/<example>.py
+```
