@@ -27,6 +27,13 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Workflow-level control flags for downstream propagation
+    # None = "not set, let agent/team use its own default"
+    add_dependencies_to_context: Optional[bool] = None
+    add_session_state_to_context: Optional[bool] = None
+    add_history_to_context: Optional[bool] = None
+    debug_mode: Optional[bool] = None
+
     # Runtime-resolved callable factory results
     tools: Optional[List[Any]] = None
     knowledge: Optional[Any] = None

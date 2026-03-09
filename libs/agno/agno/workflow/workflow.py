@@ -31,6 +31,7 @@ from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, SessionMetrics
@@ -260,6 +261,14 @@ class Workflow:
     # Metadata stored with this workflow
     metadata: Optional[Dict[str, Any]] = None
 
+    # Dependencies to pass to downstream agents/teams
+    dependencies: Optional[Dict[str, Any]] = None
+    # Workflow-level control flags (propagated to downstream agents/teams)
+    add_dependencies_to_context: Optional[bool] = None
+    add_session_state_to_context: Optional[bool] = None
+    add_history_to_context: Optional[bool] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
@@ -295,6 +304,11 @@ class Workflow:
         store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         cache_session: bool = False,
         telemetry: bool = True,
         add_workflow_history_to_steps: bool = False,
@@ -318,6 +332,11 @@ class Workflow:
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
+        self.dependencies = dependencies
+        self.add_dependencies_to_context = add_dependencies_to_context
+        self.add_session_state_to_context = add_session_state_to_context
+        self.add_history_to_context = add_history_to_context
+        self.knowledge_filters = knowledge_filters
 
         # Component metadata (set by get_workflows during DB loading)
         self._version: Optional[int] = None
@@ -6262,6 +6281,12 @@ class Workflow:
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -6282,6 +6307,12 @@ class Workflow:
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -6301,6 +6332,12 @@ class Workflow:
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -6372,6 +6409,42 @@ class Workflow:
 
         self.update_agents_and_teams_session_info()
 
+        # Resolve run-level params: call-site > self.<field> > None
+        # dependencies: merge call-site with self.dependencies (call-site wins on conflicts)
+        resolved_dependencies: Optional[Dict[str, Any]] = None
+        if dependencies is not None and self.dependencies is not None:
+            resolved_dependencies = self.dependencies.copy()
+            resolved_dependencies.update(dependencies)
+        elif dependencies is not None:
+            resolved_dependencies = dependencies.copy()
+        elif self.dependencies is not None:
+            resolved_dependencies = self.dependencies.copy()
+
+        # metadata: merge call-site with self.metadata (self wins on conflicts)
+        resolved_metadata: Optional[Dict[str, Any]] = None
+        if metadata is not None and self.metadata is not None:
+            resolved_metadata = metadata.copy()
+            resolved_metadata.update(self.metadata)
+        elif metadata is not None:
+            resolved_metadata = metadata.copy()
+        elif self.metadata is not None:
+            resolved_metadata = self.metadata.copy()
+
+        # Boolean flags and knowledge_filters: call-site > self.<field>
+        resolved_add_deps = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        resolved_add_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
+        )
+        resolved_add_history = (
+            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        )
+        resolved_filters = knowledge_filters if knowledge_filters is not None else self.knowledge_filters
+        resolved_debug = debug_mode if debug_mode is not None else None
+
         # Initialize run context
         run_context = RunContext(
             run_id=run_id,
@@ -6380,7 +6453,13 @@ class Workflow:
             session_state=session_state,
             workflow_id=self.id,
             workflow_name=self.name,
-            dependencies=dependencies,
+            dependencies=resolved_dependencies,
+            metadata=resolved_metadata,
+            knowledge_filters=resolved_filters,
+            add_dependencies_to_context=resolved_add_deps,
+            add_session_state_to_context=resolved_add_state,
+            add_history_to_context=resolved_add_history,
+            debug_mode=resolved_debug,
         )
 
         # Execute workflow agent if configured
@@ -6449,6 +6528,12 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -6470,6 +6555,12 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -6490,6 +6581,12 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -6549,13 +6646,57 @@ class Workflow:
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
+        # Resolve run-level params: call-site > self.<field> > None
+        # dependencies: merge call-site with self.dependencies (call-site wins on conflicts)
+        resolved_dependencies: Optional[Dict[str, Any]] = None
+        if dependencies is not None and self.dependencies is not None:
+            resolved_dependencies = self.dependencies.copy()
+            resolved_dependencies.update(dependencies)
+        elif dependencies is not None:
+            resolved_dependencies = dependencies.copy()
+        elif self.dependencies is not None:
+            resolved_dependencies = self.dependencies.copy()
+
+        # metadata: merge call-site with self.metadata (self wins on conflicts)
+        resolved_metadata: Optional[Dict[str, Any]] = None
+        if metadata is not None and self.metadata is not None:
+            resolved_metadata = metadata.copy()
+            resolved_metadata.update(self.metadata)
+        elif metadata is not None:
+            resolved_metadata = metadata.copy()
+        elif self.metadata is not None:
+            resolved_metadata = self.metadata.copy()
+
+        # Boolean flags and knowledge_filters: call-site > self.<field>
+        resolved_add_deps = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        resolved_add_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
+        )
+        resolved_add_history = (
+            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        )
+        resolved_filters = knowledge_filters if knowledge_filters is not None else self.knowledge_filters
+        resolved_debug = debug_mode if debug_mode is not None else None
+
         # Initialize run context
         run_context = RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            dependencies=resolved_dependencies,
+            metadata=resolved_metadata,
+            knowledge_filters=resolved_filters,
+            add_dependencies_to_context=resolved_add_deps,
+            add_session_state_to_context=resolved_add_state,
+            add_history_to_context=resolved_add_history,
+            debug_mode=resolved_debug,
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)

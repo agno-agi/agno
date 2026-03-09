@@ -687,6 +687,16 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
+                            metadata=run_context.metadata if run_context else None,
+                            knowledge_filters=run_context.knowledge_filters if run_context else None,
+                            add_dependencies_to_context=run_context.add_dependencies_to_context
+                            if run_context
+                            else None,
+                            add_session_state_to_context=run_context.add_session_state_to_context
+                            if run_context
+                            else None,
+                            add_history_to_context=run_context.add_history_to_context if run_context else None,
+                            debug_mode=run_context.debug_mode if run_context else None,
                             **kwargs,
                         )
 
@@ -968,6 +978,16 @@ class Step:
                             stream_events=stream_events,
                             yield_run_output=True,
                             run_context=run_context,
+                            metadata=run_context.metadata if run_context else None,
+                            knowledge_filters=run_context.knowledge_filters if run_context else None,
+                            add_dependencies_to_context=run_context.add_dependencies_to_context
+                            if run_context
+                            else None,
+                            add_session_state_to_context=run_context.add_session_state_to_context
+                            if run_context
+                            else None,
+                            add_history_to_context=run_context.add_history_to_context if run_context else None,
+                            debug_mode=run_context.debug_mode if run_context else None,
                             **kwargs,
                         )
 
@@ -1254,6 +1274,16 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
+                            metadata=run_context.metadata if run_context else None,
+                            knowledge_filters=run_context.knowledge_filters if run_context else None,
+                            add_dependencies_to_context=run_context.add_dependencies_to_context
+                            if run_context
+                            else None,
+                            add_session_state_to_context=run_context.add_session_state_to_context
+                            if run_context
+                            else None,
+                            add_history_to_context=run_context.add_history_to_context if run_context else None,
+                            debug_mode=run_context.debug_mode if run_context else None,
                             **kwargs,
                         )
 
@@ -1529,6 +1559,16 @@ class Step:
                             stream_events=stream_events,
                             run_context=run_context,
                             yield_run_output=True,
+                            metadata=run_context.metadata if run_context else None,
+                            knowledge_filters=run_context.knowledge_filters if run_context else None,
+                            add_dependencies_to_context=run_context.add_dependencies_to_context
+                            if run_context
+                            else None,
+                            add_session_state_to_context=run_context.add_session_state_to_context
+                            if run_context
+                            else None,
+                            add_history_to_context=run_context.add_history_to_context if run_context else None,
+                            debug_mode=run_context.debug_mode if run_context else None,
                             **kwargs,
                         )
 
