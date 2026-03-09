@@ -197,7 +197,10 @@ def attach_routes(
 
     async def process_message(message: dict):
         # Extract early so error handler can notify the user
-        phone_number = message["from"]
+        phone_number = message.get("from")
+        if not phone_number:
+            log_warning("Message missing 'from' field, skipping")
+            return
         # Hash phone number before it reaches storage — deterministic so the
         # same phone always resolves to the same session, but irreversible
         hashed_phone = hashlib.sha256(phone_number.encode()).hexdigest()
@@ -282,7 +285,8 @@ def attach_routes(
                     run_kwargs["audio"] = [Audio(content=media)]
 
             # Inject phone number so the agent can reference the user in responses
-            if send_user_number_to_context:
+            # Workflows don't support add_dependencies_to_context
+            if send_user_number_to_context and entity_type != "workflow":
                 run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {phone_number}"}
                 run_kwargs["add_dependencies_to_context"] = True
 
@@ -316,6 +320,7 @@ def attach_routes(
             has_media = False
             for attr, media_type in (
                 ("images", "image"),
+                ("videos", "video"),
                 ("files", "document"),
                 ("audio", "audio"),
             ):
