@@ -145,24 +145,22 @@ class GoogleCalendarTools(Toolkit):
         access_token: Optional[str] = None,
         oauth_port: Optional[int] = None,
         allow_update: Optional[bool] = None,
-        # P0 tools — existing
+        # Reading
         list_events: bool = True,
-        create_event: bool = True,
-        update_event: bool = True,
-        delete_event: bool = True,
+        get_event: bool = True,
         fetch_all_events: bool = True,
         find_available_slots: bool = True,
         list_calendars: bool = True,
-        # P0 tools — new
-        get_event: bool = True,
-        quick_add_event: bool = False,
         check_availability: bool = True,
-        # P1 tools
-        move_event: bool = False,
         get_event_attendees: bool = True,
-        respond_to_event: bool = False,
         search_events: bool = True,
-        # Toolkit params
+        # Writing
+        create_event: bool = True,
+        update_event: bool = True,
+        delete_event: bool = True,
+        quick_add_event: bool = False,
+        move_event: bool = False,
+        respond_to_event: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
@@ -226,37 +224,36 @@ class GoogleCalendarTools(Toolkit):
             tools = self._all_tools()
         else:
             tools: List[Any] = []  # type: ignore[no-redef]
-            # P0 existing
+            # Reading
             if list_events:
                 tools.append(self.list_events)
             if get_event:
                 tools.append(self.get_event)
-            if create_event:
-                tools.append(self.create_event)
-            if update_event:
-                tools.append(self.update_event)
-            if delete_event:
-                tools.append(self.delete_event)
             if fetch_all_events:
                 tools.append(self.fetch_all_events)
             if find_available_slots:
                 tools.append(self.find_available_slots)
             if list_calendars:
                 tools.append(self.list_calendars)
-            # P0 new
-            if quick_add_event:
-                tools.append(self.quick_add_event)
             if check_availability:
                 tools.append(self.check_availability)
-            # P1
-            if move_event:
-                tools.append(self.move_event)
             if get_event_attendees:
                 tools.append(self.get_event_attendees)
-            if respond_to_event:
-                tools.append(self.respond_to_event)
             if search_events:
                 tools.append(self.search_events)
+            # Writing
+            if create_event:
+                tools.append(self.create_event)
+            if update_event:
+                tools.append(self.update_event)
+            if delete_event:
+                tools.append(self.delete_event)
+            if quick_add_event:
+                tools.append(self.quick_add_event)
+            if move_event:
+                tools.append(self.move_event)
+            if respond_to_event:
+                tools.append(self.respond_to_event)
 
         super().__init__(
             name="google_calendar_tools",
@@ -361,7 +358,9 @@ class GoogleCalendarTools(Toolkit):
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
+            if self.port is not None:
+                oauth_kwargs["port"] = self.port
+            self.creds = flow.run_local_server(**oauth_kwargs)
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
@@ -369,7 +368,6 @@ class GoogleCalendarTools(Toolkit):
             log_debug("Successfully authenticated with Google Calendar API.")
             log_info(f"Token file path: {token_file}")
 
-    # ─── P0 existing tools ───────────────────────────────────────────────
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
@@ -426,17 +424,12 @@ class GoogleCalendarTools(Toolkit):
         attendees: Optional[List[str]] = None,
         add_google_meet_link: Optional[bool] = False,
         notify_attendees: Optional[bool] = False,
-        all_day: Optional[bool] = False,
-        recurrence: Optional[List[str]] = None,
-        visibility: Optional[str] = None,
-        reminders: Optional[str] = None,
-        color_id: Optional[str] = None,
     ) -> str:
         """Create a new event in the Google Calendar.
 
         Args:
-            start_date (str): Start date/time in ISO format (YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD for all-day)
-            end_date (str): End date/time in ISO format (YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD for all-day)
+            start_date (str): Start date and time of the event in ISO format (YYYY-MM-DDTHH:MM:SS)
+            end_date (str): End date and time of the event in ISO format (YYYY-MM-DDTHH:MM:SS)
             title (Optional[str]): Title/summary of the event
             description (Optional[str]): Detailed description of the event
             location (Optional[str]): Location of the event
@@ -444,11 +437,6 @@ class GoogleCalendarTools(Toolkit):
             attendees (Optional[List[str]]): List of attendee email addresses
             add_google_meet_link (Optional[bool]): Whether to add a Google Meet video link
             notify_attendees (Optional[bool]): Whether to send email notifications to attendees
-            all_day (Optional[bool]): Whether this is an all-day event (uses date format YYYY-MM-DD)
-            recurrence (Optional[List[str]]): Recurrence rules, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"]
-            visibility (Optional[str]): Event visibility: "default", "public", "private", or "confidential"
-            reminders (Optional[str]): Reminder overrides as JSON string, e.g. '[{"method": "popup", "minutes": 10}]'
-            color_id (Optional[str]): Event color ID ("1" through "11")
 
         Returns:
             str: JSON string containing the created event or error message
@@ -456,39 +444,25 @@ class GoogleCalendarTools(Toolkit):
         try:
             attendees_list = [{"email": attendee} for attendee in attendees] if attendees else []
 
+            try:
+                start_time = datetime.datetime.fromisoformat(start_date).strftime("%Y-%m-%dT%H:%M:%S")
+                end_time = datetime.datetime.fromisoformat(end_date).strftime("%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                return json.dumps({"error": "Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."})
+
             event: Dict[str, Any] = {
                 "summary": title,
                 "location": location,
                 "description": description,
+                "start": {"dateTime": start_time, "timeZone": timezone},
+                "end": {"dateTime": end_time, "timeZone": timezone},
                 "attendees": attendees_list,
             }
-
-            if all_day:
-                event["start"] = {"date": start_date[:10]}
-                event["end"] = {"date": end_date[:10]}
-            else:
-                try:
-                    start_time = datetime.datetime.fromisoformat(start_date).strftime("%Y-%m-%dT%H:%M:%S")
-                    end_time = datetime.datetime.fromisoformat(end_date).strftime("%Y-%m-%dT%H:%M:%S")
-                except ValueError:
-                    return json.dumps({"error": "Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."})
-                event["start"] = {"dateTime": start_time, "timeZone": timezone}
-                event["end"] = {"dateTime": end_time, "timeZone": timezone}
 
             if add_google_meet_link:
                 event["conferenceData"] = {
                     "createRequest": {"requestId": str(uuid.uuid4()), "conferenceSolutionKey": {"type": "hangoutsMeet"}}
                 }
-
-            if recurrence:
-                event["recurrence"] = recurrence
-            if visibility:
-                event["visibility"] = visibility
-            if color_id:
-                event["colorId"] = color_id
-            if reminders is not None:
-                reminder_list = json.loads(reminders) if isinstance(reminders, str) else reminders
-                event["reminders"] = {"useDefault": False, "overrides": reminder_list}
 
             # Remove None values
             event = {k: v for k, v in event.items() if v is not None}
@@ -524,11 +498,6 @@ class GoogleCalendarTools(Toolkit):
         timezone: Optional[str] = None,
         attendees: Optional[List[str]] = None,
         notify_attendees: Optional[bool] = False,
-        all_day: Optional[bool] = None,
-        recurrence: Optional[List[str]] = None,
-        visibility: Optional[str] = None,
-        reminders: Optional[str] = None,
-        color_id: Optional[str] = None,
     ) -> str:
         """Update an existing event in the Google Calendar.
 
@@ -542,11 +511,6 @@ class GoogleCalendarTools(Toolkit):
             timezone (Optional[str]): New timezone
             attendees (Optional[List[str]]): Updated list of attendee email addresses
             notify_attendees (Optional[bool]): Whether to send email notifications
-            all_day (Optional[bool]): Convert to/from all-day event
-            recurrence (Optional[List[str]]): Updated recurrence rules
-            visibility (Optional[str]): Updated visibility
-            reminders (Optional[str]): Updated reminder overrides as JSON string, e.g. '[{"method": "popup", "minutes": 10}]'
-            color_id (Optional[str]): Updated event color ID
 
         Returns:
             str: JSON string containing the updated event or error message
@@ -563,21 +527,8 @@ class GoogleCalendarTools(Toolkit):
                 event["location"] = location
             if attendees is not None:
                 event["attendees"] = [{"email": attendee} for attendee in attendees]
-            if recurrence is not None:
-                event["recurrence"] = recurrence
-            if visibility is not None:
-                event["visibility"] = visibility
-            if color_id is not None:
-                event["colorId"] = color_id
-            if reminders is not None:
-                reminder_list = json.loads(reminders) if isinstance(reminders, str) else reminders
-                event["reminders"] = {"useDefault": False, "overrides": reminder_list}
 
-            # Handle all-day conversion
-            if all_day is True and start_date:
-                event["start"] = {"date": start_date[:10]}
-                event["end"] = {"date": (end_date or start_date)[:10]}
-            elif start_date:
+            if start_date:
                 try:
                     start_time = datetime.datetime.fromisoformat(start_date).strftime("%Y-%m-%dT%H:%M:%S")
                     event["start"]["dateTime"] = start_time
@@ -586,7 +537,7 @@ class GoogleCalendarTools(Toolkit):
                 except ValueError:
                     return json.dumps({"error": f"Invalid start datetime format: {start_date}. Use ISO format."})
 
-            if end_date and all_day is not True:
+            if end_date:
                 try:
                     end_time = datetime.datetime.fromisoformat(end_date).strftime("%Y-%m-%dT%H:%M:%S")
                     event["end"]["dateTime"] = end_time
@@ -897,7 +848,6 @@ class GoogleCalendarTools(Toolkit):
             log_error(f"An error occurred while listing calendars: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
-    # ─── P0 new tools ────────────────────────────────────────────────────
 
     @authenticate
     def get_event(self, event_id: str) -> str:
@@ -1009,7 +959,6 @@ class GoogleCalendarTools(Toolkit):
             log_error(f"An error occurred while checking availability: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
-    # ─── P1 tools ────────────────────────────────────────────────────────
 
     @authenticate
     def search_events(

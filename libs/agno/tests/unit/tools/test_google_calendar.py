@@ -338,67 +338,6 @@ class TestCreateEvent:
         )
         assert "error" in json.loads(result)
 
-    def test_create_all_day_event(self, calendar_tools, mock_calendar_service):
-        mock_event = {"id": "test_id", "start": {"date": "2025-07-19"}}
-        mock_calendar_service.events().insert().execute.return_value = mock_event
-
-        result = calendar_tools.create_event(
-            start_date="2025-07-19",
-            end_date="2025-07-20",
-            title="All Day Event",
-            all_day=True,
-        )
-        assert json.loads(result) == mock_event
-
-    def test_create_recurring_event(self, calendar_tools, mock_calendar_service):
-        mock_event = {"id": "test_id", "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=10"]}
-        mock_calendar_service.events().insert().execute.return_value = mock_event
-
-        result = calendar_tools.create_event(
-            start_date="2025-07-19T09:00:00",
-            end_date="2025-07-19T10:00:00",
-            title="Weekly Standup",
-            recurrence=["RRULE:FREQ=WEEKLY;COUNT=10"],
-        )
-        assert json.loads(result) == mock_event
-
-    def test_create_event_with_visibility(self, calendar_tools, mock_calendar_service):
-        mock_event = {"id": "test_id", "visibility": "private"}
-        mock_calendar_service.events().insert().execute.return_value = mock_event
-
-        result = calendar_tools.create_event(
-            start_date="2025-07-19T10:00:00",
-            end_date="2025-07-19T11:00:00",
-            title="Private Meeting",
-            visibility="private",
-        )
-        assert json.loads(result) == mock_event
-
-    def test_create_event_with_reminders(self, calendar_tools, mock_calendar_service):
-        mock_event = {"id": "test_id"}
-        mock_calendar_service.events().insert().execute.return_value = mock_event
-
-        result = calendar_tools.create_event(
-            start_date="2025-07-19T10:00:00",
-            end_date="2025-07-19T11:00:00",
-            title="Reminded Event",
-            reminders='[{"method": "popup", "minutes": 10}]',
-        )
-        assert json.loads(result) == mock_event
-
-    def test_create_event_with_color(self, calendar_tools, mock_calendar_service):
-        mock_event = {"id": "test_id", "colorId": "5"}
-        mock_calendar_service.events().insert().execute.return_value = mock_event
-
-        result = calendar_tools.create_event(
-            start_date="2025-07-19T10:00:00",
-            end_date="2025-07-19T11:00:00",
-            title="Colored Event",
-            color_id="5",
-        )
-        assert json.loads(result) == mock_event
-
-
 class TestUpdateEvent:
     def test_update_event_success(self, calendar_tools, mock_calendar_service):
         existing_event = {
