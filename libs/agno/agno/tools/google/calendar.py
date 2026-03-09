@@ -90,20 +90,25 @@ except ImportError:
     )
 
 
-CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
+_CALENDAR_BASE_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Google Calendar tools for managing events and scheduling.
 
     ## Date/Time Formats
     - All dates use ISO format: YYYY-MM-DDTHH:MM:SS
     - For all-day events, use YYYY-MM-DD
-    - Always specify timezone when creating events
+    - Always specify timezone when creating events""")
 
-    ## Tips
-    - Use get_event to fetch full details before updating an event
-    - Use check_availability (FreeBusy) to check multiple people's schedules at once
-    - Use quick_add_event for simple events -- Google parses natural language
-    - Use search_events for full-text search across event fields
-    - Event IDs from list_events can be used with get_event, update_event, delete_event""")
+# Per-tool tips, keyed by tool function name
+_CALENDAR_TOOL_TIPS: Dict[str, str] = {
+    "get_event": "Use get_event to fetch full details before updating an event",
+    "check_availability": "Use check_availability (FreeBusy) to check multiple people's schedules at once",
+    "quick_add_event": "Use quick_add_event for simple events -- Google parses natural language",
+    "search_events": "Use search_events for full-text search across event fields",
+    "list_events": "Event IDs from list_events can be used with get_event, update_event, delete_event",
+    "create_event": "create_event supports recurrence, all-day events, reminders, visibility, and color",
+    "respond_to_event": "Use respond_to_event to accept, decline, or tentatively accept meeting invitations",
+    "move_event": "Use move_event to transfer an event between calendars",
+}
 
 
 def authenticate(func):
@@ -212,10 +217,7 @@ class GoogleCalendarTools(Toolkit):
                 stacklevel=2,
             )
 
-        if instructions is None:
-            self.instructions = CALENDAR_INSTRUCTIONS
-        else:
-            self.instructions = instructions
+        self._custom_instructions = instructions
 
         self.creds = creds
         self.service: Optional[Resource] = None
@@ -266,10 +268,21 @@ class GoogleCalendarTools(Toolkit):
             if search_events:
                 tools.append(self.search_events)
 
+        # Build instructions from registered tools
+        if self._custom_instructions is not None:
+            derived_instructions = self._custom_instructions
+        else:
+            tool_names = {t.__name__ if callable(t) else t for t in tools}
+            tips = [tip for name, tip in _CALENDAR_TOOL_TIPS.items() if name in tool_names]
+            if tips:
+                derived_instructions = _CALENDAR_BASE_INSTRUCTIONS + "\n\n## Tips\n" + "\n".join(f"- {t}" for t in tips)
+            else:
+                derived_instructions = _CALENDAR_BASE_INSTRUCTIONS
+
         super().__init__(
             name="google_calendar_tools",
             tools=tools,
-            instructions=self.instructions,
+            instructions=derived_instructions,
             add_instructions=add_instructions,
             **kwargs,
         )
