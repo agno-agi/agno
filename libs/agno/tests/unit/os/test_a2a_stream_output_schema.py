@@ -6,9 +6,7 @@ output_schema set to a Pydantic model.
 
 import importlib
 import json
-import sys
 
-import pytest
 from pydantic import BaseModel, Field
 
 # Import _serialize_content directly from utils without triggering
