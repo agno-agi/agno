@@ -414,7 +414,7 @@ class Workflow:
             "add_history_to_context": add_history_to_context
             if add_history_to_context is not None
             else self.add_history_to_context,
-            "debug_mode": debug_mode if debug_mode is not None else None,
+            "debug_mode": debug_mode,
         }
 
     @property
