@@ -45,9 +45,7 @@ class DailyBriefing(BaseModel):
     date: str = Field(..., description="Today's date in YYYY-MM-DD format")
     total_events: int = Field(..., description="Total number of events today")
     total_meeting_hours: float = Field(..., description="Total hours in meetings")
-    free_hours: float = Field(
-        ..., description="Estimated free hours between 9am-6pm"
-    )
+    free_hours: float = Field(..., description="Estimated free hours between 9am-6pm")
     events: List[MeetingItem] = Field(
         default_factory=list, description="All events in chronological order"
     )
@@ -55,9 +53,7 @@ class DailyBriefing(BaseModel):
         default_factory=list,
         description="Overlapping events or back-to-back warnings",
     )
-    summary: str = Field(
-        ..., description="2-3 sentence overview of the day"
-    )
+    summary: str = Field(..., description="2-3 sentence overview of the day")
 
 
 agent = Agent(

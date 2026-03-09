@@ -329,6 +329,7 @@ class TestCreateEvent:
         )
         assert "error" in json.loads(result)
 
+
 class TestUpdateEvent:
     def test_update_event_success(self, calendar_tools, mock_calendar_service):
         existing_event = {
