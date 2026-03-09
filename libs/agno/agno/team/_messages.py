@@ -428,7 +428,12 @@ def get_system_message(
 
         time = datetime.now(tz) if tz else datetime.now()
 
-        additional_information.append(f"The current time is {time}.")
+        if team.datetime_format:
+            formatted_time = time.strftime(team.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        additional_information.append(f"The current time is {formatted_time}.")
 
     # 1.3.3 Add the current location
     if team.add_location_to_context:
@@ -644,7 +649,12 @@ async def aget_system_message(
 
         time = datetime.now(tz) if tz else datetime.now()
 
-        additional_information.append(f"The current time is {time}.")
+        if team.datetime_format:
+            formatted_time = time.strftime(team.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        additional_information.append(f"The current time is {formatted_time}.")
 
     # 1.3.3 Add the current location
     if team.add_location_to_context:
