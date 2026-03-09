@@ -1002,7 +1002,9 @@ class OpenAIResponses(Model):
         # Detect incomplete responses (output truncated by max_output_tokens or content filter)
         if response.status == "incomplete":
             reason = response.incomplete_details.reason if response.incomplete_details else "unknown"
-            has_partial_content = bool(response.output_text)
+            has_partial_content = bool(response.output_text) or any(
+                getattr(item, "type", None) == "function_call" for item in (response.output or [])
+            )
             log_warning(
                 f"Model response incomplete: reason={reason}, model={self.id}, "
                 f"has_partial_content={has_partial_content}"
@@ -1188,7 +1190,7 @@ class OpenAIResponses(Model):
                     if stream_event.response.incomplete_details
                     else "unknown"
                 )
-                has_content = bool(assistant_message.content)
+                has_content = bool(assistant_message.content) or bool(assistant_message.tool_calls)
                 log_warning(
                     f"Streaming response incomplete: reason={reason}, model={self.id}, has_content={has_content}"
                 )

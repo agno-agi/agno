@@ -202,6 +202,27 @@ class TestOpenAIResponsesIncomplete:
         with pytest.raises(ModelProviderError, match="unknown"):
             model._parse_provider_response(response)  # type: ignore[arg-type]
 
+    def test_incomplete_with_function_call_does_not_raise(self):
+        """When status=incomplete but output contains function_call items, don't raise."""
+        model = OpenAIResponses(id="gpt-4o")
+
+        fake_function_call = MagicMock()
+        fake_function_call.type = "function_call"
+        fake_function_call.name = "search"
+        fake_function_call.arguments = "{}"
+        fake_function_call.call_id = "call_1"
+
+        response = _FakeResponsesResponse(
+            status="incomplete",
+            incomplete_details=_FakeIncompleteDetails(reason="max_output_tokens"),
+            output_text="",
+            output=[fake_function_call],
+        )
+
+        result = model._parse_provider_response(response)  # type: ignore[arg-type]
+        # Should not raise — function_call items count as partial content
+        assert result is not None
+
     def test_completed_status_does_not_raise(self):
         """Normal completed response should not raise."""
         model = OpenAIResponses(id="gpt-4o")
@@ -258,6 +279,26 @@ class TestOpenAIResponsesStreamingIncomplete:
 
         result, _ = model._parse_provider_response_delta(event, assistant_message, {})  # type: ignore[arg-type]
         # Should return a ModelResponse (metrics) without raising
+        assert result is not None
+
+    def test_streaming_incomplete_with_tool_calls_does_not_raise(self):
+        """When response.completed has status=incomplete but assistant has tool_calls, don't raise."""
+        model = OpenAIResponses(id="gpt-4o")
+        assistant_message = Message(role="assistant")  # no content
+        assistant_message.tool_calls = [
+            {"call_id": "call_1", "type": "function", "function": {"name": "search", "arguments": "{}"}}
+        ]
+
+        fake_response = _FakeResponsesResponse(
+            status="incomplete",
+            incomplete_details=_FakeIncompleteDetails(reason="max_output_tokens"),
+            output_text="",
+        )
+        fake_response.output = []
+        event = _FakeStreamEvent(type="response.completed", response=fake_response)
+
+        result, _ = model._parse_provider_response_delta(event, assistant_message, {})  # type: ignore[arg-type]
+        # Should not raise — tool_calls count as partial content
         assert result is not None
 
     def test_streaming_completed_does_not_raise(self):
