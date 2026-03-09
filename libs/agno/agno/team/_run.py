@@ -4147,6 +4147,7 @@ def _get_continue_run_messages(
     input: List[Message],
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -4210,6 +4211,10 @@ def _get_continue_run_messages(
     for msg in input:
         if msg is not system_message:
             run_messages.messages.append(msg)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    if run_context is not None:
+        run_context.messages = run_messages.messages
 
     return run_messages
 
@@ -4839,7 +4844,11 @@ def continue_run_dispatch(
         # Get continue run messages from existing conversation
         input_messages = run_response.messages or []
         run_messages = _get_continue_run_messages(
-            team, input=input_messages, session=team_session, add_history_to_context=team.add_history_to_context
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
         )
 
         # Handle tool call updates (execute confirmed tools, etc.)
@@ -5628,6 +5637,7 @@ async def _acontinue_run(
                         input=input_messages,
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
                     )
 
                     await _ahandle_team_tool_call_updates(
@@ -5931,6 +5941,7 @@ async def _acontinue_run_stream(
                         input=input_messages,
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
                     )
 
                     run_response.status = RunStatus.running

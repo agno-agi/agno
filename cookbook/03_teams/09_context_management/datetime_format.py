@@ -26,7 +26,7 @@ scheduling_team = Team(
     model=OpenAIResponses(id="gpt-5-mini"),
     members=[scheduler],
     add_datetime_to_context=True,
-    datetime_format="%B %d, %Y %I:%M %p %Z", # Human-readable format (e.g., March 09, 2026 02:30 PM UTC)
+    datetime_format="%B %d, %Y %I:%M %p %Z",  # Human-readable format (e.g., March 09, 2026 02:30 PM UTC)
     timezone_identifier="US/Eastern",
 )
 
