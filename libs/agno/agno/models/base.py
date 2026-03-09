@@ -2096,7 +2096,6 @@ class Model(ABC):
 
                 if function_call.function.show_result and item.content is not None:
                     show_result_response = ModelResponse(content=item.content)
-                    skip_raw_event = True
 
             if isinstance(item, CustomEvent):
                 output_delta = str(item)
