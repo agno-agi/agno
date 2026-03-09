@@ -7,6 +7,7 @@ calls. These tests verify that:
 2. Concurrency is limited by a semaphore
 3. Individual failures don't break the entire batch
 4. Successful results are collected correctly
+5. EMBEDDER_FALLBACK_CONCURRENCY env var is validated properly
 """
 
 import asyncio
@@ -160,3 +161,35 @@ async def test_fallback_all_fail_returns_empty(embedder):
     assert len(embeddings) == 3
     assert all(emb == [] for emb in embeddings)
     assert all(u is None for u in usage)
+
+
+@pytest.mark.asyncio
+async def test_fallback_non_numeric_concurrency_env_uses_default(embedder):
+    """Non-numeric EMBEDDER_FALLBACK_CONCURRENCY should fall back to default 5."""
+    e, mock_aclient = embedder
+
+    mock_aclient.embeddings.create = AsyncMock(side_effect=Exception("batch failed"))
+    e.async_get_embedding_and_usage = AsyncMock(return_value=([0.1], {"prompt_tokens": 1}))
+
+    texts = ["a", "b"]
+    with patch.dict("os.environ", {"EMBEDDER_FALLBACK_CONCURRENCY": "not_a_number"}):
+        embeddings, usage = await e.async_get_embeddings_batch_and_usage(texts)
+
+    assert len(embeddings) == 2
+    assert all(emb == [0.1] for emb in embeddings)
+
+
+@pytest.mark.asyncio
+async def test_fallback_zero_concurrency_env_uses_minimum_one(embedder):
+    """EMBEDDER_FALLBACK_CONCURRENCY=0 should be clamped to 1, not hang."""
+    e, mock_aclient = embedder
+
+    mock_aclient.embeddings.create = AsyncMock(side_effect=Exception("batch failed"))
+    e.async_get_embedding_and_usage = AsyncMock(return_value=([0.5], {"prompt_tokens": 2}))
+
+    texts = ["x", "y", "z"]
+    with patch.dict("os.environ", {"EMBEDDER_FALLBACK_CONCURRENCY": "0"}):
+        embeddings, usage = await e.async_get_embeddings_batch_and_usage(texts)
+
+    assert len(embeddings) == 3
+    assert all(emb == [0.5] for emb in embeddings)

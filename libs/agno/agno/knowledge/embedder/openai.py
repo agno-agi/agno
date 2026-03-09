@@ -189,7 +189,11 @@ class OpenAIEmbedder(Embedder):
                 log_warning(f"Error in async batch embedding: {e}")
                 # Fallback to PARALLEL individual calls for this batch
                 # Configurable via EMBEDDER_FALLBACK_CONCURRENCY env var (default: 5)
-                max_concurrent = int(os.getenv("EMBEDDER_FALLBACK_CONCURRENCY", "5"))
+                try:
+                    max_concurrent = int(os.getenv("EMBEDDER_FALLBACK_CONCURRENCY", "5"))
+                except (ValueError, TypeError):
+                    max_concurrent = 5
+                max_concurrent = max(1, max_concurrent)
                 semaphore = asyncio.Semaphore(max_concurrent)
 
                 async def get_single_embedding(text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -207,12 +211,11 @@ class OpenAIEmbedder(Embedder):
                 )
 
                 for result in results:
-                    if isinstance(result, BaseException):
+                    if isinstance(result, Exception):
                         all_embeddings.append([])
                         all_usage.append(None)
                     else:
-                        embedding, usage = result
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
+                        all_embeddings.append(result[0])
+                        all_usage.append(result[1])
 
         return all_embeddings, all_usage
