@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import sanitize_tool_name
 from agno.workflow.workflow import Workflow, WorkflowRunOutput
 
 
@@ -33,15 +34,20 @@ class WorkflowTools(Toolkit):
         # The workflow to execute
         self.workflow: Workflow = workflow
 
-        # Tool names for this workflow
-        self._think_tool = f"think_{workflow.name}"
-        self._run_tool = f"run_{workflow.name}"
-        self._analyze_tool = f"analyze_{workflow.name}"
+        # Sanitize workflow name for use in tool names
+        _name = sanitize_tool_name(workflow.name or "workflow")
+
+        # Keep think/analyze as exact names so _response.py reasoning aggregation
+        # can detect them (it checks for tool_name.lower() == "think" / "analyze").
+        self._think_tool = "think"
+        self._analyze_tool = "analyze"
+        # Namespace only the run tool to avoid collisions
+        self._run_tool = f"run_workflow_{_name}"
 
         # Namespaced session state keys to avoid clashes when multiple WorkflowTools are on the same agent
-        self._thoughts_key = f"workflow_thoughts_{workflow.name}"
-        self._results_key = f"workflow_results_{workflow.name}"
-        self._analysis_key = f"workflow_analysis_{workflow.name}"
+        self._thoughts_key = f"workflow_thoughts_{_name}"
+        self._results_key = f"workflow_results_{_name}"
+        self._analysis_key = f"workflow_analysis_{_name}"
 
         # Add instructions for using this toolkit
         if instructions is None:
@@ -57,7 +63,7 @@ class WorkflowTools(Toolkit):
             self.instructions = instructions
 
         super().__init__(
-            name=f"{workflow.name}_tools",
+            name=f"{_name}_tools",
             instructions=self.instructions,
             add_instructions=add_instructions,
             auto_register=False,

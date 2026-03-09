@@ -8,13 +8,13 @@ from agno.db.schemas import UserMemory
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import sanitize_tool_name
 
 
 class MemoryTools(Toolkit):
     def __init__(
         self,
         db: BaseDb,
-        memory_name: str = "memory",
         enable_get_memories: bool = True,
         enable_add_memory: bool = True,
         enable_update_memory: bool = True,
@@ -26,23 +26,28 @@ class MemoryTools(Toolkit):
         add_few_shot: bool = True,
         few_shot_examples: Optional[str] = None,
         all: bool = False,
+        *,
+        memory_name: str = "memory",
         **kwargs,
     ):
         # The database to use for memory operations
         self.db: BaseDb = db
 
+        # Sanitize memory_name for safe use in tool names
+        _name = sanitize_tool_name(memory_name)
+
         # Tool names for this memory store
-        self._think_tool = f"think_{memory_name}"
-        self._get_tool = f"get_memories_{memory_name}"
-        self._add_tool = f"add_memory_{memory_name}"
-        self._update_tool = f"update_memory_{memory_name}"
-        self._delete_tool = f"delete_memory_{memory_name}"
-        self._analyze_tool = f"analyze_{memory_name}"
+        self._think_tool = f"think_{_name}"
+        self._get_tool = f"get_memories_{_name}"
+        self._add_tool = f"add_memory_{_name}"
+        self._update_tool = f"update_memory_{_name}"
+        self._delete_tool = f"delete_memory_{_name}"
+        self._analyze_tool = f"analyze_{_name}"
 
         # Namespaced session state keys to avoid clashes when multiple MemoryTools are on the same agent
-        self._thoughts_key = f"memory_thoughts_{memory_name}"
-        self._operations_key = f"memory_operations_{memory_name}"
-        self._analysis_key = f"memory_analysis_{memory_name}"
+        self._thoughts_key = f"memory_thoughts_{_name}"
+        self._operations_key = f"memory_operations_{_name}"
+        self._analysis_key = f"memory_analysis_{_name}"
 
         # Add instructions for using this toolkit
         if instructions is None:
@@ -63,7 +68,7 @@ class MemoryTools(Toolkit):
             self.instructions = instructions
 
         super().__init__(
-            name=f"{memory_name}_tools",
+            name=f"{_name}_tools",
             instructions=self.instructions,
             add_instructions=add_instructions,
             auto_register=False,

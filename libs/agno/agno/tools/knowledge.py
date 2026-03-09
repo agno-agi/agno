@@ -7,6 +7,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import sanitize_tool_name
 
 
 class KnowledgeTools(Toolkit):
@@ -30,7 +31,7 @@ class KnowledgeTools(Toolkit):
         self.knowledge: Knowledge = knowledge
 
         # Use knowledge name for namespacing (falls back to "knowledge" if not set)
-        _name = knowledge.name or "knowledge"
+        _name = sanitize_tool_name(knowledge.name or "knowledge")
 
         # Tool names for this knowledge base
         self._think_tool = f"think_{_name}"
