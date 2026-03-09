@@ -241,3 +241,69 @@ async def test_upload_audio_single_empty_bytes():
     with patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload:
         await upload_and_send_media_async(items, "audio", "phone", _TEST_CONFIG, send_text_fallback=False)
         mock_upload.assert_not_called()
+
+
+# === upload_and_send_media_async — return value ===
+
+
+@pytest.mark.asyncio
+async def test_upload_returns_true_on_success():
+    items = [Image(content=b"fake_png")]
+    with (
+        patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
+        patch("agno.os.interfaces.whatsapp.helpers._send_media", new_callable=AsyncMock),
+    ):
+        mock_upload.return_value = "media_123"
+        result = await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG)
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_upload_returns_false_on_failure():
+    items = [Image(content=b"fake_png")]
+    with (
+        patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
+    ):
+        mock_upload.return_value = {"error": "upload failed"}
+        result = await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG, "fallback")
+        assert result is False
+
+
+@pytest.mark.asyncio
+async def test_upload_returns_false_on_empty_content():
+    items = [Image(content=b"")]
+    with patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock):
+        result = await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG, "fallback")
+        assert result is False
+
+
+# === upload_and_send_media_async — image MIME passthrough ===
+
+
+@pytest.mark.asyncio
+async def test_upload_image_jpeg_detected_from_bytes():
+    # JPEG magic bytes: FF D8 FF
+    items = [Image(content=b"\xff\xd8\xff\xe0fake_jpeg_data")]
+    with (
+        patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
+        patch("agno.os.interfaces.whatsapp.helpers._send_media", new_callable=AsyncMock),
+    ):
+        mock_upload.return_value = "media_456"
+        await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG)
+        assert mock_upload.call_args.kwargs["mime_type"] == "image/jpeg"
+        assert mock_upload.call_args.kwargs["filename"] == "image.jpeg"
+
+
+@pytest.mark.asyncio
+async def test_upload_image_non_jpeg_defaults_to_png():
+    # PNG magic or anything else → defaults to PNG
+    items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png_data")]
+    with (
+        patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
+        patch("agno.os.interfaces.whatsapp.helpers._send_media", new_callable=AsyncMock),
+    ):
+        mock_upload.return_value = "media_789"
+        await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG)
+        assert mock_upload.call_args.kwargs["mime_type"] == "image/png"
+        assert mock_upload.call_args.kwargs["filename"] == "image.png"

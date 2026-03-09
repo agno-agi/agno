@@ -21,8 +21,11 @@ def _build_app(agent_mock: Mock) -> FastAPI:
     return app
 
 
-def _make_agent_mock():
+def _make_agent_mock(db=None):
     agent_mock = AsyncMock()
+    agent_mock.name = "test_agent"
+    agent_mock.id = "test_agent"
+    agent_mock.db = db
     agent_mock.arun = AsyncMock(
         return_value=Mock(
             status="OK",
@@ -36,6 +39,32 @@ def _make_agent_mock():
         )
     )
     return agent_mock
+
+
+def _make_mock_db():
+    from agno.db.base import BaseDb
+
+    db = Mock(spec=BaseDb)
+    # Track upserted sessions so get_sessions can return them
+    db._sessions = []
+
+    def _upsert(session, **kwargs):
+        db._sessions.append(session)
+        return session
+
+    def _get_sessions(**kwargs):
+        user_id = kwargs.get("user_id")
+        matches = [s for s in db._sessions if s.user_id == user_id]
+        # Sort newest first (highest created_at)
+        matches.sort(key=lambda s: s.created_at or 0, reverse=True)
+        limit = kwargs.get("limit")
+        if limit:
+            matches = matches[:limit]
+        return matches
+
+    db.upsert_session = Mock(side_effect=_upsert)
+    db.get_sessions = Mock(side_effect=_get_sessions)
+    return db
 
 
 def _make_whatsapp_webhook(message_type: str, **kwargs) -> dict:
@@ -175,7 +204,7 @@ async def test_text_message_processing():
         call_args = agent_mock.arun.call_args
         assert call_args[0][0] == "hello world"
         assert call_args.kwargs["user_id"] == _HASHED_SENDER
-        assert call_args.kwargs["session_id"] == f"wa:{_HASHED_SENDER}"
+        assert call_args.kwargs["session_id"] == f"wa:test_agent:{_HASHED_SENDER}"
 
 
 @pytest.mark.asyncio
@@ -738,7 +767,7 @@ async def test_same_phone_same_session_id():
         # Both calls get the same deterministic session_id and user_id
         assert first_call.kwargs["session_id"] == second_call.kwargs["session_id"]
         assert first_call.kwargs["user_id"] == second_call.kwargs["user_id"]
-        assert first_call.kwargs["session_id"] == f"wa:{_HASHED_SENDER}"
+        assert first_call.kwargs["session_id"] == f"wa:test_agent:{_HASHED_SENDER}"
 
 
 @pytest.mark.asyncio
@@ -800,7 +829,8 @@ async def test_user_id_is_hashed_not_raw_phone():
 
 @pytest.mark.asyncio
 async def test_new_command_starts_fresh_session():
-    agent_mock = _make_agent_mock()
+    mock_db = _make_mock_db()
+    agent_mock = _make_agent_mock(db=mock_db)
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock) as mock_send_text,
@@ -815,9 +845,9 @@ async def test_new_command_starts_fresh_session():
         client.post("/webhook", json=body)
         await _wait_for_agent_call(agent_mock)
         original_session = agent_mock.arun.call_args.kwargs["session_id"]
-        assert original_session == f"wa:{_HASHED_SENDER}"
+        assert original_session == f"wa:test_agent:{_HASHED_SENDER}"
 
-        # Second: send /new
+        # Second: send /new — persists new session to DB
         agent_mock.arun.reset_mock()
         mock_send_text.reset_mock()
         body = _make_whatsapp_webhook("text", text={"body": "/new"})
@@ -827,6 +857,11 @@ async def test_new_command_starts_fresh_session():
 
         # Agent should NOT be called — /new is intercepted
         agent_mock.arun.assert_not_called()
+        # Session persisted to DB
+        mock_db.upsert_session.assert_called_once()
+        persisted = mock_db.upsert_session.call_args[0][0]
+        assert persisted.user_id == _HASHED_SENDER
+        assert persisted.session_id.startswith(f"wa:test_agent:{_HASHED_SENDER}:")
         # Confirmation sent to user
         mock_send_text.assert_called_once()
         sent_text = mock_send_text.call_args.kwargs.get(
@@ -834,7 +869,7 @@ async def test_new_command_starts_fresh_session():
         )
         assert "New conversation started!" in sent_text
 
-        # Third: next message should use a NEW session_id
+        # Third: next message should use the NEW session_id from DB
         agent_mock.arun.reset_mock()
         body = _make_whatsapp_webhook("text", text={"body": "after reset"})
         client.post("/webhook", json=body)
@@ -842,14 +877,16 @@ async def test_new_command_starts_fresh_session():
         new_session = agent_mock.arun.call_args.kwargs["session_id"]
 
         assert new_session != original_session
-        assert new_session.startswith(f"wa:{_HASHED_SENDER}:")
+        # /new sessions scoped by entity_id for multi-bot isolation
+        assert new_session.startswith(f"wa:test_agent:{_HASHED_SENDER}:")
         # user_id stays the same — memories persist
         assert agent_mock.arun.call_args.kwargs["user_id"] == _HASHED_SENDER
 
 
 @pytest.mark.asyncio
 async def test_new_command_case_insensitive():
-    agent_mock = _make_agent_mock()
+    mock_db = _make_mock_db()
+    agent_mock = _make_agent_mock(db=mock_db)
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock) as mock_send_text,

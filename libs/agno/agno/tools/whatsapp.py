@@ -221,11 +221,7 @@ class WhatsAppTools(Toolkit):
             if len(buttons) > 3:
                 return json.dumps({"error": "WhatsApp allows a maximum of 3 reply buttons"})
 
-            # WhatsApp enforces max 20 chars for button titles
-            for btn in buttons:
-                btn.title = btn.title[:20]
-
-            action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title}} for btn in buttons]
+            action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title[:20]}} for btn in buttons]
 
             interactive: Dict[str, Any] = {
                 "type": "button",
@@ -280,12 +276,6 @@ class WhatsAppTools(Toolkit):
             if len(sections) > 10:
                 return json.dumps({"error": "WhatsApp allows a maximum of 10 sections"})
 
-            # WhatsApp enforces max 20 chars for button text, 24 for row titles
-            button_text = button_text[:20]
-            for section in sections:
-                for row in section.rows:
-                    row.title = row.title[:24]
-
             total_rows = sum(len(s.rows) for s in sections)
             if total_rows > 10:
                 return json.dumps(
@@ -294,12 +284,23 @@ class WhatsAppTools(Toolkit):
                     }
                 )
 
+            # Build payload with truncation without mutating caller's models
+            sections_payload = []
+            for section in sections:
+                rows = []
+                for row in section.rows:
+                    row_data: Dict[str, Any] = {"id": row.id, "title": row.title[:24]}
+                    if row.description:
+                        row_data["description"] = row.description[:72]
+                    rows.append(row_data)
+                sections_payload.append({"title": section.title, "rows": rows})
+
             interactive: Dict[str, Any] = {
                 "type": "list",
                 "body": {"text": body_text},
                 "action": {
-                    "button": button_text,
-                    "sections": [s.model_dump(exclude_none=True) for s in sections],
+                    "button": button_text[:20],
+                    "sections": sections_payload,
                 },
             }
             if header:

@@ -23,6 +23,8 @@ image_agent = Agent(
         id="gemini-3-pro-image-preview",
         response_modalities=["Text", "Image"],
     ),
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 

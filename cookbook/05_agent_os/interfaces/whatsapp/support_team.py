@@ -61,6 +61,7 @@ support_team = Team(
     instructions=[
         "When the user asks a question, delegate research to the Researcher.",
         "Then have the Writer compose a friendly WhatsApp-style reply.",
+        "Do not use emojis. Keep a professional, neutral tone.",
     ],
     db=team_db,
     add_history_to_context=True,

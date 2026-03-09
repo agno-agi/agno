@@ -1,7 +1,8 @@
 import asyncio
 import hashlib
 import re
-from typing import Dict, Optional, Union
+from time import time
+from typing import Any, Literal, NamedTuple, Optional, Type, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
@@ -20,6 +22,9 @@ from agno.os.interfaces.whatsapp.helpers import (
     upload_and_send_media_async,
 )
 from agno.os.interfaces.whatsapp.security import validate_webhook_signature
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_error, log_info, log_warning
@@ -46,6 +51,35 @@ _WA_TOOL_NAMES = frozenset(
         "mark_as_read",
     }
 )
+
+
+class _SessionConfig(NamedTuple):
+    session_type: SessionType
+    session_cls: Type[Any]
+    id_field: str
+    db: Any
+    has_db: bool
+    is_async_db: bool
+
+
+_SESSION_DISPATCH = {
+    "agent": (SessionType.AGENT, AgentSession, "agent_id"),
+    "team": (SessionType.TEAM, TeamSession, "team_id"),
+    "workflow": (SessionType.WORKFLOW, WorkflowSession, "workflow_id"),
+}
+
+
+def _resolve_session_config(entity: Any, entity_type: str) -> _SessionConfig:
+    session_type, session_cls, id_field = _SESSION_DISPATCH[entity_type]
+    db = getattr(entity, "db", None)
+    return _SessionConfig(
+        session_type=session_type,
+        session_cls=session_cls,
+        id_field=id_field,
+        db=db,
+        has_db=isinstance(db, (BaseDb, AsyncBaseDb)),
+        is_async_db=isinstance(db, AsyncBaseDb),
+    )
 
 
 def _format_reasoning(text: str) -> str:
@@ -83,23 +117,25 @@ def attach_routes(
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
 
-    # Resolve credentials once; inner functions capture via closure
+    # Inner functions capture config via closure to keep each instance isolated
+    entity = agent or team or workflow
+    # entity_type drives session dispatch and /new handler
+    entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
+    raw_name = getattr(entity, "name", None)
+    # entity_name labels messages; entity_id namespaces session IDs
+    entity_name = raw_name if isinstance(raw_name, str) else entity_type
+    # Multiple WhatsApp routers on one app need unique operation_ids
+    op_suffix = entity_name.lower().replace(" ", "_")
+    entity_id = getattr(entity, "id", None) or entity_name
+
+    # Used by /new handler (create sessions) and process_message (find latest)
+    session_config = _resolve_session_config(entity, entity_type)
+
     config = WhatsAppConfig.init(
         access_token=access_token,
         phone_number_id=phone_number_id,
         verify_token=verify_token,
     )
-
-    entity = agent or team or workflow
-    entity_type = "agent" if agent else "team" if team else "workflow"
-
-    # Maps hashed_phone → session_id; absent key falls back to default deterministic ID.
-    # On server restart the map is empty, so users resume their original session.
-    _active_sessions: Dict[str, str] = {}
-    raw_name = getattr(entity, "name", None)
-    entity_name = raw_name if isinstance(raw_name, str) else entity_type
-    # Unique suffix prevents operation_id collisions across mounted routers
-    op_suffix = entity_name.lower().replace(" ", "_")
 
     @router.get("/status", operation_id=f"whatsapp_status_{op_suffix}")
     async def status():
@@ -175,13 +211,53 @@ def attach_routes(
 
             # /new starts a fresh session — old session data is preserved
             if parsed.text.strip().lower() == "/new":
-                _active_sessions[hashed_phone] = f"wa:{hashed_phone}:{uuid4().hex[:8]}"
-                await send_whatsapp_message_async(phone_number, _SESSION_RESET_MESSAGE, config)
+                if not session_config.has_db:
+                    await send_whatsapp_message_async(
+                        phone_number, "Session reset requires storage to be configured.", config
+                    )
+                    return
+                try:
+                    new_session_id = f"wa:{entity_id}:{hashed_phone}:{uuid4().hex[:8]}"
+                    new_session = session_config.session_cls(
+                        session_id=new_session_id,
+                        user_id=hashed_phone,
+                        created_at=int(time()),
+                        **{session_config.id_field: entity_id},
+                    )
+                    if session_config.is_async_db:
+                        await session_config.db.upsert_session(new_session)
+                    else:
+                        session_config.db.upsert_session(new_session)
+                    await send_whatsapp_message_async(phone_number, _SESSION_RESET_MESSAGE, config)
+                except Exception as e:
+                    log_warning(f"Failed to persist /new session: {e}")
+                    await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
                 return
 
             log_info(f"Processing message from {hashed_phone[:12]}: {parsed.text}")
 
-            session_id = _active_sessions.get(hashed_phone, f"wa:{hashed_phone}")
+            # Resolve session: check DB for latest, fall back to deterministic ID
+            default_session_id = f"wa:{entity_id}:{hashed_phone}"
+            session_id = default_session_id
+            if session_config.has_db:
+                try:
+                    # Find the most recent session for this user + entity
+                    session_filter = dict(
+                        session_type=session_config.session_type,
+                        user_id=hashed_phone,
+                        component_id=entity_id,
+                        limit=1,
+                        sort_by="updated_at",
+                        sort_order="desc",
+                    )
+                    if session_config.is_async_db:
+                        sessions = await session_config.db.get_sessions(**session_filter)
+                    else:
+                        sessions = session_config.db.get_sessions(**session_filter)
+                    if sessions:
+                        session_id = sessions[0].session_id
+                except Exception as e:
+                    log_warning(f"Session lookup failed, using default: {e}")
 
             # Download media from Meta servers and wrap as Agno media objects
             run_kwargs: dict = {

@@ -8,6 +8,7 @@ import httpx
 
 from agno.utils.audio import pcm_to_wav_bytes
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.tokens import get_image_type
 
 _BASE_URL = "https://graph.facebook.com"
 _API_VERSION = "v22.0"
@@ -239,7 +240,7 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
-    except httpx.HTTPStatusError as e:
+    except Exception as e:
         return {"error": str(e)}
     return None
 
@@ -270,7 +271,8 @@ async def upload_and_send_media_async(
     config: WhatsAppConfig,
     response_content: Optional[str] = None,
     send_text_fallback: bool = True,
-) -> None:
+) -> bool:
+    any_sent = False
     for item in media_items:
         raw_bytes = item.get_content_bytes()
         if not raw_bytes:
@@ -280,10 +282,17 @@ async def upload_and_send_media_async(
             continue
 
         if media_type == "image":
-            mime_type, filename = "image/png", "image.png"
+            # WhatsApp only accepts image/jpeg and image/png
+            detected = get_image_type(raw_bytes)
+            fmt = detected if detected == "jpeg" else "png"
+            mime_type = f"image/{fmt}"
+            filename = f"image.{fmt}"
         elif media_type == "document":
             filename = item.name or item.filename or "document"
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        elif media_type == "video":
+            mime_type = getattr(item, "mime_type", None) or "video/mp4"
+            filename = f"video.{mime_type.split('/')[-1]}"
         elif media_type == "audio":
             mime_type = item.mime_type or "audio/mpeg"
             if mime_type.split(";")[0] in _WHATSAPP_AUDIO_MIMES:
@@ -305,7 +314,7 @@ async def upload_and_send_media_async(
 
         # Caption only for image/document; audio has no caption field
         # WhatsApp caps captions at 1024 chars — truncate explicitly
-        caption = response_content if media_type in ("image", "document") else None
+        caption = response_content if media_type in ("image", "video", "document") else None
         if caption and len(caption) > 1024:
             caption = caption[:1021] + "..."
         await _send_media(
@@ -316,3 +325,5 @@ async def upload_and_send_media_async(
             caption=caption,
             filename=filename if media_type == "document" else None,
         )
+        any_sent = True
+    return any_sent
