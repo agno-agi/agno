@@ -302,6 +302,9 @@ APPROVAL_TABLE_SCHEMA = {
     "resolved_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    # Run status from the associated run. Updated when run completes/errors/cancels.
+    # Values: "PAUSED", "COMPLETED", "RUNNING", "ERROR", "CANCELLED", or None.
+    "run_status": {"type": String, "nullable": True, "index": True},
 }
 
 
