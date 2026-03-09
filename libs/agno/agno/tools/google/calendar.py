@@ -819,25 +819,29 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def check_availability(
         self,
-        attendee_emails: List[str],
         start_date: str,
         end_date: str,
+        attendee_emails: Optional[List[str]] = None,
         timezone: Optional[str] = None,
     ) -> str:
         """
         Check availability of one or more people within a time window.
         Returns busy time ranges for each attendee.
+        Use "me" or omit attendee_emails to check the authenticated user's own calendar.
 
         Args:
-            attendee_emails (List[str]): Email addresses to check availability for
             start_date (str): Start of the time window in ISO format (YYYY-MM-DDTHH:MM:SS)
             end_date (str): End of the time window in ISO format (YYYY-MM-DDTHH:MM:SS)
+            attendee_emails (Optional[List[str]]): Email addresses to check availability for. Defaults to the authenticated user's calendar if not provided. Use "me" for the authenticated user alongside other emails.
             timezone (Optional[str]): Timezone for the query (default: UTC)
 
         Returns:
             str: JSON string with busy periods for each attendee
         """
         try:
+            # Default to authenticated user's primary calendar
+            resolved = [("primary" if e in ("me", "primary") else e) for e in (attendee_emails or ["me"])]
+
             try:
                 start_dt = datetime.datetime.fromisoformat(start_date)
                 end_dt = datetime.datetime.fromisoformat(end_date)
@@ -852,7 +856,7 @@ class GoogleCalendarTools(Toolkit):
                 "timeMin": start_dt.isoformat(),
                 "timeMax": end_dt.isoformat(),
                 "timeZone": timezone or "UTC",
-                "items": [{"id": email} for email in attendee_emails],
+                "items": [{"id": cal_id} for cal_id in resolved],
             }
 
             service = cast(Resource, self.service)
@@ -860,18 +864,20 @@ class GoogleCalendarTools(Toolkit):
 
             calendars = result.get("calendars", {})
             availability: Dict[str, Any] = {}
-            for email in attendee_emails:
-                cal_data = calendars.get(email, {})
+            for cal_id in resolved:
+                cal_data = calendars.get(cal_id, {})
                 busy = cal_data.get("busy", [])
                 errors = cal_data.get("errors", [])
-                availability[email] = {
+                # Label as "me" in output when checking own calendar
+                label = "me" if cal_id == "primary" else cal_id
+                availability[label] = {
                     "busy_periods": busy,
                     "is_free": len(busy) == 0 and len(errors) == 0,
                 }
                 if errors:
-                    availability[email]["errors"] = errors
+                    availability[label]["errors"] = errors
 
-            log_debug(f"Checked availability for {len(attendee_emails)} attendees")
+            log_debug(f"Checked availability for {len(resolved)} attendees")
             return json.dumps(
                 {
                     "availability": availability,
