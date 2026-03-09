@@ -66,6 +66,7 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail
 | `gmail_draft_reply.py` | Thread-aware draft replies |
 | `gmail_followup_tracker.py` | Find unanswered sent emails, draft follow-ups |
 | `gmail_action_items.py` | Extract structured action items from email threads |
+| `calendar_event_creator.py` | Complex event creation with attendees, Google Meet, and timezone handling |
 | `calendar_daily_briefing.py` | Structured daily briefing with conflict detection and prep notes |
 | `calendar_meeting_scheduler.py` | Multi-person scheduling with FreeBusy availability checking |
 | `calendar_gmail_meeting_prep.py` | Combined Calendar + Gmail: prep briefs with attendee email context |
