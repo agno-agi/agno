@@ -2,14 +2,15 @@
 Message History In Tool Hooks
 =============================
 
-Access the current run's message history inside tool hooks in a team.
+Access the current run's message history inside tool hooks in a team
+via run_context.messages.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict
 
 from agno.agent import Agent
-from agno.models.message import Message
 from agno.models.openai import OpenAIChat
+from agno.run.base import RunContext
 from agno.team import Team
 from agno.tools import FunctionCall, tool
 
@@ -19,19 +20,21 @@ from agno.tools import FunctionCall, tool
 
 
 def context_aware_hook(
-    messages: Optional[List[Message]],
+    run_context: RunContext,
     function_name: str,
     function_call: Callable,
     arguments: Dict[str, Any],
 ):
     """Log conversation context before executing a member's tool."""
-    count = len(messages) if messages else 0
+    msgs = run_context.messages
+    count = len(msgs) if msgs else 0
     print(f"[hook] {function_name} — {count} messages in run")
     return function_call(**arguments)
 
 
-def pre_hook(messages: Optional[List[Message]], fc: FunctionCall):
-    count = len(messages) if messages else 0
+def pre_hook(run_context: RunContext, fc: FunctionCall):
+    msgs = run_context.messages
+    count = len(msgs) if msgs else 0
     print(f"[pre-hook] {fc.function.name} — {count} messages in run")
 
 

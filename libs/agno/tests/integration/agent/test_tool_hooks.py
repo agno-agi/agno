@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict
 from unittest.mock import patch
 
 import pytest
@@ -6,6 +6,7 @@ import pytest
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.run.agent import RunOutput
+from agno.run.base import RunContext
 from agno.tools import FunctionCall
 from agno.tools.decorator import tool
 from agno.utils.log import logger
@@ -157,23 +158,25 @@ async def test_logger_and_confirmation_hooks_combined_async():
         mock_info.assert_any_call("HOOK POST: mul returned 20")
 
 
-# --- Messages in Tool Hooks ---
+# --- Messages in Tool Hooks via run_context ---
 
 captured_messages: Dict[str, Any] = {}
 
 
-def messages_pre_hook(messages: Optional[List[Message]], fc: FunctionCall):
-    """Pre-hook that captures messages passed via convenience injection."""
+def messages_pre_hook(run_context: RunContext, fc: FunctionCall):
+    """Pre-hook that captures messages via run_context.messages."""
+    msgs = run_context.messages
     captured_messages["pre"] = {
-        "count": len(messages) if messages else 0,
-        "has_user": any(m.role == "user" for m in messages) if messages else False,
+        "count": len(msgs) if msgs else 0,
+        "has_user": any(m.role == "user" for m in msgs) if msgs else False,
     }
 
 
-def messages_post_hook(messages: Optional[List[Message]], fc: FunctionCall):
-    """Post-hook that captures messages."""
+def messages_post_hook(run_context: RunContext, fc: FunctionCall):
+    """Post-hook that captures messages via run_context.messages."""
+    msgs = run_context.messages
     captured_messages["post"] = {
-        "count": len(messages) if messages else 0,
+        "count": len(msgs) if msgs else 0,
         "result": fc.result,
     }
 
@@ -185,15 +188,16 @@ def divide(a: int, b: int) -> str:
 
 
 def messages_tool_hook(
-    messages: Optional[List[Message]],
+    run_context: RunContext,
     function_name: str,
     function_call: Callable[..., Any],
     arguments: Dict[str, Any],
 ) -> Any:
-    """Tool hook that captures messages."""
+    """Tool hook that captures messages via run_context.messages."""
+    msgs = run_context.messages
     captured_messages["tool_hook"] = {
-        "count": len(messages) if messages else 0,
-        "has_user": any(m.role == "user" for m in messages) if messages else False,
+        "count": len(msgs) if msgs else 0,
+        "has_user": any(m.role == "user" for m in msgs) if msgs else False,
     }
     return function_call(**arguments)
 
@@ -205,7 +209,7 @@ def modulo(a: int, b: int) -> int:
 
 
 def test_pre_post_hook_receives_messages():
-    """Test that pre/post hooks receive run messages via convenience injection."""
+    """Test that pre/post hooks receive run messages via run_context.messages."""
     captured_messages.clear()
     agent = Agent(tools=[divide])
 
@@ -220,7 +224,7 @@ def test_pre_post_hook_receives_messages():
 
 
 def test_tool_hook_receives_messages():
-    """Test that tool hooks receive run messages via convenience injection."""
+    """Test that tool hooks receive run messages via run_context.messages."""
     captured_messages.clear()
     agent = Agent(tools=[modulo], tool_hooks=[messages_tool_hook])
 
@@ -234,12 +238,12 @@ def test_tool_hook_receives_messages():
 
 
 def test_hook_mutation_does_not_affect_run():
-    """Test that mutating messages in a hook does not corrupt the agent run."""
+    """Test that mutating run_context.messages in a hook does not corrupt the agent run."""
 
-    def mutating_hook(messages: Optional[List[Message]], fc: FunctionCall):
-        if messages:
-            messages.clear()
-            messages.append(Message(role="user", content="INJECTED"))
+    def mutating_hook(run_context: RunContext, fc: FunctionCall):
+        if run_context.messages:
+            run_context.messages.clear()
+            run_context.messages.append(Message(role="user", content="INJECTED"))
 
     @tool(pre_hook=mutating_hook)
     def square(n: int) -> int:
@@ -257,7 +261,7 @@ def test_hook_mutation_does_not_affect_run():
 
 @pytest.mark.asyncio
 async def test_async_pre_post_hook_receives_messages():
-    """Test that pre/post hooks receive messages in async runs."""
+    """Test that pre/post hooks receive messages in async runs via run_context.messages."""
     captured_messages.clear()
     agent = Agent(tools=[divide])
 

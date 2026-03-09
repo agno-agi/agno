@@ -1,12 +1,13 @@
-"""Tests for tool hooks receiving messages in team runs."""
+"""Tests for tool hooks receiving messages in team runs via run_context.messages."""
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict
 
 import pytest
 
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
+from agno.run.base import RunContext
 from agno.team import Team
 from agno.tools import FunctionCall
 from agno.tools.decorator import tool
@@ -16,29 +17,32 @@ MODEL = "gpt-4o-mini"
 captured_messages: Dict[str, Any] = {}
 
 
-def messages_pre_hook(messages: Optional[List[Message]], fc: FunctionCall):
+def messages_pre_hook(run_context: RunContext, fc: FunctionCall):
+    msgs = run_context.messages
     captured_messages["pre"] = {
-        "count": len(messages) if messages else 0,
-        "has_user": any(m.role == "user" for m in messages) if messages else False,
+        "count": len(msgs) if msgs else 0,
+        "has_user": any(m.role == "user" for m in msgs) if msgs else False,
     }
 
 
-def messages_post_hook(messages: Optional[List[Message]], fc: FunctionCall):
+def messages_post_hook(run_context: RunContext, fc: FunctionCall):
+    msgs = run_context.messages
     captured_messages["post"] = {
-        "count": len(messages) if messages else 0,
+        "count": len(msgs) if msgs else 0,
         "result": fc.result,
     }
 
 
 def messages_tool_hook(
-    messages: Optional[List[Message]],
+    run_context: RunContext,
     function_name: str,
     function_call: Callable[..., Any],
     arguments: Dict[str, Any],
 ) -> Any:
+    msgs = run_context.messages
     captured_messages["tool_hook"] = {
-        "count": len(messages) if messages else 0,
-        "has_user": any(m.role == "user" for m in messages) if messages else False,
+        "count": len(msgs) if msgs else 0,
+        "has_user": any(m.role == "user" for m in msgs) if msgs else False,
     }
     return function_call(**arguments)
 
@@ -134,12 +138,12 @@ def test_member_tool_hook_receives_messages():
 
 
 def test_mutation_does_not_affect_team_run():
-    """Test that mutating messages in a hook does not corrupt the team run."""
+    """Test that mutating run_context.messages in a hook does not corrupt the team run."""
 
-    def mutating_hook(messages: Optional[List[Message]], fc: FunctionCall):
-        if messages:
-            messages.clear()
-            messages.append(Message(role="user", content="INJECTED"))
+    def mutating_hook(run_context: RunContext, fc: FunctionCall):
+        if run_context.messages:
+            run_context.messages.clear()
+            run_context.messages.append(Message(role="user", content="INJECTED"))
 
     @tool(pre_hook=mutating_hook)
     def get_temperature(city: str) -> str:

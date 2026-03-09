@@ -2,14 +2,13 @@
 Message History Hooks
 =============================
 
-Access the current run's message history inside tool pre/post hooks.
+Access the current run's message history inside tool pre/post hooks
+via run_context.messages.
 """
 
-from typing import List, Optional
-
 from agno.agent import Agent
-from agno.models.message import Message
 from agno.models.openai import OpenAIChat
+from agno.run.base import RunContext
 from agno.tools import FunctionCall, tool
 
 # ---------------------------------------------------------------------------
@@ -17,13 +16,15 @@ from agno.tools import FunctionCall, tool
 # ---------------------------------------------------------------------------
 
 
-def pre_hook(messages: Optional[List[Message]], fc: FunctionCall):
-    count = len(messages) if messages else 0
+def pre_hook(run_context: RunContext, fc: FunctionCall):
+    msgs = run_context.messages
+    count = len(msgs) if msgs else 0
     print(f"[pre-hook] {fc.function.name} — {count} messages in run")
 
 
-def post_hook(messages: Optional[List[Message]], fc: FunctionCall):
-    count = len(messages) if messages else 0
+def post_hook(run_context: RunContext, fc: FunctionCall):
+    msgs = run_context.messages
+    count = len(msgs) if msgs else 0
     print(
         f"[post-hook] {fc.function.name} returned '{fc.result}' — {count} messages in run"
     )

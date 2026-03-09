@@ -836,13 +836,6 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has a run_context argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["run_context"] = self.function._run_context
-                # Check if the pre-hook has a messages argument
-                if "messages" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["messages"] = (
-                        list(self.function._run_context.messages)
-                        if self.function._run_context is not None and self.function._run_context.messages is not None
-                        else None
-                    )
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -871,13 +864,6 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has a run_context argument
                 if "run_context" in signature(self.function.post_hook).parameters:
                     post_hook_args["run_context"] = self.function._run_context
-                # Check if the post-hook has a messages argument
-                if "messages" in signature(self.function.post_hook).parameters:
-                    post_hook_args["messages"] = (
-                        list(self.function._run_context.messages)
-                        if self.function._run_context is not None and self.function._run_context.messages is not None
-                        else None
-                    )
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -955,13 +941,6 @@ class FunctionCall(BaseModel):
         # Check if the hook has a run_context argument
         if "run_context" in signature(hook).parameters:
             hook_args["run_context"] = self.function._run_context
-        # Check if the hook has a messages argument
-        if "messages" in signature(hook).parameters:
-            hook_args["messages"] = (
-                list(self.function._run_context.messages)
-                if self.function._run_context is not None and self.function._run_context.messages is not None
-                else None
-            )
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
         if "function_name" in signature(hook).parameters:
@@ -1129,13 +1108,6 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has a run_context argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["run_context"] = self.function._run_context
-                # Check if the pre-hook has a messages argument
-                if "messages" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["messages"] = (
-                        list(self.function._run_context.messages)
-                        if self.function._run_context is not None and self.function._run_context.messages is not None
-                        else None
-                    )
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -1165,13 +1137,6 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has a run_context argument
                 if "run_context" in signature(self.function.post_hook).parameters:
                     post_hook_args["run_context"] = self.function._run_context
-                # Check if the post-hook has a messages argument
-                if "messages" in signature(self.function.post_hook).parameters:
-                    post_hook_args["messages"] = (
-                        list(self.function._run_context.messages)
-                        if self.function._run_context is not None and self.function._run_context.messages is not None
-                        else None
-                    )
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
