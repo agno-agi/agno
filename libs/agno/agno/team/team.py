@@ -133,9 +133,11 @@ class Team:
     share_member_interactions: bool = False
 
     # If True, adds a tool to allow searching through previous sessions
-    search_session_history: Optional[bool] = False
-    # Number of past sessions to include in the search
-    num_history_sessions: Optional[int] = None
+    search_past_sessions: Optional[bool] = False
+    # Max past sessions to search (default 20 when None)
+    num_past_sessions_to_search: Optional[int] = None
+    # Max runs per session in preview (default 3 when None)
+    num_past_session_runs_in_search: Optional[int] = None
 
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
@@ -158,6 +160,9 @@ class Team:
     add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_context: bool = False
+    # Allows for custom datetime format string (e.g. "%Y-%m-%d %H:%M:%S", "%d/%m/%Y")
+    # If None, the default datetime string representation is used
+    datetime_format: Optional[str] = None
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, add the team name to the instructions
@@ -425,7 +430,11 @@ class Team:
         cache_session: bool = False,
         add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
-        search_session_history: Optional[bool] = False,
+        search_past_sessions: Optional[bool] = False,
+        num_past_sessions_to_search: Optional[int] = None,
+        num_past_session_runs_in_search: Optional[int] = None,
+        # Deprecated params — kept for backward compatibility
+        search_session_history: Optional[bool] = None,
         num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -435,6 +444,7 @@ class Team:
         markdown: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        datetime_format: Optional[str] = None,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
         add_member_tools_to_context: bool = False,
@@ -537,6 +547,9 @@ class Team:
             cache_session=cache_session,
             add_team_history_to_members=add_team_history_to_members,
             num_team_history_runs=num_team_history_runs,
+            search_past_sessions=search_past_sessions,
+            num_past_sessions_to_search=num_past_sessions_to_search,
+            num_past_session_runs_in_search=num_past_session_runs_in_search,
             search_session_history=search_session_history,
             num_history_sessions=num_history_sessions,
             description=description,
@@ -547,6 +560,7 @@ class Team:
             markdown=markdown,
             add_datetime_to_context=add_datetime_to_context,
             add_location_to_context=add_location_to_context,
+            datetime_format=datetime_format,
             timezone_identifier=timezone_identifier,
             add_name_to_context=add_name_to_context,
             add_member_tools_to_context=add_member_tools_to_context,
