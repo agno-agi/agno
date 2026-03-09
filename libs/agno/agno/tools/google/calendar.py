@@ -90,25 +90,20 @@ except ImportError:
     )
 
 
-_CALENDAR_BASE_INSTRUCTIONS = textwrap.dedent("""\
+CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Google Calendar tools for managing events and scheduling.
 
     ## Date/Time Formats
     - All dates use ISO format: YYYY-MM-DDTHH:MM:SS
     - For all-day events, use YYYY-MM-DD
-    - Always specify timezone when creating events""")
+    - Always specify timezone when creating events
 
-# Per-tool tips, keyed by tool function name
-_CALENDAR_TOOL_TIPS: Dict[str, str] = {
-    "get_event": "Use get_event to fetch full details before updating an event",
-    "check_availability": "Use check_availability (FreeBusy) to check multiple people's schedules at once",
-    "quick_add_event": "Use quick_add_event for simple events -- Google parses natural language",
-    "search_events": "Use search_events for full-text search across event fields",
-    "list_events": "Event IDs from list_events can be used with get_event, update_event, delete_event",
-    "create_event": "create_event supports recurrence, all-day events, reminders, visibility, and color",
-    "respond_to_event": "Use respond_to_event to accept, decline, or tentatively accept meeting invitations",
-    "move_event": "Use move_event to transfer an event between calendars",
-}
+    ## Tips
+    - Use get_event to fetch full details before updating an event
+    - Use check_availability (FreeBusy) to check multiple people's schedules at once
+    - Use quick_add_event for simple events -- Google parses natural language
+    - Use search_events for full-text search across event fields
+    - Event IDs from list_events can be used with get_event, update_event, delete_event""")
 
 
 def authenticate(func):
@@ -130,18 +125,10 @@ def authenticate(func):
 
 
 class GoogleCalendarTools(Toolkit):
-    """Google Calendar toolkit for AI agents.
-
-    Provides tools for listing, creating, updating, and deleting calendar events,
-    finding available time slots, checking multi-person availability via FreeBusy,
-    searching events, and managing attendee responses.
-    """
-
-    DEFAULT_SCOPES = {
-        "read": "https://www.googleapis.com/auth/calendar.readonly",
-        "write": "https://www.googleapis.com/auth/calendar",
-        "freebusy": "https://www.googleapis.com/auth/calendar.freebusy",
-    }
+    DEFAULT_SCOPES = [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar",
+    ]
 
     def __init__(
         self,
@@ -188,7 +175,7 @@ class GoogleCalendarTools(Toolkit):
             token_path: Path to cached token file. Created on first auth.
             service_account_path: Path to service account JSON key. When set, OAuth is skipped.
             delegated_user: Email to impersonate via domain-wide delegation. Optional for Calendar.
-            scopes: Custom OAuth scopes. If None, auto-derived from enabled tools.
+            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
             port: Port for OAuth local redirect server.
             login_hint: Email to pre-select in the OAuth consent screen.
             calendar_id: Calendar to operate on. Defaults to "primary".
@@ -210,14 +197,16 @@ class GoogleCalendarTools(Toolkit):
             )
             if port is None:
                 port = oauth_port
-        if allow_update is not None:
-            warnings.warn(
-                "allow_update is deprecated. Scopes are now auto-derived from enabled tools.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        # allow_update kept for backward compat — per-tool booleans are the replacement
+        if allow_update:
+            create_event = True
+            update_event = True
+            delete_event = True
 
-        self._custom_instructions = instructions
+        if instructions is None:
+            self.instructions = CALENDAR_INSTRUCTIONS
+        else:
+            self.instructions = instructions
 
         self.creds = creds
         self.service: Optional[Resource] = None
@@ -226,6 +215,7 @@ class GoogleCalendarTools(Toolkit):
         self.token_path = token_path
         self.service_account_path = service_account_path
         self.delegated_user = delegated_user
+        self.scopes = scopes or self.DEFAULT_SCOPES
         self.port = port
         self.login_hint = login_hint
         # Cached email for respond_to_event
@@ -268,85 +258,31 @@ class GoogleCalendarTools(Toolkit):
             if search_events:
                 tools.append(self.search_events)
 
-        # Build instructions from registered tools
-        if self._custom_instructions is not None:
-            derived_instructions = self._custom_instructions
-        else:
-            tool_names = {t.__name__ if callable(t) else t for t in tools}
-            tips = [tip for name, tip in _CALENDAR_TOOL_TIPS.items() if name in tool_names]
-            if tips:
-                derived_instructions = _CALENDAR_BASE_INSTRUCTIONS + "\n\n## Tips\n" + "\n".join(f"- {t}" for t in tips)
-            else:
-                derived_instructions = _CALENDAR_BASE_INSTRUCTIONS
-
         super().__init__(
             name="google_calendar_tools",
             tools=tools,
-            instructions=derived_instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             **kwargs,
         )
 
-        # Auto-derive scopes from registered tools
-        write_tools = {
-            "create_event",
-            "update_event",
-            "delete_event",
-            "quick_add_event",
-            "move_event",
-            "respond_to_event",
-        }
+        # Validate that required scopes cover registered tools
+        write_tools = {"create_event", "update_event", "delete_event", "quick_add_event", "move_event", "respond_to_event"}
+        if any(t in self.functions for t in write_tools):
+            if "https://www.googleapis.com/auth/calendar" not in self.scopes:
+                raise ValueError(
+                    "The scope https://www.googleapis.com/auth/calendar is required for write operations"
+                )
+
         read_tools = {
-            "list_events",
-            "get_event",
-            "fetch_all_events",
-            "find_available_slots",
-            "list_calendars",
-            "get_event_attendees",
-            "search_events",
+            "list_events", "get_event", "fetch_all_events", "find_available_slots",
+            "list_calendars", "check_availability", "get_event_attendees", "search_events",
         }
-        freebusy_tools = {"check_availability"}
-
-        if scopes is not None:
-            self.scopes = scopes
-            # Validate user-provided scopes cover registered tools
-            has_write = any(t in self.functions for t in write_tools)
-            if has_write and self.DEFAULT_SCOPES["write"] not in self.scopes:
-                raise ValueError(
-                    f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations "
-                    f"(tools: {', '.join(t for t in write_tools if t in self.functions)})"
-                )
-            has_read = any(t in self.functions for t in read_tools)
-            if (
-                has_read
-                and self.DEFAULT_SCOPES["read"] not in self.scopes
-                and self.DEFAULT_SCOPES["write"] not in self.scopes
-            ):
-                raise ValueError(
-                    f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} "
-                    "is required for read operations"
-                )
-        else:
-            # Auto-derive from registered tools
-            has_write = any(t in self.functions for t in write_tools)
-            has_read = any(t in self.functions for t in read_tools)
-            has_freebusy = any(t in self.functions for t in freebusy_tools)
-
-            # Deprecated allow_update still honored as a hint to add write scope
-            if allow_update and not has_write:
-                has_write = True
-
-            if has_write:
-                # Full calendar scope covers read + write + freebusy
-                self.scopes = [self.DEFAULT_SCOPES["write"]]
-            elif has_read:
-                self.scopes = [self.DEFAULT_SCOPES["read"]]
-                if has_freebusy:
-                    self.scopes.append(self.DEFAULT_SCOPES["freebusy"])
-            elif has_freebusy:
-                self.scopes = [self.DEFAULT_SCOPES["freebusy"]]
-            else:
-                self.scopes = [self.DEFAULT_SCOPES["read"]]
+        if any(t in self.functions for t in read_tools):
+            read_scope = "https://www.googleapis.com/auth/calendar.readonly"
+            write_scope = "https://www.googleapis.com/auth/calendar"
+            if read_scope not in self.scopes and write_scope not in self.scopes:
+                raise ValueError(f"The scope {read_scope} is required for read operations")
 
     def _all_tools(self) -> list:
         return [

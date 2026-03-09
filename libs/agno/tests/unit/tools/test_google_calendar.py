@@ -166,49 +166,33 @@ class TestDeprecatedParams:
             assert any("oauth_port is deprecated" in str(x.message) for x in w)
             assert tools.port == 9090
 
-    def test_allow_update_deprecation(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            tools = GoogleCalendarTools(allow_update=True)
-            assert any("allow_update is deprecated" in str(x.message) for x in w)
-            # Should still get write scope
-            assert "https://www.googleapis.com/auth/calendar" in tools.scopes
-
-
-class TestScopeAutoDerivation:
-    def test_read_only_scopes(self):
+    def test_allow_update_enables_write_tools(self):
         tools = GoogleCalendarTools(
+            allow_update=True,
             create_event=False,
             update_event=False,
             delete_event=False,
         )
-        assert tools.scopes == [
-            "https://www.googleapis.com/auth/calendar.readonly",
-            "https://www.googleapis.com/auth/calendar.freebusy",
-        ]
+        tool_names = [func.name for func in tools.functions.values()]
+        assert "create_event" in tool_names
+        assert "update_event" in tool_names
+        assert "delete_event" in tool_names
 
-    def test_write_scopes(self):
+
+class TestScopeValidation:
+    def test_default_scopes(self):
         tools = GoogleCalendarTools()
-        # create_event=True by default, so write scope
-        assert tools.scopes == ["https://www.googleapis.com/auth/calendar"]
+        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
 
-    def test_freebusy_only_scopes(self):
+    def test_read_only_tools_get_default_scopes(self):
         tools = GoogleCalendarTools(
-            list_events=False,
-            get_event=False,
             create_event=False,
             update_event=False,
             delete_event=False,
-            fetch_all_events=False,
-            find_available_slots=False,
-            list_calendars=False,
-            check_availability=True,
-            get_event_attendees=False,
-            search_events=False,
         )
-        assert tools.scopes == ["https://www.googleapis.com/auth/calendar.freebusy"]
+        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
 
-    def test_custom_scopes_validated(self):
+    def test_custom_scopes_write_validated(self):
         with pytest.raises(ValueError, match="required for write operations"):
             GoogleCalendarTools(
                 scopes=["https://www.googleapis.com/auth/calendar.readonly"],
@@ -218,12 +202,18 @@ class TestScopeAutoDerivation:
     def test_custom_scopes_read_validated(self):
         with pytest.raises(ValueError, match="required for read operations"):
             GoogleCalendarTools(
-                scopes=["https://www.googleapis.com/auth/calendar.freebusy"],
+                scopes=["https://www.googleapis.com/auth/calendar.events"],
                 list_events=True,
                 create_event=False,
                 update_event=False,
                 delete_event=False,
             )
+
+    def test_custom_write_scope_covers_reads(self):
+        tools = GoogleCalendarTools(
+            scopes=["https://www.googleapis.com/auth/calendar"],
+        )
+        assert tools.scopes == ["https://www.googleapis.com/auth/calendar"]
 
 
 class TestAuthentication:
