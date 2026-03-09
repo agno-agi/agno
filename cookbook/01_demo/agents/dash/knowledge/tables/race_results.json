@@ -1,0 +1,74 @@
+{
+  "table_name": "race_results",
+  "table_description": "Holds comprehensive race data for each Formula 1 race from 1950-2020, including positions, drivers, teams, and points.",
+  "use_cases": [
+    "Driver career results",
+    "Finish position distributions",
+    "Points by season",
+    "Race-by-race analysis"
+  ],
+  "data_quality_notes": [
+    "position is TEXT type - contains non-numeric values like 'Ret' (retired), 'DSQ', 'DNS', 'NC'",
+    "To filter for podium finishes, use: position IN ('1', '2', '3')",
+    "To filter for points finishes, cast carefully or use string comparison",
+    "name_tag column name differs from drivers_championship and fastest_laps which use driver_tag",
+    "laps and points are FLOAT - may contain NULL for DNFs"
+  ],
+  "table_columns": [
+    {
+      "name": "index",
+      "type": "int",
+      "description": "Unique index for each entry."
+    },
+    {
+      "name": "year",
+      "type": "int",
+      "description": "The year of the race."
+    },
+    {
+      "name": "position",
+      "type": "text",
+      "description": "The finishing position of the driver. TEXT type - may contain 'Ret', 'DSQ', 'DNS', 'NC' for non-finishers."
+    },
+    {
+      "name": "driver_no",
+      "type": "int",
+      "description": "Driver number."
+    },
+    {
+      "name": "venue",
+      "type": "text",
+      "description": "Location/name of the race (e.g., 'Monaco', 'British Grand Prix')."
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "description": "Full name of the driver."
+    },
+    {
+      "name": "name_tag",
+      "type": "text",
+      "description": "Abbreviated tag of the driver's name. Note: Other tables use 'driver_tag' for the same concept."
+    },
+    {
+      "name": "team",
+      "type": "text",
+      "description": "The racing team of the driver."
+    },
+    {
+      "name": "laps",
+      "type": "float",
+      "description": "Number of laps completed. May be NULL or partial for retirements."
+    },
+    {
+      "name": "time",
+      "type": "text",
+      "description": "Finishing time or gap to the leader (e.g., '+1 Lap', '+12.345s')."
+    },
+    {
+      "name": "points",
+      "type": "float",
+      "description": "Points earned in the race. 0 or NULL for non-points finishes."
+    }
+  ]
+}

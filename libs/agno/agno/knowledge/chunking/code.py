@@ -6,7 +6,7 @@ try:
 except ImportError:
     raise ImportError(
         "`chonkie` is required for code chunking. "
-        "Please install it using `pip install chonkie[code]` to use CodeChunking."
+        'Please install it using `pip install "chonkie[code]"` to use CodeChunking.'
     )
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
@@ -82,7 +82,7 @@ class CodeChunking(ChunkingStrategy):
         for i, chunk in enumerate(chunks, 1):
             meta_data = document.meta_data.copy()
             meta_data["chunk"] = i
-            chunk_id = f"{document.id}_{i}" if document.id else None
+            chunk_id = self._generate_chunk_id(document, i, chunk.text)
             meta_data["chunk_size"] = len(chunk.text)
 
             chunked_documents.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk.text))

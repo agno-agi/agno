@@ -10,6 +10,74 @@ class ReaderFactory:
     # Cache for instantiated readers
     _reader_cache: Dict[str, Reader] = {}
 
+    # Static metadata for readers - avoids instantiation just to get metadata
+    READER_METADATA: Dict[str, Dict[str, str]] = {
+        "pdf": {
+            "name": "PdfReader",
+            "description": "Processes PDF documents with OCR support for images and text extraction",
+        },
+        "csv": {
+            "name": "CsvReader",
+            "description": "Parses CSV files with custom delimiter support",
+        },
+        "excel": {
+            "name": "ExcelReader",
+            "description": "Processes Excel workbooks (.xlsx and .xls) with sheet filtering and row-based chunking",
+        },
+        "field_labeled_csv": {
+            "name": "FieldLabeledCsvReader",
+            "description": "Converts CSV rows to field-labeled text format for enhanced readability and context",
+        },
+        "docx": {
+            "name": "DocxReader",
+            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+        },
+        "pptx": {
+            "name": "PptxReader",
+            "description": "Extracts text content from Microsoft PowerPoint presentations (.pptx format)",
+        },
+        "json": {
+            "name": "JsonReader",
+            "description": "Processes JSON data structures and API responses with nested object handling",
+        },
+        "markdown": {
+            "name": "MarkdownReader",
+            "description": "Processes Markdown documentation with header-aware chunking and formatting preservation",
+        },
+        "text": {
+            "name": "TextReader",
+            "description": "Handles plain text files with customizable chunking strategies and encoding detection",
+        },
+        "website": {
+            "name": "WebsiteReader",
+            "description": "Scrapes and extracts content from web pages with HTML parsing and text cleaning",
+        },
+        "firecrawl": {
+            "name": "FirecrawlReader",
+            "description": "Advanced web scraping and crawling with JavaScript rendering and structured data extraction",
+        },
+        "tavily": {
+            "name": "TavilyReader",
+            "description": "Extracts content from URLs using Tavily's Extract API with markdown or text output",
+        },
+        "youtube": {
+            "name": "YouTubeReader",
+            "description": "Extracts transcripts and metadata from YouTube videos and playlists",
+        },
+        "arxiv": {
+            "name": "ArxivReader",
+            "description": "Downloads and processes academic papers from ArXiv with PDF parsing and metadata extraction",
+        },
+        "wikipedia": {
+            "name": "WikipediaReader",
+            "description": "Fetches and processes Wikipedia articles with section-aware chunking and link resolution",
+        },
+        "web_search": {
+            "name": "WebSearchReader",
+            "description": "Executes web searches and processes results with relevance ranking and content extraction",
+        },
+    }
+
     @classmethod
     def _get_pdf_reader(cls, **kwargs) -> Reader:
         """Get PDF reader instance."""
@@ -29,10 +97,22 @@ class ReaderFactory:
 
         config: Dict[str, Any] = {
             "name": "CSV Reader",
-            "description": "Parses CSV, XLSX, and XLS files with custom delimiter support",
+            "description": "Parses CSV files with custom delimiter support",
         }
         config.update(kwargs)
         return CSVReader(**config)
+
+    @classmethod
+    def _get_excel_reader(cls, **kwargs) -> Reader:
+        """Get Excel reader instance."""
+        from agno.knowledge.reader.excel_reader import ExcelReader
+
+        config: Dict[str, Any] = {
+            "name": "Excel Reader",
+            "description": "Processes Excel workbooks (.xlsx and .xls) with sheet filtering and row-based chunking",
+        }
+        config.update(kwargs)
+        return ExcelReader(**config)
 
     @classmethod
     def _get_field_labeled_csv_reader(cls, **kwargs) -> Reader:
@@ -204,6 +284,53 @@ class ReaderFactory:
         return getattr(cls, method_name)
 
     @classmethod
+    def get_reader_class(cls, reader_key: str) -> type:
+        """Get the reader CLASS without instantiation.
+
+        This is useful for accessing class methods like get_supported_chunking_strategies()
+        without the overhead of creating an instance.
+
+        Args:
+            reader_key: The reader key (e.g., 'pdf', 'csv', 'markdown')
+
+        Returns:
+            The reader class (not an instance)
+
+        Raises:
+            ValueError: If the reader key is unknown
+            ImportError: If the reader's dependencies are not installed
+        """
+        # Map reader keys to their import paths
+        reader_class_map: Dict[str, tuple] = {
+            "pdf": ("agno.knowledge.reader.pdf_reader", "PDFReader"),
+            "csv": ("agno.knowledge.reader.csv_reader", "CSVReader"),
+            "excel": ("agno.knowledge.reader.excel_reader", "ExcelReader"),
+            "field_labeled_csv": ("agno.knowledge.reader.field_labeled_csv_reader", "FieldLabeledCSVReader"),
+            "docx": ("agno.knowledge.reader.docx_reader", "DocxReader"),
+            "pptx": ("agno.knowledge.reader.pptx_reader", "PPTXReader"),
+            "json": ("agno.knowledge.reader.json_reader", "JSONReader"),
+            "markdown": ("agno.knowledge.reader.markdown_reader", "MarkdownReader"),
+            "text": ("agno.knowledge.reader.text_reader", "TextReader"),
+            "website": ("agno.knowledge.reader.website_reader", "WebsiteReader"),
+            "firecrawl": ("agno.knowledge.reader.firecrawl_reader", "FirecrawlReader"),
+            "tavily": ("agno.knowledge.reader.tavily_reader", "TavilyReader"),
+            "youtube": ("agno.knowledge.reader.youtube_reader", "YouTubeReader"),
+            "arxiv": ("agno.knowledge.reader.arxiv_reader", "ArxivReader"),
+            "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
+            "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
+        }
+
+        if reader_key not in reader_class_map:
+            raise ValueError(f"Unknown reader: {reader_key}")
+
+        module_path, class_name = reader_class_map[reader_key]
+
+        import importlib
+
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name)
+
+    @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
         """Create a reader instance with the given key and optional overrides."""
         if reader_key in cls._reader_cache:
@@ -227,6 +354,13 @@ class ReaderFactory:
             return cls.create_reader("pdf")
         elif extension in [".csv", "text/csv"]:
             return cls.create_reader("csv")
+        elif extension in [
+            ".xlsx",
+            ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+        ]:
+            return cls.create_reader("excel")
         elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
             return cls.create_reader("docx")
         elif extension == ".pptx":

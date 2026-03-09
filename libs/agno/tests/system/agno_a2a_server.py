@@ -15,7 +15,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -61,7 +61,7 @@ assistant = Agent(
         "You have access to a knowledge base - search it when asked about documents.",
     ],
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     tools=[CalculatorTools()],
     knowledge=knowledge,
     search_knowledge=True,
@@ -73,7 +73,7 @@ researcher = Agent(
     id="researcher-agent-2",
     description="A research assistant with web search capabilities.",
     model=OpenAIChat(id="gpt-5-mini"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
     instructions=[
         "You are a research assistant.",
@@ -81,7 +81,7 @@ researcher = Agent(
         "Provide well-researched, accurate responses.",
     ],
     markdown=True,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 # =============================================================================
@@ -101,7 +101,7 @@ research_team = Team(
         "Combine insights from team members for comprehensive answers.",
     ],
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
 )
 

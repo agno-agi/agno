@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
@@ -165,6 +165,22 @@ class TeamRunEvent(str, Enum):
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
 
+    model_request_started = "TeamModelRequestStarted"
+    model_request_completed = "TeamModelRequestCompleted"
+
+    compression_started = "TeamCompressionStarted"
+    compression_completed = "TeamCompressionCompleted"
+
+    run_paused = "TeamRunPaused"
+    run_continued = "TeamRunContinued"
+
+    # Task mode events
+    task_iteration_started = "TeamTaskIterationStarted"
+    task_iteration_completed = "TeamTaskIterationCompleted"
+    task_state_updated = "TeamTaskStateUpdated"
+    task_created = "TeamTaskCreated"
+    task_updated = "TeamTaskUpdated"
+
     custom_event = "CustomEvent"
 
 
@@ -263,7 +279,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
 
 
@@ -286,6 +302,32 @@ class RunCancelledEvent(BaseTeamRunEvent):
     @property
     def is_cancelled(self):
         return True
+
+
+@dataclass
+class RunPausedEvent(BaseTeamRunEvent):
+    """Event sent when the team run is paused due to HITL requirements"""
+
+    event: str = TeamRunEvent.run_paused.value
+    tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [req for req in self.requirements if not req.is_resolved()]
+
+
+@dataclass
+class RunContinuedEvent(BaseTeamRunEvent):
+    """Event sent when a paused team run is continued"""
+
+    event: str = TeamRunEvent.run_continued.value
 
 
 @dataclass
@@ -322,6 +364,7 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -407,6 +450,154 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ModelRequestStartedEvent(BaseTeamRunEvent):
+    """Event sent when a model request is about to be made"""
+
+    event: str = TeamRunEvent.model_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class ModelRequestCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a model request has completed"""
+
+    event: str = TeamRunEvent.model_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = TeamRunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = TeamRunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
+class TaskIterationStartedEvent(BaseTeamRunEvent):
+    """Event sent when a task iteration starts in tasks mode"""
+
+    event: str = TeamRunEvent.task_iteration_started.value
+    iteration: int = 0
+    max_iterations: int = 0
+
+
+@dataclass
+class TaskIterationCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a task iteration completes in tasks mode"""
+
+    event: str = TeamRunEvent.task_iteration_completed.value
+    iteration: int = 0
+    max_iterations: int = 0
+    task_summary: Optional[str] = None
+
+
+@dataclass
+class TaskData:
+    """Structured task data for frontend rendering"""
+
+    id: str = ""
+    title: str = ""
+    description: str = ""
+    status: str = "pending"  # pending, in_progress, completed, failed, blocked
+    assignee: Optional[str] = None
+    dependencies: List[str] = field(default_factory=list)
+    result: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "status": self.status,
+            "assignee": self.assignee,
+            "dependencies": self.dependencies,
+            "result": self.result,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TaskData":
+        return cls(
+            id=data.get("id", ""),
+            title=data.get("title", ""),
+            description=data.get("description", ""),
+            status=data.get("status", "pending"),
+            assignee=data.get("assignee"),
+            dependencies=data.get("dependencies", []),
+            result=data.get("result"),
+        )
+
+
+@dataclass
+class TaskStateUpdatedEvent(BaseTeamRunEvent):
+    """Event sent when the task state is updated in tasks mode.
+
+    Contains the full structured task list for frontend rendering.
+    The frontend can use the `tasks` field to render a task list UI
+    with checkboxes that update in real-time.
+    """
+
+    event: str = TeamRunEvent.task_state_updated.value
+    task_summary: Optional[str] = None
+    goal_complete: bool = False
+    # Full structured task list for frontend rendering
+    tasks: List[TaskData] = field(default_factory=list)
+    completion_summary: Optional[str] = None
+
+
+@dataclass
+class TaskCreatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task is created in tasks mode.
+
+    This allows the frontend to show tasks as they are created,
+    before waiting for the iteration to complete.
+    """
+
+    event: str = TeamRunEvent.task_created.value
+    task_id: str = ""
+    title: str = ""
+    description: str = ""
+    assignee: Optional[str] = None
+    status: str = "pending"
+    dependencies: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TaskUpdatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task status changes in tasks mode.
+
+    This allows the frontend to update task status in real-time
+    (e.g., mark as in_progress when execution starts, completed when done).
+    """
+
+    event: str = TeamRunEvent.task_updated.value
+    task_id: str = ""
+    title: str = ""
+    status: str = ""  # pending, in_progress, completed, failed, blocked
+    previous_status: Optional[str] = None
+    result: Optional[str] = None
+    assignee: Optional[str] = None
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
@@ -424,6 +615,8 @@ TeamRunOutputEvent = Union[
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
     ReasoningStartedEvent,
@@ -441,6 +634,15 @@ TeamRunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
+    TaskIterationStartedEvent,
+    TaskIterationCompletedEvent,
+    TaskStateUpdatedEvent,
+    TaskCreatedEvent,
+    TaskUpdatedEvent,
     CustomEvent,
 ]
 
@@ -453,6 +655,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
+    TeamRunEvent.run_paused.value: RunPausedEvent,
+    TeamRunEvent.run_continued.value: RunContinuedEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
@@ -472,6 +676,15 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.model_request_started.value: ModelRequestStartedEvent,
+    TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    TeamRunEvent.compression_started.value: CompressionStartedEvent,
+    TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
+    TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
+    TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
+    TeamRunEvent.task_created.value: TaskCreatedEvent,
+    TeamRunEvent.task_updated.value: TaskUpdatedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 
@@ -505,7 +718,7 @@ class TeamRunOutput:
     content_type: str = "str"
 
     messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     model: Optional[str] = None
     model_provider: Optional[str] = None
 
@@ -582,13 +795,14 @@ class TeamRunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
             ]
         }
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -637,6 +851,9 @@ class TeamRunOutput:
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
+
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
 
         if self.tools is not None:
             _dict["tools"] = []
@@ -716,6 +933,11 @@ class TeamRunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
+        requirements_data = data.pop("requirements", None)
+        requirements = None
+        if requirements_data is not None:
+            requirements = [RunRequirement.from_dict(r) if isinstance(r, dict) else r for r in requirements_data]
+
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
@@ -725,7 +947,7 @@ class TeamRunOutput:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            metrics = Metrics(**metrics)
+            metrics = RunMetrics.from_dict(metrics)
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
@@ -752,6 +974,7 @@ class TeamRunOutput:
             input=input_obj,
             citations=citations,
             tools=tools,
+            requirements=requirements,
             events=events,
             **filtered_data,
         )

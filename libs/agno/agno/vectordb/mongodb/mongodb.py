@@ -1150,7 +1150,7 @@ class MongoDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")
             return []

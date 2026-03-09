@@ -145,6 +145,7 @@ def test_history():
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
         db=SqliteDb(db_file="tmp/huggingface_agent_db.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

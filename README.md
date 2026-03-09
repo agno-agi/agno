@@ -8,159 +8,170 @@
   </a>
 </div>
 
+<p align="center">
+  Build, run, and manage agentic software at scale.
+</p>
+
 <div align="center">
-  <a href="https://docs.agno.com">Documentation</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+  <a href="https://docs.agno.com">Docs</a>
+  <span>&nbsp;•&nbsp;</span>
   <a href="https://github.com/agno-agi/agno/tree/main/cookbook">Cookbook</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://www.agno.com/?utm_source=github&utm_medium=readme&utm_campaign=agno-github">Website</a>
-  <br />
+  <span>&nbsp;•&nbsp;</span>
+  <a href="https://docs.agno.com/first-agent">Quickstart</a>
+  <span>&nbsp;•&nbsp;</span>
+  <a href="https://www.agno.com/discord">Discord</a>
 </div>
 
-## What is Agno?
+## What is Agno
 
-Agno is a multi-agent framework, runtime, and control plane. Use it to build private and secure AI products that run in your cloud.
+Agno is the runtime for agentic software. Build agents, teams, and workflows. Run them as scalable services. Monitor and manage them in production.
 
-- **Build** agents, teams, and workflows with memory, knowledge, guardrails and 100+ integrations.
-- **Run** in production with a stateless FastAPI runtime. Horizontally scalable.
-- **Manage** with a control plane that connects directly to your runtime — no data leaves your environment.
+| Layer | What it does |
+|-------|--------------|
+| **Framework** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations. |
+| **Runtime** | Serve your system in production with a stateless, session-scoped FastAPI backend. |
+| **Control Plane** | Test, monitor, and manage your system using the [AgentOS UI](https://os.agno.com). |
 
-## Why Agno?
+## Quick Start
 
-- **Your cloud, your data:** Runs entirely in your infrastructure. Nothing leaves your environment.
-- **Ready for production on day one:** Pre-built FastAPI runtime with SSE endpoints, ready to deploy.
-- **Incredibly fast:** 529× faster than LangGraph, 24× lower memory.
+Build a stateful, tool-using agent and serve it as a production API in ~20 lines.
 
-## Getting Started
-
-Start with the [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started), then:
-
-- Browse the [cookbooks](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
-- Read the [docs](https://docs.agno.com) to learn more
-
-## Resources
-
-- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
-- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
-
-## Example
-
-Here's an example of an Agent that connects to an MCP server, manages conversation state in a database, is served using a FastAPI application that you can chat with using the [AgentOS UI](https://os.agno.com).
-
-```python agno_agent.py
+```python
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 
-# ************* Create Agent *************
-agno_agent = Agent(
-    name="Agno Agent",
-    model=Claude(id="claude-sonnet-4-5"),
-    # Add a database to the Agent
+agno_assist = Agent(
+    name="Agno Assist",
+    model=Claude(id="claude-sonnet-4-6"),
     db=SqliteDb(db_file="agno.db"),
-    # Add the Agno MCP server to the Agent
-    tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
-    # Add the previous session history to the context
+    tools=[MCPTools(url="https://docs.agno.com/mcp")],
     add_history_to_context=True,
+    num_history_runs=3,
     markdown=True,
 )
 
-
-# ************* Create AgentOS *************
-agent_os = AgentOS(agents=[agno_agent])
-# Get the FastAPI app for the AgentOS
+agent_os = AgentOS(agents=[agno_assist], tracing=True)
 app = agent_os.get_app()
-
-# ************* Run AgentOS *************
-if __name__ == "__main__":
-    agent_os.serve(app="agno_agent:app", reload=True)
 ```
 
-## AgentOS - Production Runtime for Multi-Agent Systems
+Run it:
 
-Building Agents is easy, running them as a secure, scalable service is hard. AgentOS solves this by providing a high performance runtime for serving multi-agent systems in production. Key features include:
+```bash
+export ANTHROPIC_API_KEY="***"
 
-1. **Pre-built FastAPI app**: AgentOS includes a ready-to-use FastAPI app for running your agents, teams and workflows. This gives you a significant head start when building an AI product.
+uvx --python 3.12 \
+  --with "agno[os]" \
+  --with anthropic \
+  --with mcp \
+  fastapi dev agno_assist.py
+```
 
-2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, so you can test, monitor and manage your system in real time with full operational visibility.
+In ~20 lines, you get:
+- A stateful agent with streaming responses
+- Per-user, per-session isolation
+- A production API at http://localhost:8000
+- Native tracing
 
-3. **Private by Design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data leaves your environment, making it ideal for security conscious enterprises..
+Connect to the [AgentOS UI](https://os.agno.com) to monitor, manage, and test your agents.
 
-When you run the example script shared above, you get a FastAPI app that you can connect to the [AgentOS UI](https://os.agno.com). Here's what it looks like in action:
+1. Open [os.agno.com](https://os.agno.com) and sign in.
+2. Click **"Add new OS"** in the top navigation.
+3. Select **"Local"** to connect to a local AgentOS.
+4. Enter your endpoint URL (default: `http://localhost:8000`).
+5. Name it "Local AgentOS".
+6. Click **"Connect"**.
 
-https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
+https://github.com/user-attachments/assets/75258047-2471-4920-8874-30d68c492683
 
-## Private by Design
+Open Chat, select your agent, and ask:
 
-This is the part we care most about.
+> What is Agno?
 
-AgentOS runs in **your** cloud. The control plane UI connects directly to your runtime from your browser. Your data never touches our servers. No retention costs, no vendor lock-in, no compliance headaches.
+The agent retrieves context from the Agno MCP server and responds with grounded answers.
 
-This isn't a privacy mode or enterprise add-on. It's how Agno works.
+https://github.com/user-attachments/assets/24c28d28-1d17-492c-815d-810e992ea8d2
 
-## Features
+You can use this exact same architecture for running multi-agent systems in production.
 
-### Core:
-- Model agnostic — works with OpenAI, Anthropic, Google, local models, whatever
-- Type-safe I/O with `input_schema` and `output_schema`
-- Async-first, built for long-running tasks
-- Natively multimodal (text, images, audio, video, files)
+## Why Agno?
 
-### Memory & Knowledge:
-- Persistent storage for session history and state
-- User memory that persists across sessions
-- Agentic RAG with 20+ vector stores, hybrid search, reranking
-- Culture — shared long-term memory across agents
+Agentic software introduces three fundamental shifts.
 
-### Execution:
-- Human-in-the-loop (confirmations, approvals, overrides)
-- Guardrails for validation and security
-- Pre/post hooks for the agent lifecycle
-- First-class MCP and A2A support
-- 100+ built-in toolkits
+### A new interaction model
 
-### Production:
-- Ready-to-use FastAPI runtime
-- Integrated control plane UI
-- Evals for accuracy, performance, latency
-- Durable execution for resumable workflows
-- RBAC and per-agent permissions
+Traditional software receives a request and returns a response. Agents stream reasoning, tool calls, and results in real time. They can pause mid-execution, wait for approval, and resume later.
 
-## Performance
+Agno treats streaming and long-running execution as first-class behavior.
 
-We're obsessive about performance because agent workloads spawn hundreds of instances and run long tasks. Stateless, horizontal scalability isn't optional.
+### A new governance model
 
-**Benchmarks** (Apple M4 MacBook Pro, Oct 2025):
+Traditional systems execute predefined decision logic written in advance. Agents choose actions dynamically. Some actions are low risk. Some require user approval. Some require administrative authority.
 
-| Metric | Agno | LangGraph | PydanticAI | CrewAI |
-|--------|------|-----------|------------|--------|
-| Instantiation | **3μs** | 1,587μs (529× slower) | 170μs (57× slower) | 210μs (70× slower) |
-| Memory | **6.6 KiB** | 161 KiB (24× higher) | 29 KiB (4× higher) | 66 KiB (10× higher) |
+Agno lets you define who decides what as part of the agent definition, with:
 
-Run the benchmarks yourself: [`cookbook/12_evals/performance`](https://github.com/agno-agi/agno/tree/main/cookbook/12_evals/performance)
+- Approval workflows
+- Human-in-the-loop
+- Audit logs
+- Enforcement at runtime
 
-https://github.com/user-attachments/assets/54b98576-1859-4880-9f2d-15e1a426719d
+### A new trust model
+
+Traditional systems are designed to be predictable. Every execution path is defined in advance. Agents introduce probabilistic reasoning into the execution path.
+
+Agno builds trust into the engine itself:
+
+- Guardrails run as part of execution
+- Evaluations integrate into the agent loop
+- Traces and audit logs are first-class
+
+## Built for Production
+
+Agno runs in your infrastructure, not ours.
+
+- Stateless, horizontally scalable runtime.
+- 50+ APIs and background execution.
+- Per-user and per-session isolation.
+- Runtime approval enforcement.
+- Native tracing and full auditability.
+- Sessions, memory, knowledge, and traces stored in your database.
+
+You own the system. You own the data. You define the rules.
+
+## What You Can Build
+
+Agno powers real agentic systems built from the same primitives above.
+
+- [**Pal →**](https://github.com/agno-agi/pal) A personal agent that learns your preferences.
+- [**Dash →**](https://github.com/agno-agi/dash) A self-learning data agent grounded in six layers of context.
+- [**Scout →**](https://github.com/agno-agi/scout) A self-learning context agent that manages enterprise context knowledge.
+- [**Gcode →**](https://github.com/agno-agi/gcode) A post-IDE coding agent that improves over time.
+- [**Investment Team →**](https://github.com/agno-agi/investment-team) A multi-agent investment committee that debates and allocates capital.
+
+Single agents. Coordinated teams. Structured workflows. All built on one architecture.
+
+## Get Started
+
+1. [Read the docs](https://docs.agno.com)
+2. [Build your first agent](https://docs.agno.com/first-agent)
+3. Explore the [cookbook](https://github.com/agno-agi/agno/tree/main/cookbook)
 
 ## IDE Integration
 
-For AI-assisted development, add our docs to your IDE:
+Add Agno docs as a source in your coding tools:
 
 **Cursor:** Settings → Indexing & Docs → Add `https://docs.agno.com/llms-full.txt`
 
-Works with VSCode, Windsurf, and other AI-enabled editors too.
+Also works with VSCode, Windsurf, and similar tools.
 
 ## Contributing
 
-We welcome contributions. See the [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md).
+See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md).
 
 ## Telemetry
 
-Agno logs which model providers are used so we can prioritize updates. Disable with `AGNO_TELEMETRY=false`.
+Agno logs which model providers are used to prioritize updates. Disable with `AGNO_TELEMETRY=false`.
 
-<p align="left">
-  <a href="#top">⬆️ Back to Top</a>
-</p>
+<p align="right"><a href="#top">↑ Back to top</a></p>

@@ -1,8 +1,10 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+from agno.os.utils import to_utc_datetime
 
 
 class DeleteMemoriesRequest(BaseModel):
@@ -71,7 +73,7 @@ class UserStatsSchema(BaseModel):
         return cls(
             user_id=str(user_stats_dict["user_id"]),
             total_memories=user_stats_dict["total_memories"],
-            last_memory_updated_at=datetime.fromtimestamp(updated_at, tz=timezone.utc) if updated_at else None,
+            last_memory_updated_at=to_utc_datetime(updated_at),
         )
 
 

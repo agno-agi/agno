@@ -1,14 +1,14 @@
 from agno.agent.agent import Agent
 from agno.media import File, Image
 from agno.models.openai.responses import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 def test_image_input(image_path):
     """Test image input with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )
@@ -26,7 +26,7 @@ def test_multimodal_with_tools(image_path):
     """Test multimodal input with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

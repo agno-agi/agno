@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
@@ -172,6 +172,12 @@ class RunEvent(str, Enum):
     output_model_response_started = "OutputModelResponseStarted"
     output_model_response_completed = "OutputModelResponseCompleted"
 
+    model_request_started = "ModelRequestStarted"
+    model_request_completed = "ModelRequestCompleted"
+
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -268,7 +274,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
 
 
@@ -349,6 +355,7 @@ class MemoryUpdateStartedEvent(BaseAgentRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -434,8 +441,52 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ModelRequestStartedEvent(BaseAgentRunEvent):
+    """Event sent when a model request is about to be made"""
+
+    event: str = RunEvent.model_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class ModelRequestCompletedEvent(BaseAgentRunEvent):
+    """Event sent when a model request has completed"""
+
+    event: str = RunEvent.model_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseAgentRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = RunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = RunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
+    # tool_call_id for ToolExecution
+    tool_call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance
@@ -472,6 +523,10 @@ RunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
     CustomEvent,
 ]
 
@@ -506,6 +561,10 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    RunEvent.model_request_started.value: ModelRequestStartedEvent,
+    RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    RunEvent.compression_started.value: CompressionStartedEvent,
+    RunEvent.compression_completed.value: CompressionCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
@@ -545,7 +604,7 @@ class RunOutput:
     model: Optional[str] = None
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     additional_input: Optional[List[Message]] = None
 
     tools: Optional[List[ToolExecution]] = None
@@ -630,7 +689,7 @@ class RunOutput:
         }
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
@@ -785,7 +844,7 @@ class RunOutput:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            metrics = Metrics(**metrics)
+            metrics = RunMetrics.from_dict(metrics)
 
         additional_input = data.pop("additional_input", None)
 
