@@ -142,7 +142,6 @@ def test_cancel_team_sync_streaming_preserves_content_in_db(shared_db):
     assert len(last_run.content) > 0, "Content should not be empty"
 
     # The stored content should be actual streamed content, not just "Run was cancelled"
-    partial_content = "".join(content_chunks)
     assert len(last_run.content) > 20, "Stored content should be substantial, not just a cancellation message"
 
 

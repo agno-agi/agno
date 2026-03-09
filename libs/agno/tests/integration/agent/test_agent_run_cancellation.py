@@ -980,7 +980,6 @@ def test_cancel_agent_continue_run_sync_streaming(shared_db):
             cancelled = True
 
     # Verify cancellation
-    cancelled_events = [e for e in [event] if isinstance(event, RunCancelledEvent)]
     session = agent.get_session(session_id=session_id)
     assert session is not None
     assert session.runs is not None and len(session.runs) > 0
