@@ -160,6 +160,9 @@ class Team:
     add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_context: bool = False
+    # Allows for custom datetime format string (e.g. "%Y-%m-%d %H:%M:%S", "%d/%m/%Y")
+    # If None, the default datetime string representation is used
+    datetime_format: Optional[str] = None
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, add the team name to the instructions
@@ -441,6 +444,7 @@ class Team:
         markdown: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        datetime_format: Optional[str] = None,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
         add_member_tools_to_context: bool = False,
@@ -556,6 +560,7 @@ class Team:
             markdown=markdown,
             add_datetime_to_context=add_datetime_to_context,
             add_location_to_context=add_location_to_context,
+            datetime_format=datetime_format,
             timezone_identifier=timezone_identifier,
             add_name_to_context=add_name_to_context,
             add_member_tools_to_context=add_member_tools_to_context,
