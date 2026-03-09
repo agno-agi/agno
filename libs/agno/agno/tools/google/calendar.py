@@ -75,7 +75,6 @@ class GoogleCalendarTools(Toolkit):
         login_hint: Optional[str] = None,
         calendar_id: str = "primary",
         allow_update: Optional[bool] = None,
-        # Reading
         list_events: bool = True,
         get_event: bool = True,
         fetch_all_events: bool = True,
@@ -84,7 +83,6 @@ class GoogleCalendarTools(Toolkit):
         check_availability: bool = True,
         get_event_attendees: bool = True,
         search_events: bool = True,
-        # Writing
         create_event: bool = True,
         update_event: bool = True,
         delete_event: bool = True,
@@ -133,12 +131,12 @@ class GoogleCalendarTools(Toolkit):
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
 
-        # Build tool list from boolean flags
+        # include_tools: pass full catalog, let Toolkit base class filter by name
         if kwargs.get("include_tools"):
             tools = self._all_tools()
         else:
             tools: List[Any] = []  # type: ignore[no-redef]
-            # Reading
+
             if list_events:
                 tools.append(self.list_events)
             if get_event:
@@ -155,7 +153,7 @@ class GoogleCalendarTools(Toolkit):
                 tools.append(self.get_event_attendees)
             if search_events:
                 tools.append(self.search_events)
-            # Writing
+
             if create_event:
                 tools.append(self.create_event)
             if update_event:
@@ -178,18 +176,30 @@ class GoogleCalendarTools(Toolkit):
         )
 
         # Validate that required scopes cover registered tools
-        write_tools = {"create_event", "update_event", "delete_event", "quick_add_event", "move_event", "respond_to_event"}
+        write_tools = {
+            "create_event",
+            "update_event",
+            "delete_event",
+            "quick_add_event",
+            "move_event",
+            "respond_to_event",
+        }
         if any(t in self.functions for t in write_tools):
             if "https://www.googleapis.com/auth/calendar" not in self.scopes:
-                raise ValueError(
-                    "The scope https://www.googleapis.com/auth/calendar is required for write operations"
-                )
+                raise ValueError("The scope https://www.googleapis.com/auth/calendar is required for write operations")
 
         read_tools = {
-            "list_events", "get_event", "fetch_all_events", "find_available_slots",
-            "list_calendars", "check_availability", "get_event_attendees", "search_events",
+            "list_events",
+            "get_event",
+            "fetch_all_events",
+            "find_available_slots",
+            "list_calendars",
+            "check_availability",
+            "get_event_attendees",
+            "search_events",
         }
         if any(t in self.functions for t in read_tools):
+            # Write scope is a superset of read — either satisfies read operations
             read_scope = "https://www.googleapis.com/auth/calendar.readonly"
             write_scope = "https://www.googleapis.com/auth/calendar"
             if read_scope not in self.scopes and write_scope not in self.scopes:
@@ -280,7 +290,6 @@ class GoogleCalendarTools(Toolkit):
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
             log_debug("Successfully authenticated with Google Calendar API.")
             log_info(f"Token file path: {token_file}")
-
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
@@ -767,7 +776,6 @@ class GoogleCalendarTools(Toolkit):
             log_error(f"An error occurred while listing calendars: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
-
     @authenticate
     def get_event(self, event_id: str) -> str:
         """
@@ -874,7 +882,6 @@ class GoogleCalendarTools(Toolkit):
         except HttpError as error:
             log_error(f"An error occurred while checking availability: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
-
 
     @authenticate
     def search_events(
