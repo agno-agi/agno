@@ -11,6 +11,7 @@ Examples for team workflows in run_control.
 ## Files
 
 - cancel_run.py - Demonstrates cancel run.
+- cancel_run_persistence.py - Cancel a running team and verify partial content is persisted.
 - background_execution.py - Demonstrates background execution and polling.
 - model_inheritance.py - Demonstrates model inheritance.
 - remote_team.py - Demonstrates remote team.

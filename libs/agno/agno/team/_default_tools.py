@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.exceptions import RunCancelledException
 from agno.filters import FilterExpr
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
@@ -33,6 +34,7 @@ from agno.memory import MemoryManager
 from agno.models.message import Message, MessageReferences
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.cancel import cancel_run, raise_if_cancelled
 from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -584,14 +586,28 @@ def _get_delegate_task_function(
                 yield_run_output=True,
             )
             member_agent_run_response = None
+            member_run_id = None
             for member_agent_run_output_event in member_agent_run_response_stream:
                 # Do NOT break out of the loop, Iterator need to exit properly
                 if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                     member_agent_run_response = member_agent_run_output_event  # type: ignore
                     continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                # Check if the run is cancelled
+                # Capture the member's run_id for cancellation propagation
+                if member_run_id is None and hasattr(member_agent_run_output_event, "run_id"):
+                    member_run_id = member_agent_run_output_event.run_id
+
+                # Check if the member's own run is cancelled
                 check_if_run_cancelled(member_agent_run_output_event)
+
+                # Check if the parent team's run is cancelled - propagate to member
+                try:
+                    raise_if_cancelled(run_response.run_id)
+                except RunCancelledException:
+                    # Cancel the member's run so it stops generating
+                    if member_run_id:
+                        cancel_run(member_run_id)
+                    raise
 
                 # Yield the member event directly
                 member_agent_run_output_event.parent_run_id = (
@@ -621,6 +637,8 @@ def _get_delegate_task_function(
             )
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
+            # Also check if the parent team's run was cancelled while the member was executing
+            raise_if_cancelled(run_response.run_id)
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -724,14 +742,28 @@ def _get_delegate_task_function(
                 yield_run_output=True,
             )
             member_agent_run_response = None
+            member_run_id = None
             async for member_agent_run_response_event in member_agent_run_response_stream:
                 # Do NOT break out of the loop, AsyncIterator need to exit properly
                 if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
                     member_agent_run_response = member_agent_run_response_event  # type: ignore
                     continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                # Check if the run is cancelled
+                # Capture the member's run_id for cancellation propagation
+                if member_run_id is None and hasattr(member_agent_run_response_event, "run_id"):
+                    member_run_id = member_agent_run_response_event.run_id
+
+                # Check if the member's own run is cancelled
                 check_if_run_cancelled(member_agent_run_response_event)
+
+                # Check if the parent team's run is cancelled - propagate to member
+                try:
+                    raise_if_cancelled(run_response.run_id)
+                except RunCancelledException:
+                    # Cancel the member's run so it stops generating
+                    if member_run_id:
+                        cancel_run(member_run_id)
+                    raise
 
                 # Yield the member event directly
                 member_agent_run_response_event.parent_run_id = getattr(
@@ -760,6 +792,8 @@ def _get_delegate_task_function(
                 else None,
             )
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
+            # Also check if the parent team's run was cancelled while the member was executing
+            raise_if_cancelled(run_response.run_id)
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -853,14 +887,27 @@ def _get_delegate_task_function(
                     yield_run_output=True,
                 )
                 member_agent_run_response = None
+                member_run_id = None
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     # Do NOT break out of the loop, Iterator need to exit properly
                     if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_response_chunk  # type: ignore
                         continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                    # Check if the run is cancelled
+                    # Capture the member's run_id for cancellation propagation
+                    if member_run_id is None and hasattr(member_agent_run_response_chunk, "run_id"):
+                        member_run_id = member_agent_run_response_chunk.run_id
+
+                    # Check if the member's own run is cancelled
                     check_if_run_cancelled(member_agent_run_response_chunk)
+
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        raise
 
                     # Yield the member event directly
                     member_agent_run_response_chunk.parent_run_id = member_agent_run_response_chunk.parent_run_id or (
@@ -891,6 +938,7 @@ def _get_delegate_task_function(
                 )
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                raise_if_cancelled(run_response.run_id)
 
             # Check if the member run is paused (HITL)
             if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -982,6 +1030,7 @@ def _get_delegate_task_function(
                     yield_run_output=True,
                 )
                 member_agent_run_response = None
+                member_run_id = None
                 try:
                     try:
                         async for member_agent_run_output_event in member_stream:
@@ -990,7 +1039,20 @@ def _get_delegate_task_function(
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
                                 continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
+                            # Capture the member's run_id for cancellation propagation
+                            if member_run_id is None and hasattr(member_agent_run_output_event, "run_id"):
+                                member_run_id = member_agent_run_output_event.run_id
+
                             check_if_run_cancelled(member_agent_run_output_event)
+
+                            # Check if the parent team's run is cancelled - propagate to member
+                            try:
+                                raise_if_cancelled(run_response.run_id)
+                            except RunCancelledException:
+                                if member_run_id:
+                                    cancel_run(member_run_id)
+                                raise
+
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id
                                 or (run_response.run_id if run_response is not None else None)
@@ -1079,6 +1141,7 @@ def _get_delegate_task_function(
                         metadata=run_context.metadata,
                     )
                     check_if_run_cancelled(member_agent_run_response)
+                    raise_if_cancelled(run_response.run_id)
 
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
 

@@ -481,6 +481,182 @@ async def test_cancel_preserves_partial_structured_output(shared_db):
 
 
 # ============================================================================
+# CONTENT PRESERVATION SPECIFIC TESTS
+# ============================================================================
+def test_cancel_agent_sync_streaming_preserves_content_in_db(shared_db):
+    """Test that cancelled agent run preserves partial content in the database.
+
+    Verifies:
+    - Run status is set to cancelled in DB
+    - Partial content is stored (not overwritten with cancellation message)
+    - Content length matches what was streamed
+    """
+    agent = Agent(
+        name="Content Persist Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very detailed response.",
+        db=shared_db,
+    )
+
+    session_id = "test_agent_sync_content_persist"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.run(
+        input="Write a very long story about a dragon who learns to code. Make it at least 2000 words.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 10 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None
+    assert len(last_run.content) > 20, "Stored content should be substantial, not just a cancellation message"
+    assert "was cancelled" not in last_run.content or len(last_run.content) > 100, (
+        "Content should be actual streamed content, not just the cancellation error message"
+    )
+
+
+def test_cancel_agent_sync_streaming_preserves_messages_in_db(shared_db):
+    """Test that cancelled agent run preserves partial messages in the database."""
+    agent = Agent(
+        name="Messages Persist Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very detailed response.",
+        db=shared_db,
+    )
+
+    session_id = "test_agent_sync_messages_persist"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.run(
+        input="Write a very long story about a dragon who learns to code.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 5 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    last_run = session.runs[-1]
+    assert last_run.messages is not None, "Messages should be preserved after cancellation"
+    assert len(last_run.messages) > 0, "Should have at least one message preserved"
+
+
+@pytest.mark.asyncio
+async def test_cancel_agent_async_streaming_preserves_content_in_db(shared_db):
+    """Async version: stored content should be actual streamed content, not exception message."""
+    agent = Agent(
+        name="Async Content Persist Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very detailed response.",
+        db=shared_db,
+    )
+
+    session_id = "test_agent_async_content_persist"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.arun(
+        input="Write a very long story about a dragon who learns to code. Make it at least 2000 words.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    async for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 10 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None
+    assert "was cancelled" not in last_run.content or len(last_run.content) > 100, (
+        "Content should be actual streamed content, not just the cancellation error message"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_agent_async_streaming_preserves_messages_in_db(shared_db):
+    """Async version: messages should be preserved after cancellation."""
+    agent = Agent(
+        name="Async Messages Persist Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very detailed response.",
+        db=shared_db,
+    )
+
+    session_id = "test_agent_async_messages_persist"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.arun(
+        input="Write a very long story about a dragon who learns to code.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    async for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 5 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    last_run = session.runs[-1]
+    assert last_run.messages is not None, "Messages should be preserved after async cancellation"
+    assert len(last_run.messages) > 0, "Should have at least one message preserved"
+
+
+# ============================================================================
 # REDIS CANCELLATION TESTS
 # ============================================================================
 
@@ -751,3 +927,219 @@ async def test_redis_cancellation_manager_aget_active_runs(redis_cancellation_ma
     await redis_cancellation_manager.acleanup_run(run_id1)
     await redis_cancellation_manager.acleanup_run(run_id2)
     await redis_cancellation_manager.acleanup_run(run_id3)
+
+
+# ============================================================================
+# CONTINUE_RUN CANCELLATION TESTS
+# These test the _continue_run, _continue_run_stream,
+# _acontinue_run, _acontinue_run_stream handlers
+# ============================================================================
+def test_cancel_agent_continue_run_sync_streaming(shared_db):
+    """Test cancelling an agent during continue_run with sync streaming.
+
+    Tests the _continue_run_stream handler.
+    """
+    agent = Agent(
+        name="Continue Stream Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent.",
+        db=shared_db,
+    )
+
+    session_id = "test_continue_sync_stream_cancel"
+
+    # First run: complete a normal run to establish session state
+    first_result = agent.run(
+        input="Say hello",
+        session_id=session_id,
+        stream=False,
+    )
+    assert first_result.status == RunStatus.completed
+
+    # Continue run with streaming and cancel mid-stream
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.continue_run(
+        run_response=first_result,
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 3 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    # Verify cancellation
+    cancelled_events = [e for e in [event] if isinstance(event, RunCancelledEvent)]
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None, "Partial content should be preserved in continue_run_stream"
+
+
+def test_cancel_agent_continue_run_sync_non_streaming(shared_db):
+    """Test cancelling an agent during continue_run without streaming.
+
+    Tests the _continue_run handler.
+    """
+    agent = Agent(
+        name="Continue Non-Stream Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write very long detailed responses.",
+        db=shared_db,
+    )
+
+    session_id = "test_continue_sync_non_stream_cancel"
+
+    # First run
+    first_result = agent.run(
+        input="Say hello briefly",
+        session_id=session_id,
+        stream=False,
+    )
+    assert first_result.status == RunStatus.completed
+
+    run_id = "test_continue_non_stream_run"
+    result = None
+    exception_raised = None
+
+    def run_continue():
+        nonlocal result, exception_raised
+        try:
+            result = agent.continue_run(
+                run_response=first_result,
+                run_id=run_id,
+                session_id=session_id,
+                stream=False,
+            )
+        except RunCancelledException as e:
+            exception_raised = e
+
+    agent_thread = threading.Thread(target=run_continue)
+    agent_thread.start()
+
+    time.sleep(1.0)
+    cancel_result = agent.cancel_run(run_id)
+
+    agent_thread.join(timeout=10)
+
+    if cancel_result:
+        if exception_raised:
+            assert isinstance(exception_raised, RunCancelledException)
+        elif result:
+            assert result.status in [RunStatus.cancelled, RunStatus.completed]
+    else:
+        assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_agent_continue_run_async_streaming(shared_db):
+    """Test cancelling an agent during acontinue_run with async streaming.
+
+    Tests the _acontinue_run_stream handler.
+    """
+    agent = Agent(
+        name="Async Continue Stream Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent.",
+        db=shared_db,
+    )
+
+    session_id = "test_continue_async_stream_cancel"
+
+    # First run
+    first_result = await agent.arun(
+        input="Say hello",
+        session_id=session_id,
+        stream=False,
+    )
+    assert first_result.status == RunStatus.completed
+
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.acontinue_run(
+        run_response=first_result,
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    async for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 3 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None, "Partial content should be preserved in acontinue_run_stream"
+
+
+@pytest.mark.asyncio
+async def test_cancel_agent_continue_run_async_non_streaming(shared_db):
+    """Test cancelling an agent during acontinue_run without streaming.
+
+    Tests the _acontinue_run handler.
+    """
+    agent = Agent(
+        name="Async Continue Non-Stream Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write very long detailed responses.",
+        db=shared_db,
+    )
+
+    session_id = "test_continue_async_non_stream_cancel"
+
+    # First run
+    first_result = await agent.arun(
+        input="Say hello briefly",
+        session_id=session_id,
+        stream=False,
+    )
+    assert first_result.status == RunStatus.completed
+
+    run_id = "test_continue_async_non_stream_run"
+
+    async def cancel_after_delay():
+        await asyncio.sleep(1.0)
+        agent.cancel_run(run_id)
+
+    cancel_task = asyncio.create_task(cancel_after_delay())
+
+    try:
+        result = await agent.acontinue_run(
+            run_response=first_result,
+            run_id=run_id,
+            session_id=session_id,
+            stream=False,
+        )
+        assert result.status in [RunStatus.completed, RunStatus.cancelled]
+    except RunCancelledException:
+        pass
+
+    cancel_task.cancel()
+    try:
+        await cancel_task
+    except asyncio.CancelledError:
+        pass

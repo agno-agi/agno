@@ -423,7 +423,10 @@ def _run_tasks(
     except RunCancelledException as e:
         log_info(f"Team task run {run_response.run_id} was cancelled")
         run_response.status = RunStatus.cancelled
-        run_response.content = str(e)
+        # Don't overwrite content - preserve any partial content that was streamed
+        # Only set content if it's empty
+        if not run_response.content:
+            run_response.content = str(e)
         _cleanup_and_store(team, run_response=run_response, session=session)
         return run_response
 
@@ -881,7 +884,20 @@ def _run_tasks_stream(
     except RunCancelledException as e:
         log_info(f"Team task run {run_response.run_id} was cancelled during streaming")
         run_response.status = RunStatus.cancelled
-        run_response.content = str(e)
+        # Don't overwrite content - preserve any partial content that was streamed
+        # Only set content if it's empty
+        if not run_response.content:
+            run_response.content = str(e)
+
+        # Preserve partial messages if available
+        if run_response.messages is None and run_messages is not None:
+            messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+            if messages_for_run_response:
+                run_response.messages = messages_for_run_response
+
+        # Cleanup and store BEFORE yielding the cancellation event
+        # This ensures the session is saved even if the consumer stops iterating
+        _cleanup_and_store(team, run_response=run_response, session=session)
 
         yield handle_event(
             create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
@@ -889,7 +905,6 @@ def _run_tasks_stream(
             events_to_skip=team.events_to_skip,
             store_events=team.store_events,
         )
-        _cleanup_and_store(team, run_response=run_response, session=session)
 
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
@@ -1208,10 +1223,13 @@ def _run(
 
                 return run_response
             except RunCancelledException as e:
-                # Handle run cancellation during streaming
-                log_info(f"Team run {run_response.run_id} was cancelled during streaming")
+                # Handle run cancellation
+                log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
+                # Don't overwrite content - preserve any partial content
+                # Only set content if it's empty
+                if not run_response.content:
+                    run_response.content = str(e)
 
                 # Cleanup and store the run response and session
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1647,7 +1665,20 @@ def _run_stream(
                 # Handle run cancellation during streaming
                 log_info(f"Team run {run_response.run_id} was cancelled during streaming")
                 run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
+                # Don't overwrite content - preserve any partial content that was streamed
+                # Only set content if it's empty
+                if not run_response.content:
+                    run_response.content = str(e)
+
+                # Preserve partial messages if available
+                if run_response.messages is None and run_messages is not None:
+                    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                    if messages_for_run_response:
+                        run_response.messages = messages_for_run_response
+
+                # Cleanup and store BEFORE yielding the cancellation event
+                # This ensures the session is saved even if the consumer stops iterating
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 # Yield the cancellation event
                 yield handle_event(
@@ -1656,7 +1687,6 @@ def _run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-                _cleanup_and_store(team, run_response=run_response, session=session)
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
@@ -2199,7 +2229,10 @@ async def _arun_tasks(
     except RunCancelledException as e:
         log_info(f"Team task run {run_response.run_id} was cancelled")
         run_response.status = RunStatus.cancelled
-        run_response.content = str(e)
+        # Don't overwrite content - preserve any partial content
+        # Only set content if it's empty
+        if not run_response.content:
+            run_response.content = str(e)
         if team_session is not None:
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
@@ -2676,7 +2709,21 @@ async def _arun_tasks_stream(
     except RunCancelledException as e:
         log_info(f"Team task run {run_response.run_id} was cancelled during async streaming")
         run_response.status = RunStatus.cancelled
-        run_response.content = str(e)
+        # Don't overwrite content - preserve any partial content that was streamed
+        # Only set content if it's empty
+        if not run_response.content:
+            run_response.content = str(e)
+
+        # Preserve partial messages if available
+        if run_response.messages is None and run_messages is not None:
+            messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+            if messages_for_run_response:
+                run_response.messages = messages_for_run_response
+
+        # Cleanup and store BEFORE yielding the cancellation event
+        # This ensures the session is saved even if the consumer stops iterating
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
         yield handle_event(  # type: ignore
             create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
@@ -2684,8 +2731,6 @@ async def _arun_tasks_stream(
             events_to_skip=team.events_to_skip,
             store_events=team.store_events,
         )
-        if team_session is not None:
-            await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
@@ -3040,8 +3085,11 @@ async def _arun(
             except RunCancelledException as e:
                 # Handle run cancellation
                 log_info(f"Run {run_response.run_id} was cancelled")
-                run_response.content = str(e)
                 run_response.status = RunStatus.cancelled
+                # Don't overwrite content - preserve any partial content
+                # Only set content if it's empty
+                if not run_response.content:
+                    run_response.content = str(e)
 
                 # Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3588,7 +3636,20 @@ async def _arun_stream(
                 # Handle run cancellation during async streaming
                 log_info(f"Team run {run_response.run_id} was cancelled during async streaming")
                 run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
+                # Don't overwrite content - preserve any partial content that was streamed
+                # Only set content if it's empty
+                if not run_response.content:
+                    run_response.content = str(e)
+
+                # Preserve partial messages if available
+                if run_response.messages is None and run_messages is not None:
+                    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                    if messages_for_run_response:
+                        run_response.messages = messages_for_run_response
+
+                # Cleanup and store BEFORE yielding the cancellation event
+                # This ensures the session is saved even if the consumer stops iterating
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 # Yield the cancellation event
                 yield handle_event(  # type: ignore
@@ -3597,9 +3658,6 @@ async def _arun_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-
-                # Cleanup and store the run response and session
-                await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -5063,7 +5121,10 @@ def _continue_run(
             except RunCancelledException as e:
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
+                # Don't overwrite content - preserve any partial content
+                # Only set content if it's empty
+                if not run_response.content:
+                    run_response.content = str(e)
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 return run_response
 
@@ -5312,8 +5373,20 @@ def _continue_run_stream(
             except RunCancelledException as e:
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
+                # Don't overwrite content - preserve any partial content that was streamed
+                # Only set content if it's empty
                 if not run_response.content:
                     run_response.content = str(e)
+
+                # Preserve partial messages if available
+                if run_response.messages is None and run_messages is not None:
+                    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                    if messages_for_run_response:
+                        run_response.messages = messages_for_run_response
+
+                # Cleanup and store BEFORE yielding the cancellation event
+                # This ensures the session is saved even if the consumer stops iterating
+                _cleanup_and_store(team, run_response=run_response, session=session)
 
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
@@ -5321,7 +5394,6 @@ def _continue_run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-                _cleanup_and_store(team, run_response=run_response, session=session)
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -5744,7 +5816,10 @@ async def _acontinue_run(
                 run_response = cast(TeamRunOutput, run_response)
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
+                # Don't overwrite content - preserve any partial content
+                # Only set content if it's empty
+                if not run_response.content:
+                    run_response.content = str(e)
 
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -6139,8 +6214,21 @@ async def _acontinue_run_stream(
                 run_response = cast(TeamRunOutput, run_response)
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
+                # Don't overwrite content - preserve any partial content that was streamed
+                # Only set content if it's empty
                 if not run_response.content:
                     run_response.content = str(e)
+
+                # Preserve partial messages if available
+                if run_response.messages is None and run_messages is not None:
+                    messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+                    if messages_for_run_response:
+                        run_response.messages = messages_for_run_response
+
+                # Cleanup and store BEFORE yielding the cancellation event
+                # This ensures the session is saved even if the consumer stops iterating
+                if team_session is not None:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
@@ -6148,8 +6236,6 @@ async def _acontinue_run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-                if team_session is not None:
-                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 break
 
             except (InputCheckError, OutputCheckError) as e:

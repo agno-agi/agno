@@ -29,7 +29,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError
+from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
 from agno.models.message import Citations, Message
@@ -2152,6 +2152,8 @@ class Model(ABC):
                         function_call_output += str(item)
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                 function_call.error = str(e)
@@ -2804,6 +2806,8 @@ class Model(ABC):
                             function_call_output += str(item)
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
+                except RunCancelledException:
+                    raise
                 except Exception as e:
                     log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                     function_call.error = str(e)

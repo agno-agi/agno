@@ -25,6 +25,7 @@ from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
+from agno.run.cancel import cancel_run, raise_if_cancelled
 from agno.run.team import (
     TaskCreatedEvent,
     TaskUpdatedEvent,
@@ -427,11 +428,21 @@ def _get_task_management_tools(
                     else None,
                     yield_run_output=True,
                 )
+                member_run_id = None
                 for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
+                    if member_run_id is None and hasattr(event, "run_id"):
+                        member_run_id = event.run_id
                     check_if_run_cancelled(event)
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        raise
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
             else:
@@ -455,6 +466,7 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
+                raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             raise
         except Exception as e:
@@ -571,11 +583,21 @@ def _get_task_management_tools(
                     else None,
                     yield_run_output=True,
                 )
+                member_run_id = None
                 async for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
+                    if member_run_id is None and hasattr(event, "run_id"):
+                        member_run_id = event.run_id
                     check_if_run_cancelled(event)
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        raise
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
             else:
@@ -599,6 +621,7 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
+                raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             raise
         except Exception as e:
