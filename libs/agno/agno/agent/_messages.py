@@ -1352,6 +1352,9 @@ def get_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
+
     return run_messages
 
 
@@ -1554,6 +1557,9 @@ async def aget_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
+
     return run_messages
 
 
@@ -1562,6 +1568,7 @@ def get_continue_run_messages(
     input: List[Message],
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1644,6 +1651,10 @@ def get_continue_run_messages(
     for msg in input:
         if msg is not system_message:
             run_messages.messages.append(msg)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    if run_context is not None:
+        run_context.messages = run_messages.messages
 
     return run_messages
 

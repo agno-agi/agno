@@ -28,14 +28,14 @@ def context_aware_hook(
     """Log conversation context before executing a member's tool."""
     msgs = run_context.messages
     count = len(msgs) if msgs else 0
-    print(f"[hook] {function_name} — {count} messages in run")
+    print(f"[hook] {function_name} - {count} messages in run")
     return function_call(**arguments)
 
 
 def pre_hook(run_context: RunContext, fc: FunctionCall):
     msgs = run_context.messages
     count = len(msgs) if msgs else 0
-    print(f"[pre-hook] {fc.function.name} — {count} messages in run")
+    print(f"[pre-hook] {fc.function.name} - {count} messages in run")
 
 
 @tool(pre_hook=pre_hook)

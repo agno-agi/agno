@@ -905,6 +905,9 @@ def _get_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
+
     return run_messages
 
 
@@ -1035,6 +1038,9 @@ async def _aget_run_messages(
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
 
     return run_messages
 

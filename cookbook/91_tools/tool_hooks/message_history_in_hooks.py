@@ -19,14 +19,14 @@ from agno.tools import FunctionCall, tool
 def pre_hook(run_context: RunContext, fc: FunctionCall):
     msgs = run_context.messages
     count = len(msgs) if msgs else 0
-    print(f"[pre-hook] {fc.function.name} — {count} messages in run")
+    print(f"[pre-hook] {fc.function.name} - {count} messages in run")
 
 
 def post_hook(run_context: RunContext, fc: FunctionCall):
     msgs = run_context.messages
     count = len(msgs) if msgs else 0
     print(
-        f"[post-hook] {fc.function.name} returned '{fc.result}' — {count} messages in run"
+        f"[post-hook] {fc.function.name} returned '{fc.result}' - {count} messages in run"
     )
 
 

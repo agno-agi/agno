@@ -790,11 +790,13 @@ class FunctionCall(BaseModel):
         return call_str
 
     def _safe_hook_call(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
-        """Call a hook with mutation-safe messages.
+        """Call a hook with list-structure-safe messages.
 
-        Temporarily replaces run_context.messages with a copy so the hook
-        cannot corrupt the live message list. The live reference is restored
-        after the hook returns (or raises).
+        Temporarily replaces run_context.messages with a shallow copy so the
+        hook cannot corrupt the live message list (e.g. .clear(), .append()).
+        Individual Message objects are still shared references — this protects
+        list structure only, not message contents. The live reference is
+        restored after the hook returns (or raises).
         """
         rc = self.function._run_context
         if rc is not None and rc.messages is not None:
