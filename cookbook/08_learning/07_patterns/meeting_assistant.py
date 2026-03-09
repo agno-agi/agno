@@ -13,12 +13,6 @@ Scenario:
 - Meeting 1: Team standup - track attendees, project updates, blockers
 - Meeting 2: 1:1 with team member - track career goals, action items
 - Meeting 3: Client call - track client entity, meeting notes, follow-ups
-
-Key features demonstrated:
-- Entity creation for people, projects, companies
-- Event logging on entities (meetings, updates, decisions)
-- Relationship tracking (works_on, reports_to, owns)
-- Session context for meeting notes and action items
 """
 
 from agno.agent import Agent
@@ -31,16 +25,11 @@ from agno.learn import (
 )
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
-
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 
 def create_meeting_assistant(user_id: str, meeting_id: str) -> Agent:
-    """Create a meeting assistant for tracking entities and action items."""
     return Agent(
         model=OpenAIResponses(id="gpt-4o"),
         db=db,
@@ -71,7 +60,7 @@ WORKFLOW:
 Be thorough - every person, project, and decision should be tracked.""",
         learning=LearningMachine(
             session_context=SessionContextConfig(
-                enable_planning=True,  # Track meeting agenda and action items
+                enable_planning=True,
             ),
             entity_memory=EntityMemoryConfig(
                 mode=LearningMode.AGENTIC,
@@ -85,102 +74,73 @@ Be thorough - every person, project, and decision should be tracked.""",
     )
 
 
-# ============================================================================
-# Demo: Meeting Assistant Scenario
-# ============================================================================
-
 if __name__ == "__main__":
-    # Team standup meeting
+    # Meeting 1: Team standup — reuse same agent for all messages
     print("\n" + "=" * 60)
     print("MEETING 1: Team Standup")
     print("=" * 60 + "\n")
 
-    standup_intro = create_meeting_assistant(
-        "manager@company.com", "standup-2024-01-15"
-    )
-    standup_intro.print_response(
+    standup = create_meeting_assistant("manager@company.com", "standup-2024-01-15")
+    standup.print_response(
         "Starting our Monday standup. Present: Alice (senior engineer), "
         "Bob (junior engineer), and myself.",
         stream=True,
     )
 
-    standup_updates = create_meeting_assistant(
-        "manager@company.com", "standup-2024-01-15"
-    )
-    standup_updates.print_response(
+    standup.print_response(
         "Alice: Project Atlas is on track for Q1 launch. Finished the auth module. "
         "Bob: Working on the onboarding flow for Atlas, blocked on API specs. "
         "Both Alice and Bob are working on Project Atlas.",
         stream=True,
     )
 
-    standup_action_items = create_meeting_assistant(
-        "manager@company.com", "standup-2024-01-15"
-    )
-    standup_action_items.print_response(
+    standup.print_response(
         "Action items from this standup: "
         "1. Alice to review Bob's PR by Wednesday "
         "2. Bob to sync with API team about specs "
         "3. I'll schedule Atlas demo for Friday.",
         stream=True,
     )
-    standup_action_items.learning_machine.session_context_store.print(
-        session_id="standup-2024-01-15"
-    )
+    standup.learning_machine.session_context_store.print(session_id="standup-2024-01-15")
 
-    # 1:1 meeting with Alice
+    # Meeting 2: 1:1 with Alice — different session, new agent
     print("\n" + "=" * 60)
     print("MEETING 2: 1:1 with Alice")
     print("=" * 60 + "\n")
 
-    one_on_one_context = create_meeting_assistant(
-        "manager@company.com", "1on1-alice-2024-01-15"
-    )
-    one_on_one_context.print_response(
+    one_on_one = create_meeting_assistant("manager@company.com", "1on1-alice-2024-01-15")
+    one_on_one.print_response(
         "Starting 1:1 with Alice. What do we know about her from previous meetings?",
         stream=True,
     )
 
-    one_on_one_discussion = create_meeting_assistant(
-        "manager@company.com", "1on1-alice-2024-01-15"
-    )
-    one_on_one_discussion.print_response(
+    one_on_one.print_response(
         "Alice shared she's interested in moving to a tech lead role. "
         "She wants to mentor Bob more actively. Her strength is system design.",
         stream=True,
     )
-    one_on_one_discussion.learning_machine.session_context_store.print(
-        session_id="1on1-alice-2024-01-15"
-    )
+    one_on_one.learning_machine.session_context_store.print(session_id="1on1-alice-2024-01-15")
 
-    # Client call with Acme Corp
+    # Meeting 3: Client call — different session, new agent
     print("\n" + "=" * 60)
     print("MEETING 3: Client Call with Acme Corp")
     print("=" * 60 + "\n")
 
-    client_call_intro = create_meeting_assistant(
-        "manager@company.com", "client-acme-2024-01-16"
-    )
-    client_call_intro.print_response(
+    client_call = create_meeting_assistant("manager@company.com", "client-acme-2024-01-16")
+    client_call.print_response(
         "Client call with Acme Corp. Their CTO Sarah Chen is on the call. "
         "Sarah is CTO at Acme.",
         stream=True,
     )
 
-    client_call_discussion = create_meeting_assistant(
-        "manager@company.com", "client-acme-2024-01-16"
-    )
-    client_call_discussion.print_response(
+    client_call.print_response(
         "Acme wants to integrate Project Atlas into their platform. "
         "Timeline: Q2 launch. Budget approved for enterprise tier. "
         "Sarah will be our main point of contact.",
         stream=True,
     )
 
-    client_call_followups = create_meeting_assistant(
-        "manager@company.com", "client-acme-2024-01-16"
-    )
-    client_call_followups.print_response(
+    client_call.print_response(
         "Follow-up actions: "
         "1. Send Acme the technical specs by Friday "
         "2. Schedule deep-dive with their engineering team "
@@ -193,7 +153,7 @@ if __name__ == "__main__":
     print("VERIFICATION: Entity Tracking")
     print("=" * 60 + "\n")
 
-    em = client_call_followups.learning_machine.entity_memory_store
+    em = client_call.learning_machine.entity_memory_store
 
     print("People entities:")
     if em:
@@ -201,9 +161,7 @@ if __name__ == "__main__":
             results = em.search(query=name, entity_type="person", limit=1)
             if results:
                 entity = results[0]
-                print(
-                    f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts"
-                )
+                print(f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts")
             else:
                 print(f"  {name}: NOT FOUND")
 
@@ -220,9 +178,5 @@ if __name__ == "__main__":
             print("  Acme Corp: FOUND")
 
     print("\nSession contexts:")
-    client_call_followups.learning_machine.session_context_store.print(
-        session_id="standup-2024-01-15"
-    )
-    client_call_followups.learning_machine.session_context_store.print(
-        session_id="client-acme-2024-01-16"
-    )
+    client_call.learning_machine.session_context_store.print(session_id="standup-2024-01-15")
+    client_call.learning_machine.session_context_store.print(session_id="client-acme-2024-01-16")

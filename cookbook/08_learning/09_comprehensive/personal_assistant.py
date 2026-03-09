@@ -14,10 +14,6 @@ This cookbook demonstrates:
 Scenario:
 Week-long journey showing assistant learning to prioritize, organize,
 and proactively manage communication clutter across multiple channels.
-
-Success metrics:
-- Before learning: User manually triages 50+ messages daily
-- After learning: Assistant surfaces 5-10 priority items, auto-handles rest
 """
 
 from agno.agent import Agent
@@ -36,14 +32,9 @@ from agno.learn import (
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ============================================================================
-# Setup
-# ============================================================================
-
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
-# Knowledge base for learned patterns
 personal_kb = Knowledge(
     vector_db=PgVector(
         db_url=db_url,
@@ -55,7 +46,6 @@ personal_kb = Knowledge(
 
 
 def create_personal_assistant(user_id: str, session_id: str) -> Agent:
-    """Create personal assistant with all 5 learning stores."""
     return Agent(
         model=OpenAIResponses(id="gpt-4o"),
         db=db,
@@ -109,58 +99,41 @@ Be proactive, context-aware, and help reduce communication overwhelm.""",
     )
 
 
-# ============================================================================
-# Message Formatting Helpers
-# ============================================================================
-
-
 def format_email(sender: str, subject: str, preview: str) -> str:
-    """Format email message."""
     return f"EMAIL from {sender}\nSubject: {subject}\n{preview}"
 
 
 def format_slack(channel: str, sender: str, message: str) -> str:
-    """Format Slack message."""
     return f"SLACK #{channel} - {sender}: {message}"
 
 
 def format_whatsapp(sender: str, message: str) -> str:
-    """Format WhatsApp message."""
     return f"WHATSAPP from {sender}: {message}"
 
 
 def format_meeting(title: str, notes: str) -> str:
-    """Format meeting notes."""
     return f"MEETING: {title}\n{notes}"
 
 
-# ============================================================================
-# Demo: 5-Day Personal Assistant Journey
-# ============================================================================
-
 if __name__ == "__main__":
-    # Seed knowledge base with email management best practices from authoritative sources
-    personal_kb.add_content(
-        url="https://blog.superhuman.com/inbox-zero-method/", skip_if_exists=True
-    )
-
     user_id = "alex@stripe.com"
+
+    # Single agent for the entire week — same user, same session
+    assistant = create_personal_assistant(user_id, "week-jan-15")
 
     # Monday: Initial setup and message triage
     print("\n" + "=" * 60)
     print("MONDAY: Initial Setup & Message Triage")
     print("=" * 60 + "\n")
 
-    intro_setup = create_personal_assistant(user_id, "week-jan-15")
-    intro_setup.print_response(
+    assistant.print_response(
         "Hi! I'm Alex Chen, product manager at Stripe working on payment APIs. "
         "I typically work 9-6 PT and prefer concise communication.",
         stream=True,
     )
-    intro_setup.learning_machine.user_profile_store.print(user_id=user_id)
+    assistant.learning_machine.user_profile_store.print(user_id=user_id)
 
-    sarah_urgent_email = create_personal_assistant(user_id, "week-jan-15")
-    sarah_urgent_email.print_response(
+    assistant.print_response(
         "Here's my first message this morning:\n\n"
         + format_email(
             "Sarah Chen <sarah@stripe.com>",
@@ -170,8 +143,7 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    monday_other_messages = create_personal_assistant(user_id, "week-jan-15")
-    monday_other_messages.print_response(
+    assistant.print_response(
         "I also have these messages:\n\n"
         + format_slack("product-team", "Bob", "Hey Alex, quick question about API docs")
         + "\n\n"
@@ -180,24 +152,20 @@ if __name__ == "__main__":
         + "Help me prioritize all of today's messages.",
         stream=True,
     )
-    monday_other_messages.learning_machine.session_context_store.print(
-        session_id="week-jan-15"
-    )
+    assistant.learning_machine.session_context_store.print(session_id="week-jan-15")
 
     # Tuesday: Pattern recognition
     print("\n" + "=" * 60)
     print("TUESDAY: Learning Priority Patterns")
     print("=" * 60 + "\n")
 
-    tuesday_recap = create_personal_assistant(user_id, "week-jan-15")
-    tuesday_recap.print_response(
+    assistant.print_response(
         "Good morning! Yesterday I handled Sarah's urgent email first and it was the "
         "right call - the exec review went well.",
         stream=True,
     )
 
-    tuesday_inbox = create_personal_assistant(user_id, "week-jan-15")
-    tuesday_inbox.print_response(
+    assistant.print_response(
         "Here's today's inbox:\n\n"
         + format_email(
             "Sarah Chen",
@@ -205,30 +173,24 @@ if __name__ == "__main__":
             "Great discussion yesterday...",
         )
         + "\n\n"
-        + format_email(
-            "Newsletter", "Weekly Product Digest", "Top 10 product trends..."
-        )
+        + format_email("Newsletter", "Weekly Product Digest", "Top 10 product trends...")
         + "\n\n"
         + format_slack("product-team", "Sarah", "Can we sync on post-launch roadmap?"),
         stream=True,
     )
 
-    tuesday_pattern_check = create_personal_assistant(user_id, "week-jan-15")
-    tuesday_pattern_check.print_response(
+    assistant.print_response(
         "What patterns do you see? How should I prioritize today?",
         stream=True,
     )
-    tuesday_pattern_check.learning_machine.learned_knowledge_store.print(
-        query="priority Sarah"
-    )
+    assistant.learning_machine.learned_knowledge_store.print(query="priority Sarah")
 
     # Wednesday: Proactive assistance
     print("\n" + "=" * 60)
     print("WEDNESDAY: Proactive Prioritization")
     print("=" * 60 + "\n")
 
-    wednesday_customer_issue = create_personal_assistant(user_id, "week-jan-15")
-    wednesday_customer_issue.print_response(
+    assistant.print_response(
         "Morning - I have an urgent message:\n\n"
         + format_email(
             "customer-success@acme.com",
@@ -238,29 +200,23 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    wednesday_other_messages = create_personal_assistant(user_id, "week-jan-15")
-    wednesday_other_messages.print_response(
+    assistant.print_response(
         "Also received:\n\n"
         + format_slack("random", "Karen", "Anyone want coffee?")
         + "\n\n"
-        + format_email(
-            "Sarah Chen", "Post-launch retrospective", "Let's schedule for Friday"
-        )
+        + format_email("Sarah Chen", "Post-launch retrospective", "Let's schedule for Friday")
         + "\n\n"
         + "Use learned patterns to prioritize all messages today.",
         stream=True,
     )
-    wednesday_other_messages.learning_machine.session_context_store.print(
-        session_id="week-jan-15"
-    )
+    assistant.learning_machine.session_context_store.print(session_id="week-jan-15")
 
     # Thursday: Cross-channel context tracking
     print("\n" + "=" * 60)
     print("THURSDAY: Cross-Channel Thread Tracking")
     print("=" * 60 + "\n")
 
-    thursday_meeting = create_personal_assistant(user_id, "week-jan-15")
-    thursday_meeting.print_response(
+    assistant.print_response(
         format_meeting(
             "API Launch Retrospective",
             "Attendees: Sarah, Bob, Engineering team\n"
@@ -273,44 +229,34 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    thursday_slack_followup = create_personal_assistant(user_id, "week-jan-15")
-    thursday_slack_followup.print_response(
+    assistant.print_response(
         "Later that day:\n\n"
         + format_slack("product-team", "Sarah", "Alex, how's the Q2 roadmap coming?")
         + "\n\n"
         + "What's the status on these action items?",
         stream=True,
     )
-    thursday_slack_followup.learning_machine.session_context_store.print(
-        session_id="week-jan-15"
-    )
+    assistant.learning_machine.session_context_store.print(session_id="week-jan-15")
 
     # Friday: Week wrap-up
     print("\n" + "=" * 60)
     print("FRIDAY: Weekly Summary & Pattern Review")
     print("=" * 60 + "\n")
 
-    friday_summary = create_personal_assistant(user_id, "week-jan-15")
-    friday_summary.print_response(
+    assistant.print_response(
         "It's Friday afternoon. Please:\n"
         "1. Summarize my week\n"
         "2. List any incomplete action\n"
         "3. Suggest prep for next week",
         stream=True,
     )
-    friday_summary.learning_machine.learned_knowledge_store.print(
-        query="priority pattern"
-    )
+    assistant.learning_machine.learned_knowledge_store.print(query="priority pattern")
 
     # Verify all 5 stores
     print("\n" + "=" * 60)
     print("VERIFICATION: All 5 Stores")
     print("=" * 60 + "\n")
 
-    friday_summary.learning_machine.user_profile_store.print(user_id=user_id)
-    friday_summary.learning_machine.session_context_store.print(
-        session_id="week-jan-15"
-    )
-    friday_summary.learning_machine.learned_knowledge_store.print(
-        query="priority"
-    )
+    assistant.learning_machine.user_profile_store.print(user_id=user_id)
+    assistant.learning_machine.session_context_store.print(session_id="week-jan-15")
+    assistant.learning_machine.learned_knowledge_store.print(query="priority")

@@ -13,11 +13,6 @@ Scenario:
 - Engineer A reports a database connection issue, bot helps diagnose
 - After resolution, engineer tells bot to save the pattern
 - Engineer B (different person) has similar issue - bot finds prior solution
-
-What makes this different from other cookbooks:
-- support_agent.py: Stores work independently
-- personal_assistant.py: Single user focus
-- THIS: Multi-user knowledge sharing + incident tracking with save_learning
 """
 
 from agno.agent import Agent
@@ -32,10 +27,6 @@ from agno.learn import (
 )
 from agno.models.anthropic import Claude
 from agno.vectordb.pgvector import PgVector, SearchType
-
-# ============================================================================
-# Setup
-# ============================================================================
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -52,7 +43,6 @@ incident_kb = Knowledge(
 
 
 def create_oncall_bot(engineer_id: str, incident_id: str) -> Agent:
-    """Create an incident response bot for an on-call engineer."""
     return Agent(
         model=Claude(id="claude-sonnet-4-5-20250929"),
         db=db,
@@ -69,10 +59,10 @@ Be concise and focus on actionable steps.""",
         learning=LearningMachine(
             knowledge=incident_kb,
             session_context=SessionContextConfig(
-                enable_planning=True,  # Track incident resolution steps
+                enable_planning=True,
             ),
             learned_knowledge=LearnedKnowledgeConfig(
-                mode=LearningMode.AGENTIC,  # Agent saves patterns via save_learning tool
+                mode=LearningMode.AGENTIC,
                 namespace="incidents:prod",
             ),
         ),
@@ -82,51 +72,41 @@ Be concise and focus on actionable steps.""",
     )
 
 
-# ============================================================================
-# Demo: Incident Response with Knowledge Sharing
-# ============================================================================
-
 if __name__ == "__main__":
     # Sarah encounters database connection storm
     print("\n" + "=" * 60)
     print("INCIDENT 1: Database Connection Storm (Sarah)")
     print("=" * 60 + "\n")
 
-    sarah_initial_report = create_oncall_bot("sarah@company.com", "INC-001")
-    sarah_initial_report.print_response(
+    sarah_bot = create_oncall_bot("sarah@company.com", "INC-001")
+    sarah_bot.print_response(
         "I'm getting paged - our API is throwing 'too many connections' errors to Postgres. "
         "Response times are spiking. What should I check first?",
         stream=True,
     )
-    sarah_initial_report.learning_machine.session_context_store.print(
-        session_id="INC-001"
-    )
+    sarah_bot.learning_machine.session_context_store.print(session_id="INC-001")
 
-    sarah_investigation = create_oncall_bot("sarah@company.com", "INC-001")
-    sarah_investigation.print_response(
+    sarah_bot.print_response(
         "I checked pg_stat_activity - there are 500 connections! Our pool is set to 100. "
         "Most are in 'idle in transaction' state. What's causing this?",
         stream=True,
     )
 
-    sarah_resolution = create_oncall_bot("sarah@company.com", "INC-001")
-    sarah_resolution.print_response(
+    sarah_bot.print_response(
         "Found it! A new deployment had a missing connection.close() in a retry loop. "
         "Rolled back the deployment, connections dropping. Crisis averted! "
         "Root cause was unclosed connections in retry logic.",
         stream=True,
     )
-    sarah_resolution.learning_machine.learned_knowledge_store.print(
-        query="database connections"
-    )
+    sarah_bot.learning_machine.learned_knowledge_store.print(query="database connections")
 
-    # Marcus encounters similar issue
+    # Marcus encounters similar issue — different engineer, different incident
     print("\n" + "=" * 60)
     print("INCIDENT 2: Similar Database Issue (Marcus)")
     print("=" * 60 + "\n")
 
-    marcus_similar_issue = create_oncall_bot("marcus@company.com", "INC-002")
-    marcus_similar_issue.print_response(
+    marcus_bot = create_oncall_bot("marcus@company.com", "INC-002")
+    marcus_bot.print_response(
         "Seeing Postgres connection exhaustion on the payments service. "
         "Pool is maxed out. What's the fastest way to diagnose?",
         stream=True,
@@ -138,14 +118,8 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     print("Learned knowledge (shared across engineers):")
-    marcus_similar_issue.learning_machine.learned_knowledge_store.print(
-        query="connection postgres"
-    )
+    marcus_bot.learning_machine.learned_knowledge_store.print(query="connection postgres")
 
     print("\nSession contexts (separate per incident):")
-    sarah_resolution.learning_machine.session_context_store.print(
-        session_id="INC-001"
-    )
-    marcus_similar_issue.learning_machine.session_context_store.print(
-        session_id="INC-002"
-    )
+    sarah_bot.learning_machine.session_context_store.print(session_id="INC-001")
+    marcus_bot.learning_machine.session_context_store.print(session_id="INC-002")
