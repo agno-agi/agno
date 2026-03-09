@@ -272,6 +272,9 @@ def _run_tasks(
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
+        # Set messages on run_context so tool pre/post hooks can access the current message history
+        run_context.messages = run_messages.messages
+
         # 4. Start memory and learning creation in background
         memory_future = _start_memory_future(
             team,
@@ -585,6 +588,9 @@ def _run_tasks_stream(
         )
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
+
+        # Set messages on run_context so tool pre/post hooks can access the current message history
+        run_context.messages = run_messages.messages
 
         # 4. Start memory creation in background
         memory_future = _start_memory_future(
@@ -1090,6 +1096,9 @@ def _run(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
+
                 # 4. Start memory creation in background thread
                 memory_future = _start_memory_future(
                     team,
@@ -1436,6 +1445,9 @@ def _run_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
 
                 # 4. Start memory creation in background thread
                 memory_future = _start_memory_future(
@@ -2048,6 +2060,9 @@ async def _arun_tasks(
             **kwargs,
         )
 
+        # Set messages on run_context so tool pre/post hooks can access the current message history
+        run_context.messages = run_messages.messages
+
         # 4. Start memory and learning creation in background
         memory_task = await _astart_memory_task(
             team,
@@ -2377,6 +2392,9 @@ async def _arun_tasks_stream(
             tools=_tools,
             **kwargs,
         )
+
+        # Set messages on run_context so tool pre/post hooks can access the current message history
+        run_context.messages = run_messages.messages
 
         # 4. Start memory creation in background
         memory_task = await _astart_memory_task(
@@ -2919,6 +2937,9 @@ async def _arun(
 
                 team.model = cast(Model, team.model)
 
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
+
                 # 4. Start memory creation in background task
                 memory_task = await _astart_memory_task(
                     team,
@@ -3375,6 +3396,9 @@ async def _arun_stream(
                     tools=_tools,
                     **kwargs,
                 )
+
+                # Set messages on run_context so tool pre/post hooks can access the current message history
+                run_context.messages = run_messages.messages
 
                 # 4. Start memory creation in background task
                 memory_task = await _astart_memory_task(
@@ -4842,6 +4866,9 @@ def continue_run_dispatch(
             team, input=input_messages, session=team_session, add_history_to_context=team.add_history_to_context
         )
 
+        # Set messages on run_context so tool pre/post hooks can access the current message history
+        run_context.messages = run_messages.messages
+
         # Handle tool call updates (execute confirmed tools, etc.)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
 
@@ -4969,6 +4996,9 @@ def _continue_run(
     )
 
     team.model = cast(Model, team.model)
+
+    # Set messages on run_context so tool pre/post hooks can access the current message history
+    run_context.messages = run_messages.messages
 
     try:
         num_attempts = team.retries + 1
@@ -5132,6 +5162,9 @@ def _continue_run_stream(
     from agno.utils.events import create_team_run_continued_event
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Set messages on run_context so tool pre/post hooks can access the current message history
+    run_context.messages = run_messages.messages
 
     try:
         num_attempts = team.retries + 1
@@ -5630,6 +5663,9 @@ async def _acontinue_run(
                         add_history_to_context=team.add_history_to_context,
                     )
 
+                    # Set messages on run_context so tool pre/post hooks can access the current message history
+                    run_context.messages = run_messages.messages
+
                     await _ahandle_team_tool_call_updates(
                         team, run_response=run_response, run_messages=run_messages, tools=_tools
                     )
@@ -5932,6 +5968,9 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                     )
+
+                    # Set messages on run_context so tool pre/post hooks can access the current message history
+                    run_context.messages = run_messages.messages
 
                     run_response.status = RunStatus.running
                     run_response.content = None

@@ -1,10 +1,12 @@
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import patch
 
 import pytest
 
 from agno.agent import Agent
+from agno.models.message import Message
 from agno.run.agent import RunOutput
+from agno.tools import FunctionCall
 from agno.tools.decorator import tool
 from agno.utils.log import logger
 
@@ -153,3 +155,117 @@ async def test_logger_and_confirmation_hooks_combined_async():
         mock_info.assert_any_call("This tool is allowed to be called")
         mock_info.assert_any_call("HOOK PRE: Calling mul with args {'a': 4, 'b': 5}")
         mock_info.assert_any_call("HOOK POST: mul returned 20")
+
+
+# --- Messages in Tool Hooks ---
+
+captured_messages: Dict[str, Any] = {}
+
+
+def messages_pre_hook(messages: Optional[List[Message]], fc: FunctionCall):
+    """Pre-hook that captures messages passed via convenience injection."""
+    captured_messages["pre"] = {
+        "count": len(messages) if messages else 0,
+        "has_user": any(m.role == "user" for m in messages) if messages else False,
+    }
+
+
+def messages_post_hook(messages: Optional[List[Message]], fc: FunctionCall):
+    """Post-hook that captures messages."""
+    captured_messages["post"] = {
+        "count": len(messages) if messages else 0,
+        "result": fc.result,
+    }
+
+
+@tool(pre_hook=messages_pre_hook, post_hook=messages_post_hook)
+def divide(a: int, b: int) -> str:
+    """Divide a by b."""
+    return str(a // b)
+
+
+def messages_tool_hook(
+    messages: Optional[List[Message]],
+    function_name: str,
+    function_call: Callable[..., Any],
+    arguments: Dict[str, Any],
+) -> Any:
+    """Tool hook that captures messages."""
+    captured_messages["tool_hook"] = {
+        "count": len(messages) if messages else 0,
+        "has_user": any(m.role == "user" for m in messages) if messages else False,
+    }
+    return function_call(**arguments)
+
+
+@tool()
+def modulo(a: int, b: int) -> int:
+    """Return a mod b."""
+    return a % b
+
+
+def test_pre_post_hook_receives_messages():
+    """Test that pre/post hooks receive run messages via convenience injection."""
+    captured_messages.clear()
+    agent = Agent(tools=[divide])
+
+    response: RunOutput = agent.run("Compute 10 / 2")
+
+    assert response.tools is not None
+    assert response.tools[0].tool_name == "divide"
+    assert captured_messages["pre"]["count"] > 0
+    assert captured_messages["pre"]["has_user"] is True
+    assert captured_messages["post"]["count"] > 0
+    assert captured_messages["post"]["result"] == "5"
+
+
+def test_tool_hook_receives_messages():
+    """Test that tool hooks receive run messages via convenience injection."""
+    captured_messages.clear()
+    agent = Agent(tools=[modulo], tool_hooks=[messages_tool_hook])
+
+    response: RunOutput = agent.run("Compute 10 mod 3")
+
+    assert response.tools is not None
+    assert response.tools[0].tool_name == "modulo"
+    assert response.tools[0].result == "1"
+    assert captured_messages["tool_hook"]["count"] > 0
+    assert captured_messages["tool_hook"]["has_user"] is True
+
+
+def test_hook_mutation_does_not_affect_run():
+    """Test that mutating messages in a hook does not corrupt the agent run."""
+
+    def mutating_hook(messages: Optional[List[Message]], fc: FunctionCall):
+        if messages:
+            messages.clear()
+            messages.append(Message(role="user", content="INJECTED"))
+
+    @tool(pre_hook=mutating_hook)
+    def square(n: int) -> int:
+        """Return n squared."""
+        return n * n
+
+    agent = Agent(tools=[square])
+    response: RunOutput = agent.run("Compute 5 squared")
+
+    assert response.content is not None
+    assert response.tools is not None
+    assert response.tools[0].tool_name == "square"
+    assert response.tools[0].result == "25"
+
+
+@pytest.mark.asyncio
+async def test_async_pre_post_hook_receives_messages():
+    """Test that pre/post hooks receive messages in async runs."""
+    captured_messages.clear()
+    agent = Agent(tools=[divide])
+
+    response: RunOutput = await agent.arun("Compute 20 / 4")
+
+    assert response.tools is not None
+    assert response.tools[0].tool_name == "divide"
+    assert captured_messages["pre"]["count"] > 0
+    assert captured_messages["pre"]["has_user"] is True
+    assert captured_messages["post"]["count"] > 0
+    assert captured_messages["post"]["result"] == "5"
