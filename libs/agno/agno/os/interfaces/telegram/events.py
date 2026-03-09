@@ -1,278 +1,398 @@
-import time
-from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Union
+"""
+Telegram Streaming Event Handlers
+==================================
 
-from agno.os.interfaces.telegram.helpers import (
-    TG_MAX_MESSAGE_LENGTH,
-    markdown_to_telegram_html,
-    send_chunked,
-)
-from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
-from agno.run.agent import RunCompletedEvent as AgentRunCompletedEvent
-from agno.run.agent import RunContentEvent as AgentRunContentEvent
-from agno.run.agent import RunErrorEvent as AgentRunErrorEvent
-from agno.run.agent import RunOutput
-from agno.run.agent import ToolCallCompletedEvent as AgentToolCallCompletedEvent
-from agno.run.agent import ToolCallStartedEvent as AgentToolCallStartedEvent
-from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
-from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
-from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import RunErrorEvent as TeamRunErrorEvent
-from agno.run.team import TeamRunOutput
-from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
-from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
-from agno.run.workflow import (
-    LoopIterationStartedEvent,
-    ParallelExecutionStartedEvent,
-    StepCompletedEvent,
-    StepStartedEvent,
-    WorkflowCompletedEvent,
-    WorkflowErrorEvent,
-)
+Dispatch table mapping normalized event names to handler functions.
+Handlers update StreamState; the stream loop in router.py drives
+iteration and final display.
+
+Key concepts:
+- Events are normalized (Team prefix stripped) for unified handling
+- Workflow mode suppresses inner agent events to reduce noise
+- Handlers return True on terminal events to break the stream loop
+"""
+
+import time
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
+
+from agno.agent import RunEvent
+from agno.os.interfaces.telegram.state import TG_DRAFT_EDIT_INTERVAL, TG_STREAM_EDIT_INTERVAL, StreamState
+from agno.run.workflow import WorkflowRunEvent
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
-    from telebot.async_telebot import AsyncTeleBot
-
-TG_STREAM_EDIT_INTERVAL = 1.0  # Minimum seconds between message edits to avoid rate limits
-
-
-def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
+    from agno.run.base import BaseRunOutputEvent
 
 _DELEGATION_TOOLS = {"delegate_task_to_member", "delegate_task_to_members"}
 
+# Events from inner agents that are suppressed during workflow streaming
+# to avoid flooding the status blockquote. Only workflow-level progress is shown.
+# Values are NORMALIZED (no "Team" prefix).
+_SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
+    {
+        RunEvent.reasoning_started.value,
+        RunEvent.reasoning_completed.value,
+        RunEvent.tool_call_started.value,
+        RunEvent.tool_call_completed.value,
+        RunEvent.tool_call_error.value,
+        RunEvent.memory_update_started.value,
+        RunEvent.memory_update_completed.value,
+        RunEvent.run_content.value,
+        RunEvent.run_intermediate_content.value,
+        RunEvent.run_completed.value,
+        RunEvent.run_error.value,
+        RunEvent.run_cancelled.value,
+    }
+)
+
+# Handlers return True on terminal events (errors, cancellations) to break the loop.
+_EventHandler = Callable[["BaseRunOutputEvent", StreamState], Awaitable[bool]]
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def _normalize_event(event: str) -> str:
+    """Strip 'Team' prefix so agent and team events use the same handlers."""
+    return event.removeprefix("Team")
+
 
 def _delegation_label(tool_name: str, tool_args: Optional[dict], *, started: bool) -> Optional[str]:
-    """Return a human-friendly status label for team delegation tool calls.
-
-    Returns None for non-delegation tools so callers fall through to the
-    generic 'Using {tool_name}...' / 'Used {tool_name}' labels.
-    """
+    """Return a human-friendly label for delegation tool calls, or None for regular tools."""
     if tool_name not in _DELEGATION_TOOLS:
         return None
     if tool_name == "delegate_task_to_members":
         return "Delegating to all members..." if started else "Delegated to all members"
-    # delegate_task_to_member — extract the member id from args
     member = (tool_args or {}).get("member_id", "member")
     return f"Delegating to {member}..." if started else f"Delegated to {member}"
 
 
-async def stream_to_telegram(
-    bot: "AsyncTeleBot",
-    event_stream: AsyncIterator[Any],
-    chat_id: int,
-    reply_to: Optional[int],
-    message_thread_id: Optional[int] = None,
-    is_team: bool = False,
-    error_message: str = "",
-) -> Optional[Union[RunOutput, TeamRunOutput]]:
-    sent_message_id: Optional[int] = None
-    accumulated_content = ""
-    status_lines: list[str] = []
-    last_edit_time = 0.0
-    final_run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
+# =============================================================================
+# Agent/Team Event Handlers
+# =============================================================================
 
-    def _build_display_html() -> str:
-        """Build ready-to-send HTML with status in an expandable blockquote."""
-        parts: list[str] = []
-        if status_lines:
-            escaped_status = _escape_html("\n".join(status_lines))
-            parts.append(f"<blockquote expandable>{escaped_status}</blockquote>")
-        if accumulated_content:
-            parts.append(markdown_to_telegram_html(accumulated_content))
-        return "\n".join(parts)
 
-    def _is_not_modified(exc: Exception) -> bool:
-        return "message is not modified" in str(exc)
+async def _on_reasoning_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    state.add_status("Reasoning...")
+    await state.flush()
+    return False
 
-    async def _send_or_edit(html: str) -> None:
-        nonlocal sent_message_id, last_edit_time
-        display = html[:TG_MAX_MESSAGE_LENGTH]
-        if sent_message_id is None:
-            try:
-                msg = await bot.send_message(
-                    chat_id,
-                    display,
-                    parse_mode="HTML",
-                    reply_to_message_id=reply_to,
-                    message_thread_id=message_thread_id,
-                )
-            except Exception:
-                # Fallback: send without HTML parsing
-                msg = await bot.send_message(
-                    chat_id,
-                    display,
-                    reply_to_message_id=reply_to,
-                    message_thread_id=message_thread_id,
-                )
-            sent_message_id = msg.message_id
-        else:
-            try:
-                await bot.edit_message_text(display, chat_id, sent_message_id, parse_mode="HTML")
-            except Exception as e:
-                if _is_not_modified(e):
-                    pass  # Content unchanged — safe to skip
-                else:
-                    try:
-                        await bot.edit_message_text(display, chat_id, sent_message_id)
-                    except Exception:
-                        pass
-        last_edit_time = time.monotonic()
 
-    async def _flush_display() -> None:
+async def _on_reasoning_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    state.update_status("Reasoning...", "Reasoned")
+    await state.flush()
+    return False
+
+
+async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    tool = getattr(chunk, "tool", None)
+    tool_name = (tool.tool_name if tool else None) or ""
+    if not tool_name:
         try:
-            await _send_or_edit(_build_display_html())
-        except Exception as e:
-            log_warning(f"Stream display update failed: {e}")
+            await state.bot.send_chat_action(state.chat_id, "typing", message_thread_id=state.message_thread_id)
+        except Exception:
+            pass
+        return False
 
-    async for event in event_stream:
-        # Agent/Team final output
-        if isinstance(event, (RunOutput, TeamRunOutput)):
-            final_run_output = event
-            continue
+    tool_args = tool.tool_args if tool else None
+    label = _delegation_label(tool_name, tool_args, started=True)
+    if label is None:
+        agent_label = ""
+        if state.is_team:
+            agent_name = getattr(chunk, "agent_name", None)
+            if agent_name:
+                agent_label = f"[{agent_name}] "
+        label = f"{agent_label}Using {tool_name}..."
+    state.add_status(label)
+    await state.flush()
+    return False
 
-        # Workflow step events
-        if isinstance(event, StepStartedEvent):
-            step_name = event.step_name or "unknown"
-            status_lines.append(f"Running step: {step_name}...")
-            await _flush_display()
-            continue
 
-        if isinstance(event, StepCompletedEvent):
-            step_name = event.step_name or "unknown"
-            for i, line in enumerate(status_lines):
-                if f"Running step: {step_name}..." in line:
-                    status_lines[i] = f"Completed step: {step_name}"
-                    break
-            if event.content:
-                accumulated_content = str(event.content)
-            await _flush_display()
-            continue
+async def _on_tool_call_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    tool = getattr(chunk, "tool", None)
+    tool_name = (tool.tool_name if tool else None) or ""
+    if not tool_name:
+        return False
 
-        if isinstance(event, ParallelExecutionStartedEvent):
-            count = event.parallel_step_count or 0
-            status_lines.append(f"Running {count} steps in parallel...")
-            await _flush_display()
-            continue
+    tool_args = tool.tool_args if tool else None
+    completed = _delegation_label(tool_name, tool_args, started=False)
+    if completed:
+        started = _delegation_label(tool_name, tool_args, started=True)
+        if started:
+            state.update_status(started, completed)
+    else:
+        for i, line in enumerate(state.status_lines):
+            if f"Using {tool_name}..." in line:
+                state.status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
+                break
+    await state.flush()
+    return False
 
-        if isinstance(event, LoopIterationStartedEvent):
-            step_name = event.step_name or "loop"
-            iteration = event.iteration
-            max_iter = event.max_iterations
-            if max_iter:
-                status_lines.append(f"{step_name}: iteration {iteration}/{max_iter}...")
-            else:
-                status_lines.append(f"{step_name}: iteration {iteration}...")
-            await _flush_display()
-            continue
 
-        if isinstance(event, WorkflowCompletedEvent):
-            if event.content:
-                accumulated_content = str(event.content)
-            continue
-
-        if isinstance(event, WorkflowErrorEvent):
-            accumulated_content = f"Error: {event.error or 'Unknown error'}"
-            continue
-
-        # Agent/Team run error — model failures, invalid input, etc.
-        if isinstance(event, (AgentRunErrorEvent, TeamRunErrorEvent)):
-            log_error(f"Run error during stream: {event.content or 'Unknown error'}")
-            accumulated_content = error_message
+async def _on_tool_call_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    tool = getattr(chunk, "tool", None)
+    tool_name = (tool.tool_name if tool else None) or "tool"
+    found = False
+    for i, line in enumerate(state.status_lines):
+        if f"Using {tool_name}..." in line:
+            state.status_lines[i] = line.replace(f"Using {tool_name}...", f"{tool_name} failed")
+            found = True
             break
+    if not found:
+        state.add_status(f"{tool_name} failed")
+    await state.flush()
+    return False
 
-        # Tool call started
-        if isinstance(event, (AgentToolCallStartedEvent, TeamToolCallStartedEvent)):
-            tool_name = event.tool.tool_name if event.tool else None
-            if tool_name:
-                tool_args = event.tool.tool_args if event.tool else None
-                status_label = _delegation_label(tool_name, tool_args, started=True)
-                if status_label is None:
-                    agent_label = ""
-                    if is_team and isinstance(event, AgentToolCallStartedEvent) and event.agent_name:
-                        agent_label = f"[{event.agent_name}] "
-                    status_label = f"{agent_label}Using {tool_name}..."
-                status_lines.append(status_label)
-                await _flush_display()
-            else:
-                try:
-                    await bot.send_chat_action(chat_id, "typing", message_thread_id=message_thread_id)
-                except Exception:
-                    pass
-            continue
 
-        if isinstance(event, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
-            status_lines.append("Reasoning...")
-            await _flush_display()
-            continue
-
-        # Tool call completed
-        if isinstance(event, (AgentToolCallCompletedEvent, TeamToolCallCompletedEvent)):
-            tool_name = event.tool.tool_name if event.tool else None
-            if tool_name:
-                tool_args = event.tool.tool_args if event.tool else None
-                completed_label = _delegation_label(tool_name, tool_args, started=False)
-                if completed_label:
-                    # Find and replace the matching started label
-                    started_label = _delegation_label(tool_name, tool_args, started=True)
-                    for i, line in enumerate(status_lines):
-                        if line == started_label:
-                            status_lines[i] = completed_label
-                            break
-                else:
-                    for i, line in enumerate(status_lines):
-                        if f"Using {tool_name}..." in line:
-                            status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
-                            break
-                await _flush_display()
-            continue
-
-        # Content deltas
-        if isinstance(event, (AgentRunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += str(event.content)
-
-            now = time.monotonic()
-            if now - last_edit_time < TG_STREAM_EDIT_INTERVAL:
-                continue
-
+async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    content = getattr(chunk, "content", None)
+    if content is not None:
+        state.accumulated_content += str(content)
+        now = time.monotonic()
+        interval = TG_DRAFT_EDIT_INTERVAL if state.use_draft else TG_STREAM_EDIT_INTERVAL
+        if now - state.last_edit_time >= interval:
             try:
-                await _send_or_edit(_build_display_html())
+                await state.send_or_edit(state.build_display_html())
             except Exception as e:
                 log_warning(f"Stream edit failed (will retry on next chunk): {e}")
+    return False
 
-        # RunCompleted carries the final content — replace accumulated
-        elif isinstance(event, (AgentRunCompletedEvent, TeamRunCompletedEvent)):
-            if event.content:
-                accumulated_content = str(event.content)
 
-    # Final edit: send the complete display (blockquote status + content)
-    final_html = _build_display_html()
-    if final_html and sent_message_id:
-        try:
-            if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
-                try:
-                    await bot.edit_message_text(final_html, chat_id, sent_message_id, parse_mode="HTML")
-                except Exception as e:
-                    if not _is_not_modified(e):
-                        await bot.edit_message_text(final_html, chat_id, sent_message_id)
-            else:
-                try:
-                    await bot.delete_message(chat_id, sent_message_id)
-                except Exception:
-                    pass
-                await send_chunked(
-                    bot, chat_id, accumulated_content, reply_to_message_id=reply_to, message_thread_id=message_thread_id
-                )
-        except Exception as e:
-            log_warning(f"Final stream edit failed: {e}")
-    elif final_html and not sent_message_id:
-        await send_chunked(
-            bot,
-            chat_id,
-            accumulated_content or final_html,
-            reply_to_message_id=reply_to,
-            message_thread_id=message_thread_id,
-        )
+async def _on_run_intermediate_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    # Teams emit intermediate content from each member as they finish. The team
+    # leader emits a single consolidated RunContent at the end — that's what we
+    # show. For non-team entities, accumulate normally.
+    if not state.is_team:
+        content = getattr(chunk, "content", None)
+        if content is not None:
+            state.accumulated_content += str(content)
+    return False
 
-    return final_run_output
+
+async def _on_run_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    content = getattr(chunk, "content", None)
+    if content:
+        state.accumulated_content = str(content)
+    return False
+
+
+async def _on_run_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    error_content = getattr(chunk, "content", None) or "Unknown error"
+    log_error(f"Run error during stream: {error_content}")
+    state.accumulated_content = state.error_message
+    state.terminal = True
+    return True
+
+
+async def _on_memory_update_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    state.add_status("Updating memory...")
+    await state.flush()
+    return False
+
+
+async def _on_memory_update_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    state.update_status("Updating memory...", "Memory updated")
+    await state.flush()
+    return False
+
+
+# =============================================================================
+# Workflow Event Handlers
+# =============================================================================
+
+
+async def _on_workflow_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    wf_name = getattr(chunk, "workflow_name", None) or "Workflow"
+    state.add_status(f"Running workflow: {wf_name}...")
+    await state.flush()
+    return False
+
+
+async def _on_workflow_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    state.update_status("Running workflow:", "Workflow completed")
+    content = getattr(chunk, "content", None)
+    if content:
+        state.accumulated_content = str(content)
+    elif state.workflow_final_content:
+        state.accumulated_content = state.workflow_final_content
+    return False
+
+
+async def _on_workflow_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    state.update_status("Running workflow:", "Workflow failed")
+    state.accumulated_content = state.error_message or "Error: workflow failed"
+    state.terminal = True
+    return True
+
+
+async def _on_step_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "unknown"
+    state.add_status(f"Running step: {step_name}...")
+    await state.flush()
+    return False
+
+
+async def _on_step_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "unknown"
+    state.update_status(f"Running step: {step_name}...", f"Completed step: {step_name}")
+    content = getattr(chunk, "content", None)
+    if content:
+        state.accumulated_content = str(content)
+    await state.flush()
+    return False
+
+
+async def _on_step_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "unknown"
+    state.update_status(f"Running step: {step_name}...", f"Step failed: {step_name}")
+    await state.flush()
+    return False
+
+
+async def _on_step_output(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    content = getattr(chunk, "content", None)
+    if content is not None:
+        state.workflow_final_content = str(content)
+    return False
+
+
+async def _on_workflow_agent_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    agent_name = getattr(chunk, "agent_name", None) or "agent"
+    state.add_status(f"Running agent: {agent_name}...")
+    await state.flush()
+    return False
+
+
+async def _on_workflow_agent_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    agent_name = getattr(chunk, "agent_name", None) or "agent"
+    state.update_status(f"Running agent: {agent_name}...", f"Completed agent: {agent_name}")
+    await state.flush()
+    return False
+
+
+async def _on_loop_execution_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "loop"
+    max_iter = getattr(chunk, "max_iterations", None)
+    label = f"Loop: {step_name}" + (f" (max {max_iter})" if max_iter else "")
+    state.add_status(f"{label}...")
+    await state.flush()
+    return False
+
+
+async def _on_loop_iteration_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "loop"
+    iteration = getattr(chunk, "iteration", 0)
+    max_iter = getattr(chunk, "max_iterations", None)
+    label = f"{step_name}: iteration {iteration}" + (f"/{max_iter}" if max_iter else "")
+    state.add_status(f"{label}...")
+    await state.flush()
+    return False
+
+
+async def _on_loop_iteration_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "loop"
+    iteration = getattr(chunk, "iteration", 0)
+    state.update_status(f"{step_name}: iteration {iteration}...", f"{step_name}: iteration {iteration} done")
+    await state.flush()
+    return False
+
+
+async def _on_loop_execution_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    step_name = getattr(chunk, "step_name", None) or "loop"
+    state.update_status(f"Loop: {step_name}", f"Loop: {step_name} completed")
+    await state.flush()
+    return False
+
+
+# Factory for simple paired workflow events (started/completed)
+def _make_wf_handler(label: str, *, started: bool) -> _EventHandler:
+    async def handler(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+        if started:
+            state.add_status(f"{label}...")
+        else:
+            state.update_status(f"{label}...", f"{label} completed")
+        await state.flush()
+        return False
+
+    return handler
+
+
+# =============================================================================
+# Dispatch Table
+# =============================================================================
+
+# Keys are normalized (no "Team" prefix) so one table handles both agent and team events.
+HANDLERS: Dict[str, _EventHandler] = {
+    # -- Agent/Team events (normalized) --
+    RunEvent.reasoning_started.value: _on_reasoning_started,
+    RunEvent.reasoning_completed.value: _on_reasoning_completed,
+    RunEvent.tool_call_started.value: _on_tool_call_started,
+    RunEvent.tool_call_completed.value: _on_tool_call_completed,
+    RunEvent.tool_call_error.value: _on_tool_call_error,
+    RunEvent.run_content.value: _on_run_content,
+    RunEvent.run_intermediate_content.value: _on_run_intermediate_content,
+    RunEvent.run_completed.value: _on_run_completed,
+    RunEvent.run_error.value: _on_run_error,
+    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
+    RunEvent.memory_update_started.value: _on_memory_update_started,
+    RunEvent.memory_update_completed.value: _on_memory_update_completed,
+    # -- Workflow lifecycle --
+    WorkflowRunEvent.workflow_started.value: _on_workflow_started,
+    WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
+    WorkflowRunEvent.workflow_error.value: _on_workflow_error,
+    WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
+    # -- Workflow steps --
+    WorkflowRunEvent.step_started.value: _on_step_started,
+    WorkflowRunEvent.step_completed.value: _on_step_completed,
+    WorkflowRunEvent.step_error.value: _on_step_error,
+    WorkflowRunEvent.step_output.value: _on_step_output,
+    # -- Workflow agents --
+    WorkflowRunEvent.workflow_agent_started.value: _on_workflow_agent_started,
+    WorkflowRunEvent.workflow_agent_completed.value: _on_workflow_agent_completed,
+    # -- Workflow loops --
+    WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
+    WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
+    WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
+    WorkflowRunEvent.loop_execution_completed.value: _on_loop_execution_completed,
+    # -- Workflow structural (factory-generated) --
+    WorkflowRunEvent.parallel_execution_started.value: _make_wf_handler("Parallel execution", started=True),
+    WorkflowRunEvent.parallel_execution_completed.value: _make_wf_handler("Parallel execution", started=False),
+    WorkflowRunEvent.condition_execution_started.value: _make_wf_handler("Evaluating condition", started=True),
+    WorkflowRunEvent.condition_execution_completed.value: _make_wf_handler("Evaluating condition", started=False),
+    WorkflowRunEvent.router_execution_started.value: _make_wf_handler("Routing", started=True),
+    WorkflowRunEvent.router_execution_completed.value: _make_wf_handler("Routing", started=False),
+    WorkflowRunEvent.steps_execution_started.value: _make_wf_handler("Running steps", started=True),
+    WorkflowRunEvent.steps_execution_completed.value: _make_wf_handler("Running steps", started=False),
+}
+
+
+# =============================================================================
+# Public API
+# =============================================================================
+
+
+async def process_event(ev_raw: str, chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
+    """
+    Process a single streaming event and update state accordingly.
+
+    Args:
+        ev_raw: Raw event name (e.g., "ToolCallStarted", "TeamRunContent")
+        chunk: Stream chunk containing event data
+        state: StreamState tracking session state
+
+    Returns:
+        True if this is a terminal event and the stream loop should break.
+    """
+    ev = _normalize_event(ev_raw)
+
+    # Suppress nested agent internals in workflow mode
+    if state.is_workflow and ev in _SUPPRESSED_IN_WORKFLOW:
+        return False
+
+    handler = HANDLERS.get(ev)
+    if handler:
+        return await handler(chunk, state)
+
+    return False
