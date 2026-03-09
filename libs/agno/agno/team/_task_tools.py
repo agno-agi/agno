@@ -438,7 +438,8 @@ def _get_task_management_tools(
                     check_if_run_cancelled(event)
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
-                        raise_if_cancelled(run_response.run_id)
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         if member_run_id:
                             cancel_run(member_run_id)
@@ -466,7 +467,8 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
-                raise_if_cancelled(run_response.run_id)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             raise
         except Exception as e:
@@ -593,7 +595,8 @@ def _get_task_management_tools(
                     check_if_run_cancelled(event)
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
-                        raise_if_cancelled(run_response.run_id)
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         if member_run_id:
                             cancel_run(member_run_id)
@@ -621,7 +624,8 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
-                raise_if_cancelled(run_response.run_id)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             raise
         except Exception as e:

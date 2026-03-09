@@ -602,7 +602,8 @@ def _get_delegate_task_function(
 
                 # Check if the parent team's run is cancelled - propagate to member
                 try:
-                    raise_if_cancelled(run_response.run_id)
+                    if run_response.run_id is not None:
+                        raise_if_cancelled(run_response.run_id)
                 except RunCancelledException:
                     # Cancel the member's run so it stops generating
                     if member_run_id:
@@ -638,7 +639,8 @@ def _get_delegate_task_function(
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
             # Also check if the parent team's run was cancelled while the member was executing
-            raise_if_cancelled(run_response.run_id)
+            if run_response.run_id is not None:
+                raise_if_cancelled(run_response.run_id)
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -758,7 +760,8 @@ def _get_delegate_task_function(
 
                 # Check if the parent team's run is cancelled - propagate to member
                 try:
-                    raise_if_cancelled(run_response.run_id)
+                    if run_response.run_id is not None:
+                        raise_if_cancelled(run_response.run_id)
                 except RunCancelledException:
                     # Cancel the member's run so it stops generating
                     if member_run_id:
@@ -793,7 +796,8 @@ def _get_delegate_task_function(
             )
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
             # Also check if the parent team's run was cancelled while the member was executing
-            raise_if_cancelled(run_response.run_id)
+            if run_response.run_id is not None:
+                raise_if_cancelled(run_response.run_id)
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -903,7 +907,8 @@ def _get_delegate_task_function(
 
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
-                        raise_if_cancelled(run_response.run_id)
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         if member_run_id:
                             cancel_run(member_run_id)
@@ -938,7 +943,8 @@ def _get_delegate_task_function(
                 )
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
-                raise_if_cancelled(run_response.run_id)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
 
             # Check if the member run is paused (HITL)
             if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -1047,7 +1053,8 @@ def _get_delegate_task_function(
 
                             # Check if the parent team's run is cancelled - propagate to member
                             try:
-                                raise_if_cancelled(run_response.run_id)
+                                if run_response.run_id is not None:
+                                    raise_if_cancelled(run_response.run_id)
                             except RunCancelledException:
                                 if member_run_id:
                                     cancel_run(member_run_id)
@@ -1141,7 +1148,8 @@ def _get_delegate_task_function(
                         metadata=run_context.metadata,
                     )
                     check_if_run_cancelled(member_agent_run_response)
-                    raise_if_cancelled(run_response.run_id)
+                    if run_response.run_id is not None:
+                        raise_if_cancelled(run_response.run_id)
 
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
 
