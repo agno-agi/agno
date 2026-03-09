@@ -7,12 +7,14 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    import httpx
     import gitlab
+    import httpx
     from gitlab import Gitlab
     from gitlab.exceptions import GitlabAuthenticationError, GitlabError
 except ImportError:
-    raise ImportError("`python-gitlab` and `httpx` not installed. Please install using `pip install python-gitlab httpx`")
+    raise ImportError(
+        "`python-gitlab` and `httpx` not installed. Please install using `pip install python-gitlab httpx`"
+    )
 
 
 class GitlabTools(Toolkit):
