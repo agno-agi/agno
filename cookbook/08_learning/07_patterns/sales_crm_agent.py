@@ -149,7 +149,9 @@ if __name__ == "__main__":
         stream=True,
     )
     alice_close.learning_machine.learned_knowledge_store.print(query="sales")
-    alice_close.learning_machine.session_context_store.print(session_id="alice-session-2")
+    alice_close.learning_machine.session_context_store.print(
+        session_id="alice-session-2"
+    )
 
     print("\n" + "=" * 60)
     print("Cross-user sharing: Alice created -> Carlos queried -> Alice closed")

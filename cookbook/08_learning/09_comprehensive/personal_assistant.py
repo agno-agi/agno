@@ -173,7 +173,9 @@ if __name__ == "__main__":
             "Great discussion yesterday...",
         )
         + "\n\n"
-        + format_email("Newsletter", "Weekly Product Digest", "Top 10 product trends...")
+        + format_email(
+            "Newsletter", "Weekly Product Digest", "Top 10 product trends..."
+        )
         + "\n\n"
         + format_slack("product-team", "Sarah", "Can we sync on post-launch roadmap?"),
         stream=True,
@@ -204,7 +206,9 @@ if __name__ == "__main__":
         "Also received:\n\n"
         + format_slack("random", "Karen", "Anyone want coffee?")
         + "\n\n"
-        + format_email("Sarah Chen", "Post-launch retrospective", "Let's schedule for Friday")
+        + format_email(
+            "Sarah Chen", "Post-launch retrospective", "Let's schedule for Friday"
+        )
         + "\n\n"
         + "Use learned patterns to prioritize all messages today.",
         stream=True,

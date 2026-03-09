@@ -98,7 +98,9 @@ if __name__ == "__main__":
         "Root cause was unclosed connections in retry logic.",
         stream=True,
     )
-    sarah_bot.learning_machine.learned_knowledge_store.print(query="database connections")
+    sarah_bot.learning_machine.learned_knowledge_store.print(
+        query="database connections"
+    )
 
     # Marcus encounters similar issue — different engineer, different incident
     print("\n" + "=" * 60)
@@ -118,7 +120,9 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     print("Learned knowledge (shared across engineers):")
-    marcus_bot.learning_machine.learned_knowledge_store.print(query="connection postgres")
+    marcus_bot.learning_machine.learned_knowledge_store.print(
+        query="connection postgres"
+    )
 
     print("\nSession contexts (separate per incident):")
     sarah_bot.learning_machine.session_context_store.print(session_id="INC-001")

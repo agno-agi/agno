@@ -101,14 +101,18 @@ if __name__ == "__main__":
         "3. I'll schedule Atlas demo for Friday.",
         stream=True,
     )
-    standup.learning_machine.session_context_store.print(session_id="standup-2024-01-15")
+    standup.learning_machine.session_context_store.print(
+        session_id="standup-2024-01-15"
+    )
 
     # Meeting 2: 1:1 with Alice — different session, new agent
     print("\n" + "=" * 60)
     print("MEETING 2: 1:1 with Alice")
     print("=" * 60 + "\n")
 
-    one_on_one = create_meeting_assistant("manager@company.com", "1on1-alice-2024-01-15")
+    one_on_one = create_meeting_assistant(
+        "manager@company.com", "1on1-alice-2024-01-15"
+    )
     one_on_one.print_response(
         "Starting 1:1 with Alice. What do we know about her from previous meetings?",
         stream=True,
@@ -119,14 +123,18 @@ if __name__ == "__main__":
         "She wants to mentor Bob more actively. Her strength is system design.",
         stream=True,
     )
-    one_on_one.learning_machine.session_context_store.print(session_id="1on1-alice-2024-01-15")
+    one_on_one.learning_machine.session_context_store.print(
+        session_id="1on1-alice-2024-01-15"
+    )
 
     # Meeting 3: Client call — different session, new agent
     print("\n" + "=" * 60)
     print("MEETING 3: Client Call with Acme Corp")
     print("=" * 60 + "\n")
 
-    client_call = create_meeting_assistant("manager@company.com", "client-acme-2024-01-16")
+    client_call = create_meeting_assistant(
+        "manager@company.com", "client-acme-2024-01-16"
+    )
     client_call.print_response(
         "Client call with Acme Corp. Their CTO Sarah Chen is on the call. "
         "Sarah is CTO at Acme.",
@@ -161,7 +169,9 @@ if __name__ == "__main__":
             results = em.search(query=name, entity_type="person", limit=1)
             if results:
                 entity = results[0]
-                print(f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts")
+                print(
+                    f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts"
+                )
             else:
                 print(f"  {name}: NOT FOUND")
 
@@ -178,5 +188,9 @@ if __name__ == "__main__":
             print("  Acme Corp: FOUND")
 
     print("\nSession contexts:")
-    client_call.learning_machine.session_context_store.print(session_id="standup-2024-01-15")
-    client_call.learning_machine.session_context_store.print(session_id="client-acme-2024-01-16")
+    client_call.learning_machine.session_context_store.print(
+        session_id="standup-2024-01-15"
+    )
+    client_call.learning_machine.session_context_store.print(
+        session_id="client-acme-2024-01-16"
+    )
