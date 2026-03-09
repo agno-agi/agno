@@ -2821,6 +2821,7 @@ def continue_run_dispatch(
         input=input,
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
+        run_context=run_context,
     )
 
     # Reset the run state
