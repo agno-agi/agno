@@ -2,7 +2,6 @@ import datetime
 import json
 import textwrap
 import uuid
-import warnings
 from functools import wraps
 from os import getenv
 from pathlib import Path
@@ -72,12 +71,9 @@ class GoogleCalendarTools(Toolkit):
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
-        port: Optional[int] = None,
+        oauth_port: int = 8080,
         login_hint: Optional[str] = None,
         calendar_id: str = "primary",
-        # Deprecated params — backward compat
-        access_token: Optional[str] = None,
-        oauth_port: Optional[int] = None,
         allow_update: Optional[bool] = None,
         # Reading
         list_events: bool = True,
@@ -108,28 +104,12 @@ class GoogleCalendarTools(Toolkit):
             service_account_path: Path to service account JSON key. When set, OAuth is skipped.
             delegated_user: Email to impersonate via domain-wide delegation. Optional for Calendar.
             scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            port: Port for OAuth local redirect server.
+            oauth_port: Port for OAuth local redirect server (default: 8080).
             login_hint: Email to pre-select in the OAuth consent screen.
             calendar_id: Calendar to operate on. Defaults to "primary".
             instructions: Custom instructions for the toolkit. If None, uses default.
             add_instructions: Whether to inject instructions into the agent system prompt.
         """
-        # Handle deprecated params
-        if access_token is not None:
-            warnings.warn(
-                "access_token is deprecated and unused. Use credentials_path or service_account_path.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if oauth_port is not None:
-            warnings.warn(
-                "oauth_port is deprecated. Use port instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if port is None:
-                port = oauth_port
-        # allow_update kept for backward compat — per-tool booleans are the replacement
         if allow_update:
             create_event = True
             update_event = True
@@ -148,7 +128,7 @@ class GoogleCalendarTools(Toolkit):
         self.service_account_path = service_account_path
         self.delegated_user = delegated_user
         self.scopes = scopes or self.DEFAULT_SCOPES
-        self.port = port
+        self.oauth_port = oauth_port
         self.login_hint = login_hint
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
@@ -292,8 +272,7 @@ class GoogleCalendarTools(Toolkit):
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            if self.port is not None:
-                oauth_kwargs["port"] = self.port
+            oauth_kwargs["port"] = self.oauth_port
             self.creds = flow.run_local_server(**oauth_kwargs)
 
         # Save the credentials for future use

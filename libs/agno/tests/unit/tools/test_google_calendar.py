@@ -3,7 +3,6 @@
 import json
 import os
 import tempfile
-import warnings
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -151,20 +150,14 @@ class TestGoogleCalendarToolsInitialization:
         assert tools.login_hint == "user@example.com"
 
 
-class TestDeprecatedParams:
-    def test_access_token_deprecation(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            GoogleCalendarTools(access_token="test")
-            assert len(w) == 1
-            assert "access_token is deprecated" in str(w[0].message)
+class TestBackwardCompat:
+    def test_oauth_port_stored(self):
+        tools = GoogleCalendarTools(oauth_port=9090)
+        assert tools.oauth_port == 9090
 
-    def test_oauth_port_deprecation(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            tools = GoogleCalendarTools(oauth_port=9090)
-            assert any("oauth_port is deprecated" in str(x.message) for x in w)
-            assert tools.port == 9090
+    def test_oauth_port_default(self):
+        tools = GoogleCalendarTools()
+        assert tools.oauth_port == 8080
 
     def test_allow_update_enables_write_tools(self):
         tools = GoogleCalendarTools(
@@ -218,16 +211,14 @@ class TestScopeValidation:
 
 class TestAuthentication:
     def test_auth_parameters_stored(self):
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            tools = GoogleCalendarTools(
-                credentials_path="test_creds.json",
-                token_path="test_token.json",
-                port=9090,
-            )
+        tools = GoogleCalendarTools(
+            credentials_path="test_creds.json",
+            token_path="test_token.json",
+            oauth_port=9090,
+        )
         assert tools.credentials_path == "test_creds.json"
         assert tools.token_path == "test_token.json"
-        assert tools.port == 9090
+        assert tools.oauth_port == 9090
 
     def test_scopes_configuration(self):
         custom_scopes = ["https://www.googleapis.com/auth/calendar"]
