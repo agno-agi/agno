@@ -95,13 +95,12 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 
     ## Date/Time Formats
     - All dates use ISO format: YYYY-MM-DDTHH:MM:SS
-    - For all-day events, use YYYY-MM-DD
     - Always specify timezone when creating events
 
     ## Tips
     - Use get_event to fetch full details before updating an event
-    - Use check_availability (FreeBusy) to check multiple people's schedules at once
-    - Use quick_add_event for simple events -- Google parses natural language
+    - Use check_availability to check multiple people's schedules at once
+    - Use quick_add_event for simple events from natural language descriptions
     - Use search_events for full-text search across event fields
     - Event IDs from list_events can be used with get_event, update_event, delete_event""")
 
@@ -371,7 +370,8 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
-        """List upcoming events from the user's Google Calendar.
+        """
+        List upcoming events from the user's Google Calendar.
 
         Args:
             limit (int): Number of events to return (default: 10)
@@ -425,11 +425,12 @@ class GoogleCalendarTools(Toolkit):
         add_google_meet_link: Optional[bool] = False,
         notify_attendees: Optional[bool] = False,
     ) -> str:
-        """Create a new event in the Google Calendar.
+        """
+        Create a new event in the Google Calendar.
 
         Args:
-            start_date (str): Start date and time of the event in ISO format (YYYY-MM-DDTHH:MM:SS)
-            end_date (str): End date and time of the event in ISO format (YYYY-MM-DDTHH:MM:SS)
+            start_date (str): Start date and time in ISO format (YYYY-MM-DDTHH:MM:SS)
+            end_date (str): End date and time in ISO format (YYYY-MM-DDTHH:MM:SS)
             title (Optional[str]): Title/summary of the event
             description (Optional[str]): Detailed description of the event
             location (Optional[str]): Location of the event
@@ -499,7 +500,8 @@ class GoogleCalendarTools(Toolkit):
         attendees: Optional[List[str]] = None,
         notify_attendees: Optional[bool] = False,
     ) -> str:
-        """Update an existing event in the Google Calendar.
+        """
+        Update an existing event in the Google Calendar.
 
         Args:
             event_id (str): ID of the event to update
@@ -562,11 +564,12 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def delete_event(self, event_id: str, notify_attendees: Optional[bool] = True) -> str:
-        """Delete an event from the Google Calendar.
+        """
+        Delete an event from the Google Calendar.
 
         Args:
             event_id (str): ID of the event to delete
-            notify_attendees (Optional[bool]): Whether to send email notifications to attendees (default: True)
+            notify_attendees (Optional[bool]): Whether to send notifications to attendees (default: True)
 
         Returns:
             str: JSON string containing success or error message
@@ -588,12 +591,14 @@ class GoogleCalendarTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> str:
-        """Fetch all Google Calendar events in a given date range.
+        """
+        Fetch all Google Calendar events in a given date range.
+        Paginates through results automatically to retrieve every matching event.
 
         Args:
-            max_results (int): Maximum number of events to return (default: 10, max: 100)
-            start_date (Optional[str]): Minimum date in ISO format (YYYY-MM-DDTHH:MM:SS)
-            end_date (Optional[str]): Maximum date in ISO format (YYYY-MM-DDTHH:MM:SS)
+            max_results (int): Number of events to fetch per page (default: 10, max: 100)
+            start_date (Optional[str]): Start of range in ISO format (YYYY-MM-DDTHH:MM:SS)
+            end_date (Optional[str]): End of range in ISO format (YYYY-MM-DDTHH:MM:SS)
 
         Returns:
             str: JSON string containing all events or error message
@@ -662,10 +667,9 @@ class GoogleCalendarTools(Toolkit):
         end_date: str,
         duration_minutes: int = 30,
     ) -> str:
-        """Find available time slots within a date range based on your calendar.
-
-        Fetches your actual calendar events to determine busy periods,
-        then finds available slots within working hours (locale-aware).
+        """
+        Find available time slots within a date range based on your calendar.
+        Checks existing events against working hours to find free windows.
 
         Args:
             start_date (str): Start date in ISO format (YYYY-MM-DD)
@@ -815,7 +819,8 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def list_calendars(self) -> str:
-        """List all available Google Calendars for the authenticated user.
+        """
+        List all available Google Calendars for the authenticated user.
 
         Returns:
             str: JSON string containing available calendars with their IDs, names, and access roles
@@ -851,13 +856,14 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def get_event(self, event_id: str) -> str:
-        """Get full details of a single Google Calendar event.
+        """
+        Get full details of a single Google Calendar event by its ID.
 
         Args:
             event_id (str): The unique identifier of the event
 
         Returns:
-            str: JSON string with event details including summary, times, attendees, location, and conferencing info
+            str: JSON string with full event details
         """
         try:
             service = cast(Resource, self.service)
@@ -869,14 +875,12 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def quick_add_event(self, text: str) -> str:
-        """Create a Google Calendar event from a natural language description.
-
-        Google's API parses the text to extract date, time, and title automatically.
-        Examples: "Meeting with John tomorrow 3pm", "Lunch at noon on Friday",
-        "Team standup every weekday at 9am"
+        """
+        Create a Google Calendar event from a natural language description.
+        Examples: "Meeting with John tomorrow 3pm", "Lunch at noon on Friday"
 
         Args:
-            text (str): Natural language description of the event
+            text (str): Natural language description of the event including date, time, and title
 
         Returns:
             str: JSON string containing the created event or error message
@@ -898,11 +902,9 @@ class GoogleCalendarTools(Toolkit):
         end_date: str,
         timezone: Optional[str] = None,
     ) -> str:
-        """Check the availability of one or more people using Google Calendar's FreeBusy API.
-
-        Returns busy time ranges for each attendee within the specified window.
-        This is the correct way to check multiple people's calendars at once
-        when scheduling a meeting.
+        """
+        Check availability of one or more people within a time window.
+        Returns busy time ranges for each attendee.
 
         Args:
             attendee_emails (List[str]): Email addresses to check availability for
@@ -968,8 +970,8 @@ class GoogleCalendarTools(Toolkit):
         end_date: Optional[str] = None,
         max_results: int = 10,
     ) -> str:
-        """Search Google Calendar events by text across summary, description, location, and attendees.
-
+        """
+        Search Google Calendar events by text across summary, description, location, and attendees.
         Unlike list_events which returns upcoming events, this performs full-text search.
 
         Args:
@@ -1029,7 +1031,8 @@ class GoogleCalendarTools(Toolkit):
         destination_calendar_id: str,
         notify_attendees: Optional[bool] = False,
     ) -> str:
-        """Move a Google Calendar event to a different calendar.
+        """
+        Move a Google Calendar event to a different calendar.
 
         Args:
             event_id (str): ID of the event to move
@@ -1060,7 +1063,8 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def get_event_attendees(self, event_id: str) -> str:
-        """Get the attendee list and their RSVP statuses for a Google Calendar event.
+        """
+        Get the attendee list and their RSVP statuses for a Google Calendar event.
 
         Args:
             event_id (str): ID of the event
@@ -1100,7 +1104,8 @@ class GoogleCalendarTools(Toolkit):
 
     @authenticate
     def respond_to_event(self, event_id: str, response: str) -> str:
-        """Set the authenticated user's attendance response for a Google Calendar event.
+        """
+        Set the authenticated user's attendance response for a Google Calendar event.
 
         Args:
             event_id (str): ID of the event
