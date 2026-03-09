@@ -1,3 +1,4 @@
+import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Optional, Union
@@ -52,13 +53,13 @@ def get_entrypoint_for_tool(
     ) -> ToolResult:
         # Execute the MCP tool call
         try:
+            # Import here to avoid circular imports
+            from agno.tools.mcp.multi_mcp import MultiMCPTools
+
             # Get the appropriate session for this run
             # If mcp_tools_instance has header_provider and run_context is provided,
             # this will create/reuse a session with dynamic headers
             if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
-                # Import here to avoid circular imports
-                from agno.tools.mcp.multi_mcp import MultiMCPTools
-
                 # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
                 if isinstance(mcp_tools_instance, MultiMCPTools):
                     active_session = await mcp_tools_instance.get_session_for_run(
@@ -71,13 +72,27 @@ def get_entrypoint_for_tool(
             else:
                 active_session = session
 
-            try:
-                await active_session.send_ping()
-            except Exception as e:
-                log_exception(e)
+            # Acquire the concurrency semaphore if available to prevent
+            # overwhelming the SSE transport with too many concurrent writes.
+            # The semaphore allows multiple concurrent calls (unlike a Lock)
+            # while bounding the degree of parallelism.
+            # For MultiMCPTools, each server gets its own semaphore to avoid
+            # cross-server head-of-line blocking.
+            semaphore: Optional[asyncio.Semaphore] = None
+            if mcp_tools_instance:
+                if isinstance(mcp_tools_instance, MultiMCPTools) and hasattr(
+                    mcp_tools_instance, "get_semaphore_for_server"
+                ):
+                    semaphore = mcp_tools_instance.get_semaphore_for_server(server_idx)
+                elif hasattr(mcp_tools_instance, "_call_semaphore"):
+                    semaphore = mcp_tools_instance._call_semaphore
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            if semaphore is not None:
+                async with semaphore:
+                    result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            else:
+                result = await active_session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:

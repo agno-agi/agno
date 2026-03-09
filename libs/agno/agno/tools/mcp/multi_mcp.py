@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import warnings
@@ -56,6 +57,7 @@ class MultiMCPTools(Toolkit):
         refresh_connection: bool = False,
         allow_partial_failure: bool = False,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        max_concurrent_calls: int = 10,
         **kwargs,
     ):
         """
@@ -74,6 +76,8 @@ class MultiMCPTools(Toolkit):
             allow_partial_failure: If True, allows toolkit to initialize even if some MCP servers fail to connect. If False, any failure will raise an exception.
             refresh_connection: If True, the connection and tools will be refreshed on each run
             header_provider: Header provider function for all servers. Takes RunContext and returns dict of HTTP headers.
+            max_concurrent_calls: Maximum number of concurrent MCP tool calls allowed
+                per server. Each server gets its own concurrency limit. Defaults to 10.
         """
         warnings.warn(
             "The MultiMCPTools class is deprecated and will be removed in a future version. Please use multiple MCPTools instances instead.",
@@ -158,6 +162,12 @@ class MultiMCPTools(Toolkit):
         self._sessions: list[ClientSession] = []
         self._session_to_server_idx: Dict[int, int] = {}  # Maps session list index to server params index
 
+        # Per-server semaphores to limit concurrent MCP method calls over
+        # each server's transport independently.  This prevents traffic to
+        # one slow server from blocking calls to other servers.
+        self._max_concurrent_calls = max_concurrent_calls
+        self._call_semaphores: Dict[int, asyncio.Semaphore] = {}
+
         # Session management for per-agent-run sessions with dynamic headers
         # For MultiMCP, we track sessions per (run_id, server_idx) since we have multiple servers
         # Maps (run_id, server_idx) to (session, timestamp) for TTL-based cleanup
@@ -178,6 +188,12 @@ class MultiMCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    def get_semaphore_for_server(self, server_idx: int) -> asyncio.Semaphore:
+        """Get or create a concurrency semaphore for the given server index."""
+        if server_idx not in self._call_semaphores:
+            self._call_semaphores[server_idx] = asyncio.Semaphore(self._max_concurrent_calls)
+        return self._call_semaphores[server_idx]
 
     async def is_alive(self) -> bool:
         try:
