@@ -1009,7 +1009,12 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+                # Remove any entrypoint_args keys that also appear in self.arguments to
+                # avoid "multiple values for keyword argument" when an MCP tool has a
+                # parameter whose name collides with a framework-injection keyword
+                # (e.g., a tool parameter literally named 'agent' or 'team').
+                call_args = {k: v for k, v in entrypoint_args.items() if k not in (self.arguments or {})}
+                result = self.function.entrypoint(**call_args, **self.arguments)  # type: ignore
 
             # Handle generator case
             if isgenerator(result):
@@ -1221,10 +1226,15 @@ class FunctionCall(BaseModel):
                 execution_chain = await self._build_nested_execution_chain_async(entrypoint_args)
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
+                # Remove any entrypoint_args keys that also appear in self.arguments to
+                # avoid "multiple values for keyword argument" when an MCP tool has a
+                # parameter whose name collides with a framework-injection keyword
+                # (e.g., a tool parameter literally named 'agent' or 'team').
+                call_args = {k: v for k, v in entrypoint_args.items() if k not in (self.arguments or {})}
                 if self.arguments is None or self.arguments == {}:
-                    result = self.function.entrypoint(**entrypoint_args)
+                    result = self.function.entrypoint(**call_args)
                 else:
-                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                    result = self.function.entrypoint(**call_args, **self.arguments)
 
                 # Handle both sync and async entrypoints
                 if isasyncgenfunction(self.function.entrypoint):
