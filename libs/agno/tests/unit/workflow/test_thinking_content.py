@@ -52,6 +52,28 @@ class TestExtractThinkingContent:
         assert "Step 1: analyze" in reasoning
         assert output == "Final answer here."
 
+    def test_multiple_think_blocks(self):
+        """Multiple <think> blocks from tool-call iterations should all be extracted."""
+        content = "<think>\nstep1 reasoning\n</think>\n<think>\nstep2 reasoning\n</think>\nFinal answer."
+        reasoning, output = extract_thinking_content(content)
+        assert "step1 reasoning" in reasoning
+        assert "step2 reasoning" in reasoning
+        assert "<think>" not in output
+        assert output == "Final answer."
+
+    def test_multiple_think_blocks_with_tool_results(self):
+        """Simulates accumulated content from a model that thinks before and after tool calls."""
+        content = (
+            "<think>\nI need to call tools\n</think>\n"
+            "<think>\nTool returned data, formatting answer\n</think>\n"
+            "The weather is sunny and population is 5 million."
+        )
+        reasoning, output = extract_thinking_content(content)
+        assert "I need to call tools" in reasoning
+        assert "Tool returned data" in reasoning
+        assert "<think>" not in output
+        assert "weather is sunny" in output
+
 
 # =============================================================================
 # Tests for _process_step_output with thinking mode
