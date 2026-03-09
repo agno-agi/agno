@@ -30,20 +30,34 @@ class WorkflowTools(Toolkit):
         async_mode: bool = False,
         **kwargs,
     ):
+        # The workflow to execute
+        self.workflow: Workflow = workflow
+
+        # Tool names for this workflow
+        self._think_tool = f"think_{workflow.name}"
+        self._run_tool = f"run_{workflow.name}"
+        self._analyze_tool = f"analyze_{workflow.name}"
+
+        # Namespaced session state keys to avoid clashes when multiple WorkflowTools are on the same agent
+        self._thoughts_key = f"workflow_thoughts_{workflow.name}"
+        self._results_key = f"workflow_results_{workflow.name}"
+        self._analysis_key = f"workflow_analysis_{workflow.name}"
+
         # Add instructions for using this toolkit
         if instructions is None:
-            self.instructions = self.DEFAULT_INSTRUCTIONS
+            self.instructions = self.DEFAULT_INSTRUCTIONS.format(
+                think_tool=self._think_tool,
+                run_tool=self._run_tool,
+                analyze_tool=self._analyze_tool,
+            )
             if add_few_shot:
                 if few_shot_examples is not None:
                     self.instructions += "\n" + few_shot_examples
         else:
             self.instructions = instructions
 
-        # The workflow to execute
-        self.workflow: Workflow = workflow
-
         super().__init__(
-            name="workflow_tools",
+            name=f"{workflow.name}_tools",
             instructions=self.instructions,
             add_instructions=add_instructions,
             auto_register=False,
@@ -52,19 +66,19 @@ class WorkflowTools(Toolkit):
 
         if enable_think or all:
             if async_mode:
-                self.register(self.async_think, name="think")
+                self.register(self.async_think, name=self._think_tool)
             else:
-                self.register(self.think, name="think")
+                self.register(self.think, name=self._think_tool)
         if enable_run_workflow or all:
             if async_mode:
-                self.register(self.async_run_workflow, name="run_workflow")
+                self.register(self.async_run_workflow, name=self._run_tool)
             else:
-                self.register(self.run_workflow, name="run_workflow")
+                self.register(self.run_workflow, name=self._run_tool)
         if enable_analyze or all:
             if async_mode:
-                self.register(self.async_analyze, name="analyze")
+                self.register(self.async_analyze, name=self._analyze_tool)
             else:
-                self.register(self.analyze, name="analyze")
+                self.register(self.analyze, name=self._analyze_tool)
 
     def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the workflow execution, refine your approach, brainstorm workflow inputs, or revise your plan.
@@ -79,12 +93,12 @@ class WorkflowTools(Toolkit):
             # Add the thought to the session state
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "workflow_thoughts" not in run_context.session_state:
-                run_context.session_state["workflow_thoughts"] = []
-            run_context.session_state["workflow_thoughts"].append(thought)
+            if self._thoughts_key not in run_context.session_state:
+                run_context.session_state[self._thoughts_key] = []
+            run_context.session_state[self._thoughts_key].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in run_context.session_state["workflow_thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in run_context.session_state[self._thoughts_key]])
             formatted_thoughts = dedent(
                 f"""Workflow Thoughts:
                 {thoughts}
@@ -108,12 +122,12 @@ class WorkflowTools(Toolkit):
             # Add the thought to the session state
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "workflow_thoughts" not in run_context.session_state:
-                run_context.session_state["workflow_thoughts"] = []
-            run_context.session_state["workflow_thoughts"].append(thought)
+            if self._thoughts_key not in run_context.session_state:
+                run_context.session_state[self._thoughts_key] = []
+            run_context.session_state[self._thoughts_key].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in run_context.session_state["workflow_thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in run_context.session_state[self._thoughts_key]])
             formatted_thoughts = dedent(
                 f"""Workflow Thoughts:
                 {thoughts}
@@ -153,10 +167,10 @@ class WorkflowTools(Toolkit):
                 additional_data=input.additional_data,
             )
 
-            if "workflow_results" not in run_context.session_state:
-                run_context.session_state["workflow_results"] = []
+            if self._results_key not in run_context.session_state:
+                run_context.session_state[self._results_key] = []
 
-            run_context.session_state["workflow_results"].append(result.to_dict())
+            run_context.session_state[self._results_key].append(result.to_dict())
 
             return json.dumps(result.to_dict(), indent=2)
 
@@ -193,10 +207,10 @@ class WorkflowTools(Toolkit):
                 additional_data=input.additional_data,
             )
 
-            if "workflow_results" not in run_context.session_state:
-                run_context.session_state["workflow_results"] = []
+            if self._results_key not in run_context.session_state:
+                run_context.session_state[self._results_key] = []
 
-            run_context.session_state["workflow_results"].append(result.to_dict())
+            run_context.session_state[self._results_key].append(result.to_dict())
 
             return json.dumps(result.to_dict(), indent=2)
 
@@ -216,12 +230,12 @@ class WorkflowTools(Toolkit):
             # Add the analysis to the session state
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "workflow_analysis" not in run_context.session_state:
-                run_context.session_state["workflow_analysis"] = []
-            run_context.session_state["workflow_analysis"].append(analysis)
+            if self._analysis_key not in run_context.session_state:
+                run_context.session_state[self._analysis_key] = []
+            run_context.session_state[self._analysis_key].append(analysis)
 
             # Return the full log of analysis and the new analysis
-            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state["workflow_analysis"]])
+            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state[self._analysis_key]])
             formatted_analysis = dedent(
                 f"""Workflow Analysis:
                 {analysis_log}
@@ -244,12 +258,12 @@ class WorkflowTools(Toolkit):
             # Add the analysis to the session state
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "workflow_analysis" not in run_context.session_state:
-                run_context.session_state["workflow_analysis"] = []
-            run_context.session_state["workflow_analysis"].append(analysis)
+            if self._analysis_key not in run_context.session_state:
+                run_context.session_state[self._analysis_key] = []
+            run_context.session_state[self._analysis_key].append(analysis)
 
             # Return the full log of analysis and the new analysis
-            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state["workflow_analysis"]])
+            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state[self._analysis_key]])
             formatted_analysis = dedent(
                 f"""Workflow Analysis:
                 {analysis_log}
@@ -261,19 +275,19 @@ class WorkflowTools(Toolkit):
             return f"Error recording workflow analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\
-        You have access to the Think, Run Workflow, and Analyze tools that will help you execute workflows and analyze their results. Use these tools as frequently as needed to successfully complete workflow-based tasks.
+        You have access to the `{think_tool}`, `{run_tool}`, and `{analyze_tool}` tools that will help you execute workflows and analyze their results. Use these tools as frequently as needed to successfully complete workflow-based tasks.
         ## How to use the Think, Run Workflow, and Analyze tools:
 
         1. **Think**
         - Purpose: A scratchpad for planning workflow execution, brainstorming inputs, and refining your approach. You never reveal your "Think" content to the user.
-        - Usage: Call `think` whenever you need to figure out what workflow inputs to use, analyze requirements, or decide on execution strategy before (or after) you run the workflow.
+        - Usage: Call `{think_tool}` whenever you need to figure out what workflow inputs to use, analyze requirements, or decide on execution strategy before (or after) you run the workflow.
         2. **Run Workflow**
         - Purpose: Executes the workflow with specified inputs and parameters.
-        - Usage: Call `run_workflow` with appropriate input data whenever you want to execute the workflow.
+        - Usage: Call `{run_tool}` with appropriate input data whenever you want to execute the workflow.
             - For all workflows, start with simple inputs and gradually increase complexity
         3. **Analyze**
         - Purpose: Evaluate whether the workflow execution results are correct and sufficient. If not, go back to "Think" or "Run Workflow" with refined inputs.
-        - Usage: Call `analyze` after getting workflow results to verify the quality and correctness of the execution. Consider:
+        - Usage: Call `{analyze_tool}` after getting workflow results to verify the quality and correctness of the execution. Consider:
             - Completeness: Did the workflow complete all expected steps?
             - Quality: Are the results accurate and meet the requirements?
             - Errors: Were there any failures or unexpected behaviors?
