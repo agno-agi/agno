@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 from agno.metrics import MessageMetrics
@@ -17,8 +18,6 @@ def extract_thinking_content(content: str) -> Tuple[Optional[str], str]:
     """
     if not content or "</think>" not in content:
         return None, content
-
-    import re
 
     pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
     matches = pattern.findall(content)
