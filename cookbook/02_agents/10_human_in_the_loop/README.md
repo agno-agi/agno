@@ -9,6 +9,7 @@ Examples for confirmation flows, user input prompts, and external tool handling.
 - `confirmation_required_mcp_toolkit.py` - Confirmation with MCP toolkit.
 - `confirmation_toolkit.py` - Confirmation using a toolkit.
 - `external_tool_execution.py` - External tool execution flow.
+- `mixed_external_and_regular_tools.py` - Mixed external and regular tools in a single agent.
 - `user_input_required.py` - Tools that require user input.
 - `confirmation_with_session_state.py` - Confirmation flow where the tool modifies session_state before pausing. Verifies that state changes survive the pause/continue round-trip.
 

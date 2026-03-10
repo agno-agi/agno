@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.4"
+version = "2.5.9"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -116,6 +116,7 @@ firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 github = ["PyGithub"]
+gitlab = ["python-gitlab", "httpx"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
 googlemaps = ["googlemaps", "google-maps-places"]
@@ -186,6 +187,9 @@ agui = ["ag-ui-protocol"]
 # Dependencies for A2A integration
 a2a = ["a2a-sdk"]
 
+# Dependencies for Slack integration
+slack = ["slack_sdk>=3.40.0"]
+
 # Dependencies for Embedders
 huggingface = [
     "huggingface-hub",
@@ -239,6 +243,7 @@ tools = [
   "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
+  "agno[gitlab]",
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
@@ -322,6 +327,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "agno[a2a]",
+    "agno[slack]",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",
@@ -460,6 +466,7 @@ module = [
   "filetype.*",
   "firecrawl.*",
   "github.*",
+  "gitlab.*",
   "google.*",
   "googlemaps.*",
   "google_maps_places.*",
