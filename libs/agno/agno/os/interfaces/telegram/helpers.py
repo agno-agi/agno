@@ -27,6 +27,11 @@ class ParsedMessage(NamedTuple):
 
 # ---------------------------------------------------------------------------
 # Markdown -> Telegram HTML conversion
+#
+# Telegram supports only: <b>, <i>, <s>, <u>, <code>, <pre>, <a>,
+# <blockquote>, <tg-spoiler>, <tg-emoji>.
+# Uses mistune (pip install mistune) for proper AST-based conversion when
+# available; falls back to regex for zero-dependency operation.
 # ---------------------------------------------------------------------------
 
 
@@ -34,7 +39,107 @@ def _escape_html(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+# -- Optional mistune-based converter (AST parser, handles edge cases) ------
+
+try:
+    import mistune
+
+    class _TelegramRenderer(mistune.HTMLRenderer):  # type: ignore[misc]
+        # Telegram only supports a handful of HTML tags. Every renderer method
+        # must output ONLY those tags, or plain text. Unsupported constructs
+        # (tables, images, horizontal rules) degrade gracefully to text.
+
+        def text(self, text: str) -> str:
+            return _escape_html(text)
+
+        def strong(self, text: str) -> str:
+            return f"<b>{text}</b>"
+
+        def emphasis(self, text: str) -> str:
+            return f"<i>{text}</i>"
+
+        def strikethrough(self, text: str) -> str:
+            return f"<s>{text}</s>"
+
+        def link(self, text: str, url: str, title: Optional[str] = None) -> str:
+            return f'<a href="{html.escape(url, quote=True)}">{text}</a>'
+
+        def codespan(self, text: str) -> str:
+            return f"<code>{_escape_html(text)}</code>"
+
+        def block_code(self, code: str, info: Optional[str] = None) -> str:
+            escaped = _escape_html(code.rstrip("\n"))
+            if info:
+                lang = _escape_html(info.split()[0])
+                return f'<pre><code class="language-{lang}">{escaped}</code></pre>\n'
+            return f"<pre>{escaped}</pre>\n"
+
+        def heading(self, text: str, level: int, **attrs: Any) -> str:
+            return f"<b>{text}</b>\n"
+
+        def paragraph(self, text: str) -> str:
+            return f"{text}\n"
+
+        def linebreak(self) -> str:
+            return "\n"
+
+        def softbreak(self) -> str:
+            return "\n"
+
+        def block_quote(self, text: str) -> str:
+            return f"<blockquote>{text.strip()}</blockquote>\n"
+
+        _LIST_MARKER = "\x00LIST\x00"
+
+        def list(self, text: str, ordered: bool, **attrs: Any) -> str:
+            depth: int = attrs.get("depth", 0)
+            if depth > 0:
+                indent = "  " * depth
+                indented = "".join(f"{indent}{line}\n" for line in text.strip().splitlines())
+                return f"{self._LIST_MARKER}{indented}"
+            return text
+
+        def list_item(self, text: str, **attrs: Any) -> str:
+            # Nested list is appended to item text with a marker
+            if self._LIST_MARKER in text:
+                item_text, nested = text.split(self._LIST_MARKER, 1)
+                return f"- {item_text.strip()}\n{nested}"
+            return f"- {text.strip()}\n"
+
+        def thematic_break(self) -> str:
+            return "\n"
+
+        def image(self, alt: str, url: str, title: Optional[str] = None) -> str:
+            # Telegram HTML doesn't support <img>; render as a link
+            display = alt or title or "image"
+            return self.link(display, url)
+
+        def inline_html(self, html_text: str) -> str:
+            return _escape_html(html_text)
+
+        def block_html(self, html_text: str) -> str:
+            return _escape_html(html_text)
+
+    _mistune_md = mistune.create_markdown(
+        renderer=_TelegramRenderer(escape=False),
+        plugins=["strikethrough"],
+    )
+    _HAS_MISTUNE = True
+except ImportError:
+    _HAS_MISTUNE = False
+
+
 def markdown_to_telegram_html(text: str) -> str:
+    if _HAS_MISTUNE:
+        result = _mistune_md(text)  # type: ignore[misc]
+        return result.strip() if isinstance(result, str) else str(result).strip()
+    return _regex_markdown_to_telegram_html(text)
+
+
+# -- Regex fallback (no dependencies) ---------------------------------------
+
+
+def _regex_markdown_to_telegram_html(text: str) -> str:
     lines = text.split("\n")
     result: list[str] = []
     in_code_block = False
@@ -62,7 +167,6 @@ def markdown_to_telegram_html(text: str) -> str:
         line = _convert_inline_markdown(line)
         result.append(line)
 
-    # Handle unclosed code block
     if in_code_block:
         code_content = _escape_html("\n".join(code_block_lines))
         result.append(f"<pre>{code_content}</pre>")
@@ -93,7 +197,6 @@ def _convert_inline_markdown(line: str) -> str:
 
 
 def _format_line_with_links(line: str) -> str:
-    # Extract links BEFORE HTML-escaping to preserve raw URLs
     placeholders: list[str] = []
 
     def _replace_link(m: re.Match) -> str:
@@ -114,7 +217,6 @@ def _format_line_with_links(line: str) -> str:
 
 
 def _apply_inline_formatting(text: str) -> str:
-    # Protect code spans from bold/italic processing
     code_spans: list[str] = []
 
     def _save_code(m: re.Match) -> str:
