@@ -377,7 +377,9 @@ def _patch_continue_dispatch_dependencies(agent: Agent, monkeypatch: pytest.Monk
     monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
     monkeypatch.setattr(agent, "get_tools", lambda **kwargs: [])
     monkeypatch.setattr(_tools, "determine_tools_for_model", lambda agent, **kwargs: [])
-    monkeypatch.setattr(_messages, "get_continue_run_messages", lambda agent, input=None, **kwargs: RunMessages(messages=[]))
+    monkeypatch.setattr(
+        _messages, "get_continue_run_messages", lambda agent, input=None, **kwargs: RunMessages(messages=[])
+    )
 
 
 def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
