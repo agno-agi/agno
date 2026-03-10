@@ -237,9 +237,14 @@ class Gemini(Model):
 
     @staticmethod
     def _has_function_declarations(tools_config: list) -> bool:
-        """Check if tools list contains function declarations (not just built-in tools)."""
+        """Check if tools list contains function declarations (not just built-in tools).
+
+        Handles both Tool instances (normal path) and dicts (from GenerateContentConfig.model_dump()).
+        """
         for tool in tools_config:
             if isinstance(tool, Tool) and tool.function_declarations:
+                return True
+            if isinstance(tool, dict) and tool.get("function_declarations"):
                 return True
         return False
 
@@ -259,7 +264,8 @@ class Gemini(Model):
             if isinstance(self.generation_config, GenerateContentConfig):
                 config = self.generation_config.model_dump()
             else:
-                config = self.generation_config
+                # Shallow copy to avoid mutating self.generation_config across calls
+                config = dict(self.generation_config)
         else:
             config = {}
 

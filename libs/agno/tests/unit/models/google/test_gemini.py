@@ -244,3 +244,29 @@ class TestGemini25JsonToolConflict:
         )
         cfg = self._extract_config(params)
         assert cfg.get("response_mime_type") is None
+
+    def test_repeated_calls_do_not_mutate_generation_config(self):
+        gen_config = {"response_mime_type": "application/json"}
+        model = Gemini(id="gemini-2.5-flash", api_key="test-key", generation_config=gen_config)
+
+        # First call with tools — guard should fire and strip JSON mode
+        model.get_request_params(response_format=_SimpleSchema, tools=_FUNCTION_TOOL)
+
+        # generation_config dict must NOT be mutated
+        assert gen_config.get("response_mime_type") == "application/json"
+
+        # Second call without tools — JSON mode should still work
+        params2 = model.get_request_params(response_format=_SimpleSchema)
+        cfg2 = self._extract_config(params2)
+        assert cfg2.get("response_mime_type") == "application/json"
+        assert cfg2.get("response_schema") is not None
+
+    def test_no_guard_for_gemini_3(self):
+        model = Gemini(id="gemini-3-flash-preview", api_key="test-key")
+        params = model.get_request_params(
+            response_format=_SimpleSchema,
+            tools=_FUNCTION_TOOL,
+        )
+        cfg = self._extract_config(params)
+        assert cfg.get("response_mime_type") == "application/json"
+        assert cfg.get("response_schema") is not None
