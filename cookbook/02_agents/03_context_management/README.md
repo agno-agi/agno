@@ -9,6 +9,7 @@ Examples for instructions, system messages, introduction messages, and context s
 - `instructions_with_state.py` - Dynamic instructions using session state.
 - `introduction_message.py` - Set an initial greeting message for the agent.
 - `system_message.py` - Customize the agent's system message and role.
+- `datetime_format.py` - Customize the datetime format injected into agent context.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).

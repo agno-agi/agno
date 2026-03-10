@@ -639,11 +639,13 @@ def get_workflow_router(
         workflow_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        version: Optional[int] = Form(None),
+        message: str = Form(..., description="The input message or prompt to send to the workflow"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        version: Optional[int] = Form(None, description="Workflow version to use for this run"),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
