@@ -399,8 +399,6 @@ class Team:
     _member_response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Safe formatter for template resolution
     _formatter: Optional[Any] = None
-    # Hooks normalised flag
-    _hooks_normalised: bool = False
     # MCP tools initialized on the last run
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run

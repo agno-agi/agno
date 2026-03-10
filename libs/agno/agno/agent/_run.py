@@ -1265,13 +1265,12 @@ def run_dispatch(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hook & guardails
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
-        agent._hooks_normalised = True
+    # Normalise hooks & guardrails on every run. Hooks may be reassigned between
+    # runs, so always normalise rather than caching behind a flag.
+    if agent.pre_hooks:
+        agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
+    if agent.post_hooks:
+        agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
 
     # Initialize session
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
@@ -2496,13 +2495,12 @@ def arun_dispatch(  # type: ignore
     # 2. Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hooks & guardails
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
-        agent._hooks_normalised = True
+    # Normalise hooks & guardrails on every run. Hooks may be reassigned between
+    # runs, so always normalise rather than caching behind a flag.
+    if agent.pre_hooks:
+        agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
+    if agent.post_hooks:
+        agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
 
     # Initialize session
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
