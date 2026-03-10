@@ -1,9 +1,9 @@
 import inspect
-import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
@@ -15,8 +15,16 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import (
+    OnReject,
+    StepInput,
+    StepOutput,
+    StepRequirement,
+    StepType,
+    UserInputField,
+)
 
 WorkflowSteps = List[
     Union[
@@ -35,20 +43,231 @@ WorkflowSteps = List[
 
 @dataclass
 class Router:
-    """A router that dynamically selects which step(s) to execute based on input"""
+    """A router that dynamically selects which step(s) to execute based on input.
 
-    # Router function that returns the step(s) to execute
-    selector: Union[
-        Callable[[StepInput], Union[WorkflowSteps, List[WorkflowSteps]]],
-        Callable[[StepInput], Awaitable[Union[WorkflowSteps, List[WorkflowSteps]]]],
-    ]
-    choices: WorkflowSteps  # Available steps that can be selected
+    The Router can operate in three modes:
+    1. Programmatic selection: Use a `selector` function to determine which steps to execute
+    2. CEL expression: Use a CEL expression string that returns a step name
+    3. HITL selection: Set `requires_user_input=True` to pause and let the user choose
+
+    The selector can be:
+        - A callable function that takes StepInput and returns step(s)
+        - A CEL (Common Expression Language) expression string that returns a step name
+
+    CEL expressions for selector have access to (same as Condition, plus step_choices):
+        - input: The workflow input as a string
+        - previous_step_content: Content from the previous step
+        - previous_step_outputs: Map of step name to content string from all previous steps
+        - additional_data: Map of additional data passed to the workflow
+        - session_state: Map of session state values
+        - step_choices: List of step names available to the selector
+
+    CEL expressions must return the name of a step from choices.
+
+    Example CEL expressions:
+        - 'input.contains("video") ? "video_step" : "image_step"'
+        - 'additional_data.route'
+        - 'previous_step_outputs.classifier.contains("billing") ? "Billing" : "Support"'
+
+    When using HITL mode:
+    - Set `requires_user_input=True`
+    - Optionally provide `user_input_message` for the prompt
+    - The workflow will pause and present the user with the available `choices`
+    - User selects one or more choices by name
+    - The Router then executes the selected steps
+    """
+
+    # Available steps that can be selected
+    choices: WorkflowSteps
+
+    # Router function or CEL expression that selects step(s) to execute (optional if using HITL)
+    selector: Optional[
+        Union[
+            Callable[[StepInput], Union[WorkflowSteps, List[WorkflowSteps]]],
+            Callable[[StepInput], Awaitable[Union[WorkflowSteps, List[WorkflowSteps]]]],
+            str,  # CEL expression returning step name
+        ]
+    ] = None
 
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def _prepare_steps(self):
-        """Prepare the steps for execution - mirrors workflow logic"""
+    # HITL parameters for user-driven routing (selection mode)
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    allow_multiple_selections: bool = False  # If True, user can select multiple choices
+    user_input_schema: Optional[List[Dict[str, Any]]] = field(default=None)  # Custom schema if needed
+
+    # HITL parameters for confirmation mode
+    # If True, the router will pause and ask for confirmation before executing selected steps
+    # User confirms -> execute the selected steps from selector
+    # User rejects -> skip the router entirely
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+    on_reject: Union[OnReject, str] = OnReject.skip
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Router",
+            "name": self.name,
+            "description": self.description,
+            "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "allow_multiple_selections": self.allow_multiple_selections,
+        }
+        # Serialize selector
+        if self.selector is None:
+            result["selector"] = None
+            result["selector_type"] = None
+        elif callable(self.selector):
+            result["selector"] = self.selector.__name__
+            result["selector_type"] = "function"
+        elif isinstance(self.selector, str):
+            result["selector"] = self.selector
+            result["selector_type"] = "cel"
+        else:
+            raise ValueError(f"Invalid selector type: {type(self.selector).__name__}")
+
+        if self.user_input_schema:
+            result["user_input_schema"] = self.user_input_schema
+
+        # Add confirmation HITL fields
+        result["requires_confirmation"] = self.requires_confirmation
+        result["confirmation_message"] = self.confirmation_message
+        result["on_reject"] = str(self.on_reject)
+
+        return result
+
+    def create_step_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+        for_route_selection: bool = False,
+    ) -> StepRequirement:
+        """Create a StepRequirement for HITL pause.
+
+        This method handles both:
+        1. Confirmation mode (requires_confirmation=True): Asks user to confirm before executing
+        2. Route selection mode (requires_user_input=True): Asks user to select which routes to execute
+
+        Args:
+            step_index: Index of the router in the workflow.
+            step_input: The prepared input for the router.
+            for_route_selection: If True, creates a requirement for route selection (user chooses routes).
+                                 If False, creates a requirement for confirmation (user confirms execution).
+
+        Returns:
+            StepRequirement configured for this router's HITL needs.
+        """
+        step_name = self.name or f"router_{step_index + 1}"
+
+        if for_route_selection:
+            # Route selection mode - user selects which routes to execute
+            choice_names = self._get_choice_names()
+
+            # Build user input schema for selection (optional, for display purposes)
+            if self.user_input_schema:
+                schema = [UserInputField.from_dict(f) if isinstance(f, dict) else f for f in self.user_input_schema]
+            else:
+                schema = None  # Route selection uses available_choices, not user_input_schema
+
+            return StepRequirement(
+                step_id=str(uuid4()),
+                step_name=step_name,
+                step_index=step_index,
+                step_type="Router",
+                requires_route_selection=True,
+                user_input_message=self.user_input_message or f"Select a route from: {', '.join(choice_names)}",
+                user_input_schema=schema,
+                available_choices=choice_names,
+                allow_multiple_selections=self.allow_multiple_selections,
+                step_input=step_input,
+            )
+        else:
+            # Confirmation mode - user confirms before execution
+            return StepRequirement(
+                step_id=str(uuid4()),
+                step_name=step_name,
+                step_index=step_index,
+                step_type="Router",
+                requires_confirmation=self.requires_confirmation,
+                confirmation_message=self.confirmation_message
+                or f"Execute router '{self.name or 'router'}' with selected steps?",
+                on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+                requires_user_input=False,
+                step_input=step_input,
+            )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Router":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        # Deserialize selector
+        selector_data = data.get("selector")
+        selector_type = data.get("selector_type")
+
+        selector: Any = None
+        if selector_data is None:
+            # Selector is optional when using HITL
+            selector = None
+        elif isinstance(selector_data, str):
+            # Determine if this is a CEL expression or a function name
+            if selector_type == "cel" or (selector_type is None and is_cel_expression(selector_data)):
+                # CEL expression - use as-is
+                selector = selector_data
+            else:
+                # Function name - look up in registry
+                if registry:
+                    func = registry.get_function(selector_data)
+                    if func is None:
+                        raise ValueError(f"Selector function '{selector_data}' not found in registry")
+                    selector = func
+                else:
+                    raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
+        else:
+            raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
+
+        return cls(
+            selector=selector,
+            choices=[deserialize_step(step) for step in data.get("choices", [])],
+            name=data.get("name"),
+            description=data.get("description"),
+            requires_user_input=data.get("requires_user_input", False),
+            user_input_message=data.get("user_input_message"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
+            user_input_schema=data.get("user_input_schema"),
+            requires_confirmation=data.get("requires_confirmation", False),
+            confirmation_message=data.get("confirmation_message"),
+            on_reject=data.get("on_reject", OnReject.skip),
+        )
+
+    def _prepare_single_step(self, step: Any) -> Any:
+        """Prepare a single step for execution."""
         from agno.agent.agent import Agent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
@@ -57,20 +276,81 @@ class Router:
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
 
+        if callable(step) and hasattr(step, "__name__"):
+            return Step(name=step.__name__, description="User-defined callable step", executor=step)
+        elif isinstance(step, Agent):
+            return Step(name=step.name, description=step.description, agent=step)
+        elif isinstance(step, Team):
+            return Step(name=step.name, description=step.description, team=step)
+        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+            return step
+        else:
+            raise ValueError(f"Invalid step type: {type(step).__name__}")
+
+    def _prepare_steps(self):
+        """Prepare the steps for execution - mirrors workflow logic"""
+        from agno.workflow.steps import Steps
+
         prepared_steps: WorkflowSteps = []
         for step in self.choices:
-            if callable(step) and hasattr(step, "__name__"):
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
-                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
-            elif isinstance(step, Team):
-                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
-                prepared_steps.append(step)
+            if isinstance(step, list):
+                # Handle nested list of steps - wrap in Steps container
+                nested_prepared = [self._prepare_single_step(s) for s in step]
+                # Create a Steps container with a generated name
+                steps_container = Steps(
+                    name=f"steps_group_{len(prepared_steps)}",
+                    steps=nested_prepared,
+                )
+                prepared_steps.append(steps_container)
             else:
-                raise ValueError(f"Invalid step type: {type(step).__name__}")
+                prepared_steps.append(self._prepare_single_step(step))
 
         self.steps = prepared_steps
+        # Build name-to-step mapping for string-based selection (used by CEL and callable selectors)
+        self._step_name_map: Dict[str, Any] = {}
+        for step in self.steps:
+            if hasattr(step, "name") and step.name:
+                self._step_name_map[step.name] = step
+
+    def _get_choice_names(self) -> List[str]:
+        """Get the names of all available choices for HITL display."""
+        if not hasattr(self, "steps"):
+            self._prepare_steps()
+        names = []
+        for step in self.steps:
+            name = getattr(step, "name", None)
+            if name:
+                names.append(name)
+        return names
+
+    def _get_step_by_name(self, name: str) -> Optional[Step]:
+        """Get a step by its name."""
+        if not hasattr(self, "steps"):
+            self._prepare_steps()
+        for step in self.steps:
+            if getattr(step, "name", None) == name:
+                return step  # type: ignore[return-value]
+        return None
+
+    def _get_steps_from_user_selection(self, selection: Union[str, List[str]]) -> List[Step]:
+        """Get steps based on user selection (by name)."""
+        if isinstance(selection, str):
+            selection = [selection]
+
+        selected_steps = []
+        for name in selection:
+            step = self._get_step_by_name(name.strip())
+            if step:
+                selected_steps.append(step)
+            else:
+                logger.warning(f"Router: Unknown choice '{name}', skipping")
+
+        return selected_steps
+
+    @property
+    def requires_hitl(self) -> bool:
+        """Check if this router requires any form of HITL."""
+        return self.requires_user_input
 
     def _update_step_input_from_outputs(
         self,
@@ -110,54 +390,148 @@ class Router:
             audio=current_audio + all_audio,
         )
 
-    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
-        """Route to the appropriate steps based on input"""
-        if callable(self.selector):
-            if session_state is not None and self._selector_has_session_state_param():
-                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-            else:
-                result = self.selector(step_input)
+    def _resolve_selector_result(self, result: Any) -> List[Any]:
+        """Resolve selector result to a list of steps, handling strings, Steps, and lists.
 
-            # Handle the result based on its type
-            if isinstance(result, Step):
-                return [result]
-            elif isinstance(result, list):
-                return result  # type: ignore
+        This unified resolver handles:
+        - String step names (from CEL expressions or callable selectors)
+        - Step objects directly returned by callable selectors
+        - Lists of strings or Steps
+        """
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.steps import Steps
+
+        if result is None:
+            return []
+
+        # Handle string - look up by name in the step_name_map
+        if isinstance(result, str):
+            if result in self._step_name_map:
+                return [self._step_name_map[result]]
             else:
-                logger.warning(f"Router function returned unexpected type: {type(result)}")
+                available_steps = list(self._step_name_map.keys())
+                logger.warning(
+                    f"Router '{self.name}' selector returned unknown step name: '{result}'. "
+                    f"Available step names are: {available_steps}. "
+                    f"Make sure the selector returns one of the available step names."
+                )
                 return []
+
+        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
+        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+            # Validate that the returned step is in the router's choices
+            step_name = getattr(result, "name", None)
+            if step_name and step_name not in self._step_name_map:
+                available_steps = list(self._step_name_map.keys())
+                logger.warning(
+                    f"Router '{self.name}' selector returned a Step '{step_name}' that is not in choices. "
+                    f"Available step names are: {available_steps}. "
+                    f"The step will still be executed, but this may indicate a configuration error."
+                )
+            return [result]
+
+        # Handle list of results (could be strings, Steps, or mixed)
+        if isinstance(result, list):
+            resolved = []
+            for item in result:
+                resolved.extend(self._resolve_selector_result(item))
+            return resolved
+
+        logger.warning(f"Router selector returned unexpected type: {type(result)}")
+        return []
+
+    def _selector_has_step_choices_param(self) -> bool:
+        """Check if the selector function has a step_choices parameter"""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "step_choices" in sig.parameters
+        except Exception:
+            return False
+
+    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+        """Route to the appropriate steps based on input."""
+        # Handle CEL expression selector
+        if isinstance(self.selector, str):
+            if not CEL_AVAILABLE:
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
+                return []
+            try:
+                step_names = list(self._step_name_map.keys())
+                step_name = evaluate_cel_router_selector(
+                    self.selector, step_input, session_state, step_choices=step_names
+                )
+                return self._resolve_selector_result(step_name)
+            except Exception as e:
+                logger.error(f"Router CEL evaluation failed: {e}")
+                return []
+
+        # Handle callable selector
+        if callable(self.selector):
+            has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
+
+            result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
+
+            return self._resolve_selector_result(result)
 
         return []
 
     async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
-        """Async version of step routing"""
+        """Async version of step routing."""
+        # Handle CEL expression selector (CEL evaluation is synchronous)
+        if isinstance(self.selector, str):
+            if not CEL_AVAILABLE:
+                logger.error(
+                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
+                )
+                return []
+            try:
+                step_names = list(self._step_name_map.keys())
+                step_name = evaluate_cel_router_selector(
+                    self.selector, step_input, session_state, step_choices=step_names
+                )
+                return self._resolve_selector_result(step_name)
+            except Exception as e:
+                logger.error(f"Router CEL evaluation failed: {e}")
+                return []
+
+        # Handle callable selector
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
+            has_step_choices = self._selector_has_step_choices_param()
+
+            # Build kwargs based on what parameters the selector accepts
+            kwargs: Dict[str, Any] = {}
+            if has_session_state:
+                kwargs["session_state"] = session_state
+            if has_step_choices:
+                kwargs["step_choices"] = self.steps
 
             if inspect.iscoroutinefunction(self.selector):
-                if has_session_state:
-                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.selector(step_input)
+                result = await self.selector(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.selector(step_input)
+                result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
 
-            # Handle the result based on its type
-            if isinstance(result, Step):
-                return [result]
-            elif isinstance(result, list):
-                return result
-            else:
-                logger.warning(f"Router function returned unexpected type: {type(result)}")
-                return []
+            return self._resolve_selector_result(result)
 
         return []
 
     def _selector_has_session_state_param(self) -> bool:
-        """Check if the selector function has a session_state parameter"""
+        """Check if the selector function has a session_state parameter."""
         if not callable(self.selector):
             return False
 
@@ -267,6 +641,7 @@ class Router:
             step_type=StepType.ROUTER,
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )
 
@@ -278,7 +653,6 @@ class Router:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -302,15 +676,6 @@ class Router:
         else:
             steps_to_execute = self._route_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield router started event
@@ -438,6 +803,7 @@ class Router:
             step_type=StepType.ROUTER,
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )
 
@@ -544,6 +910,7 @@ class Router:
             step_type=StepType.ROUTER,
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )
 
@@ -555,7 +922,6 @@ class Router:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -579,15 +945,6 @@ class Router:
         else:
             steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield router started event
@@ -718,6 +1075,6 @@ class Router:
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
             error=None,
-            stop=False,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )

@@ -108,8 +108,8 @@ def test_read_complex_csv(csv_reader, complex_csv_file):
 
 def test_read_nonexistent_file(csv_reader, temp_dir):
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = csv_reader.read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        csv_reader.read(nonexistent_path)
 
 
 def test_read_with_chunking(csv_reader, csv_file):
@@ -191,14 +191,14 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
 
 @pytest.mark.asyncio
 async def test_async_read_with_chunking(csv_reader, csv_file):
-    def mock_chunk(doc):
+    async def mock_achunk(doc):
         return [
             Document(name=f"{doc.name}_chunk1", id=f"{doc.id}_chunk1", content=f"{doc.content}_chunked1"),
             Document(name=f"{doc.name}_chunk2", id=f"{doc.id}_chunk2", content=f"{doc.content}_chunked2"),
         ]
 
     csv_reader.chunk = True
-    csv_reader.chunk_document = mock_chunk
+    csv_reader.achunk_document = mock_achunk
 
     documents = await csv_reader.async_read(csv_file)
 
@@ -216,3 +216,106 @@ async def test_async_read_empty_file(csv_reader, temp_dir):
 
     documents = await csv_reader.async_read(empty_path)
     assert documents == []
+
+
+LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
+
+
+def test_read_bytesio_with_custom_encoding():
+    """Test reading BytesIO with custom encoding (Latin-1).
+
+    This tests the fix for BUG-007 where BytesIO reads were hardcoded to UTF-8.
+    """
+    # Encode as Latin-1 (single-byte encoding for accented chars)
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    # Create reader with Latin-1 encoding
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 1
+    content = documents[0].content
+
+    # Verify accented characters are correctly decoded
+    assert "José" in content
+    assert "São Paulo" in content
+    assert "François" in content
+    assert "Montréal" in content
+
+
+def test_read_bytesio_wrong_encoding_fails():
+    """Test that reading Latin-1 bytes as UTF-8 fails or corrupts data.
+
+    This demonstrates why the encoding parameter is important.
+    """
+    # Encode as Latin-1
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    # Try to read with default UTF-8 encoding (should fail or corrupt)
+    reader = CSVReader(chunk=False)  # Uses UTF-8 by default
+
+    # This should either raise an error or produce corrupted output
+    documents = reader.read(file_obj)
+
+    # If it didn't raise, the content should be corrupted (mojibake)
+    if documents:
+        content = documents[0].content
+        # The accented characters should NOT be correctly decoded
+        assert "José" not in content or "São Paulo" not in content
+
+
+def test_read_path_with_custom_encoding(temp_dir):
+    """Test reading Path with custom encoding."""
+    file_path = temp_dir / "latin1.csv"
+    with open(file_path, "w", encoding="latin-1") as f:
+        f.write(LATIN1_CSV)
+
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+@pytest.mark.asyncio
+async def test_async_read_bytesio_with_custom_encoding():
+    """Test async reading BytesIO with custom encoding (Latin-1).
+
+    This tests the fix for BUG-007 in the async path.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = await reader.async_read(file_obj)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+@pytest.mark.asyncio
+async def test_async_read_path_with_custom_encoding(temp_dir):
+    """Test async reading Path with custom encoding.
+
+    This tests the fix for BUG-007 in the async path with Path input.
+    """
+    file_path = temp_dir / "latin1.csv"
+    with open(file_path, "w", encoding="latin-1") as f:
+        f.write(LATIN1_CSV)
+
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = await reader.async_read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content

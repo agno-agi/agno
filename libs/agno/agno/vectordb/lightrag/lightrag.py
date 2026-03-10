@@ -109,7 +109,7 @@ class LightRag(VectorDb):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -322,7 +322,7 @@ class LightRag(VectorDb):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -349,10 +349,11 @@ class LightRag(VectorDb):
         # LightRAG server returns a dict with 'response' key, but we expect a list of documents
         # Convert the response to the expected format
         if isinstance(result, dict) and "response" in result:
-            # Wrap the response in a Document object
-            return [
-                Document(content=result["response"], meta_data={"source": "lightrag", "query": query, "mode": mode})
-            ]
+            meta_data = {"source": "lightrag", "query": query, "mode": mode}
+            # Preserve references from LightRAG response for document citations
+            if "references" in result:
+                meta_data["references"] = result["references"]
+            return [Document(content=result["response"], meta_data=meta_data)]
         elif isinstance(result, list):
             # Convert list items to Document objects
             documents = []

@@ -28,9 +28,10 @@ class MarkdownReader(Reader):
     """Reader for Markdown files"""
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Markdown readers."""
         strategies = [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,
@@ -45,7 +46,7 @@ class MarkdownReader(Reader):
         return strategies
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.MARKDOWN]
 
     def __init__(
@@ -69,8 +70,8 @@ class MarkdownReader(Reader):
                 file_name = name or file.stem
                 file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                log_debug(f"Reading uploaded file: {file.name}")
-                file_name = name or file.name.split(".")[0]
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
@@ -101,16 +102,16 @@ class MarkdownReader(Reader):
                         file_contents = await f.read()
                 except ImportError:
                     log_warning("aiofiles not installed, using synchronous file I/O")
-                    file_contents = file.read_text(self.encoding or "utf-8")
+                    file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                log_debug(f"Reading uploaded file asynchronously: {file.name}")
-                file_name = name or file.name.split(".")[0]
+                log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
             document = Document(
                 name=file_name,
-                id=str(uuid.uuid4()),  # Fixed an issue with the id creation
+                id=str(uuid.uuid4()),
                 content=file_contents,
             )
 

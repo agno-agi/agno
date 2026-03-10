@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
@@ -13,9 +16,13 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     if not is_gemini_class:
         return False
 
-    # Check if it's a Gemini 2.5+ model (supports thinking)
+    # Check if it's a Gemini model with thinking support
+    # - Gemini 2.5+ models support thinking
+    # - Gemini 3+ models support thinking (including DeepThink variants)
     model_id = reasoning_model.id.lower()
-    has_thinking_support = "2.5" in model_id
+    has_thinking_support = (
+        "2.5" in model_id or "3.0" in model_id or "3.5" in model_id or "deepthink" in model_id or "gemini-3" in model_id
+    )
 
     # Also check if thinking parameters are set
     # Note: thinking_budget=0 explicitly disables thinking mode per Google's API docs
@@ -29,15 +36,23 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     return is_gemini_class and (has_thinking_support or has_thinking_budget or has_include_thoughts)
 
 
-def get_gemini_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+def get_gemini_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     """Get reasoning from a Gemini model."""
-    from agno.run.agent import RunOutput
-
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
+        reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.messages is not None:
@@ -51,15 +66,23 @@ def get_gemini_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
     )
 
 
-async def aget_gemini_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+async def aget_gemini_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     """Get reasoning from a Gemini model asynchronously."""
-    from agno.run.agent import RunOutput
-
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
+        reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.messages is not None:
@@ -90,7 +113,7 @@ def get_gemini_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Stream reasoning content as it arrives
@@ -130,7 +153,7 @@ async def aget_gemini_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_intermediate_steps=True):
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Stream reasoning content as it arrives

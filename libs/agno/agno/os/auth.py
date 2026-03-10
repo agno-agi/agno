@@ -1,27 +1,93 @@
-from typing import List, Set
+import asyncio
+import hmac
+from os import getenv
+from typing import Any, List, Optional, Set
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from agno.os.scopes import get_accessible_resource_ids
+from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
 from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
+
+# Scopes granted to the internal service token (used by the scheduler executor).
+# Shared constant so auth.py and jwt.py stay in sync.
+INTERNAL_SERVICE_SCOPES: List[str] = [
+    "agents:read",
+    "agents:run",
+    "teams:read",
+    "teams:run",
+    "workflows:read",
+    "workflows:run",
+    "schedules:read",
+    "schedules:write",
+    "schedules:delete",
+]
+
+
+def get_auth_token_from_request(request: Request) -> Optional[str]:
+    """
+    Extract the JWT/Bearer token from the Authorization header.
+
+    This is used to forward the auth token to remote agents/teams/workflows
+    when making requests through the gateway.
+
+    Args:
+        request: The FastAPI request object
+
+    Returns:
+        The bearer token string if present, None otherwise
+
+    Usage:
+        auth_token = get_auth_token_from_request(request)
+        if auth_token and isinstance(agent, RemoteAgent):
+            await agent.arun(message, auth_token=auth_token)
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+    return None
+
+
+def _is_jwt_configured() -> bool:
+    """Check if JWT authentication is configured via environment variables.
+
+    This covers cases where JWT middleware is set up manually (not via authorization=True).
+    """
+    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
 
 
 def get_authentication_dependency(settings: AgnoAPISettings):
     """
     Create an authentication dependency function for FastAPI routes.
 
+    This handles security key authentication (OS_SECURITY_KEY).
+    When JWT authorization is enabled (via authorization=True, JWT environment variables,
+    or manually added JWT middleware), this dependency is skipped as JWT middleware
+    handles authentication.
+
     Args:
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         A dependency function that can be used with FastAPI's Depends()
     """
 
-    async def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+    async def auth_dependency(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+        # If JWT authorization is enabled via settings (authorization=True on AgentOS)
+        if settings and settings.authorization_enabled:
+            return True
+
+        # Check if JWT middleware has already handled authentication
+        if getattr(request.state, "authenticated", False):
+            return True
+
+        # Also skip if JWT is configured via environment variables
+        if _is_jwt_configured():
+            return True
+
         # If no security key is set, skip authentication entirely
         if not settings or not settings.os_security_key:
             return True
@@ -32,7 +98,15 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
         token = credentials.credentials
 
-        # Verify the token
+        # Check internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
+            request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+            return True
+
+        # Verify the token against security key
         if token != settings.os_security_key:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
@@ -45,13 +119,24 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     """
     Validate a bearer token for WebSocket authentication (legacy os_security_key method).
 
+    When JWT authorization is enabled (via authorization=True or JWT environment variables),
+    this validation is skipped as JWT middleware handles authentication.
+
     Args:
         token: The bearer token to validate
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         True if the token is valid or authentication is disabled, False otherwise
     """
+    # If JWT authorization is enabled, skip security key validation
+    if settings and settings.authorization_enabled:
+        return True
+
+    # Also skip if JWT is configured via environment variables (manual JWT middleware setup)
+    if _is_jwt_configured():
+        return True
+
     # If no security key is set, skip authentication entirely
     if not settings or not settings.os_security_key:
         return True
@@ -240,5 +325,69 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
         resource_id = request.path_params.get(resource_id_param)
         if resource_id and not check_resource_access(request, resource_id, resource_type, action):
             raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
+
+    return dependency
+
+
+def require_approval_resolved(db: Any) -> Any:
+    """
+    Dependency factory that blocks a run continuation when a pending admin-required
+    approval exists for the run.
+
+    Designed to sit alongside ``require_resource_access`` in the route's
+    ``dependencies`` list.  Pass the OS-level DB adapter at router-creation time
+    (the same pattern used by ``get_approval_router``).
+
+    Usage::
+
+        dependencies=[
+            Depends(require_resource_access("agents", "run", "agent_id")),
+            Depends(require_approval_resolved(os.db)),
+        ]
+    """
+
+    async def dependency(request: Request) -> None:
+        # Mirror require_resource_access: skip entirely when authorization is disabled.
+        if not getattr(request.state, "authorization_enabled", False):
+            return
+
+        if db is None:
+            return
+
+        # Callers with approvals:write (admins) bypass this gate — they can
+        # force-continue a run for operational or debugging purposes.
+        user_scopes: List[str] = getattr(request.state, "scopes", [])
+        if has_required_scopes(user_scopes, ["approvals:write"]):
+            return
+
+        run_id: Optional[str] = request.path_params.get("run_id")
+        if not run_id:
+            return
+
+        fn = getattr(db, "get_approvals", None)
+        if fn is None:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                result = await fn(run_id=run_id, status="pending", approval_type="required")
+            else:
+                result = fn(run_id=run_id, status="pending", approval_type="required")
+
+            approvals = result[0] if isinstance(result, tuple) else result
+            if approvals:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This run requires admin approval before it can be continued",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # DB doesn't support approvals or another transient error — let the
+            # run continue so non-approval setups are unaffected.
+            from agno.utils.log import log_warning
+
+            log_warning(f"Approval resolution check skipped due to error: {exc}")
+            return
 
     return dependency

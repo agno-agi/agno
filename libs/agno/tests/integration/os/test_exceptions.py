@@ -1,7 +1,7 @@
 """Integration tests for exception handling in AgentOS."""
 
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -115,13 +115,16 @@ def test_internal_server_error_response_format(test_agent: Agent, caplog):
     app = agent_os.get_app()
     client = TestClient(app, raise_server_exceptions=False)
 
-    # Mock the agent's arun method to raise an exception
-    test_agent.arun = AsyncMock(side_effect=Exception("Internal error"))
-
-    with caplog.at_level(logging.ERROR):
+    # Mock deep_copy to return the same instance, then mock arun to raise an exception
+    # (AgentOS uses create_fresh=True which calls deep_copy)
+    with (
+        patch.object(test_agent, "deep_copy", return_value=test_agent),
+        patch.object(test_agent, "arun", new_callable=AsyncMock, side_effect=Exception("Internal error")),
+        caplog.at_level(logging.ERROR),
+    ):
         response = client.post(
             f"/agents/{test_agent.id}/runs",
-            data={"message": "Hello, world!"},
+            data={"message": "Hello, world!", "stream": "false"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
