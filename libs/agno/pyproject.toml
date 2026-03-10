@@ -191,9 +191,6 @@ a2a = ["a2a-sdk"]
 # Dependencies for Slack integration
 slack = ["slack_sdk>=3.40.0"]
 
-# Dependencies for Telegram enhanced Markdown formatting (optional)
-telegram-markdown = ["mistune>=3.0"]
-
 # Dependencies for Embedders
 huggingface = [
     "huggingface-hub",
