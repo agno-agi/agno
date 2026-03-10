@@ -314,97 +314,68 @@ class TestStreamState:
 
 
 class TestBotState:
-    def test_dedup_rejects_duplicate(self):
-        from agno.os.interfaces.telegram.state import BotState
+    def _make_bot_state(self):
+        from agno.os.interfaces.telegram.state import BotState, resolve_session_config
 
-        bot_state = BotState(bot=AsyncMock())
+        agent = AsyncMock()
+        agent.db = None
+        cfg = resolve_session_config(agent, "agent")
+        return BotState(bot=AsyncMock(), session_config=cfg)
+
+    def test_dedup_rejects_duplicate(self):
+        bot_state = self._make_bot_state()
         assert bot_state.check_dedup(1) is False
         assert bot_state.check_dedup(1) is True
 
     def test_dedup_allows_different_ids(self):
-        from agno.os.interfaces.telegram.state import BotState
-
-        bot_state = BotState(bot=AsyncMock())
+        bot_state = self._make_bot_state()
         assert bot_state.check_dedup(1) is False
         assert bot_state.check_dedup(2) is False
 
     @pytest.mark.asyncio
-    async def test_new_session_creates_timestamp_id(self):
-        from agno.os.interfaces.telegram.state import BotState
-
-        bot_state = BotState(bot=AsyncMock())
-        key = "tg:12345"
-
-        # First session (no DB, no cache) → returns base_key
-        sid = await bot_state.get_session_id(key)
-        assert sid == "tg:12345"
-
-        # /new creates a timestamp-based session
-        new_id = await bot_state.new_session(key)
-        assert new_id.startswith("tg:12345:")
-        assert new_id != "tg:12345"
-
-        # Subsequent get returns the new session
-        sid2 = await bot_state.get_session_id(key)
-        assert sid2 == new_id
-
-    @pytest.mark.asyncio
-    async def test_new_session_independent_keys(self):
-        from agno.os.interfaces.telegram.state import BotState
-
-        bot_state = BotState(bot=AsyncMock())
-        await bot_state.new_session("tg:111")
-        sid_111 = await bot_state.get_session_id("tg:111")
-        sid_222 = await bot_state.get_session_id("tg:222")
-        assert sid_111.startswith("tg:111:")
-        assert sid_222 == "tg:222"  # unaffected
-
-    @pytest.mark.asyncio
-    async def test_new_session_persists_to_db(self):
+    async def test_find_latest_session_returns_none_when_empty(self):
         from agno.db.base import AsyncBaseDb
-        from agno.os.interfaces.telegram.state import BotState
+        from agno.os.interfaces.telegram.state import find_latest_session, resolve_session_config
 
         mock_db = AsyncMock(spec=AsyncBaseDb)
-        bot_state = BotState(bot=AsyncMock(), db=mock_db, entity_type="agent", entity_id="test-agent")
-        new_id = await bot_state.new_session("tg:12345", user_id="user1")
-        assert new_id.startswith("tg:12345:")
-        mock_db.upsert_session.assert_awaited_once()
-        session_arg = mock_db.upsert_session.call_args[1]["session"]
-        assert session_arg.session_id == new_id
-        assert session_arg.user_id == "user1"
+        mock_db.get_sessions.return_value = ([], 0)
+        agent = AsyncMock()
+        agent.db = mock_db
+        cfg = resolve_session_config(agent, "agent")
+
+        result = await find_latest_session(cfg, "user1", "test-agent")
+        assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_session_id_recovers_from_db(self):
+    async def test_find_latest_session_returns_session_id(self):
         from agno.db.base import AsyncBaseDb
-        from agno.os.interfaces.telegram.state import BotState
+        from agno.os.interfaces.telegram.state import find_latest_session, resolve_session_config
 
         mock_db = AsyncMock(spec=AsyncBaseDb)
-        # Simulate DB returning the latest session for this chat
-        mock_db.get_sessions.return_value = ([{"session_id": "tg:12345:1709012345"}], 1)
-        bot_state = BotState(bot=AsyncMock(), db=mock_db, entity_type="agent", entity_id="test-agent")
+        mock_db.get_sessions.return_value = ([{"session_id": "tg:12345:abc123"}], 1)
+        agent = AsyncMock()
+        agent.db = mock_db
+        cfg = resolve_session_config(agent, "agent")
 
-        sid = await bot_state.get_session_id("tg:12345", user_id="user1")
-        assert sid == "tg:12345:1709012345"
+        result = await find_latest_session(cfg, "user1", "test-agent")
+        assert result == "tg:12345:abc123"
         mock_db.get_sessions.assert_awaited_once()
 
-        # Second call should use cache, no additional DB call
-        sid2 = await bot_state.get_session_id("tg:12345", user_id="user1")
-        assert sid2 == "tg:12345:1709012345"
-        assert mock_db.get_sessions.await_count == 1
-
     @pytest.mark.asyncio
-    async def test_invalidate_session_creates_new(self):
-        from agno.os.interfaces.telegram.state import BotState
+    async def test_find_latest_session_no_cache(self):
+        from agno.db.base import AsyncBaseDb
+        from agno.os.interfaces.telegram.state import find_latest_session, resolve_session_config
 
-        bot_state = BotState(bot=AsyncMock())
-        key = "tg:12345"
-        sid1 = await bot_state.get_session_id(key)
-        assert sid1 == "tg:12345"
+        mock_db = AsyncMock(spec=AsyncBaseDb)
+        mock_db.get_sessions.return_value = ([{"session_id": "tg:12345:abc123"}], 1)
+        agent = AsyncMock()
+        agent.db = mock_db
+        cfg = resolve_session_config(agent, "agent")
 
-        await bot_state.invalidate_session(key)
-        sid2 = await bot_state.get_session_id(key)
-        assert sid2.startswith("tg:12345:")
-        assert sid2 != sid1
+        # Each call queries DB — no caching
+        await find_latest_session(cfg, "user1", "test-agent")
+        await find_latest_session(cfg, "user1", "test-agent")
+        assert mock_db.get_sessions.await_count == 2
 
 
 # =============================================================================

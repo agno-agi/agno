@@ -1,6 +1,8 @@
 import os
 import re
+import time
 from typing import List, Optional, Union
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -17,7 +19,7 @@ from agno.os.interfaces.telegram.helpers import (
     send_response_media,
 )
 from agno.os.interfaces.telegram.security import validate_webhook_secret_token
-from agno.os.interfaces.telegram.state import BotState, StreamState, resolve_session_config
+from agno.os.interfaces.telegram.state import BotState, StreamState, find_latest_session, resolve_session_config
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import RemoteTeam, Team
@@ -178,8 +180,36 @@ def attach_routes(
             await send_html(bot, chat_id, help_message, message_thread_id=forum_thread_id)
             return True
         if cmd == "/new":
-            await bot_state.new_session(base_key, user_id=user_id)
-            await send_html(bot, chat_id, new_message, message_thread_id=forum_thread_id)
+            cfg = bot_state.session_config
+            if not cfg.has_db:
+                await send_html(
+                    bot,
+                    chat_id,
+                    "Session management requires storage. Add a database to enable /new.",
+                    message_thread_id=forum_thread_id,
+                )
+                return True
+            new_id = f"{base_key}:{uuid4().hex[:8]}"
+            try:
+                session = cfg.session_cls(
+                    session_id=new_id,
+                    user_id=user_id,
+                    created_at=int(time.time()),
+                    **{cfg.id_field: bot_state.entity_id},
+                )
+                if cfg.is_async_db:
+                    await cfg.db.upsert_session(session)
+                else:
+                    cfg.db.upsert_session(session)
+                await send_html(bot, chat_id, new_message, message_thread_id=forum_thread_id)
+            except Exception as e:
+                log_warning(f"Failed to persist new session to DB: {e}")
+                await send_html(
+                    bot,
+                    chat_id,
+                    "Failed to create new session. Please try again.",
+                    message_thread_id=forum_thread_id,
+                )
             return True
         return False
 
@@ -189,9 +219,7 @@ def attach_routes(
         chat_id: int,
         reply_to: Optional[int],
         forum_thread_id: Optional[int],
-        base_key: str,
         is_private: bool = False,
-        user_id: Optional[str] = None,
     ) -> None:
         bot = bot_state.bot
         is_wf = entity_type == "workflow"
@@ -230,7 +258,6 @@ def attach_routes(
         response = state.final_run_output
 
         if not response:
-            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if response.status == "ERROR":
@@ -238,7 +265,6 @@ def attach_routes(
             await send_chunked(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
-            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if show_reasoning:
@@ -271,8 +297,6 @@ def attach_routes(
         chat_id: int,
         reply_to: Optional[int],
         forum_thread_id: Optional[int],
-        base_key: str,
-        user_id: Optional[str] = None,
     ) -> None:
         bot = bot_state.bot
         response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
@@ -281,7 +305,6 @@ def attach_routes(
             await send_chunked(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
-            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if response.status == "ERROR":
@@ -289,7 +312,6 @@ def attach_routes(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
             log_error(response.content)
-            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if show_reasoning:
@@ -412,8 +434,16 @@ def attach_routes(
             # Inline text-based files (CSV, TXT, JSON) into message text
             message_text, files = _inline_text_files(message_text, files)
 
-            # -- Build session ID (async: may query DB on cold start) --
-            session_id = await bot_state.get_session_id(base_key, user_id=user_id)
+            # -- Resolve session ID: DB lookup with deterministic fallback --
+            session_id = base_key
+            cfg = bot_state.session_config
+            if cfg.has_db:
+                try:
+                    found = await find_latest_session(cfg, user_id, bot_state.entity_id)
+                    if found:
+                        session_id = found
+                except Exception as e:
+                    log_warning(f"Session lookup failed, using default: {e}")
 
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")
@@ -436,9 +466,7 @@ def attach_routes(
                     chat_id,
                     reply_to,
                     forum_thread_id,
-                    base_key,
                     is_private=not is_group,
-                    user_id=user_id,
                 )
             else:
                 await _sync_response(
@@ -447,14 +475,10 @@ def attach_routes(
                     chat_id,
                     reply_to,
                     forum_thread_id,
-                    base_key,
-                    user_id=user_id,
                 )
 
         except Exception as e:
             log_error(f"Error processing message: {e}", exc_info=True)
-            if base_key:
-                await bot_state.invalidate_session(base_key, user_id=user_id)
             try:
                 await send_chunked(bot, chat_id, error_message, message_thread_id=forum_thread_id)
             except Exception as send_error:

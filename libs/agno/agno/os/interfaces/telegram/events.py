@@ -162,7 +162,6 @@ async def _on_run_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool
     error_content = getattr(chunk, "content", None) or "Unknown error"
     log_error(f"Run error during stream: {error_content}")
     state.accumulated_content = state.error_message
-    state.terminal = True
     return True
 
 
@@ -198,7 +197,6 @@ async def _on_workflow_completed(chunk: "BaseRunOutputEvent", state: StreamState
 async def _on_workflow_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     state.update_status("Running workflow:", "Workflow failed")
     state.accumulated_content = state.error_message or "Error: workflow failed"
-    state.terminal = True
     return True
 
 
