@@ -649,6 +649,7 @@ jobs:
           ./libs/agno/tests/integration/agent/test_introduction.py
           ./libs/agno/tests/integration/agent/test_followups.py \
           ./libs/agno/tests/integration/agent/test_tool_hooks.py \
+          ./libs/agno/tests/integration/agent/human_in_the_loop/test_continue_run_history_context.py
 
   test-agents-2:
     runs-on: ubuntu-latest
@@ -730,6 +731,7 @@ jobs:
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_user_input_flows.py \
           ./libs/agno/tests/integration/teams/test_retries.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_external_execution_flows.py
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_continue_run_history_context.py
 
   test-teams-2:
     runs-on: ubuntu-latest
