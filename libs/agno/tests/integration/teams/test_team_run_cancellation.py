@@ -392,6 +392,12 @@ def test_cancel_team_immediately(shared_db):
     assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
     assert run_id is not None, "Should have received at least one event with run_id"
 
+    # Verify session contains exactly one cancelled run (not zero)
+    session = team.get_session(session_id=session_id)
+    assert session is not None, "Session should exist after immediate cancellation"
+    assert session.runs is not None and len(session.runs) == 1, "Session should contain exactly one run"
+    assert session.runs[0].status == RunStatus.cancelled, "The single run should have cancelled status"
+
 
 def test_cancel_non_existent_team_run():
     """Test that cancelling a non-existent run returns False."""
@@ -846,3 +852,124 @@ async def test_cancel_team_continue_run_async_non_streaming(shared_db):
         await cancel_task
     except asyncio.CancelledError:
         pass
+
+
+# ============================================================================
+# STORE MEMBER RESPONSES + CANCELLATION TESTS
+# ============================================================================
+def test_cancel_team_with_store_member_responses(shared_db):
+    """Test cancellation when store_member_responses=True.
+
+    Verifies that member runs are stored in the team session even when
+    the team run is cancelled mid-delegation.
+    """
+    researcher = Agent(
+        name="Researcher",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a researcher. Write very detailed responses about any topic.",
+    )
+    team = Team(
+        name="Member Store Team",
+        members=[researcher],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        store_tool_messages=True,
+        store_history_messages=True,
+        store_member_responses=True,
+    )
+
+    session_id = "test_team_store_member_cancel"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    for event in team.run(
+        input="Write a very long essay about space exploration with at least 10 paragraphs.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content:
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 15 and run_id and not cancelled:
+            team.cancel_run(run_id)
+            cancelled = True
+
+        if isinstance(event, TeamRunCancelledEvent):
+            break
+
+    assert cancelled, "Run should have been cancelled"
+
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+
+
+# ============================================================================
+# SESSION CONTINUITY AFTER CANCELLATION TESTS
+# ============================================================================
+def test_continue_session_after_cancelled_run(shared_db):
+    """Test that a new run on the same session sees the cancelled run's history.
+
+    This tests the primary user story from issue #5994: after cancellation,
+    users should be able to start a new run on the same session and the AI
+    should see what was generated before cancellation.
+    """
+    team = _make_team(shared_db, name="Continuity Team")
+
+    session_id = "test_team_session_continuity"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    # Run 1: Start a run and cancel it mid-stream
+    for event in team.run(
+        input="Write a very long essay about the history of the internet.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content:
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 10 and run_id and not cancelled:
+            team.cancel_run(run_id)
+            cancelled = True
+
+        if isinstance(event, TeamRunCancelledEvent):
+            break
+
+    assert cancelled, "First run should have been cancelled"
+
+    # Verify the cancelled run is persisted
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+    first_run = session.runs[-1]
+    assert first_run.status == RunStatus.cancelled
+    assert first_run.content is not None
+
+    # Run 2: Start a new run on the same session
+    result = team.run(
+        input="What was I asking about before?",
+        session_id=session_id,
+        stream=False,
+    )
+
+    # Verify second run completed and session now has 2 runs
+    assert result is not None
+    assert result.status == RunStatus.completed
+
+    session_after = team.get_session(session_id=session_id)
+    assert session_after is not None
+    assert session_after.runs is not None and len(session_after.runs) >= 2

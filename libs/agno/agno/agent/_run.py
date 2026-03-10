@@ -657,8 +657,8 @@ def _run(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
             except Exception as e:
@@ -1156,8 +1156,8 @@ def _run_stream(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield handle_event(
                     create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
                     run_response,
@@ -1749,8 +1749,8 @@ async def _arun(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except Exception as e:
                 # Check if this is the last attempt
@@ -2362,8 +2362,8 @@ async def _arun_stream(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield handle_event(  # type: ignore
                     create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
                     run_response,
@@ -3043,8 +3043,8 @@ def _continue_run(
                     cleanup_and_store(
                         agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                     )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
             except Exception as e:
@@ -3311,8 +3311,8 @@ def _continue_run_stream(
                     cleanup_and_store(
                         agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                     )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield handle_event(  # type: ignore
                     create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
                     run_response,
@@ -3828,8 +3828,8 @@ async def _acontinue_run(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
@@ -4298,8 +4298,8 @@ async def _acontinue_run_stream(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception:
-                    pass
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield handle_event(  # type: ignore
                     create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
                     run_response,
@@ -4425,7 +4425,6 @@ def _handle_run_cancellation(
     run_messages: Optional["RunMessages"] = None,
 ) -> RunOutput:
     """Prepare a run response for cancellation: set status, preserve content and messages."""
-    run_response = cast(RunOutput, run_response)
     reason = str(error) if isinstance(error, RunCancelledException) else "Operation cancelled by user"
     log_info(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
