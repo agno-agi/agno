@@ -31,7 +31,6 @@ from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
-from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, SessionMetrics
@@ -267,7 +266,6 @@ class Workflow:
     add_dependencies_to_context: Optional[bool] = None
     add_session_state_to_context: Optional[bool] = None
     add_history_to_context: Optional[bool] = None
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
 
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
@@ -308,7 +306,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         cache_session: bool = False,
         telemetry: bool = True,
         add_workflow_history_to_steps: bool = False,
@@ -336,7 +333,6 @@ class Workflow:
         self.add_dependencies_to_context = add_dependencies_to_context
         self.add_session_state_to_context = add_session_state_to_context
         self.add_history_to_context = add_history_to_context
-        self.knowledge_filters = knowledge_filters
 
         # Component metadata (set by get_workflows during DB loading)
         self._version: Optional[int] = None
@@ -372,7 +368,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Resolve run-level params: call-site > self.<field> > None.
@@ -404,7 +399,6 @@ class Workflow:
         return {
             "dependencies": resolved_dependencies,
             "metadata": resolved_metadata,
-            "knowledge_filters": knowledge_filters if knowledge_filters is not None else self.knowledge_filters,
             "add_dependencies_to_context": add_dependencies_to_context
             if add_dependencies_to_context is not None
             else self.add_dependencies_to_context,
@@ -752,8 +746,6 @@ class Workflow:
             config["add_session_state_to_context"] = self.add_session_state_to_context
         if self.add_history_to_context is not None:
             config["add_history_to_context"] = self.add_history_to_context
-        if self.knowledge_filters is not None:
-            config["knowledge_filters"] = self.knowledge_filters
 
         # --- Debug and telemetry settings ---
         config["debug_mode"] = self.debug_mode
@@ -850,7 +842,6 @@ class Workflow:
             add_dependencies_to_context=config.get("add_dependencies_to_context"),
             add_session_state_to_context=config.get("add_session_state_to_context"),
             add_history_to_context=config.get("add_history_to_context"),
-            knowledge_filters=config.get("knowledge_filters"),
             # --- Debug and telemetry settings ---
             debug_mode=config.get("debug_mode", False),
             telemetry=config.get("telemetry", True),
@@ -3191,7 +3182,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List["FilterExpr"]]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
@@ -3215,7 +3205,6 @@ class Workflow:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_history_to_context=add_history_to_context,
-            knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
         )
 
@@ -3228,7 +3217,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            knowledge_filters=resolved["knowledge_filters"],
             add_dependencies_to_context=resolved["add_dependencies_to_context"],
             add_session_state_to_context=resolved["add_session_state_to_context"],
             add_history_to_context=resolved["add_history_to_context"],
@@ -3337,7 +3325,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List["FilterExpr"]]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
@@ -3361,7 +3348,6 @@ class Workflow:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_history_to_context=add_history_to_context,
-            knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
         )
 
@@ -3374,7 +3360,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            knowledge_filters=resolved["knowledge_filters"],
             add_dependencies_to_context=resolved["add_dependencies_to_context"],
             add_session_state_to_context=resolved["add_session_state_to_context"],
             add_history_to_context=resolved["add_history_to_context"],
@@ -6407,7 +6392,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
@@ -6433,7 +6417,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
@@ -6458,7 +6441,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
@@ -6538,7 +6520,6 @@ class Workflow:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_history_to_context=add_history_to_context,
-            knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
         )
 
@@ -6552,7 +6533,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            knowledge_filters=resolved["knowledge_filters"],
             add_dependencies_to_context=resolved["add_dependencies_to_context"],
             add_session_state_to_context=resolved["add_session_state_to_context"],
             add_history_to_context=resolved["add_history_to_context"],
@@ -6629,7 +6609,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
@@ -6656,7 +6635,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
@@ -6682,7 +6660,6 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
@@ -6720,7 +6697,6 @@ class Workflow:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     add_history_to_context=add_history_to_context,
-                    knowledge_filters=knowledge_filters,
                     debug_mode=debug_mode,
                     **kwargs,
                 )
@@ -6744,7 +6720,6 @@ class Workflow:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     add_history_to_context=add_history_to_context,
-                    knowledge_filters=knowledge_filters,
                     debug_mode=debug_mode,
                     **kwargs,
                 )
@@ -6764,7 +6739,6 @@ class Workflow:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_history_to_context=add_history_to_context,
-            knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
         )
 
@@ -6778,7 +6752,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            knowledge_filters=resolved["knowledge_filters"],
             add_dependencies_to_context=resolved["add_dependencies_to_context"],
             add_session_state_to_context=resolved["add_session_state_to_context"],
             add_history_to_context=resolved["add_history_to_context"],
