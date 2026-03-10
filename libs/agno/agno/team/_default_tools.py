@@ -594,8 +594,8 @@ def _get_delegate_task_function(
                     continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                 # Capture the member's run_id for cancellation propagation
-                if member_run_id is None and hasattr(member_agent_run_output_event, "run_id"):
-                    member_run_id = member_agent_run_output_event.run_id
+                if member_run_id is None:
+                    member_run_id = getattr(member_agent_run_output_event, "run_id", None)
 
                 # Check if the member's own run is cancelled
                 check_if_run_cancelled(member_agent_run_output_event)
@@ -752,8 +752,8 @@ def _get_delegate_task_function(
                     continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                 # Capture the member's run_id for cancellation propagation
-                if member_run_id is None and hasattr(member_agent_run_response_event, "run_id"):
-                    member_run_id = member_agent_run_response_event.run_id
+                if member_run_id is None:
+                    member_run_id = getattr(member_agent_run_response_event, "run_id", None)
 
                 # Check if the member's own run is cancelled
                 check_if_run_cancelled(member_agent_run_response_event)
@@ -769,9 +769,9 @@ def _get_delegate_task_function(
                     raise
 
                 # Yield the member event directly
-                member_agent_run_response_event.parent_run_id = getattr(
-                    member_agent_run_response_event, "parent_run_id", None
-                ) or (run_response.run_id if run_response is not None else None)
+                member_agent_run_response_event.parent_run_id = member_agent_run_response_event.parent_run_id or (
+                    run_response.run_id if run_response is not None else None
+                )
                 yield member_agent_run_response_event  # type: ignore
         else:
             member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -899,8 +899,8 @@ def _get_delegate_task_function(
                         continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Capture the member's run_id for cancellation propagation
-                    if member_run_id is None and hasattr(member_agent_run_response_chunk, "run_id"):
-                        member_run_id = member_agent_run_response_chunk.run_id
+                    if member_run_id is None:
+                        member_run_id = getattr(member_agent_run_response_chunk, "run_id", None)
 
                     # Check if the member's own run is cancelled
                     check_if_run_cancelled(member_agent_run_response_chunk)

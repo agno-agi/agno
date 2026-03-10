@@ -433,8 +433,8 @@ def _get_task_management_tools(
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
-                    if member_run_id is None and hasattr(event, "run_id"):
-                        member_run_id = event.run_id
+                    if member_run_id is None:
+                        member_run_id = getattr(event, "run_id", None)
                     check_if_run_cancelled(event)
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
@@ -590,8 +590,8 @@ def _get_task_management_tools(
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
-                    if member_run_id is None and hasattr(event, "run_id"):
-                        member_run_id = event.run_id
+                    if member_run_id is None:
+                        member_run_id = getattr(event, "run_id", None)
                     check_if_run_cancelled(event)
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
