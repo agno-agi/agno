@@ -368,8 +368,8 @@ def _run_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -1152,9 +1152,8 @@ def _run(
                         team, run_response=run_response, session=session, run_context=run_context
                     )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -2143,8 +2142,8 @@ async def _arun_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -2986,9 +2985,8 @@ async def _arun(
                         team, run_response=run_response, session=team_session, run_context=run_context
                     )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -3916,11 +3914,15 @@ def _cleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    #  Scrub the stored run based on storage flags
+    import copy
+
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3929,9 +3931,10 @@ def _cleanup_and_store(
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -3947,7 +3950,6 @@ def _cleanup_and_store(
     team.save_session(session=session)
 
     # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         update_approval_run_status(team.db, run_response.run_id, run_response.status)
 
@@ -3958,11 +3960,15 @@ async def _acleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    #  Scrub the stored run based on storage flags
+    import copy
+
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -3971,9 +3977,10 @@ async def _acleanup_and_store(
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -3989,7 +3996,6 @@ async def _acleanup_and_store(
     await team.asave_session(session=session)
 
     # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
@@ -4139,6 +4145,9 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 def _get_continue_run_messages(
     team: "Team",
     input: List[Message],
+    session: Optional[TeamSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -4146,6 +4155,9 @@ def _get_continue_run_messages(
     from the existing message list for the continuation run.
     """
     run_messages = RunMessages()
+
+    if add_history_to_context is None:
+        add_history_to_context = team.add_history_to_context
 
     # Extract most recent user message
     user_message = None
@@ -4164,7 +4176,45 @@ def _get_continue_run_messages(
 
     run_messages.system_message = system_message
     run_messages.user_message = user_message
-    run_messages.messages = input
+
+    # Skip re-fetching history if input already contains it (run_response path).
+    input_has_history = any(msg.from_history for msg in input)
+
+    # Build messages: system first, then history (if needed), then remaining input
+    if system_message is not None:
+        run_messages.messages.append(system_message)
+
+    if add_history_to_context and session is not None and not input_has_history:
+        from copy import deepcopy
+
+        from agno.utils.message import filter_tool_calls
+
+        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+
+        history: List[Message] = session.get_messages(
+            last_n_runs=team.num_history_runs,
+            limit=team.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            team_id=team.id if team.parent_team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            history_copy = [deepcopy(msg) for msg in history]
+            for _msg in history_copy:
+                _msg.from_history = True
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+            log_debug(f"Adding {len(history_copy)} messages from history")
+            run_messages.messages += history_copy
+
+    # Add remaining input messages (skip system to avoid duplication)
+    for msg in input:
+        if msg is not system_message:
+            run_messages.messages.append(msg)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    if run_context is not None:
+        run_context.messages = run_messages.messages
 
     return run_messages
 
@@ -4793,7 +4843,13 @@ def continue_run_dispatch(
 
         # Get continue run messages from existing conversation
         input_messages = run_response.messages or []
-        run_messages = _get_continue_run_messages(team, input=input_messages)
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
 
         # Handle tool call updates (execute confirmed tools, etc.)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -4967,9 +5023,8 @@ def _continue_run(
                 # Convert to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                # Store media
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -5577,7 +5632,13 @@ async def _acontinue_run(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(team, input=input_messages)
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
 
                     await _ahandle_team_tool_call_updates(
                         team, run_response=run_response, run_messages=run_messages, tools=_tools
@@ -5621,8 +5682,7 @@ async def _acontinue_run(
 
                     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                    if team.store_media:
-                        store_media_util(run_response, model_response)
+                    store_media_util(run_response, model_response)
 
                 elif member_results:
                     # Member-only: re-run team with results
@@ -5876,7 +5936,13 @@ async def _acontinue_run_stream(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(team, input=input_messages)
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
 
                     run_response.status = RunStatus.running
                     run_response.content = None
