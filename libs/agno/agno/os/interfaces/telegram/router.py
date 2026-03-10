@@ -35,9 +35,9 @@ from agno.os.interfaces.telegram.helpers import markdown_to_telegram_html as mar
 
 # Session IDs use a "tg:" prefix to namespace Telegram sessions.
 # Format variants:
-#   tg:{chat_id}                                  — DMs / private chats (one session per chat)
-#   tg:{chat_id}:thread:{root_msg_id}             — Group chats (scoped by reply thread)
-#   tg:{chat_id}:topic:{message_thread_id}        — Forum topic chats (scoped by forum topic)
+#   tg:{entity_id}:{chat_id}                              — DMs / private chats
+#   tg:{entity_id}:{chat_id}:thread:{root_msg_id}         — Group chats (scoped by reply thread)
+#   tg:{entity_id}:{chat_id}:topic:{message_thread_id}    — Forum topic chats (scoped by forum topic)
 
 # Binary file types that are kept as File attachments rather than inlined as text
 _BINARY_MIME_TYPES = frozenset(
@@ -111,7 +111,7 @@ def attach_routes(
 
     # Resolve entity DB and ID for session persistence across restarts.
     entity_db = getattr(entity, "db", None)
-    entity_id = getattr(entity, "id", None) or getattr(entity, "name", None)
+    entity_id = getattr(entity, "id", None) or getattr(entity, "name", None) or entity_type
 
     bot_state = BotState(
         bot=AsyncTeleBot(token),
@@ -356,15 +356,16 @@ def attach_routes(
             # separate conversation sessions per topic.
             forum_thread_id = message.get("message_thread_id")
 
-            # -- Build base_key early (needed for /new command and session ID) --
+            # -- Build base_key: tg:{entity_id}:{scope_key} --
             if forum_thread_id:
-                base_key = f"tg:{chat_id}:topic:{forum_thread_id}"
+                scope_key = f"{chat_id}:topic:{forum_thread_id}"
             elif is_group:
                 reply_msg = message.get("reply_to_message")
                 root_msg_id = reply_msg.get("message_id", incoming_message_id) if reply_msg else incoming_message_id
-                base_key = f"tg:{chat_id}:thread:{root_msg_id}"
+                scope_key = f"{chat_id}:thread:{root_msg_id}"
             else:
-                base_key = f"tg:{chat_id}"
+                scope_key = str(chat_id)
+            base_key = f"tg:{entity_id}:{scope_key}"
 
             # Register bot commands lazily on first webhook
             await bot_state.register_commands(commands, register_commands)
