@@ -192,6 +192,9 @@ class Function(BaseModel):
     cache_dir: Optional[str] = None
     cache_ttl: int = 3600
 
+    # Parameter names whose values should be masked in log output (e.g. phone numbers).
+    sensitive_parameters: List[str] = Field(default_factory=list)
+
     # --*-- FOR INTERNAL USE ONLY --*--
     # The agent that the function is associated with
     _agent: Optional[Any] = None
@@ -776,7 +779,9 @@ class FunctionCall(BaseModel):
 
         trimmed_arguments = {}
         for k, v in self.arguments.items():
-            if isinstance(v, str) and len(str(v)) > max_arg_len:
+            if k in self.function.sensitive_parameters:
+                trimmed_arguments[k] = "***"
+            elif isinstance(v, str) and len(str(v)) > max_arg_len:
                 trimmed_arguments[k] = "..."
             else:
                 trimmed_arguments[k] = v
