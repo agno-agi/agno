@@ -27,6 +27,12 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Live reference to the current run's message list. Available in tool hooks
+    # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
+    # so accidental list mutations (.clear(), .append()) won't corrupt the run.
+    # Individual Message objects are shared references — do not mutate them.
+    messages: Optional[List[Message]] = None
+
     # Runtime-resolved callable factory results
     tools: Optional[List[Any]] = None
     knowledge: Optional[Any] = None
