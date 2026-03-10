@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -12,6 +12,7 @@ from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.base import RunStatus
 from agno.session import Session
 
 
@@ -440,6 +441,7 @@ class BaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -455,6 +457,9 @@ class BaseDb(ABC):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+                Supports composable queries with AND/OR/NOT logic and operators
+                like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -472,6 +477,7 @@ class BaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -484,6 +490,7 @@ class BaseDb(ABC):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -639,6 +646,7 @@ class BaseDb(ABC):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -647,6 +655,7 @@ class BaseDb(ABC):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -1079,6 +1088,18 @@ class BaseDb(ABC):
         """Get count of pending approvals."""
         raise NotImplementedError
 
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def clear_context_items(self) -> None:
         raise NotImplementedError
@@ -1447,6 +1468,7 @@ class AsyncBaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -1462,6 +1484,9 @@ class AsyncBaseDb(ABC):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+                Supports composable queries with AND/OR/NOT logic and operators
+                like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -1479,6 +1504,7 @@ class AsyncBaseDb(ABC):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1491,6 +1517,7 @@ class AsyncBaseDb(ABC):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -1801,6 +1828,18 @@ class AsyncBaseDb(ABC):
 
     async def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
         """Get count of pending approvals."""
+        raise NotImplementedError
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
         raise NotImplementedError
 
     @abstractmethod

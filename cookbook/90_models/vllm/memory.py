@@ -17,7 +17,7 @@ summary.
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.vllm import VLLM
-from agno.utils.pprint import pprint
+from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
 # Create Agent
