@@ -11,11 +11,10 @@ API communication automatically.
 
 Requirements:
 - Set up Google Cloud credentials: `gcloud auth application-default login`
-- Get a Parallel API key from https://parallel.ai
 - Set environment variables:
   - GOOGLE_CLOUD_PROJECT: Your GCP project ID
   - GOOGLE_CLOUD_LOCATION: Your GCP region (e.g., us-central1)
-  - PARALLEL_API_KEY: Your Parallel API key
+- Optionally set PARALLEL_API_KEY if not using GCP Marketplace subscription
 
 Run `pip install google-genai` to install dependencies.
 
@@ -33,8 +32,11 @@ agent = Agent(
         id="gemini-2.0-flash",
         vertexai=True,  # Required for Parallel grounding
         parallel_search=True,
-        # Optional: provide API key directly instead of env var
+        # Optional: provide API key directly instead of env var.
+        # If omitted, uses PARALLEL_API_KEY env var or GCP Marketplace subscription.
         # parallel_api_key="your-api-key",
+        # Optional: custom configuration for domain filtering, excerpt limits, etc.
+        # parallel_config={"source_policy": {"exclude_domains": ["example.com"]}},
     ),
     add_datetime_to_context=True,
     markdown=True,
