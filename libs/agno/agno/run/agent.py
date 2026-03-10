@@ -502,7 +502,7 @@ class FollowupsStartedEvent(BaseAgentRunEvent):
 @dataclass
 class FollowupsCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.followups_completed.value
-    followups: Optional[Followups] = None
+    followups: Optional[List[str]] = None
 
 
 @dataclass
@@ -645,7 +645,7 @@ class RunOutput:
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
 
-    followups: Optional[Followups] = None
+    followups: Optional[List[str]] = None
 
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
@@ -746,9 +746,7 @@ class RunOutput:
             _dict["references"] = [r.model_dump() for r in self.references]
 
         if self.followups is not None:
-            _dict["followups"] = (
-                self.followups.model_dump() if isinstance(self.followups, Followups) else self.followups
-            )
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = []

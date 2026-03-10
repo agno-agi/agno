@@ -59,7 +59,7 @@ async def main():
             print("Followups:")
             print("=" * 60)
             if event.followups:  # type: ignore
-                for i, suggestion in enumerate(event.followups.suggestions, 1):  # type: ignore
+                for i, suggestion in enumerate(event.followups, 1):  # type: ignore
                     print(f"  {i}. {suggestion}")
 
     print()

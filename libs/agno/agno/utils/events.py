@@ -7,7 +7,6 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     CompressionCompletedEvent,
     CompressionStartedEvent,
-    Followups,
     FollowupsCompletedEvent,
     FollowupsStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -762,7 +761,7 @@ def create_followups_started_event(
 
 def create_followups_completed_event(
     from_run_response: RunOutput,
-    followups: Optional[Followups] = None,
+    followups: Optional[List[str]] = None,
 ) -> FollowupsCompletedEvent:
     return FollowupsCompletedEvent(
         session_id=from_run_response.session_id,
@@ -992,7 +991,7 @@ def create_team_followups_started_event(
 
 def create_team_followups_completed_event(
     from_run_response: TeamRunOutput,
-    followups: Optional[Followups] = None,
+    followups: Optional[List[str]] = None,
 ) -> TeamFollowupsCompletedEvent:
     return TeamFollowupsCompletedEvent(
         session_id=from_run_response.session_id,

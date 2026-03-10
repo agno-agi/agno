@@ -10,7 +10,7 @@ from agno.models.message import Citations, Message
 from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
@@ -502,7 +502,7 @@ class FollowupsStartedEvent(BaseTeamRunEvent):
 @dataclass
 class FollowupsCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.followups_completed.value
-    followups: Optional[Followups] = None
+    followups: Optional[List[str]] = None
 
 
 @dataclass
@@ -754,7 +754,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
-    followups: Optional[Followups] = None
+    followups: Optional[List[str]] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
@@ -846,9 +846,7 @@ class TeamRunOutput:
             _dict["references"] = [r.model_dump() for r in self.references]
 
         if self.followups is not None:
-            _dict["followups"] = (
-                self.followups.model_dump() if isinstance(self.followups, Followups) else self.followups
-            )
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]

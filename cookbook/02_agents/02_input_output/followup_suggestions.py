@@ -56,7 +56,7 @@ if __name__ == "__main__":
     print("Followups:")
     print(f"{'=' * 60}")
     if run.followups:
-        for i, suggestion in enumerate(run.followups.suggestions, 1):
+        for i, suggestion in enumerate(run.followups, 1):
             print(f"  {i}. {suggestion}")
     else:
         print("  No followups generated.")

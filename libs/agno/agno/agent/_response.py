@@ -1739,29 +1739,30 @@ def _build_followup_messages(
     ]
 
 
-def _parse_followups_response(model_response: ModelResponse) -> Optional[Followups]:
-    """Parse the model response into Followups."""
+def _parse_followups_response(model_response: ModelResponse) -> Optional[List[str]]:
+    """Parse the model response into a flat list of followup strings."""
     import json
+
+    followups_obj: Optional[Followups] = None
 
     if model_response.parsed is not None:
         if isinstance(model_response.parsed, Followups):
-            return model_response.parsed
-        # If parsed is a dict, try to construct
-        if isinstance(model_response.parsed, dict):
+            followups_obj = model_response.parsed
+        elif isinstance(model_response.parsed, dict):
             try:
-                return Followups.model_validate(model_response.parsed)
+                followups_obj = Followups.model_validate(model_response.parsed)
             except Exception:
                 pass
 
     # Fall back to parsing content as JSON
-    if model_response.content:
+    if followups_obj is None and model_response.content:
         try:
             data = json.loads(model_response.content)
-            return Followups.model_validate(data)
+            followups_obj = Followups.model_validate(data)
         except Exception:
             log_warning("Failed to parse followups from model response")
 
-    return None
+    return followups_obj.suggestions if followups_obj is not None else None
 
 
 def _accumulate_followups_metrics(model_response: ModelResponse, model: Model, run_response: RunOutput) -> None:

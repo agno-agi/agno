@@ -382,7 +382,7 @@ class RunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
-    followups: Optional[dict] = Field(None, description="Followup suggestions generated after the run")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
