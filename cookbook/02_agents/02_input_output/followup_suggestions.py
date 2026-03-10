@@ -32,7 +32,7 @@ agent = Agent(
     instructions="You are a knowledgeable assistant. Answer questions thoroughly.",
     # Enable built-in followups
     followups=True,
-    num_followups=2,
+    num_followups=3,
     # Optionally use a cheaper model for followups
     # followup_model=OpenAIResponses(id="gpt-4o-mini"),
     markdown=True,
