@@ -408,6 +408,11 @@ def _run_tasks(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Generate followups if enabled
+        from agno.team._response import generate_team_followups
+
+        generate_team_followups(team, run_response=run_response)
+
         # Set the run status to completed
         run_response.status = RunStatus.completed
 
@@ -862,6 +867,11 @@ def _run_tasks_stream(
             store_events=team.store_events,
         )
 
+        # Generate followups if enabled
+        from agno.team._response import generate_team_followups_stream
+
+        yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
+
         # Set the run status to completed
         run_response.status = RunStatus.completed
 
@@ -1194,6 +1204,11 @@ def _run(
                         log_warning(f"Error in session summary creation: {str(e)}")
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Generate followups if enabled
+                from agno.team._response import generate_team_followups
+
+                generate_team_followups(team, run_response=run_response)
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -1624,6 +1639,11 @@ def _run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+                # Generate followups if enabled
+                from agno.team._response import generate_team_followups_stream
+
+                yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -2184,6 +2204,11 @@ async def _arun_tasks(
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Generate followups if enabled
+        from agno.team._response import agenerate_team_followups
+
+        await agenerate_team_followups(team, run_response=run_response)
+
         # Set the run status to completed
         run_response.status = RunStatus.completed
 
@@ -2657,6 +2682,14 @@ async def _arun_tasks_stream(
             store_events=team.store_events,
         )
 
+        # Generate followups if enabled
+        from agno.team._response import agenerate_team_followups_stream
+
+        async for event in agenerate_team_followups_stream(
+            team, run_response=run_response, stream_events=stream_events
+        ):
+            yield event
+
         # Set the run status to completed
         run_response.status = RunStatus.completed
 
@@ -3025,6 +3058,12 @@ async def _arun(
                         log_warning(f"Error in session summary creation: {str(e)}")
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Generate followups if enabled
+                from agno.team._response import agenerate_team_followups
+
+                await agenerate_team_followups(team, run_response=run_response)
+
                 run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
@@ -3566,6 +3605,14 @@ async def _arun_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+                # Generate followups if enabled
+                from agno.team._response import agenerate_team_followups_stream
+
+                async for event in agenerate_team_followups_stream(
+                    team, run_response=run_response, stream_events=stream_events
+                ):
+                    yield event
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed

@@ -157,6 +157,9 @@ def __init__(
     reasoning_agent: Optional[Agent] = None,
     reasoning_min_steps: int = 1,
     reasoning_max_steps: int = 10,
+    followups: bool = False,
+    num_followups: int = 3,
+    followup_model: Optional[Union[Model, str]] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     store_events: bool = False,
@@ -338,6 +341,12 @@ def __init__(
     team.reasoning_agent = reasoning_agent
     team.reasoning_min_steps = reasoning_min_steps
     team.reasoning_max_steps = reasoning_max_steps
+
+    team.followups = followups
+    if num_followups < 1:
+        raise ValueError("num_followups must be at least 1")
+    team.num_followups = num_followups
+    team.followup_model = followup_model  # type: ignore[assignment]
 
     team.stream = stream
     team.stream_events = stream_events
