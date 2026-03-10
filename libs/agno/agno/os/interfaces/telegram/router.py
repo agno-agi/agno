@@ -18,7 +18,7 @@ from agno.os.interfaces.telegram.helpers import (
     send_response_media,
 )
 from agno.os.interfaces.telegram.security import validate_webhook_secret_token
-from agno.os.interfaces.telegram.state import BotState, StreamState
+from agno.os.interfaces.telegram.state import BotState, StreamState, resolve_session_config
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import RemoteTeam, Team
@@ -29,9 +29,6 @@ try:
     from telebot.async_telebot import AsyncTeleBot
 except ImportError as e:
     raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
-
-# Re-export for backward compatibility (tests and external code may import from here)
-from agno.os.interfaces.telegram.helpers import markdown_to_telegram_html as markdown_to_telegram_html  # noqa: F401
 
 # Session IDs use a "tg:" prefix to namespace Telegram sessions.
 # Format variants:
@@ -109,13 +106,12 @@ def attach_routes(
     if not token:
         raise ValueError("TELEGRAM_TOKEN environment variable is not set and no token was provided")
 
-    # Resolve entity DB and ID for session persistence across restarts.
-    entity_db = getattr(entity, "db", None)
     entity_id = getattr(entity, "id", None) or getattr(entity, "name", None) or entity_type
+    session_config = resolve_session_config(entity, entity_type)
 
     bot_state = BotState(
         bot=AsyncTeleBot(token),
-        db=entity_db,
+        session_config=session_config,
         entity_type=entity_type,
         entity_id=entity_id,
     )
@@ -215,6 +211,7 @@ def attach_routes(
         forum_thread_id: Optional[int],
         base_key: str,
         is_private: bool = False,
+        user_id: Optional[str] = None,
     ) -> None:
         bot = bot_state.bot
         is_wf = entity_type == "workflow"
@@ -253,7 +250,7 @@ def attach_routes(
         response = state.final_run_output
 
         if not response:
-            await bot_state.invalidate_session(base_key)
+            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if response.status == "ERROR":
@@ -261,7 +258,7 @@ def attach_routes(
             await send_chunked(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
-            await bot_state.invalidate_session(base_key)
+            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if show_reasoning:
@@ -275,7 +272,18 @@ def attach_routes(
                     message_thread_id=forum_thread_id,
                 )
 
-        await send_response_media(bot, response, chat_id, reply_to=None, message_thread_id=forum_thread_id)
+        any_media_sent = await send_response_media(
+            bot, response, chat_id, reply_to=None, message_thread_id=forum_thread_id
+        )
+
+        # Match _sync_response: send text that overflows media caption limit
+        if response.content:
+            if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
+                await send_chunked(bot, chat_id, response.content, message_thread_id=forum_thread_id)
+            elif not any_media_sent:
+                await send_chunked(
+                    bot, chat_id, response.content, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
+                )
 
     # -------------------------------------------------------------------------
     # Non-streaming response path
@@ -288,6 +296,7 @@ def attach_routes(
         reply_to: Optional[int],
         forum_thread_id: Optional[int],
         base_key: str,
+        user_id: Optional[str] = None,
     ) -> None:
         bot = bot_state.bot
         response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
@@ -296,7 +305,7 @@ def attach_routes(
             await send_chunked(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
-            await bot_state.invalidate_session(base_key)
+            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if response.status == "ERROR":
@@ -304,7 +313,7 @@ def attach_routes(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
             log_error(response.content)
-            await bot_state.invalidate_session(base_key)
+            await bot_state.invalidate_session(base_key, user_id=user_id)
             return
 
         if show_reasoning:
@@ -343,6 +352,7 @@ def attach_routes(
         bot = bot_state.bot
         forum_thread_id: Optional[int] = None
         base_key: Optional[str] = None
+        user_id: Optional[str] = None
 
         try:
             if message.get("from", {}).get("is_bot"):
@@ -445,15 +455,30 @@ def attach_routes(
             # -- Dispatch to streaming or sync path --
             if stream:
                 await _stream_response(
-                    message_text, run_kwargs, chat_id, reply_to, forum_thread_id, base_key, is_private=not is_group
+                    message_text,
+                    run_kwargs,
+                    chat_id,
+                    reply_to,
+                    forum_thread_id,
+                    base_key,
+                    is_private=not is_group,
+                    user_id=user_id,
                 )
             else:
-                await _sync_response(message_text, run_kwargs, chat_id, reply_to, forum_thread_id, base_key)
+                await _sync_response(
+                    message_text,
+                    run_kwargs,
+                    chat_id,
+                    reply_to,
+                    forum_thread_id,
+                    base_key,
+                    user_id=user_id,
+                )
 
         except Exception as e:
-            log_error(f"Error processing message: {e}")
+            log_error(f"Error processing message: {e}", exc_info=True)
             if base_key:
-                await bot_state.invalidate_session(base_key)
+                await bot_state.invalidate_session(base_key, user_id=user_id)
             try:
                 await send_chunked(bot, chat_id, error_message, message_thread_id=forum_thread_id)
             except Exception as send_error:

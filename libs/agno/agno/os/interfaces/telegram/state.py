@@ -3,20 +3,24 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, List, Optional, Union
+from typing import TYPE_CHECKING, Any, ClassVar, List, NamedTuple, Optional, Type, Union
+from uuid import uuid4
 
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
     _escape_html,
     markdown_to_telegram_html,
     send_chunked,
 )
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, log_warning
 
 if TYPE_CHECKING:
     from telebot.async_telebot import AsyncTeleBot
 
-    from agno.db.base import AsyncBaseDb, BaseDb
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
@@ -32,6 +36,36 @@ def _generate_draft_id() -> int:
     return random.randint(1, 2**31 - 1)
 
 
+# Resolved once at startup — maps entity_type to session constructor args
+_SESSION_DISPATCH = {
+    "agent": (SessionType.AGENT, AgentSession, "agent_id"),
+    "team": (SessionType.TEAM, TeamSession, "team_id"),
+    "workflow": (SessionType.WORKFLOW, WorkflowSession, "workflow_id"),
+}
+
+
+class _SessionConfig(NamedTuple):
+    session_type: SessionType
+    session_cls: Type[Any]
+    id_field: str  # "agent_id" | "team_id" | "workflow_id"
+    db: Any  # Optional[BaseDb | AsyncBaseDb], typed as Any to avoid union complexity
+    has_db: bool
+    is_async_db: bool
+
+
+def resolve_session_config(entity: object, entity_type: str) -> _SessionConfig:
+    session_type, session_cls, id_field = _SESSION_DISPATCH[entity_type]
+    db = getattr(entity, "db", None)
+    return _SessionConfig(
+        session_type=session_type,
+        session_cls=session_cls,
+        id_field=id_field,
+        db=db,
+        has_db=isinstance(db, (BaseDb, AsyncBaseDb)),
+        is_async_db=isinstance(db, AsyncBaseDb),
+    )
+
+
 # =============================================================================
 # Bot State (persistent — shared across all messages)
 # =============================================================================
@@ -41,26 +75,19 @@ def _generate_draft_id() -> int:
 class BotState:
     """Persistent state for the bot instance (shared across all webhook calls).
 
-    Session management:
-        Unlike Slack (where each thread has a unique thread_ts that naturally
-        maps to a session), Telegram DMs have a single chat_id for all messages.
-        The /new command creates a fresh session by generating a timestamp-based
-        session ID (e.g. ``tg:12345:1709012345``).
-
-        An in-memory cache (``active_sessions``) provides O(1) lookups for the
-        hot path. On cold start (after server restart), a single DB query per
-        chat recovers the latest session ID, which is then cached.
+    Handles bot identity caching, command registration, webhook dedup,
+    and session management (in-memory cache + DB recovery on cold start).
+    Session config is resolved once at startup via ``resolve_session_config``.
     """
 
     bot: "AsyncTeleBot"
-    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
+    session_config: _SessionConfig
     entity_type: str = "agent"
     entity_id: Optional[str] = None
     bot_username: Optional[str] = None
     bot_id: Optional[int] = None
     processed_updates: dict[int, float] = field(default_factory=dict)
-    # Maps base_key → active session_id.  Replaces the old integer generation
-    # counter so that session identity survives server restarts (backed by DB).
+    # Maps base_key → active session_id; survives across messages, lost on restart
     active_sessions: dict[str, str] = field(default_factory=dict)
     commands_registered: bool = False
 
@@ -88,14 +115,6 @@ class BotState:
             log_warning(f"Failed to register bot commands: {e}")
 
     def check_dedup(self, update_id: int) -> bool:
-        """Check if an update_id has already been processed (deduplication).
-
-        Telegram may retry webhook deliveries if it doesn't receive a timely
-        response. This TTL-based cache (60s) prevents duplicate processing
-        while keeping memory bounded by evicting expired entries on each call.
-
-        Returns True if the update was already seen (duplicate).
-        """
         now = time.monotonic()
         expired = [uid for uid, ts in self.processed_updates.items() if now - ts > self.DEDUP_TTL]
         for uid in expired:
@@ -107,160 +126,69 @@ class BotState:
 
     # -- Session management ---------------------------------------------------
 
+    async def _db_find_latest(self, user_id: Optional[str]) -> Optional[str]:
+        cfg = self.session_config
+        query = dict(
+            session_type=cfg.session_type,
+            user_id=user_id,
+            component_id=self.entity_id,
+            sort_by="created_at",
+            sort_order="desc",
+            limit=1,
+            deserialize=False,
+        )
+        if cfg.is_async_db:
+            results = await cfg.db.get_sessions(**query)  # type: ignore[arg-type, misc]
+        else:
+            results = cfg.db.get_sessions(**query)  # type: ignore[arg-type]
+        # get_sessions returns List[row] or Tuple[List[row], count]
+        rows = results[0] if isinstance(results, tuple) else results
+        if not rows:
+            return None
+        row = rows[0]
+        return row.get("session_id", "") if isinstance(row, dict) else getattr(row, "session_id", "")
+
     async def new_session(self, base_key: str, user_id: Optional[str] = None) -> str:
-        """Create a new session for ``/new``.  Returns the new session_id.
-
-        Generates a timestamp-based ID (``base_key:{unix_ts_ms}``) and persists
-        an empty session to the DB so that the mapping survives server restarts.
-        Uses millisecond precision to avoid collisions from rapid /new calls.
-        """
-        new_id = f"{base_key}:{int(time.time() * 1000)}"
+        cfg = self.session_config
+        new_id = f"{base_key}:{uuid4().hex[:8]}"
         self.active_sessions[base_key] = new_id
-
-        if self.db is not None:
+        if cfg.has_db:
             try:
-                await self._persist_empty_session(new_id, user_id)
+                session = cfg.session_cls(
+                    session_id=new_id,
+                    user_id=user_id,
+                    created_at=int(time.time()),
+                    **{cfg.id_field: self.entity_id},
+                )
+                if cfg.is_async_db:
+                    await cfg.db.upsert_session(session)
+                else:
+                    cfg.db.upsert_session(session)
             except Exception as e:
                 log_warning(f"Failed to persist new session to DB: {e}")
         return new_id
 
     async def get_session_id(self, base_key: str, user_id: Optional[str] = None) -> str:
-        """Return the active session_id for *base_key*.
-
-        Hot path (cache hit): O(1) dict lookup, zero DB calls.
-        Cold path (after restart): one DB query, then cached.
-        """
-        # 1. In-memory cache hit
         if base_key in self.active_sessions:
             return self.active_sessions[base_key]
 
-        # 2. Cache miss — try to recover latest session from DB
-        if self.db is not None:
-            latest = await self._find_latest_session(base_key, user_id)
-            if latest:
-                self.active_sessions[base_key] = latest
-                log_debug(f"Recovered session from DB: {latest}")
-                return latest
+        # Cold start — recover latest session from DB
+        if self.session_config.has_db:
+            try:
+                sid = await self._db_find_latest(user_id)
+                if sid:
+                    self.active_sessions[base_key] = sid
+                    log_debug(f"Recovered session from DB: {sid}")
+                    return sid
+            except Exception as e:
+                log_warning(f"Session lookup failed, using default: {e}")
 
-        # 3. No DB or no existing sessions — use base_key as the first session
         self.active_sessions[base_key] = base_key
         return base_key
 
     async def invalidate_session(self, base_key: str, user_id: Optional[str] = None) -> None:
-        """Invalidate the current session on error (forces a new session next time)."""
         new_id = await self.new_session(base_key, user_id)
         log_debug(f"Session invalidated, new session: {new_id}")
-
-    # -- DB helpers (private) -------------------------------------------------
-
-    def _is_async_db(self) -> bool:
-        """Check if the DB is an async implementation."""
-        from agno.db.base import AsyncBaseDb
-
-        return isinstance(self.db, AsyncBaseDb)
-
-    async def _persist_empty_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        """Write an empty session record to the DB.
-
-        This ensures the session_id exists in the database before any agent run,
-        so that a server restart can discover it via ``_find_latest_session``.
-        """
-        from agno.db.base import SessionType
-        from agno.session.agent import AgentSession
-        from agno.session.team import TeamSession
-        from agno.session.workflow import WorkflowSession
-
-        now = int(time.time())
-        session_type = SessionType(self.entity_type)
-
-        if session_type == SessionType.AGENT:
-            session: Union[AgentSession, TeamSession, WorkflowSession] = AgentSession(
-                session_id=session_id,
-                agent_id=self.entity_id,
-                user_id=user_id,
-                session_data={},
-                created_at=now,
-            )
-        elif session_type == SessionType.TEAM:
-            session = TeamSession(
-                session_id=session_id,
-                team_id=self.entity_id,
-                user_id=user_id,
-                session_data={},
-                created_at=now,
-            )
-        else:
-            session = WorkflowSession(
-                session_id=session_id,
-                workflow_id=self.entity_id,
-                user_id=user_id,
-                session_data={},
-                created_at=now,
-            )
-
-        if self._is_async_db():
-            await self.db.upsert_session(session=session)  # type: ignore[misc, union-attr]
-        else:
-            # Sync DB — call in the current thread (acceptable for infrequent /new)
-            self.db.upsert_session(session=session)  # type: ignore[union-attr]
-
-    async def _find_latest_session(self, base_key: str, user_id: Optional[str] = None) -> Optional[str]:
-        """Query the DB for the most recently created session matching *base_key*.
-
-        Uses ``get_sessions`` with ``sort_by=created_at desc, limit=…`` and
-        filters results by session_id prefix in Python.  The query hits
-        existing indexes (``created_at``, ``session_type``, ``user_id``).
-        """
-        from agno.db.base import SessionType
-
-        session_type = SessionType(self.entity_type)
-        component_id = self.entity_id
-        query_kwargs = dict(
-            session_type=session_type,
-            user_id=user_id,
-            component_id=component_id,
-            sort_by="created_at",
-            sort_order="desc",
-            limit=20,
-            deserialize=False,
-        )
-
-        try:
-            # Fetch recent sessions for this user+component, sorted newest-first.
-            # We fetch a small page (limit=20) to keep the query fast; the prefix
-            # filter in Python narrows it down.  In practice a user rarely has
-            # more than a handful of sessions per agent per chat.
-            if self._is_async_db():
-                results = await self.db.get_sessions(**query_kwargs)  # type: ignore[arg-type, misc, union-attr]
-            else:
-                results = self.db.get_sessions(**query_kwargs)  # type: ignore[arg-type, union-attr]
-
-            # get_sessions returns List[Session] (deserialize=True) or
-            # Tuple[List[Dict], int] (deserialize=False).
-            rows: list
-            if isinstance(results, tuple):
-                rows, _ = results
-            else:
-                rows = results  # type: ignore[assignment]
-
-            # Find the latest session whose ID starts with our base_key.
-            # Multiple sessions may share the same created_at (second-level
-            # granularity) when /new is called rapidly, so we collect all
-            # matches and pick the lexicographically greatest session_id
-            # (the embedded millisecond timestamp breaks the tie).
-            best: Optional[str] = None
-            for row in rows:
-                sid = row.get("session_id", "") if isinstance(row, dict) else getattr(row, "session_id", "")
-                if sid and sid.startswith(base_key):
-                    if best is None or sid > best:
-                        best = sid
-            if best:
-                return best
-
-        except Exception as e:
-            log_warning(f"Failed to query DB for latest session: {e}")
-
-        return None
 
 
 # =============================================================================

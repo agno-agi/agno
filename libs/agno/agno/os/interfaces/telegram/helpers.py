@@ -1,3 +1,4 @@
+import html
 import re
 from typing import TYPE_CHECKING, Any, List, NamedTuple, Optional
 
@@ -30,7 +31,7 @@ class ParsedMessage(NamedTuple):
 
 
 def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html.escape(text, quote=False)
 
 
 def markdown_to_telegram_html(text: str) -> str:
@@ -71,15 +72,21 @@ def markdown_to_telegram_html(text: str) -> str:
 
 # Handles one level of nested parens in URLs (e.g. Wikipedia links)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(((?:[^()]*|\([^()]*\))*)\)")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
+_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*")
+_BOLD_UNDER_RE = re.compile(r"__(.+?)__")
+_ITALIC_STAR_RE = re.compile(r"(?<!\w)\*([^*]+?)\*(?!\w)")
+_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_([^_]+?)_(?!\w)")
+_STRIKE_RE = re.compile(r"~~(.+?)~~")
 
 
 def _escape_html_attr(url: str) -> str:
-    # Minimal escaping for href attributes: &, ", <, >
-    return url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    return html.escape(url, quote=True)
 
 
 def _convert_inline_markdown(line: str) -> str:
-    heading_match = re.match(r"^(#{1,6})\s+(.*)", line)
+    heading_match = _HEADING_RE.match(line)
     if heading_match:
         return f"<b>{_format_line_with_links(heading_match.group(2))}</b>"
     return _format_line_with_links(line)
@@ -107,12 +114,22 @@ def _format_line_with_links(line: str) -> str:
 
 
 def _apply_inline_formatting(text: str) -> str:
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-    text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
-    text = re.sub(r"(?<!\w)\*([^*]+?)\*(?!\w)", r"<i>\1</i>", text)
-    text = re.sub(r"(?<!\w)_([^_]+?)_(?!\w)", r"<i>\1</i>", text)
-    text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
+    # Protect code spans from bold/italic processing
+    code_spans: list[str] = []
+
+    def _save_code(m: re.Match) -> str:
+        idx = len(code_spans)
+        code_spans.append(f"<code>{m.group(1)}</code>")
+        return f"\x00CODE{idx}\x00"
+
+    text = _CODE_RE.sub(_save_code, text)
+    text = _BOLD_STAR_RE.sub(r"<b>\1</b>", text)
+    text = _BOLD_UNDER_RE.sub(r"<b>\1</b>", text)
+    text = _ITALIC_STAR_RE.sub(r"<i>\1</i>", text)
+    text = _ITALIC_UNDER_RE.sub(r"<i>\1</i>", text)
+    text = _STRIKE_RE.sub(r"<s>\1</s>", text)
+    for i, tag in enumerate(code_spans):
+        text = text.replace(f"\x00CODE{i}\x00", tag)
     return text
 
 
@@ -247,7 +264,8 @@ async def download_inbound_media(
             doc_bytes = await get_file_bytes(bot, document_meta["file_id"])
             if doc_bytes:
                 doc_mime = document_meta.get("mime_type")
-                if doc_mime and doc_mime not in File.valid_mime_types():
+                valid_mimes = File.valid_mime_types()
+                if doc_mime and doc_mime not in valid_mimes:
                     log_warning(f"Unsupported file type: {doc_mime} ({doc_name})")
                     warning = (
                         f"Note: The file type '{doc_mime}' ({doc_name}) is not directly supported. "
@@ -257,7 +275,7 @@ async def download_inbound_media(
                 files = [
                     File(
                         content=doc_bytes,
-                        mime_type=doc_mime if doc_mime in File.valid_mime_types() else None,
+                        mime_type=doc_mime if doc_mime in valid_mimes else None,
                         filename=doc_name,
                     )
                 ]
