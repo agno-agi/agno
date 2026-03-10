@@ -50,7 +50,7 @@ agent.print_response(
 )
 
 # The response will include citations from Parallel's web search results
-agent.print_response(
-    "What are the top trending topics in AI research today?",
-    stream=True,
-)
+# agent.print_response(
+#     "What are the top trending topics in AI research today?",
+#     stream=True,
+# )

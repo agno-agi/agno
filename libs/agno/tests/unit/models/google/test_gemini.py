@@ -241,6 +241,38 @@ def test_parallel_search_requires_vertexai():
         model.get_request_params()
 
 
+def test_parallel_search_incompatible_with_google_search():
+    """Test that parallel_search cannot be combined with google_search."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            model.get_request_params()
+
+
+def test_parallel_search_incompatible_with_grounding():
+    """Test that parallel_search cannot be combined with grounding."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        grounding=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            model.get_request_params()
+
+
 def test_parallel_search_config_with_api_key():
     """Test that parallel_search is correctly configured with an explicit API key."""
     model = Gemini(
@@ -334,14 +366,14 @@ def test_parallel_search_with_custom_config():
 
 
 def test_parallel_search_with_other_builtin_tools():
-    """Test that parallel_search can coexist with other builtin tools like google_search."""
+    """Test that parallel_search can coexist with url_context."""
     model = Gemini(
         vertexai=True,
         project_id="test-project",
         location="test-location",
         parallel_search=True,
         parallel_api_key="test-key",
-        search=True,
+        url_context=True,
     )
 
     with patch("agno.models.google.gemini.genai.Client"):
@@ -352,11 +384,11 @@ def test_parallel_search_with_other_builtin_tools():
     assert len(config.tools) == 2
     tool_types = []
     for t in config.tools:
-        if t.google_search is not None:
-            tool_types.append("google_search")
+        if t.url_context is not None:
+            tool_types.append("url_context")
         if t.parallel_ai_search is not None:
             tool_types.append("parallel_ai_search")
-    assert "google_search" in tool_types
+    assert "url_context" in tool_types
     assert "parallel_ai_search" in tool_types
 
 

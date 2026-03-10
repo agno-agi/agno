@@ -45,7 +45,6 @@ try:
         Retrieval,
         ThinkingConfig,
         Tool,
-        ToolParallelAiSearch,
         UrlContext,
         VertexAISearch,
     )
@@ -57,6 +56,11 @@ except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
     )
+
+try:
+    from google.genai.types import ToolParallelAiSearch
+except ImportError:
+    ToolParallelAiSearch = None
 
 
 @dataclass
@@ -342,6 +346,16 @@ class Gemini(Model):
             log_debug("Gemini Parallel web search grounding enabled.")
             if not self.vertexai:
                 raise ValueError("Parallel search grounding requires vertexai=True.")
+            if self.search or self.grounding:
+                raise ValueError(
+                    "Parallel search grounding cannot be combined with google_search or grounding tools. "
+                    "Disable `search` and `grounding` when using `parallel_search`."
+                )
+            if ToolParallelAiSearch is None:
+                raise ImportError(
+                    "ToolParallelAiSearch is not available in your version of `google-genai`. "
+                    "Please upgrade using `pip install -U google-genai`."
+                )
             parallel_tool_config: Dict[str, Any] = {}
             parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
             if parallel_key:
