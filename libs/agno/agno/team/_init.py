@@ -80,7 +80,11 @@ def __init__(
     cache_session: bool = False,
     add_team_history_to_members: bool = False,
     num_team_history_runs: int = 3,
-    search_session_history: Optional[bool] = False,
+    search_past_sessions: Optional[bool] = False,
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    # Deprecated params — kept for backward compatibility
+    search_session_history: Optional[bool] = None,
     num_history_sessions: Optional[int] = None,
     description: Optional[str] = None,
     instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -90,6 +94,7 @@ def __init__(
     markdown: bool = False,
     add_datetime_to_context: bool = False,
     add_location_to_context: bool = False,
+    datetime_format: Optional[str] = None,
     timezone_identifier: Optional[str] = None,
     add_name_to_context: bool = False,
     add_member_tools_to_context: bool = False,
@@ -153,6 +158,9 @@ def __init__(
     reasoning_agent: Optional[Agent] = None,
     reasoning_min_steps: int = 1,
     reasoning_max_steps: int = 10,
+    followups: bool = False,
+    num_followups: int = 3,
+    followup_model: Optional[Union[Model, str]] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     store_events: bool = False,
@@ -231,8 +239,16 @@ def __init__(
 
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
-    team.search_session_history = search_session_history
-    team.num_history_sessions = num_history_sessions
+
+    # Deprecated param mapping
+    if search_session_history is not None and not search_past_sessions:
+        search_past_sessions = search_session_history
+    if num_history_sessions is not None and num_past_sessions_to_search is None:
+        num_past_sessions_to_search = num_history_sessions
+
+    team.search_past_sessions = search_past_sessions
+    team.num_past_sessions_to_search = num_past_sessions_to_search
+    team.num_past_session_runs_in_search = num_past_session_runs_in_search
 
     team.description = description
     team.instructions = instructions
@@ -242,6 +258,7 @@ def __init__(
     team.markdown = markdown
     team.add_datetime_to_context = add_datetime_to_context
     team.add_location_to_context = add_location_to_context
+    team.datetime_format = datetime_format
     team.add_name_to_context = add_name_to_context
     team.timezone_identifier = timezone_identifier
     team.add_member_tools_to_context = add_member_tools_to_context
@@ -326,6 +343,12 @@ def __init__(
     team.reasoning_agent = reasoning_agent
     team.reasoning_min_steps = reasoning_min_steps
     team.reasoning_max_steps = reasoning_max_steps
+
+    team.followups = followups
+    if num_followups < 1:
+        raise ValueError("num_followups must be at least 1")
+    team.num_followups = num_followups
+    team.followup_model = followup_model  # type: ignore[assignment]
 
     team.stream = stream
     team.stream_events = stream_events
@@ -455,6 +478,7 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
 
     if isinstance(member, Agent):
         member.team_id = team.id
+        member._team = team
         member.set_id()
 
         # Inherit team primary model if agent has no explicit model

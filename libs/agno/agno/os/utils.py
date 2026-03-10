@@ -25,8 +25,8 @@ from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
 
 
-def to_utc_datetime(value: Optional[Union[int, float, datetime]]) -> Optional[datetime]:
-    """Convert a timestamp to a UTC datetime."""
+def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp, ISO 8601 string, or datetime to a UTC datetime."""
     if value is None:
         return None
 
@@ -35,6 +35,14 @@ def to_utc_datetime(value: Optional[Union[int, float, datetime]]) -> Optional[da
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value
+
+    if isinstance(value, str):
+        try:
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            return datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
 
     return datetime.fromtimestamp(value, tz=timezone.utc)
 

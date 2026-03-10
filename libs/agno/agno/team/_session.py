@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 from agno.db.base import SessionType
+from agno.metrics import SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.run import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession, WorkflowSession
@@ -525,13 +525,13 @@ async def aupdate_session_state(
 # ---------------------------------------------------------------------------
 
 
-def get_session_metrics(team: "Team", session_id: Optional[str] = None) -> Optional[Metrics]:
+def get_session_metrics(team: "Team", session_id: Optional[str] = None) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID.
 
     Args:
         session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
     Returns:
-        Optional[Metrics]: The session metrics.
+        Optional[SessionMetrics]: The session metrics.
     """
     session_id = session_id or team.session_id
     if session_id is None:
@@ -540,13 +540,13 @@ def get_session_metrics(team: "Team", session_id: Optional[str] = None) -> Optio
     return get_session_metrics_util(cast(Any, team), session_id=session_id)
 
 
-async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -> Optional[Metrics]:
+async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID.
 
     Args:
         session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
     Returns:
-        Optional[Metrics]: The session metrics.
+        Optional[SessionMetrics]: The session metrics.
     """
     session_id = session_id or team.session_id
     if session_id is None:
@@ -556,16 +556,41 @@ async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -
 
 
 def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Calculate session metrics"""
+    """Calculate session metrics and write them to session_data.
+
+    Converts run-level Metrics (details: Dict[str, List[ModelMetrics]]) to
+    session-level SessionMetrics (details: List[ModelMetrics]) using
+    SessionMetrics.accumulate_from_run().
+
+    Accumulates metrics from the team leader's own model calls as well as
+    all member agent/team responses (recursively for nested teams).
+    """
     from agno.team._storage import get_session_metrics_internal
 
     session_metrics = get_session_metrics_internal(team, session=session)
-    # Add the metrics for the current run to the session metrics
+    if session_metrics is None:
+        return
     if run_response.metrics is not None:
-        session_metrics += run_response.metrics
-    session_metrics.time_to_first_token = None
+        session_metrics.accumulate_from_run(run_response.metrics)
+
+    # Accumulate metrics from member responses (agent and nested team runs)
+    _accumulate_member_metrics(session_metrics, run_response.member_responses)
+
     if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+
+def _accumulate_member_metrics(
+    session_metrics: SessionMetrics,
+    member_responses: "List",
+) -> None:
+    """Recursively accumulate metrics from member responses into session metrics."""
+    for member_response in member_responses:
+        if member_response.metrics is not None:
+            session_metrics.accumulate_from_run(member_response.metrics)
+        # Recurse into nested team member responses
+        if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
+            _accumulate_member_metrics(session_metrics, member_response.member_responses)
 
 
 # ---------------------------------------------------------------------------

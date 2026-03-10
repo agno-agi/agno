@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -238,9 +238,6 @@ class LiteLLM(Model):
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().completion(**completion_kwargs)
@@ -266,9 +263,6 @@ class LiteLLM(Model):
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().completion(**completion_kwargs):
@@ -289,9 +283,6 @@ class LiteLLM(Model):
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
-
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -317,9 +308,6 @@ class LiteLLM(Model):
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
-
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -500,24 +488,38 @@ class LiteLLM(Model):
 
         return result
 
-    def _get_metrics(self, response_usage: Any) -> Metrics:
+    def _get_metrics(self, response_usage: Any) -> MessageMetrics:
         """
-        Parse the given LiteLLM usage into an Agno Metrics object.
+        Parse the given LiteLLM usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from LiteLLM
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         if isinstance(response_usage, dict):
             metrics.input_tokens = response_usage.get("prompt_tokens") or 0
             metrics.output_tokens = response_usage.get("completion_tokens") or 0
+            if (prompt_details := response_usage.get("prompt_tokens_details")) and isinstance(prompt_details, dict):
+                metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+                metrics.audio_input_tokens = prompt_details.get("audio_tokens", 0) or 0
+            if (completion_details := response_usage.get("completion_tokens_details")) and isinstance(
+                completion_details, dict
+            ):
+                metrics.reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
+                metrics.audio_output_tokens = completion_details.get("audio_tokens", 0) or 0
         else:
             metrics.input_tokens = response_usage.prompt_tokens or 0
             metrics.output_tokens = response_usage.completion_tokens or 0
+            if prompt_details := getattr(response_usage, "prompt_tokens_details", None):
+                metrics.cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+                metrics.audio_input_tokens = getattr(prompt_details, "audio_tokens", 0) or 0
+            if completion_details := getattr(response_usage, "completion_tokens_details", None):
+                metrics.reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0) or 0
+                metrics.audio_output_tokens = getattr(completion_details, "audio_tokens", 0) or 0
 
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
