@@ -21,7 +21,12 @@ from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
+from agno.os.auth import (
+    get_auth_token_from_request,
+    get_authentication_dependency,
+    require_approval_resolved,
+    require_resource_access,
+)
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -111,7 +116,7 @@ async def agent_response_streamer(
 async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
-    updated_tools: List,
+    updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -468,9 +473,11 @@ def get_agent_router(
             "Continue a paused or incomplete agent run with updated tool results.\n\n"
             "**Use Cases:**\n"
             "- Resume execution after tool approval/rejection\n"
-            "- Provide manual tool execution results\n\n"
+            "- Provide manual tool execution results\n"
+            "- Resume after admin approval (tools can be empty; resolution fetched from DB)\n\n"
             "**Tools Parameter:**\n"
-            "JSON string containing array of tool execution objects with results."
+            "JSON string containing array of tool execution objects with results.\n"
+            "Can be empty when an admin-required approval has been resolved."
         ),
         responses={
             200: {
@@ -482,19 +489,23 @@ def get_agent_router(
                 },
             },
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
+            403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Agent not found", "model": NotFoundResponse},
             409: {
                 "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
             },
         },
-        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+        dependencies=[
+            Depends(require_resource_access("agents", "run", "agent_id")),
+            Depends(require_approval_resolved(os.db)),
+        ],
     )
     async def continue_agent_run(
         agent_id: str,
         run_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        tools: str = Form(...),  # JSON string of tools
+        tools: str = Form(""),  # JSON string of tools (optional when admin approval resolved)
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
@@ -519,31 +530,34 @@ def get_agent_router(
                 "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
 
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        # Fetch existing run once for validation and potential approval resolution
+        existing_run = None
         if session_id and not isinstance(agent, RemoteAgent):
             existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
-            if existing_run is not None:
-                is_paused = getattr(existing_run, "is_paused", False)
-                if not is_paused:
-                    status = getattr(existing_run, "status", None)
-                    _status_to_detail = {
-                        RunStatus.running: "run is already running",
-                        RunStatus.completed: "run is already continued",
-                        RunStatus.error: "run is already errored",
-                        RunStatus.cancelled: "run is already cancelled",
-                        RunStatus.pending: "run is already pending",
-                    }
-                    detail = _status_to_detail.get(
-                        status,  # type: ignore[arg-type]
-                        f"run is not paused (status={getattr(status, 'value', status)})",
-                    )
-                    raise HTTPException(
-                        status_code=409,
-                        detail=detail,
-                    )
+
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if existing_run is not None:
+            is_paused = getattr(existing_run, "is_paused", False)
+            if not is_paused:
+                status = getattr(existing_run, "status", None)
+                _status_to_detail = {
+                    RunStatus.running: "run is already running",
+                    RunStatus.completed: "run is already continued",
+                    RunStatus.error: "run is already errored",
+                    RunStatus.cancelled: "run is already cancelled",
+                    RunStatus.pending: "run is already pending",
+                }
+                detail = _status_to_detail.get(
+                    status,  # type: ignore[arg-type]
+                    f"run is not paused (status={getattr(status, 'value', status)})",
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=detail,
+                )
 
         # Convert tools dict to ToolExecution objects if provided
-        updated_tools = []
+        updated_tools = None
         if tools_data:
             try:
                 from agno.models.response import ToolExecution

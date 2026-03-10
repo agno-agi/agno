@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str, sanitize_postgres_string, url_safe_string
+from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
 
 
 def test_url_safe_string_spaces():
@@ -359,6 +359,31 @@ def test_parse_json_with_python_code_in_value():
         == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
     )
     assert result.description == "A recursive factorial function with comments and multiplication"
+
+
+def test_generate_id_from_name_with_name():
+    """Test that named IDs are deterministic kebab-case"""
+    assert generate_id_from_name("My Agent") == "my-agent"
+    assert generate_id_from_name("hello_world") == "hello-world"
+    assert generate_id_from_name("UPPER") == "upper"
+
+
+def test_generate_id_from_name_without_name():
+    """Test that unnamed IDs are human-readable Docker-style"""
+    result = generate_id_from_name()
+    parts = result.split("-")
+    assert len(parts) == 3, f"Expected 3 parts, got {len(parts)}: {result}"
+    adjective, name, hex_suffix = parts
+    assert adjective.isalpha()
+    assert name.isalpha()
+    assert len(hex_suffix) == 8
+    int(hex_suffix, 16)  # must be valid hex
+
+
+def test_generate_id_from_name_uniqueness():
+    """Test that successive calls produce different IDs"""
+    ids = {generate_id_from_name() for _ in range(100)}
+    assert len(ids) == 100
 
 
 def test_sanitize_postgres_string_none_input():

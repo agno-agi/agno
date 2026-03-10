@@ -26,12 +26,19 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import (
+    TaskCreatedEvent,
+    TaskUpdatedEvent,
     TeamRunOutput,
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
+from agno.utils.events import (
+    create_team_task_created_event,
+    create_team_task_updated_event,
+    handle_event,
+)
 from agno.utils.log import (
     log_debug,
     use_agent_logger,
@@ -84,6 +91,51 @@ def _get_task_management_tools(
     )
 
     # ------------------------------------------------------------------
+    # Helpers: emit task events through the standard event pipeline
+    # ------------------------------------------------------------------
+    def _emit_task_created(task):
+        """Create a TaskCreatedEvent routed through handle_event."""
+        return handle_event(
+            create_team_task_created_event(
+                from_run_response=run_response,
+                task_id=task.id,
+                title=task.title,
+                description=task.description,
+                assignee=task.assignee,
+                status=task.status.value,
+                dependencies=task.dependencies,
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+
+    def _emit_task_updated(task, previous_status, result: Optional[str] = None):
+        """Create a TaskUpdatedEvent routed through handle_event.
+
+        Args:
+            task: The task being updated.
+            previous_status: The status before this update.
+            result: The result to include in the event. Pass explicitly for
+                   completed/failed transitions; omit for in_progress transitions
+                   to avoid stale data.
+        """
+        return handle_event(
+            create_team_task_updated_event(
+                from_run_response=run_response,
+                task_id=task.id,
+                title=task.title,
+                status=task.status.value,
+                previous_status=previous_status,
+                result=result,
+                assignee=task.assignee,
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+
+    # ------------------------------------------------------------------
     # Tool: create_task
     # ------------------------------------------------------------------
     def create_task(
@@ -91,7 +143,7 @@ def _get_task_management_tools(
         description: str = "",
         assignee: str = "",
         depends_on: Optional[List[str]] = None,
-    ) -> str:
+    ) -> Iterator[Union[TaskCreatedEvent, str]]:
         """Create a new task for the team to work on.
 
         Args:
@@ -102,6 +154,14 @@ def _get_task_management_tools(
         Returns:
             str: Confirmation with the new task ID.
         """
+        # Check for duplicate tasks with the same title (case-insensitive)
+        title_lower = title.lower().strip()
+        for existing_task in task_list.tasks:
+            if existing_task.title.lower().strip() == title_lower:
+                log_debug(f"Task with title '{title}' already exists: [{existing_task.id}]")
+                yield f"Task already exists: [{existing_task.id}] {existing_task.title} (status: {existing_task.status.value}). Use this task instead of creating a duplicate."
+                return
+
         task = task_list.create_task(
             title=title,
             description=description,
@@ -110,7 +170,11 @@ def _get_task_management_tools(
         )
         save_task_list(run_context.session_state, task_list)
         log_debug(f"Task created: [{task.id}] {task.title}")
-        return f"Task created: [{task.id}] {task.title} (status: {task.status.value})"
+
+        if stream_events:
+            yield _emit_task_created(task)
+
+        yield f"Task created: [{task.id}] {task.title} (status: {task.status.value})"
 
     # ------------------------------------------------------------------
     # Tool: update_task_status
@@ -119,7 +183,7 @@ def _get_task_management_tools(
         task_id: str,
         status: str,
         result: Optional[str] = None,
-    ) -> str:
+    ) -> Iterator[Union[TaskUpdatedEvent, str]]:
         """Update the status of a task. Use this to mark tasks you handle yourself as completed.
 
         Args:
@@ -132,19 +196,37 @@ def _get_task_management_tools(
         try:
             new_status = TaskStatus(status)
         except ValueError:
-            return f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
+            yield f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
+            return
         if new_status == TaskStatus.blocked:
-            return "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
+            yield "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
+            return
+
+        # Get the task to capture previous status
+        task = task_list.get_task(task_id)
+        if task is None:
+            yield f"Task with ID '{task_id}' not found."
+            return
+
+        previous_status = task.status.value
+        task_title = task.title
 
         updates: Dict[str, Any] = {"status": new_status}
         if result is not None:
             updates["result"] = result
 
-        task = task_list.update_task(task_id, **updates)
-        if task is None:
-            return f"Task with ID '{task_id}' not found."
+        updated_task = task_list.update_task(task_id, **updates)
         save_task_list(run_context.session_state, task_list)
-        return f"Task [{task.id}] '{task.title}' updated to {task.status.value}."
+
+        if stream_events and updated_task:
+            # Only include result for terminal states (completed/failed)
+            event_result = updated_task.result if new_status in (TaskStatus.completed, TaskStatus.failed) else None
+            yield _emit_task_updated(updated_task, previous_status, result=event_result)
+
+        if updated_task:
+            yield f"Task [{updated_task.id}] '{updated_task.title}' updated to {updated_task.status.value}."
+        else:
+            yield f"Task [{task_id}] '{task_title}' updated to {new_status.value}."
 
     # ------------------------------------------------------------------
     # Tool: list_tasks
@@ -307,9 +389,13 @@ def _get_task_management_tools(
 
         _, member_agent = result
 
+        previous_status = task.status.value
         task.status = TaskStatus.in_progress
         task.assignee = member_id
         save_task_list(run_context.session_state, task_list)
+
+        if stream_events:
+            yield _emit_task_updated(task, previous_status)
 
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
@@ -397,17 +483,23 @@ def _get_task_management_tools(
             task.status = TaskStatus.failed
             task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
             save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
             yield f"Task [{task.id}] failed: {task.result}"
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
             yield f"Task [{task.id}] completed. Result: {content}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
             save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
             yield f"Task [{task.id}] completed with no content."
 
     # ------------------------------------------------------------------
@@ -441,9 +533,13 @@ def _get_task_management_tools(
 
         _, member_agent = result
 
+        previous_status = task.status.value
         task.status = TaskStatus.in_progress
         task.assignee = member_id
         save_task_list(run_context.session_state, task_list)
+
+        if stream_events:
+            yield _emit_task_updated(task, previous_status)
 
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
@@ -529,17 +625,23 @@ def _get_task_management_tools(
             task.status = TaskStatus.failed
             task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
             save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
             yield f"Task [{task.id}] failed: {task.result}"
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
             task.result = content
             save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
             yield f"Task [{task.id}] completed. Result: {content}"
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
             save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
             yield f"Task [{task.id}] completed with no content."
 
     # ------------------------------------------------------------------
@@ -579,9 +681,12 @@ def _get_task_management_tools(
             yield "No valid tasks to execute."
             return
 
-        # Mark all in_progress
+        # Mark all in_progress and emit events
         for task_obj, _ in tasks_to_run:
+            previous_status = task_obj.status.value
             task_obj.status = TaskStatus.in_progress
+            if stream_events:
+                yield _emit_task_updated(task_obj, previous_status)
         save_task_list(run_context.session_state, task_list)
 
         def _run_single_task(task_obj, member_agent):
@@ -626,6 +731,7 @@ def _get_task_management_tools(
 
         results_text: List[str] = []
         modified_states: List[Dict[str, Any]] = []
+        completion_events: List[TaskUpdatedEvent] = []
 
         with ThreadPoolExecutor(max_workers=len(tasks_to_run)) as executor:
             futures = {
@@ -642,6 +748,10 @@ def _get_task_management_tools(
                     if error is not None:
                         task_obj.status = TaskStatus.failed
                         task_obj.result = f"Member execution error: {error}"
+                        if stream_events:
+                            completion_events.append(
+                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
+                            )
                         results_text.append(f"Task [{tid}] failed: {error}")
                         continue
 
@@ -673,6 +783,10 @@ def _get_task_management_tools(
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
                         )
+                        if stream_events:
+                            completion_events.append(
+                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
+                            )
                         results_text.append(f"Task [{tid}] failed: {task_obj.result}")
                     elif member_run is not None and member_run.content:
                         content = str(member_run.content)
@@ -686,6 +800,10 @@ def _get_task_management_tools(
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
                         )
+                        if stream_events:
+                            completion_events.append(
+                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
+                            )
                         results_text.append(f"Task [{tid}] completed. Result: {content}")
                     else:
                         task_obj.status = TaskStatus.completed
@@ -698,10 +816,16 @@ def _get_task_management_tools(
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
                         )
+                        if stream_events:
+                            completion_events.append(
+                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
+                            )
                         results_text.append(f"Task [{tid}] completed with no content.")
                 except Exception as e:
                     task_obj.status = TaskStatus.failed
                     task_obj.result = f"Unexpected error: {e}"
+                    if stream_events:
+                        completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                     results_text.append(f"Task [{task_obj.id}] failed unexpectedly: {e}")
 
         # Merge all modified session states
@@ -710,6 +834,11 @@ def _get_task_management_tools(
 
         save_task_list(run_context.session_state, task_list)
         use_team_logger()
+
+        # Yield all completion events
+        for event in completion_events:
+            yield event
+
         yield "\n".join(results_text)
 
     # ------------------------------------------------------------------
@@ -751,9 +880,12 @@ def _get_task_management_tools(
             yield "No valid tasks to execute."
             return
 
-        # Mark all in_progress
+        # Mark all in_progress and emit events
         for task_obj, _ in tasks_to_run:
+            previous_status = task_obj.status.value
             task_obj.status = TaskStatus.in_progress
+            if stream_events:
+                yield _emit_task_updated(task_obj, previous_status)
         save_task_list(run_context.session_state, task_list)
 
         async def _run_single_task_async(task_obj, member_agent):
@@ -804,6 +936,7 @@ def _get_task_management_tools(
 
         results_text: List[str] = []
         modified_states: List[Dict[str, Any]] = []
+        completion_events: List[TaskUpdatedEvent] = []
 
         for i, gather_result in enumerate(gather_results):
             task_obj, member_agent = tasks_to_run[i]
@@ -811,6 +944,8 @@ def _get_task_management_tools(
             if isinstance(gather_result, BaseException):
                 task_obj.status = TaskStatus.failed
                 task_obj.result = f"Unexpected error: {gather_result}"
+                if stream_events:
+                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{task_obj.id}] failed unexpectedly: {gather_result}")
                 continue
 
@@ -821,6 +956,8 @@ def _get_task_management_tools(
             if error is not None:
                 task_obj.status = TaskStatus.failed
                 task_obj.result = f"Member execution error: {error}"
+                if stream_events:
+                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] failed: {error}")
                 continue
 
@@ -849,6 +986,8 @@ def _get_task_management_tools(
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
                 )
+                if stream_events:
+                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] failed: {task_obj.result}")
             elif member_run is not None and member_run.content:
                 content = str(member_run.content)
@@ -862,6 +1001,8 @@ def _get_task_management_tools(
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
                 )
+                if stream_events:
+                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] completed. Result: {content}")
             else:
                 task_obj.status = TaskStatus.completed
@@ -874,6 +1015,8 @@ def _get_task_management_tools(
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
                 )
+                if stream_events:
+                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] completed with no content.")
 
         # Merge all modified session states
@@ -882,6 +1025,11 @@ def _get_task_management_tools(
 
         save_task_list(run_context.session_state, task_list)
         use_team_logger()
+
+        # Yield all completion events
+        for event in completion_events:
+            yield event
+
         yield "\n".join(results_text)
 
     # ------------------------------------------------------------------

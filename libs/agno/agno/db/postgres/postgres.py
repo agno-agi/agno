@@ -26,6 +26,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import json_serializer
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
@@ -756,10 +757,6 @@ class PostgresDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-
-                # Filter by session_type to ensure we get the correct session type
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                stmt = stmt.where(table.c.session_type == session_type_value)
 
                 result = sess.execute(stmt).fetchone()
                 if result is None:
@@ -4962,4 +4959,30 @@ class PostgresDb(BaseDb):
                 return sess.execute(stmt).scalar() or 0
         except Exception as e:
             log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == run_id)
+                    .values(run_status=run_status.value, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return result.rowcount
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
             return 0
