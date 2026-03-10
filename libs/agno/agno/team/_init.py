@@ -403,8 +403,6 @@ def __init__(
 
     team._formatter = None
 
-    team._hooks_normalised = False
-
     # List of MCP tools that were initialized on the last run
     team._mcp_tools_initialized_on_run = []
     # List of connectable tools that were initialized on the last run
