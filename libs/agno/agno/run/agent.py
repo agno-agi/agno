@@ -746,7 +746,9 @@ class RunOutput:
             _dict["references"] = [r.model_dump() for r in self.references]
 
         if self.followups is not None:
-            _dict["followups"] = self.followups.model_dump() if isinstance(self.followups, Followups) else self.followups
+            _dict["followups"] = (
+                self.followups.model_dump() if isinstance(self.followups, Followups) else self.followups
+            )
 
         if self.images is not None:
             _dict["images"] = []

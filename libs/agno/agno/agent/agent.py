@@ -245,6 +245,9 @@ class Agent:
     # If True, add the current location to the instructions to give the agent a sense of place
     # This allows for location-aware responses and local context
     add_location_to_context: bool = False
+    # Allows for custom datetime format string (e.g. "%Y-%m-%d %H:%M:%S", "%d/%m/%Y")
+    # If None, the default datetime string representation is used
+    datetime_format: Optional[str] = None
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, resolve session_state, dependencies, and metadata in the user and system messages
@@ -442,6 +445,7 @@ class Agent:
         add_name_to_context: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        datetime_format: Optional[str] = None,
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         learning: Optional[Union[bool, LearningMachine]] = None,
@@ -603,6 +607,7 @@ class Agent:
         self.add_name_to_context = add_name_to_context
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
+        self.datetime_format = datetime_format
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
         self.learning = learning
@@ -628,6 +633,8 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.followups = followups
+        if num_followups < 1:
+            raise ValueError("num_followups must be at least 1")
         self.num_followups = num_followups
         self.followup_model = followup_model  # type: ignore[assignment]
 
