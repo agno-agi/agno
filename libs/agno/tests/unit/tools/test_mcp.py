@@ -339,39 +339,6 @@ async def test_stale_sessions_cleaned_up_on_new_run():
             assert session == mock_new_session
 
 
-@pytest.mark.asyncio
-async def test_stale_sessions_cleaned_up_on_cache_hit():
-    """Test that stale sessions for OTHER run_ids are cleaned up when a fresh
-    cached session is returned (fast-path cache hit triggers opportunistic GC)."""
-    import time
-
-    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
-    tools._session_ttl_seconds = 0.5  # 500ms TTL for testing
-
-    # Inject a fresh session for the requesting run
-    fresh_session = MagicMock()
-    fresh_run_id = "fresh-run-id"
-    tools._run_sessions[fresh_run_id] = (fresh_session, time.time())
-
-    # Inject a stale session for a different run (use AsyncMock for async __aexit__)
-    # The stale session is 1 second old, which exceeds the 500ms TTL.
-    stale_session = MagicMock()
-    stale_context = AsyncMock()
-    stale_session_context = AsyncMock()
-    tools._run_sessions["stale-run-id"] = (stale_session, time.time() - 1.0)
-    tools._run_session_contexts["stale-run-id"] = (stale_context, stale_session_context)
-
-    run_context = MagicMock()
-    run_context.run_id = fresh_run_id
-
-    returned = await tools.get_session_for_run(run_context=run_context)
-
-    # Fresh session must be returned correctly
-    assert returned is fresh_session
-    # Stale session for other run must be evicted by the opportunistic cleanup
-    assert "stale-run-id" not in tools._run_sessions
-
-
 # =============================================================================
 # HITL (Human-in-the-Loop) and control flow tests
 # =============================================================================

@@ -309,8 +309,6 @@ class MultiMCPTools(Toolkit):
         if cache_key in self._run_sessions:
             session, last_used = self._run_sessions[cache_key]
             if time.time() - last_used <= self._session_ttl_seconds:
-                # Opportunistically clean up stale sessions for other cache keys.
-                await self._cleanup_stale_sessions()
                 return session
             # If the cached session is stale, fall through to the slow path
             # where stale sessions are cleaned up and a fresh session is created.

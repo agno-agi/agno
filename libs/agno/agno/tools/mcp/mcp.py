@@ -315,9 +315,6 @@ class MCPTools(Toolkit):
             session, created_at = self._run_sessions[run_id]
             ttl = getattr(self, "_session_ttl_seconds", None)
             if not ttl or (time.time() - created_at) <= ttl:
-                # Either no TTL is configured, or the session is still fresh.
-                # Opportunistically clean up stale sessions for other run_ids.
-                await self._cleanup_stale_sessions()
                 return session
             # Stale session: fall through to the slow path where
             # cleanup_run_session properly exits context managers.
