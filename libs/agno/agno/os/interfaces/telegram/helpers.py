@@ -1,8 +1,7 @@
-import html
-import re
 from typing import TYPE_CHECKING, Any, List, NamedTuple, Optional
 
 from agno.media import Audio, File, Image, Video
+from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -11,7 +10,6 @@ if TYPE_CHECKING:
 TG_MAX_MESSAGE_LENGTH = 4096
 TG_CHUNK_SIZE = 4000
 TG_MAX_CAPTION_LENGTH = 1024
-TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
 TG_MAX_FILE_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20 MB — Telegram API download limit
 _BYTES_PER_MB = 1024 * 1024
 _TG_MAX_FILE_DOWNLOAD_MB = TG_MAX_FILE_DOWNLOAD_SIZE // _BYTES_PER_MB
@@ -23,119 +21,6 @@ class ParsedMessage(NamedTuple):
     audio_file_id: Optional[str]
     video_file_id: Optional[str]
     document_meta: Optional[dict]
-
-
-# ---------------------------------------------------------------------------
-# Markdown -> Telegram HTML conversion
-# ---------------------------------------------------------------------------
-
-
-def _escape_html(text: str) -> str:
-    return html.escape(text, quote=False)
-
-
-def markdown_to_telegram_html(text: str) -> str:
-    lines = text.split("\n")
-    result: list[str] = []
-    in_code_block = False
-    code_block_lines: list[str] = []
-    code_lang = ""
-
-    for line in lines:
-        if line.strip().startswith("```"):
-            if not in_code_block:
-                in_code_block = True
-                code_lang = line.strip().removeprefix("```").strip()
-                code_block_lines = []
-            else:
-                in_code_block = False
-                code_content = _escape_html("\n".join(code_block_lines))
-                if code_lang:
-                    result.append(f'<pre><code class="language-{_escape_html(code_lang)}">{code_content}</code></pre>')
-                else:
-                    result.append(f"<pre>{code_content}</pre>")
-            continue
-        if in_code_block:
-            code_block_lines.append(line)
-            continue
-
-        line = _convert_inline_markdown(line)
-        result.append(line)
-
-    # Handle unclosed code block
-    if in_code_block:
-        code_content = _escape_html("\n".join(code_block_lines))
-        result.append(f"<pre>{code_content}</pre>")
-
-    return "\n".join(result)
-
-
-# Handles one level of nested parens in URLs (e.g. Wikipedia links)
-_LINK_RE = re.compile(r"\[([^\]]+)\]\(((?:[^()]*|\([^()]*\))*)\)")
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
-_CODE_RE = re.compile(r"`([^`]+)`")
-_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*")
-_BOLD_UNDER_RE = re.compile(r"__(.+?)__")
-_ITALIC_STAR_RE = re.compile(r"(?<!\w)\*([^*]+?)\*(?!\w)")
-_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_([^_]+?)_(?!\w)")
-_STRIKE_RE = re.compile(r"~~(.+?)~~")
-
-
-def _escape_html_attr(url: str) -> str:
-    return html.escape(url, quote=True)
-
-
-def _convert_inline_markdown(line: str) -> str:
-    heading_match = _HEADING_RE.match(line)
-    if heading_match:
-        return f"<b>{_format_line_with_links(heading_match.group(2))}</b>"
-    return _format_line_with_links(line)
-
-
-def _format_line_with_links(line: str) -> str:
-    # Extract links BEFORE HTML-escaping to preserve raw URLs
-    placeholders: list[str] = []
-
-    def _replace_link(m: re.Match) -> str:
-        display = _escape_html(m.group(1))
-        display = _apply_inline_formatting(display)
-        url = _escape_html_attr(m.group(2))
-        tag = f'<a href="{url}">{display}</a>'
-        idx = len(placeholders)
-        placeholders.append(tag)
-        return f"\x00LINK{idx}\x00"
-
-    line = _LINK_RE.sub(_replace_link, line)
-    line = _escape_html(line)
-    line = _apply_inline_formatting(line)
-    for i, tag in enumerate(placeholders):
-        line = line.replace(f"\x00LINK{i}\x00", tag)
-    return line
-
-
-def _apply_inline_formatting(text: str) -> str:
-    # Protect code spans from bold/italic processing
-    code_spans: list[str] = []
-
-    def _save_code(m: re.Match) -> str:
-        idx = len(code_spans)
-        code_spans.append(f"<code>{m.group(1)}</code>")
-        return f"\x00CODE{idx}\x00"
-
-    text = _CODE_RE.sub(_save_code, text)
-    text = _BOLD_STAR_RE.sub(r"<b>\1</b>", text)
-    text = _BOLD_UNDER_RE.sub(r"<b>\1</b>", text)
-    text = _ITALIC_STAR_RE.sub(r"<i>\1</i>", text)
-    text = _ITALIC_UNDER_RE.sub(r"<i>\1</i>", text)
-    text = _STRIKE_RE.sub(r"<s>\1</s>", text)
-    for i, tag in enumerate(code_spans):
-        text = text.replace(f"\x00CODE{i}\x00", tag)
-    return text
-
-
-# ---------------------------------------------------------------------------
-# Message parsing
-# ---------------------------------------------------------------------------
 
 
 def message_mentions_bot(message: dict, bot_username: str) -> bool:
@@ -204,11 +89,6 @@ def parse_inbound_message(message: dict) -> ParsedMessage:
         message_text = message.get("caption", "Process this file")
 
     return ParsedMessage(message_text, image_file_id, audio_file_id, video_file_id, document_meta)
-
-
-# ---------------------------------------------------------------------------
-# File download helpers (require bot instance)
-# ---------------------------------------------------------------------------
 
 
 async def get_file_bytes(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
@@ -281,11 +161,6 @@ async def download_inbound_media(
                 ]
 
     return images, audio, videos, files, warning
-
-
-# ---------------------------------------------------------------------------
-# Outbound message helpers (require bot instance)
-# ---------------------------------------------------------------------------
 
 
 async def send_html(

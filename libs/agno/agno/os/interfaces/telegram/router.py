@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.telegram.events import process_event
 from agno.os.interfaces.telegram.helpers import (
-    TG_GROUP_CHAT_TYPES,
     TG_MAX_CAPTION_LENGTH,
     download_inbound_media,
     message_mentions_bot,
@@ -37,6 +36,8 @@ except ImportError as e:
 #   tg:{entity_id}:{chat_id}:topic:{message_thread_id}    — Forum topic chats (scoped by forum topic)
 
 # Binary file types that are kept as File attachments rather than inlined as text
+_TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
+
 _BINARY_MIME_TYPES = frozenset(
     {
         "application/pdf",
@@ -60,7 +61,6 @@ DEFAULT_NEW_MESSAGE = "New conversation started. How can I help you?"
 
 
 def _inline_text_files(message_text: str, files: Optional[list]) -> tuple[str, Optional[list]]:
-    """Inline text-based files into message text; keep binary files as attachments."""
     if not files:
         return message_text, files
     kept: list = []
@@ -116,10 +116,6 @@ def attach_routes(
         entity_id=entity_id,
     )
 
-    # -------------------------------------------------------------------------
-    # Endpoints
-    # -------------------------------------------------------------------------
-
     @router.get(
         "/status",
         operation_id=f"telegram_status_{entity_type}",
@@ -171,21 +167,9 @@ def attach_routes(
             log_error(f"Error processing webhook: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    # -------------------------------------------------------------------------
-    # Command handling
-    # -------------------------------------------------------------------------
-
     async def _handle_command(
         cmd: str, chat_id: int, forum_thread_id: Optional[int], base_key: str, user_id: Optional[str] = None
     ) -> bool:
-        """Handle bot commands. Returns True if a command was handled.
-
-        /start — Telegram convention; sent automatically when a user first
-                 interacts with the bot or taps the "Start" button.
-        /help  — Shows usage instructions.
-        /new   — Resets conversation context by creating a new timestamp-based
-                 session (persisted to DB so it survives server restarts).
-        """
         bot = bot_state.bot
         if cmd == "/start":
             await send_html(bot, chat_id, start_message, message_thread_id=forum_thread_id)
@@ -198,10 +182,6 @@ def attach_routes(
             await send_html(bot, chat_id, new_message, message_thread_id=forum_thread_id)
             return True
         return False
-
-    # -------------------------------------------------------------------------
-    # Streaming response path
-    # -------------------------------------------------------------------------
 
     async def _stream_response(
         message_text: str,
@@ -285,10 +265,6 @@ def attach_routes(
                     bot, chat_id, response.content, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
                 )
 
-    # -------------------------------------------------------------------------
-    # Non-streaming response path
-    # -------------------------------------------------------------------------
-
     async def _sync_response(
         message_text: str,
         run_kwargs: dict,
@@ -339,10 +315,6 @@ def attach_routes(
                     bot, chat_id, response.content, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
                 )
 
-    # -------------------------------------------------------------------------
-    # Message processing orchestrator
-    # -------------------------------------------------------------------------
-
     async def _process_message(message: dict) -> None:
         chat_id = message.get("chat", {}).get("id")
         if not chat_id:
@@ -359,7 +331,7 @@ def attach_routes(
                 return
 
             chat_type = message.get("chat", {}).get("type", "private")
-            is_group = chat_type in TG_GROUP_CHAT_TYPES
+            is_group = chat_type in _TG_GROUP_CHAT_TYPES
             incoming_message_id = message.get("message_id")
             # forum_thread_id is set only in supergroups with Topics enabled.
             # It identifies which forum topic a message belongs to, allowing
@@ -392,7 +364,11 @@ def attach_routes(
                 if cmd_target != bot_username.lower():
                     return
 
-            user_id = str(message.get("from", {}).get("id", chat_id))
+            user_id_raw = message.get("from", {}).get("id")
+            if not user_id_raw:
+                log_warning("Message missing user ID, skipping")
+                return
+            user_id = str(user_id_raw)
 
             if await _handle_command(cmd, chat_id, forum_thread_id, base_key, user_id=user_id):
                 return

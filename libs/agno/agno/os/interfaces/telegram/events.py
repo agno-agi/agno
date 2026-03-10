@@ -1,16 +1,6 @@
-"""
-Telegram Streaming Event Handlers
-==================================
-
-Dispatch table mapping normalized event names to handler functions.
-Handlers update StreamState; the stream loop in router.py drives
-iteration and final display.
-
-Key concepts:
-- Events are normalized (Team prefix stripped) for unified handling
-- Workflow mode suppresses inner agent events to reduce noise
-- Handlers return True on terminal events to break the stream loop
-"""
+# Streaming event dispatch table.
+# Events are normalized (Team prefix stripped) for unified handling.
+# Handlers update StreamState; the stream loop in router.py drives iteration.
 
 import time
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
@@ -25,9 +15,8 @@ if TYPE_CHECKING:
 
 _DELEGATION_TOOLS = {"delegate_task_to_member", "delegate_task_to_members"}
 
-# Events from inner agents that are suppressed during workflow streaming
-# to avoid flooding the status blockquote. Only workflow-level progress is shown.
-# Values are NORMALIZED (no "Team" prefix).
+# Inner-agent events suppressed during workflow streaming to avoid flooding
+# the status blockquote. Only workflow-level progress is shown.
 _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
     {
         RunEvent.reasoning_started.value,
@@ -49,29 +38,24 @@ _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
 _EventHandler = Callable[["BaseRunOutputEvent", StreamState], Awaitable[bool]]
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
 def _normalize_event(event: str) -> str:
-    """Strip 'Team' prefix so agent and team events use the same handlers."""
     return event.removeprefix("Team")
 
 
+def _get_tool_info(chunk: "BaseRunOutputEvent") -> tuple[str, Optional[dict]]:
+    tool = getattr(chunk, "tool", None)
+    name = (tool.tool_name if tool else None) or ""
+    args = tool.tool_args if tool else None
+    return name, args
+
+
 def _delegation_label(tool_name: str, tool_args: Optional[dict], *, started: bool) -> Optional[str]:
-    """Return a human-friendly label for delegation tool calls, or None for regular tools."""
     if tool_name not in _DELEGATION_TOOLS:
         return None
     if tool_name == "delegate_task_to_members":
         return "Delegating to all members..." if started else "Delegated to all members"
     member = (tool_args or {}).get("member_id", "member")
     return f"Delegating to {member}..." if started else f"Delegated to {member}"
-
-
-# =============================================================================
-# Agent/Team Event Handlers
-# =============================================================================
 
 
 async def _on_reasoning_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
@@ -87,8 +71,7 @@ async def _on_reasoning_completed(chunk: "BaseRunOutputEvent", state: StreamStat
 
 
 async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    tool = getattr(chunk, "tool", None)
-    tool_name = (tool.tool_name if tool else None) or ""
+    tool_name, tool_args = _get_tool_info(chunk)
     if not tool_name:
         try:
             await state.bot.send_chat_action(state.chat_id, "typing", message_thread_id=state.message_thread_id)
@@ -96,7 +79,6 @@ async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState)
             pass
         return False
 
-    tool_args = tool.tool_args if tool else None
     label = _delegation_label(tool_name, tool_args, started=True)
     if label is None:
         agent_label = ""
@@ -111,12 +93,10 @@ async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState)
 
 
 async def _on_tool_call_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    tool = getattr(chunk, "tool", None)
-    tool_name = (tool.tool_name if tool else None) or ""
+    tool_name, tool_args = _get_tool_info(chunk)
     if not tool_name:
         return False
 
-    tool_args = tool.tool_args if tool else None
     completed = _delegation_label(tool_name, tool_args, started=False)
     if completed:
         started = _delegation_label(tool_name, tool_args, started=True)
@@ -132,8 +112,8 @@ async def _on_tool_call_completed(chunk: "BaseRunOutputEvent", state: StreamStat
 
 
 async def _on_tool_call_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    tool = getattr(chunk, "tool", None)
-    tool_name = (tool.tool_name if tool else None) or "tool"
+    tool_name, _ = _get_tool_info(chunk)
+    tool_name = tool_name or "tool"
     found = False
     for i, line in enumerate(state.status_lines):
         if f"Using {tool_name}..." in line:
@@ -196,11 +176,6 @@ async def _on_memory_update_completed(chunk: "BaseRunOutputEvent", state: Stream
     state.update_status("Updating memory...", "Memory updated")
     await state.flush()
     return False
-
-
-# =============================================================================
-# Workflow Event Handlers
-# =============================================================================
 
 
 async def _on_workflow_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
@@ -319,13 +294,8 @@ def _make_wf_handler(label: str, *, started: bool) -> _EventHandler:
     return handler
 
 
-# =============================================================================
-# Dispatch Table
-# =============================================================================
-
-# Keys are normalized (no "Team" prefix) so one table handles both agent and team events.
+# Normalized keys (no "Team" prefix) — one table handles both agent and team events
 HANDLERS: Dict[str, _EventHandler] = {
-    # -- Agent/Team events (normalized) --
     RunEvent.reasoning_started.value: _on_reasoning_started,
     RunEvent.reasoning_completed.value: _on_reasoning_completed,
     RunEvent.tool_call_started.value: _on_tool_call_started,
@@ -338,25 +308,20 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
     RunEvent.memory_update_started.value: _on_memory_update_started,
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
-    # -- Workflow lifecycle --
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
     WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
-    # -- Workflow steps --
     WorkflowRunEvent.step_started.value: _on_step_started,
     WorkflowRunEvent.step_completed.value: _on_step_completed,
     WorkflowRunEvent.step_error.value: _on_step_error,
     WorkflowRunEvent.step_output.value: _on_step_output,
-    # -- Workflow agents --
     WorkflowRunEvent.workflow_agent_started.value: _on_workflow_agent_started,
     WorkflowRunEvent.workflow_agent_completed.value: _on_workflow_agent_completed,
-    # -- Workflow loops --
     WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
     WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
     WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
     WorkflowRunEvent.loop_execution_completed.value: _on_loop_execution_completed,
-    # -- Workflow structural (factory-generated) --
     WorkflowRunEvent.parallel_execution_started.value: _make_wf_handler("Parallel execution", started=True),
     WorkflowRunEvent.parallel_execution_completed.value: _make_wf_handler("Parallel execution", started=False),
     WorkflowRunEvent.condition_execution_started.value: _make_wf_handler("Evaluating condition", started=True),
@@ -368,23 +333,7 @@ HANDLERS: Dict[str, _EventHandler] = {
 }
 
 
-# =============================================================================
-# Public API
-# =============================================================================
-
-
 async def process_event(ev_raw: str, chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    """
-    Process a single streaming event and update state accordingly.
-
-    Args:
-        ev_raw: Raw event name (e.g., "ToolCallStarted", "TeamRunContent")
-        chunk: Stream chunk containing event data
-        state: StreamState tracking session state
-
-    Returns:
-        True if this is a terminal event and the stream loop should break.
-    """
     ev = _normalize_event(ev_raw)
 
     # Suppress nested agent internals in workflow mode

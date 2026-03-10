@@ -9,10 +9,9 @@ from uuid import uuid4
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
-    _escape_html,
-    markdown_to_telegram_html,
     send_chunked,
 )
+from agno.os.interfaces.telegram.formatting import escape_html, markdown_to_telegram_html
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
@@ -32,7 +31,6 @@ TG_DRAFT_EDIT_INTERVAL = 0.3
 
 
 def _generate_draft_id() -> int:
-    """Generate a unique non-zero draft_id for sendMessageDraft."""
     return random.randint(1, 2**31 - 1)
 
 
@@ -66,20 +64,8 @@ def resolve_session_config(entity: object, entity_type: str) -> _SessionConfig:
     )
 
 
-# =============================================================================
-# Bot State (persistent — shared across all messages)
-# =============================================================================
-
-
 @dataclass
 class BotState:
-    """Persistent state for the bot instance (shared across all webhook calls).
-
-    Handles bot identity caching, command registration, webhook dedup,
-    and session management (in-memory cache + DB recovery on cold start).
-    Session config is resolved once at startup via ``resolve_session_config``.
-    """
-
     bot: "AsyncTeleBot"
     session_config: _SessionConfig
     entity_type: str = "agent"
@@ -123,8 +109,6 @@ class BotState:
             return True
         self.processed_updates[update_id] = now
         return False
-
-    # -- Session management ---------------------------------------------------
 
     async def _db_find_latest(self, user_id: Optional[str]) -> Optional[str]:
         cfg = self.session_config
@@ -191,19 +175,7 @@ class BotState:
         log_debug(f"Session invalidated, new session: {new_id}")
 
 
-# =============================================================================
-# Stream State (per-stream — created for each streaming response)
-# =============================================================================
-
-
 class StreamState:
-    """Mutable state for a single streaming response.
-
-    Combines data tracking (like Slack's StreamState) with Telegram API
-    interaction (like Slack's AsyncChatStream) since Telegram requires
-    manual message editing for live updates.
-    """
-
     def __init__(
         self,
         bot: "AsyncTeleBot",
@@ -236,8 +208,6 @@ class StreamState:
         self.workflow_final_content: Optional[str] = None
         self.terminal: bool = False
 
-    # -- Status helpers -------------------------------------------------------
-
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
 
@@ -248,21 +218,14 @@ class StreamState:
                 return
 
     def resolve_all_pending(self) -> None:
-        """Mark any in-progress status lines as done.
-
-        Called at stream end to clean up orphaned "Using X..." lines
-        when a tool call started but the stream ended before completion.
-        """
         for i, line in enumerate(self.status_lines):
             if line.endswith("..."):
                 self.status_lines[i] = line[:-3]
 
-    # -- Display helpers ------------------------------------------------------
-
     def build_display_html(self) -> str:
         parts: list[str] = []
         if self.status_lines:
-            escaped_status = _escape_html("\n".join(self.status_lines))
+            escaped_status = escape_html("\n".join(self.status_lines))
             parts.append(f"<blockquote expandable>{escaped_status}</blockquote>")
         if self.accumulated_content:
             parts.append(markdown_to_telegram_html(self.accumulated_content))
@@ -304,7 +267,6 @@ class StreamState:
         self.last_edit_time = time.monotonic()
 
     async def _send_draft(self, html: str) -> None:
-        """Stream a partial message via sendMessageDraft (private chats only)."""
         display = html[:TG_MAX_MESSAGE_LENGTH]
         if self.draft_id == 0:
             self.draft_id = _generate_draft_id()
@@ -335,12 +297,6 @@ class StreamState:
             log_warning(f"Stream display update failed: {e}")
 
     async def finalize(self) -> None:
-        """Send the final display after the stream ends.
-
-        Resolves pending status lines, then either edits the existing
-        message or sends a new chunked message if content overflows.
-        In draft mode, sends a real message to replace the draft bubble.
-        """
         self.resolve_all_pending()
         final_html = self.build_display_html()
 
@@ -385,11 +341,6 @@ class StreamState:
             )
 
     async def _finalize_draft(self, final_html: str) -> None:
-        """Finalize a draft-mode stream by sending the real message.
-
-        Sending a real message replaces the draft bubble in the client.
-        For overflow content, fall through to chunked plain messages.
-        """
         if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
             try:
                 msg = await self.bot.send_message(
