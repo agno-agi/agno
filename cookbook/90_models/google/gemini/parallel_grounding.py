@@ -36,6 +36,7 @@ agent = Agent(
         # If omitted, uses PARALLEL_API_KEY env var or GCP Marketplace subscription.
         # parallel_api_key="your-api-key",
         # Optional: custom configuration for domain filtering, excerpt limits, etc.
+        # Passed as custom_configs to ToolParallelAiSearch.
         # parallel_config={"source_policy": {"exclude_domains": ["example.com"]}},
     ),
     add_datetime_to_context=True,

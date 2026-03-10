@@ -40,12 +40,12 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
-        HttpOptions,
         Operation,
         Part,
         Retrieval,
         ThinkingConfig,
         Tool,
+        ToolParallelAiSearch,
         UrlContext,
         VertexAISearch,
     )
@@ -97,7 +97,7 @@ class Gemini(Model):
     parallel_search: bool = False
     parallel_api_key: Optional[str] = None
     # Optional custom configuration for Parallel search (e.g., domain filtering)
-    # Passed as `customConfigs` in the parallelAiSearch tool payload.
+    # Passed as `custom_configs` in the ToolParallelAiSearch payload.
     # Example: {"source_policy": {"exclude_domains": ["example.com"]}}
     parallel_config: Optional[Dict[str, Any]] = None
 
@@ -337,44 +337,21 @@ class Gemini(Model):
 
         self._append_file_search_tool(builtin_tools)
 
-        # Build parallelAiSearch tool payload (SDK doesn't support it natively yet)
-        parallel_raw_tool: Optional[Dict[str, Any]] = None
+        # Build Parallel web search grounding tool
         if self.parallel_search:
             log_debug("Gemini Parallel web search grounding enabled.")
             if not self.vertexai:
                 raise ValueError("Parallel search grounding requires vertexai=True.")
-            # Parallel search uses http_options.extra_body which bypasses the SDK tools list.
-            # It cannot be combined with other builtin tools (search, url_context, etc.).
-            if builtin_tools:
-                conflicting = []
-                if self.search or self.grounding:
-                    conflicting.append("search/grounding")
-                if self.url_context:
-                    conflicting.append("url_context")
-                if self.vertexai_search:
-                    conflicting.append("vertexai_search")
-                if self.file_search_store_names:
-                    conflicting.append("file_search")
-                raise ValueError(
-                    f"parallel_search cannot be combined with other builtin tools ({', '.join(conflicting)}). "
-                    "Parallel search is injected via http_options.extra_body which overrides SDK-managed tools."
-                )
-            parallel_tool_payload: Dict[str, Any] = {}
+            parallel_tool_config: Dict[str, Any] = {}
             parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
             if parallel_key:
-                parallel_tool_payload["api_key"] = parallel_key
+                parallel_tool_config["api_key"] = parallel_key
             if self.parallel_config:
-                parallel_tool_payload["customConfigs"] = self.parallel_config
-            parallel_raw_tool = {"parallelAiSearch": parallel_tool_payload}
+                parallel_tool_config["custom_configs"] = self.parallel_config
+            builtin_tools.append(Tool(parallel_ai_search=ToolParallelAiSearch(**parallel_tool_config)))
 
         # Set tools in config
-        # Note: For parallel_search, we inject the raw tool via http_options.extra_body
-        # since the SDK doesn't have ParallelAiSearch in the Tool class yet.
-        if parallel_raw_tool:
-            if tools:
-                log_info("Parallel search grounding enabled. External tools will be disabled.")
-            config["http_options"] = HttpOptions(extra_body={"tools": [parallel_raw_tool]})
-        elif builtin_tools:
+        if builtin_tools:
             if tools:
                 log_info("Built-in tools enabled. External tools will be disabled.")
             config["tools"] = builtin_tools
