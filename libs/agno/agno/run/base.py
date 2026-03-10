@@ -27,13 +27,6 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
-    # Workflow-level control flags for downstream propagation
-    # None = "not set, let agent/team use its own default"
-    add_dependencies_to_context: Optional[bool] = None
-    add_session_state_to_context: Optional[bool] = None
-    add_history_to_context: Optional[bool] = None
-    debug_mode: Optional[bool] = None
-
     # Live reference to the current run's message list. Available in tool hooks
     # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
     # so accidental list mutations (.clear(), .append()) won't corrupt the run.

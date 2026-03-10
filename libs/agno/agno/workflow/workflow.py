@@ -1800,6 +1800,10 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
@@ -1886,6 +1890,10 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            add_history_to_context=add_history_to_context,
+                            debug_mode=debug_mode,
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -2020,6 +2028,10 @@ class Workflow:
         run_context: RunContext,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2141,6 +2153,10 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            add_history_to_context=add_history_to_context,
+                            debug_mode=debug_mode,
                         ):
                             raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2496,6 +2512,10 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
@@ -2596,6 +2616,10 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            add_history_to_context=add_history_to_context,
+                            debug_mode=debug_mode,
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -2735,6 +2759,10 @@ class Workflow:
         stream_events: bool = False,
         websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2873,6 +2901,10 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            add_history_to_context=add_history_to_context,
+                            debug_mode=debug_mode,
                         ):
                             if workflow_run_response.run_id:
                                 await araise_if_cancelled(workflow_run_response.run_id)
@@ -3217,10 +3249,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            add_dependencies_to_context=resolved["add_dependencies_to_context"],
-            add_session_state_to_context=resolved["add_session_state_to_context"],
-            add_history_to_context=resolved["add_history_to_context"],
-            debug_mode=resolved["debug_mode"],
         )
 
         self._prepare_steps()
@@ -3286,6 +3314,10 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         run_context=run_context,
                         session_state=session_state,
+                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                        add_session_state_to_context=resolved["add_session_state_to_context"],
+                        add_history_to_context=resolved["add_history_to_context"],
+                        debug_mode=resolved["debug_mode"],
                         **kwargs,
                     )
 
@@ -3360,10 +3392,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            add_dependencies_to_context=resolved["add_dependencies_to_context"],
-            add_session_state_to_context=resolved["add_session_state_to_context"],
-            add_history_to_context=resolved["add_history_to_context"],
-            debug_mode=resolved["debug_mode"],
         )
 
         self._prepare_steps()
@@ -3435,6 +3463,10 @@ class Workflow:
                         stream_events=stream_events,
                         run_context=run_context,
                         websocket_handler=websocket_handler,
+                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                        add_session_state_to_context=resolved["add_session_state_to_context"],
+                        add_history_to_context=resolved["add_history_to_context"],
+                        debug_mode=resolved["debug_mode"],
                         **kwargs,
                     ):
                         # Events are automatically broadcast by _handle_event
@@ -6533,10 +6565,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            add_dependencies_to_context=resolved["add_dependencies_to_context"],
-            add_session_state_to_context=resolved["add_session_state_to_context"],
-            add_history_to_context=resolved["add_history_to_context"],
-            debug_mode=resolved["debug_mode"],
         )
 
         # Execute workflow agent if configured
@@ -6574,6 +6602,10 @@ class Workflow:
                 stream_events=stream_events,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
+                add_history_to_context=resolved["add_history_to_context"],
+                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
         else:
@@ -6583,6 +6615,10 @@ class Workflow:
                 workflow_run_response=workflow_run_response,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
+                add_history_to_context=resolved["add_history_to_context"],
+                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
 
@@ -6752,10 +6788,6 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
-            add_dependencies_to_context=resolved["add_dependencies_to_context"],
-            add_session_state_to_context=resolved["add_session_state_to_context"],
-            add_history_to_context=resolved["add_history_to_context"],
-            debug_mode=resolved["debug_mode"],
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
@@ -6824,6 +6856,10 @@ class Workflow:
                 session_state=session_state,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
+                add_history_to_context=resolved["add_history_to_context"],
+                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
         else:
@@ -6837,6 +6873,10 @@ class Workflow:
                 session_state=session_state,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
+                add_history_to_context=resolved["add_history_to_context"],
+                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
 
