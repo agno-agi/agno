@@ -293,8 +293,9 @@ def markdown_to_telegram_html(text: str) -> str:
     output = _TG_EMOJI_RE.sub(r'<tg-emoji emoji-id="\2">\1</tg-emoji>', output)
 
     # 13. Links and images (images rendered as links)
+    # Step 4 escapes &<> but not quotes — need to escape " in href attributes
     def _link_replacer(m: re.Match) -> str:
-        text, href = m.group(1), escape_html(m.group(2))
+        text, href = m.group(1), m.group(2).replace('"', "&quot;")
         return f'<a href="{href}">{text}</a>'
 
     output = _LINK_RE.sub(_link_replacer, output)
