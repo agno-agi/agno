@@ -14,8 +14,8 @@ Key concepts:
 import asyncio
 
 from agno.agent import Agent, RunEvent
-from agno.models.openai import OpenAIResponses
 from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
 
 db = SqliteDb(db_file="tmp/agents.db")
 
@@ -61,8 +61,6 @@ async def main():
             if event.followups:  # type: ignore
                 for i, suggestion in enumerate(event.followups.suggestions, 1):  # type: ignore
                     print(f"  {i}. {suggestion}")
-
-    
 
     print()
 
