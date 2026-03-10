@@ -302,6 +302,14 @@ class Agent:
     # Save the response to a file
     save_response_to_file: Optional[str] = None
 
+    # --- Followups ---
+    # If True, generate followup prompts after the main response
+    followups: bool = False
+    # Number of followup prompts to generate (default 3)
+    num_followups: int = 3
+    # Optional model to use for generating followups (defaults to agent's model)
+    followup_model: Optional[Model] = None
+
     # --- Agent Streaming ---
     # Stream the response from the Agent
     stream: Optional[bool] = None
@@ -458,6 +466,9 @@ class Agent:
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
+        followups: bool = False,
+        num_followups: int = 3,
+        followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -620,6 +631,12 @@ class Agent:
 
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
+
+        self.followups = followups
+        if num_followups < 1:
+            raise ValueError("num_followups must be at least 1")
+        self.num_followups = num_followups
+        self.followup_model = followup_model  # type: ignore[assignment]
 
         self.stream = stream
         self.stream_events = stream_events
