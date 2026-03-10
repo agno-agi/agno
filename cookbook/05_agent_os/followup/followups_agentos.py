@@ -1,4 +1,5 @@
 from agno.agent import Agent
+from agno.team.team import Team
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.db.postgres import PostgresDb
@@ -21,8 +22,22 @@ agent = Agent(
     markdown=True,
     db=db,
 )
+team = Team(
+    id="followups-team",
+    name="Followups Team",
+    model=OpenAIResponses(id="gpt-4o"),
+    members=[agent],
+    instructions="You are a knowledgeable assistant. Answer questions thoroughly.",
+    # Enable built-in followups
+    followups=True,
+    num_followups=4,
+    # Optionally use a cheaper model for followups
+    # followup_model=OpenAIResponses(id="gpt-4o-mini"),
+    markdown=True,
+    db=db,
+)
 
-agno_os = AgentOS(id="followups-agentos", name="Followups AgentOS", agents=[agent], db=db)
+agno_os = AgentOS(id="followups-agentos", name="Followups AgentOS", agents=[agent], teams=[team], db=db)
 app = agno_os.get_app()
 if __name__ == "__main__":
     agno_os.serve(app="followups_agentos:app", reload=True)
