@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import warnings
@@ -164,6 +165,8 @@ class MultiMCPTools(Toolkit):
         self._run_sessions: Dict[Tuple[str, int], Tuple[ClientSession, float]] = {}
         self._run_session_contexts: Dict[Tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
         self._session_ttl_seconds: float = 300.0  # 5 minutes default TTL
+        # Lock to prevent race conditions when creating sessions for the same (run_id, server_idx)
+        self._session_creation_lock: asyncio.Lock = asyncio.Lock()
 
         self.allow_partial_failure = allow_partial_failure
 
@@ -292,71 +295,80 @@ class MultiMCPTools(Toolkit):
                 return self._sessions[server_idx]
             raise ValueError(f"Server index {server_idx} out of range")
 
-        # Lazy cleanup of stale sessions
-        await self._cleanup_stale_sessions()
-
-        # Check if we already have a session for this (run_id, server_idx)
         run_id = run_context.run_id
         cache_key = (run_id, server_idx)
+
+        # Fast path: check without lock if session already exists
         if cache_key in self._run_sessions:
             session, _ = self._run_sessions[cache_key]
             return session
 
-        # Create a new session with dynamic headers for this run and server
-        log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
+        # Serialize session creation to prevent parallel tool calls from
+        # creating duplicate sessions for the same (run_id, server_idx) (race condition)
+        async with self._session_creation_lock:
+            # Re-check after acquiring the lock (another coroutine may have created it)
+            if cache_key in self._run_sessions:
+                session, _ = self._run_sessions[cache_key]
+                return session
 
-        # Generate dynamic headers from the provider
-        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+            # Lazy cleanup of stale sessions
+            await self._cleanup_stale_sessions()
 
-        # Get the server params for this server index
-        if server_idx >= len(self.server_params_list):
-            raise ValueError(f"Server index {server_idx} out of range")
+            # Create a new session with dynamic headers for this run and server
+            log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
 
-        server_params = self.server_params_list[server_idx]
+            # Generate dynamic headers from the provider
+            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
 
-        # Create new session with merged headers based on transport type
-        if isinstance(server_params, SSEClientParams):
-            params_dict = asdict(server_params)
-            existing_headers = params_dict.get("headers") or {}
-            params_dict["headers"] = {**existing_headers, **dynamic_headers}
+            # Get the server params for this server index
+            if server_idx >= len(self.server_params_list):
+                raise ValueError(f"Server index {server_idx} out of range")
 
-            context = sse_client(**params_dict)  # type: ignore
-            client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
+            server_params = self.server_params_list[server_idx]
 
-        elif isinstance(server_params, StreamableHTTPClientParams):
-            params_dict = asdict(server_params)
-            existing_headers = params_dict.get("headers") or {}
-            params_dict["headers"] = {**existing_headers, **dynamic_headers}
+            # Create new session with merged headers based on transport type
+            if isinstance(server_params, SSEClientParams):
+                params_dict = asdict(server_params)
+                existing_headers = params_dict.get("headers") or {}
+                params_dict["headers"] = {**existing_headers, **dynamic_headers}
 
-            context = streamablehttp_client(**params_dict)  # type: ignore
-            params_timeout = params_dict.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
-        else:
-            # stdio doesn't support headers, fall back to default session
-            log_warning(
-                f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
-            )
-            if server_idx < len(self._sessions):
-                return self._sessions[server_idx]
-            raise ValueError(f"Server index {server_idx} out of range")
+                context = sse_client(**params_dict)  # type: ignore
+                client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
 
-        # Enter the context and create session
-        session_params = await context.__aenter__()  # type: ignore
-        read, write = session_params[0:2]
+            elif isinstance(server_params, StreamableHTTPClientParams):
+                params_dict = asdict(server_params)
+                existing_headers = params_dict.get("headers") or {}
+                params_dict["headers"] = {**existing_headers, **dynamic_headers}
 
-        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        session = await session_context.__aenter__()  # type: ignore
+                context = streamablehttp_client(**params_dict)  # type: ignore
+                params_timeout = params_dict.get("timeout", self.timeout_seconds)
+                if isinstance(params_timeout, timedelta):
+                    params_timeout = int(params_timeout.total_seconds())
+                client_timeout = min(self.timeout_seconds, params_timeout)
+            else:
+                # stdio doesn't support headers, fall back to default session
+                log_warning(
+                    f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
+                )
+                if server_idx < len(self._sessions):
+                    return self._sessions[server_idx]
+                raise ValueError(f"Server index {server_idx} out of range")
 
-        # Initialize the session
-        await session.initialize()
+            # Enter the context and create session
+            session_params = await context.__aenter__()  # type: ignore
+            read, write = session_params[0:2]
 
-        # Store the session with timestamp and context for cleanup
-        self._run_sessions[cache_key] = (session, time.time())
-        self._run_session_contexts[cache_key] = (context, session_context)
+            session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+            session = await session_context.__aenter__()  # type: ignore
 
-        return session
+            # Initialize the session
+            await session.initialize()
+
+            # Store the session with timestamp and context for cleanup
+            self._run_sessions[cache_key] = (session, time.time())
+            self._run_session_contexts[cache_key] = (context, session_context)
+
+            return session
 
     async def cleanup_run_session(self, run_id: str, server_idx: int) -> None:
         """Clean up a per-run session."""
