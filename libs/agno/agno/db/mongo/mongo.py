@@ -59,6 +59,8 @@ class MongoDb(BaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        schedules_collection: Optional[str] = None,
+        schedule_runs_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -76,6 +78,8 @@ class MongoDb(BaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            schedules_collection (Optional[str]): Name of the collection to store schedules.
+            schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -97,6 +101,8 @@ class MongoDb(BaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            schedules_table=schedules_collection,
+            schedule_runs_table=schedule_runs_collection,
         )
 
         _client: Optional[MongoClient] = db_client
@@ -152,6 +158,8 @@ class MongoDb(BaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("schedules", self.schedules_table_name),
+            ("schedule_runs", self.schedule_runs_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -256,6 +264,28 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "schedules":
+            if not hasattr(self, "schedules_collection"):
+                if self.schedules_table_name is None:
+                    raise ValueError("Schedules collection was not provided on initialization")
+                self.schedules_collection = self._get_or_create_collection(
+                    collection_name=self.schedules_table_name,
+                    collection_type="schedules",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedules_collection
+
+        if table_type == "schedule_runs":
+            if not hasattr(self, "schedule_runs_collection"):
+                if self.schedule_runs_table_name is None:
+                    raise ValueError("Schedule runs collection was not provided on initialization")
+                self.schedule_runs_collection = self._get_or_create_collection(
+                    collection_name=self.schedule_runs_table_name,
+                    collection_type="schedule_runs",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedule_runs_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2662,6 +2692,23 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- Scheduler methods --
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get a schedule run by ID from the configured schedule runs collection."""
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+            result = collection.find_one({"id": run_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
 
     # -- Learning methods (stubs) --
     def get_learning(
