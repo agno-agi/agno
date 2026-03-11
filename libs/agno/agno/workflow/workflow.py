@@ -265,7 +265,6 @@ class Workflow:
     # Workflow-level control flags (propagated to downstream agents/teams)
     add_dependencies_to_context: Optional[bool] = None
     add_session_state_to_context: Optional[bool] = None
-    add_history_to_context: Optional[bool] = None
 
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
@@ -305,7 +304,6 @@ class Workflow:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
         cache_session: bool = False,
         telemetry: bool = True,
         add_workflow_history_to_steps: bool = False,
@@ -332,7 +330,6 @@ class Workflow:
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
         self.add_session_state_to_context = add_session_state_to_context
-        self.add_history_to_context = add_history_to_context
 
         # Component metadata (set by get_workflows during DB loading)
         self._version: Optional[int] = None
@@ -367,8 +364,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Resolve run-level params: call-site > self.<field> > None.
 
@@ -405,10 +400,6 @@ class Workflow:
             "add_session_state_to_context": add_session_state_to_context
             if add_session_state_to_context is not None
             else self.add_session_state_to_context,
-            "add_history_to_context": add_history_to_context
-            if add_history_to_context is not None
-            else self.add_history_to_context,
-            "debug_mode": debug_mode,
         }
 
     @property
@@ -744,8 +735,6 @@ class Workflow:
             config["add_dependencies_to_context"] = self.add_dependencies_to_context
         if self.add_session_state_to_context is not None:
             config["add_session_state_to_context"] = self.add_session_state_to_context
-        if self.add_history_to_context is not None:
-            config["add_history_to_context"] = self.add_history_to_context
 
         # --- Debug and telemetry settings ---
         config["debug_mode"] = self.debug_mode
@@ -841,7 +830,6 @@ class Workflow:
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context"),
             add_session_state_to_context=config.get("add_session_state_to_context"),
-            add_history_to_context=config.get("add_history_to_context"),
             # --- Debug and telemetry settings ---
             debug_mode=config.get("debug_mode", False),
             telemetry=config.get("telemetry", True),
@@ -1802,8 +1790,6 @@ class Workflow:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
@@ -1892,8 +1878,6 @@ class Workflow:
                             background_tasks=background_tasks,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -2030,8 +2014,6 @@ class Workflow:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2155,8 +2137,6 @@ class Workflow:
                             background_tasks=background_tasks,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                         ):
                             raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2514,8 +2494,6 @@ class Workflow:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
@@ -2618,8 +2596,6 @@ class Workflow:
                             background_tasks=background_tasks,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -2761,8 +2737,6 @@ class Workflow:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2903,8 +2877,6 @@ class Workflow:
                             background_tasks=background_tasks,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                         ):
                             if workflow_run_response.run_id:
                                 await araise_if_cancelled(workflow_run_response.run_id)
@@ -3213,8 +3185,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background using asyncio.create_task()"""
@@ -3236,8 +3206,6 @@ class Workflow:
             metadata=metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
         )
 
         run_context = RunContext(
@@ -3316,8 +3284,6 @@ class Workflow:
                         session_state=session_state,
                         add_dependencies_to_context=resolved["add_dependencies_to_context"],
                         add_session_state_to_context=resolved["add_session_state_to_context"],
-                        add_history_to_context=resolved["add_history_to_context"],
-                        debug_mode=resolved["debug_mode"],
                         **kwargs,
                     )
 
@@ -3356,8 +3322,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background with streaming and WebSocket broadcasting"""
@@ -3379,8 +3343,6 @@ class Workflow:
             metadata=metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
         )
 
         run_context = RunContext(
@@ -3465,8 +3427,6 @@ class Workflow:
                         websocket_handler=websocket_handler,
                         add_dependencies_to_context=resolved["add_dependencies_to_context"],
                         add_session_state_to_context=resolved["add_session_state_to_context"],
-                        add_history_to_context=resolved["add_history_to_context"],
-                        debug_mode=resolved["debug_mode"],
                         **kwargs,
                     ):
                         # Events are automatically broadcast by _handle_event
@@ -6423,8 +6383,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -6448,8 +6406,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -6472,8 +6428,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -6551,8 +6505,6 @@ class Workflow:
             metadata=metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
         )
 
         # Initialize run context
@@ -6604,8 +6556,6 @@ class Workflow:
                 background_tasks=background_tasks,
                 add_dependencies_to_context=resolved["add_dependencies_to_context"],
                 add_session_state_to_context=resolved["add_session_state_to_context"],
-                add_history_to_context=resolved["add_history_to_context"],
-                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
         else:
@@ -6617,8 +6567,6 @@ class Workflow:
                 background_tasks=background_tasks,
                 add_dependencies_to_context=resolved["add_dependencies_to_context"],
                 add_session_state_to_context=resolved["add_session_state_to_context"],
-                add_history_to_context=resolved["add_history_to_context"],
-                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
 
@@ -6644,8 +6592,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -6670,8 +6616,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -6695,8 +6639,6 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -6732,8 +6674,6 @@ class Workflow:
                     metadata=metadata,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                     **kwargs,
                 )
             elif stream and not websocket:
@@ -6755,8 +6695,6 @@ class Workflow:
                     metadata=metadata,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                     **kwargs,
                 )
 
@@ -6774,8 +6712,6 @@ class Workflow:
             metadata=metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            add_history_to_context=add_history_to_context,
-            debug_mode=debug_mode,
         )
 
         # Initialize run context
@@ -6858,8 +6794,6 @@ class Workflow:
                 background_tasks=background_tasks,
                 add_dependencies_to_context=resolved["add_dependencies_to_context"],
                 add_session_state_to_context=resolved["add_session_state_to_context"],
-                add_history_to_context=resolved["add_history_to_context"],
-                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
         else:
@@ -6875,8 +6809,6 @@ class Workflow:
                 background_tasks=background_tasks,
                 add_dependencies_to_context=resolved["add_dependencies_to_context"],
                 add_session_state_to_context=resolved["add_session_state_to_context"],
-                add_history_to_context=resolved["add_history_to_context"],
-                debug_mode=resolved["debug_mode"],
                 **kwargs,
             )
 

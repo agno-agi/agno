@@ -280,8 +280,6 @@ class Parallel:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -325,8 +323,6 @@ class Parallel:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
             except Exception as exc:
@@ -422,8 +418,6 @@ class Parallel:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -503,8 +497,6 @@ class Parallel:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -627,8 +619,6 @@ class Parallel:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -671,8 +661,6 @@ class Parallel:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
@@ -768,8 +756,6 @@ class Parallel:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -849,8 +835,6 @@ class Parallel:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))

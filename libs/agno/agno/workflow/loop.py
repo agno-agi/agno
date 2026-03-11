@@ -361,8 +361,6 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for loop orchestration
@@ -396,8 +394,6 @@ class Loop:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -480,8 +476,6 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -562,8 +556,6 @@ class Loop:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -684,8 +676,6 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
@@ -721,8 +711,6 @@ class Loop:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -805,8 +793,6 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -887,8 +873,6 @@ class Loop:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)

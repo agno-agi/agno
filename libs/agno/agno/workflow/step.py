@@ -533,8 +533,6 @@ class Step:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -693,8 +691,6 @@ class Step:
                             run_context=run_context,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                             **kwargs,
                         )
 
@@ -808,8 +804,6 @@ class Step:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -982,8 +976,6 @@ class Step:
                             run_context=run_context,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                             **kwargs,
                         )
 
@@ -1085,8 +1077,6 @@ class Step:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -1276,8 +1266,6 @@ class Step:
                             run_context=run_context,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                             **kwargs,
                         )
 
@@ -1341,8 +1329,6 @@ class Step:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -1559,8 +1545,6 @@ class Step:
                             yield_run_output=True,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
-                            add_history_to_context=add_history_to_context,
-                            debug_mode=debug_mode,
                             **kwargs,
                         )
 

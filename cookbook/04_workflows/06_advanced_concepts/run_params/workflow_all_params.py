@@ -10,7 +10,6 @@ This example shows:
   - dependencies: Injecting configuration (tone, word count, target audience)
   - add_dependencies_to_context: Making config visible to agents
   - add_session_state_to_context: Making session state visible to agents
-  - debug_mode: Toggling verbose logging from the call site
 """
 
 import asyncio
@@ -105,11 +104,10 @@ if __name__ == "__main__":
         metadata={"campaign": "onboarding"},
     )
 
-    # Example 3: Async with debug mode
-    print("\n=== Example 3: Async with debug_mode ===")
+    # Example 3: Async execution
+    print("\n=== Example 3: Async execution ===")
     asyncio.run(
         content_pipeline.aprint_response(
             input="Write about async programming in Python.",
-            debug_mode=True,
         )
     )

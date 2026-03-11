@@ -18,6 +18,6 @@ Generated: 2026-03-10
 
 **Description:** Executed with `.venvs/demo/bin/python` (mode: normal). Tests all run-level params together in a content creation pipeline.
 
-**Result:** All three examples completed successfully. Example 1 used workflow defaults (tone=professional, audience=developers). Example 2 overrode dependencies at call-site (tone=casual, audience=beginners) with merged metadata. Example 3 ran async with debug_mode=True.
+**Result:** All three examples completed successfully. Example 1 used workflow defaults (tone=professional, audience=developers). Example 2 overrode dependencies at call-site (tone=casual, audience=beginners) with merged metadata. Example 3 ran async.
 
 ---

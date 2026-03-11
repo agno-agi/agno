@@ -409,8 +409,6 @@ class Condition:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         force_else_branch: bool = False,
     ) -> StepOutput:
         """Execute the condition and its steps with sequential chaining.
@@ -496,8 +494,6 @@ class Condition:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -572,8 +568,6 @@ class Condition:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         force_else_branch: bool = False,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the condition with streaming support.
@@ -719,8 +713,6 @@ class Condition:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -810,8 +802,6 @@ class Condition:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         force_else_branch: bool = False,
     ) -> StepOutput:
         """Async execute the condition and its steps with sequential chaining.
@@ -897,8 +887,6 @@ class Condition:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 )
 
                 # Handle both single StepOutput and List[StepOutput]
@@ -971,8 +959,6 @@ class Condition:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         force_else_branch: bool = False,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the condition with streaming support.
@@ -1119,8 +1105,6 @@ class Condition:
                     background_tasks=background_tasks,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
-                    add_history_to_context=add_history_to_context,
-                    debug_mode=debug_mode,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
