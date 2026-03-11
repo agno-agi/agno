@@ -7,59 +7,17 @@ To run these tests:
     GOOGLE_API_KEY='...' pytest libs/agno/tests/integration/embedder/test_gemini_embedder.py -v
 """
 
-import io
-import math
 import os
-import struct
-import zlib
+from pathlib import Path
 
 import pytest
 
 from agno.knowledge.embedder.google import GeminiEmbedder
-from agno.media import Audio, Image
+from agno.media import Audio, Image, Video
 
 
 def _has_google_api_key() -> bool:
     return bool(os.environ.get("GOOGLE_API_KEY"))
-
-
-def _generate_test_png(width: int = 64, height: int = 64) -> bytes:
-    """Generate a minimal valid PNG (red square) in memory."""
-
-    def chunk(chunk_type: bytes, data: bytes) -> bytes:
-        c = chunk_type + data
-        return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
-
-    raw_rows = b""
-    for _ in range(height):
-        raw_rows += b"\x00"  # filter byte
-        for _ in range(width):
-            raw_rows += b"\xff\x00\x00"  # RGB red
-    compressed = zlib.compress(raw_rows)
-
-    png = b"\x89PNG\r\n\x1a\n"
-    png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-    png += chunk(b"IDAT", compressed)
-    png += chunk(b"IEND", b"")
-    return png
-
-
-def _generate_wav_bytes(duration_s: float = 1.0, freq: int = 440, sample_rate: int = 16000) -> bytes:
-    """Generate a simple sine-wave WAV in memory."""
-    num_samples = int(sample_rate * duration_s)
-    buf = io.BytesIO()
-    data_size = num_samples * 2  # 16-bit mono
-    buf.write(b"RIFF")
-    buf.write(struct.pack("<I", 36 + data_size))
-    buf.write(b"WAVE")
-    buf.write(b"fmt ")
-    buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16))
-    buf.write(b"data")
-    buf.write(struct.pack("<I", data_size))
-    for i in range(num_samples):
-        sample = int(32767 * math.sin(2 * math.pi * freq * i / sample_rate))
-        buf.write(struct.pack("<h", sample))
-    return buf.getvalue()
 
 
 # Skip all tests if GOOGLE_API_KEY is not set
@@ -69,6 +27,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 MULTIMODAL_MODEL = "gemini-embedding-2-preview"
+RESOURCES = (
+    Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+    / "cookbook"
+    / "07_knowledge"
+    / "testing_resources"
+)
 
 
 class TestGeminiEmbedderText:
@@ -113,8 +77,7 @@ class TestGeminiEmbedderImage:
         return GeminiEmbedder(id=MULTIMODAL_MODEL, dimensions=768)
 
     def test_image_embedding(self, embedder):
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
         embedding = embedder.get_image_embedding(image)
 
         assert isinstance(embedding, list)
@@ -122,8 +85,7 @@ class TestGeminiEmbedderImage:
         assert all(isinstance(x, float) for x in embedding)
 
     def test_image_embedding_and_usage(self, embedder):
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
         embedding, usage = embedder.get_image_embedding_and_usage(image)
 
         assert isinstance(embedding, list)
@@ -138,13 +100,42 @@ class TestGeminiEmbedderAudio:
         return GeminiEmbedder(id=MULTIMODAL_MODEL, dimensions=768)
 
     def test_audio_embedding(self, embedder):
-        wav_bytes = _generate_wav_bytes()
-        audio = Audio(content=wav_bytes, mime_type="audio/wav")
+        audio = Audio(filepath=RESOURCES / "sample.wav", mime_type="audio/wav")
         embedding = embedder.get_audio_embedding(audio)
 
         assert isinstance(embedding, list)
         assert len(embedding) == 768
         assert all(isinstance(x, float) for x in embedding)
+
+    def test_audio_embedding_and_usage(self, embedder):
+        audio = Audio(filepath=RESOURCES / "sample.wav", mime_type="audio/wav")
+        embedding, usage = embedder.get_audio_embedding_and_usage(audio)
+
+        assert isinstance(embedding, list)
+        assert len(embedding) == 768
+
+
+class TestGeminiEmbedderVideo:
+    """Tests for video embedding."""
+
+    @pytest.fixture
+    def embedder(self):
+        return GeminiEmbedder(id=MULTIMODAL_MODEL, dimensions=768)
+
+    def test_video_embedding(self, embedder):
+        video = Video(filepath=RESOURCES / "sample.mp4", mime_type="video/mp4")
+        embedding = embedder.get_video_embedding(video)
+
+        assert isinstance(embedding, list)
+        assert len(embedding) == 768
+        assert all(isinstance(x, float) for x in embedding)
+
+    def test_video_embedding_and_usage(self, embedder):
+        video = Video(filepath=RESOURCES / "sample.mp4", mime_type="video/mp4")
+        embedding, usage = embedder.get_video_embedding_and_usage(video)
+
+        assert isinstance(embedding, list)
+        assert len(embedding) == 768
 
 
 class TestGeminiEmbedderMultimodal:
@@ -155,8 +146,7 @@ class TestGeminiEmbedderMultimodal:
         return GeminiEmbedder(id=MULTIMODAL_MODEL, dimensions=768)
 
     def test_multimodal_text_and_image(self, embedder):
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
         embedding = embedder.get_multimodal_embedding(["A red square image", image])
 
         assert isinstance(embedding, list)
@@ -164,21 +154,26 @@ class TestGeminiEmbedderMultimodal:
         assert all(isinstance(x, float) for x in embedding)
 
     def test_multimodal_embedding_and_usage(self, embedder):
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
         embedding, usage = embedder.get_multimodal_embedding_and_usage(["description", image])
+
+        assert isinstance(embedding, list)
+        assert len(embedding) == 768
+
+    def test_multimodal_text_and_audio(self, embedder):
+        audio = Audio(filepath=RESOURCES / "sample.wav", mime_type="audio/wav")
+        embedding = embedder.get_multimodal_embedding(["A sine wave tone", audio])
 
         assert isinstance(embedding, list)
         assert len(embedding) == 768
 
 
 class TestGeminiEmbedderModelGuard:
-    """Tests that multimodal methods reject text-only models."""
+    """Tests that multimodal methods reject text-only models and invalid inputs."""
 
     def test_image_embedding_requires_multimodal_model(self):
         embedder = GeminiEmbedder(id="gemini-embedding-001")
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
 
         with pytest.raises(ValueError, match="does not support multimodal"):
             embedder.get_image_embedding(image)
@@ -198,7 +193,7 @@ class TestGeminiEmbedderModelGuard:
     def test_image_without_mime_type_uses_default(self):
         """Image without mime_type should fall back to image/png default."""
         embedder = GeminiEmbedder(id=MULTIMODAL_MODEL, dimensions=768)
-        png_bytes = _generate_test_png()
+        png_bytes = (RESOURCES / "sample.png").read_bytes()
         image = Image(content=png_bytes)
         embedding = embedder.get_image_embedding(image)
 
@@ -207,22 +202,12 @@ class TestGeminiEmbedderModelGuard:
 
     def test_image_mime_inferred_from_filepath(self):
         """MIME type should be inferred from filepath extension when mime_type is not set."""
-        import os
-        import tempfile
-
-        png_bytes = _generate_test_png()
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            f.write(png_bytes)
-            tmp_path = f.name
-
-        image = Image(filepath=tmp_path)
+        image = Image(filepath=RESOURCES / "sample.png")
         embedder = GeminiEmbedder(id=MULTIMODAL_MODEL, dimensions=768)
         embedding = embedder.get_image_embedding(image)
 
         assert isinstance(embedding, list)
         assert len(embedding) == 768
-
-        os.unlink(tmp_path)
 
 
 class TestGeminiEmbedderDimensionality:
@@ -251,8 +236,7 @@ class TestGeminiEmbedderAsync:
 
     @pytest.mark.asyncio
     async def test_async_image_embedding(self, embedder):
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
         embedding = await embedder.async_get_image_embedding(image)
 
         assert isinstance(embedding, list)
@@ -260,8 +244,7 @@ class TestGeminiEmbedderAsync:
 
     @pytest.mark.asyncio
     async def test_async_multimodal_embedding(self, embedder):
-        png_bytes = _generate_test_png()
-        image = Image(content=png_bytes, mime_type="image/png")
+        image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
         embedding = await embedder.async_get_multimodal_embedding(["test text", image])
 
         assert isinstance(embedding, list)
