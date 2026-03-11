@@ -60,14 +60,17 @@ def _build_session_key(
     message: dict,
 ) -> str:
     if forum_thread_id:
-        scope = f"{chat_id}:topic:{forum_thread_id}"
+        scope_suffix = f"{chat_id}:topic:{forum_thread_id}"
     elif is_group:
+        # All replies chain back to the original message; use root as thread anchor
         reply_msg = message.get("reply_to_message")
-        root = reply_msg.get("message_id", message.get("message_id")) if reply_msg else message.get("message_id")
-        scope = f"{chat_id}:thread:{root}"
+        thread_root_id = (
+            reply_msg.get("message_id", message.get("message_id")) if reply_msg else message.get("message_id")
+        )
+        scope_suffix = f"{chat_id}:thread:{thread_root_id}"
     else:
-        scope = str(chat_id)
-    return f"tg:{entity_id}:{scope}"
+        scope_suffix = str(chat_id)
+    return f"tg:{entity_id}:{scope_suffix}"
 
 
 def attach_routes(
@@ -178,6 +181,7 @@ def attach_routes(
                     message_thread_id=forum_thread_id,
                 )
                 return True
+            # Short UUID suffix creates sibling sessions under same (entity, chat, scope)
             new_id = f"{base_key}:{uuid4().hex[:8]}"
             try:
                 session = cfg.session_cls(
@@ -202,52 +206,51 @@ def attach_routes(
             return True
         return False
 
-    async def _deliver_response(
-        response: Optional[Union[RunOutput, TeamRunOutput]],
+    async def _send_error(chat_id: int, reply_to: Optional[int], forum_thread_id: Optional[int]) -> None:
+        await send_message(
+            bot_state.bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
+        )
+
+    async def _send_reasoning(
+        response: Union[RunOutput, TeamRunOutput],
         chat_id: int,
         reply_to: Optional[int],
         forum_thread_id: Optional[int],
     ) -> None:
-        if not response:
-            await send_message(
-                bot_state.bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
-            )
+        if not show_reasoning:
             return
-        if response.status == "ERROR":
-            log_error(response.content)
+        reasoning = getattr(response, "reasoning_content", None)
+        if reasoning:
             await send_message(
-                bot_state.bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
+                bot_state.bot,
+                chat_id,
+                f"Reasoning:\n{reasoning}",
+                reply_to_message_id=reply_to,
+                message_thread_id=forum_thread_id,
             )
-            return
 
-        if show_reasoning:
-            reasoning = getattr(response, "reasoning_content", None)
-            if reasoning:
-                await send_message(
-                    bot_state.bot,
-                    chat_id,
-                    f"Reasoning:\n{reasoning}",
-                    reply_to_message_id=reply_to,
-                    message_thread_id=forum_thread_id,
-                )
-
+    async def _send_text_and_media(
+        response: Union[RunOutput, TeamRunOutput],
+        chat_id: int,
+        reply_to: Optional[int],
+        forum_thread_id: Optional[int],
+    ) -> None:
         any_media_sent = await send_response_media(
             bot_state.bot, response, chat_id, reply_to=reply_to, message_thread_id=forum_thread_id
         )
-
-        # Media captions are capped at 1024 chars. If text overflows the caption,
-        # send the full text as a follow-up message so nothing is lost.
-        if response.content:
-            if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
-                await send_message(bot_state.bot, chat_id, response.content, message_thread_id=forum_thread_id)
-            elif not any_media_sent:
-                await send_message(
-                    bot_state.bot,
-                    chat_id,
-                    response.content,
-                    reply_to_message_id=reply_to,
-                    message_thread_id=forum_thread_id,
-                )
+        if not response.content:
+            return
+        # Media captions are capped at 1024 chars; send overflow as follow-up
+        if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
+            await send_message(bot_state.bot, chat_id, response.content, message_thread_id=forum_thread_id)
+        elif not any_media_sent:
+            await send_message(
+                bot_state.bot,
+                chat_id,
+                response.content,
+                reply_to_message_id=reply_to,
+                message_thread_id=forum_thread_id,
+            )
 
     async def _stream_response(
         message_text: str,
@@ -270,7 +273,8 @@ def attach_routes(
             is_team=entity_type == "team",
             is_workflow=is_wf,
             error_message=error_message,
-            use_draft=is_private,
+            # Typing previews are a DM-only Telegram feature; groups don't support them
+            use_typing_preview=is_private,
         )
 
         async for event in entity.arun(message_text, **stream_kwargs):  # type: ignore[union-attr]
@@ -281,10 +285,21 @@ def attach_routes(
             if ev_raw and await process_event(ev_raw, event, state):
                 break
 
+        # finalize() sends accumulated text — no text send after this
         await state.finalize()
 
-        if not is_wf:
-            await _deliver_response(state.final_run_output, chat_id, reply_to, forum_thread_id)
+        # Post-stream: handle errors and media from the final RunOutput
+        if not is_wf and state.final_run_output:
+            if state.final_run_output.status == "ERROR":
+                await _send_error(chat_id, reply_to, forum_thread_id)
+            else:
+                await send_response_media(
+                    bot_state.bot,
+                    state.final_run_output,
+                    chat_id,
+                    reply_to=reply_to,
+                    message_thread_id=forum_thread_id,
+                )
 
     async def _sync_response(
         message_text: str,
@@ -294,7 +309,13 @@ def attach_routes(
         forum_thread_id: Optional[int],
     ) -> None:
         response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
-        await _deliver_response(response, chat_id, reply_to, forum_thread_id)
+        if not response or response.status == "ERROR":
+            if response:
+                log_error(response.content)
+            await _send_error(chat_id, reply_to, forum_thread_id)
+            return
+        await _send_reasoning(response, chat_id, reply_to, forum_thread_id)
+        await _send_text_and_media(response, chat_id, reply_to, forum_thread_id)
 
     async def _process_message(message: dict) -> None:
         chat_id = message.get("chat", {}).get("id")

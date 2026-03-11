@@ -1,5 +1,5 @@
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,35 +16,22 @@ class _FakeApiTelegramException(Exception):
 
 @pytest.fixture(autouse=True)
 def _mock_telebot():
-    """Mock telebot imports so tests run without pyTelegramBotAPI installed."""
     with (
         patch("agno.tools.telegram.TeleBot") as mock_telebot,
-        patch("agno.tools.telegram.AsyncTeleBot") as mock_async_telebot,
         patch("agno.tools.telegram.ApiTelegramException", _FakeApiTelegramException),
     ):
         mock_telebot.return_value = MagicMock()
-        mock_async_telebot.return_value = AsyncMock()
-        yield {"TeleBot": mock_telebot, "AsyncTeleBot": mock_async_telebot}
+        yield {"TeleBot": mock_telebot}
 
 
 class TestTelegramToolsInit:
-    def test_sync_mode_registers_sync_tools(self, monkeypatch):
+    def test_default_registers_send_message_only(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345")
         assert "send_message" in tools.functions
-        # Media tools default to False — only send_message is on by default
         assert "send_photo" not in tools.functions
-        assert len(tools.async_functions) == 0
-
-    def test_async_mode_registers_async_tools(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        assert "send_message_async" in tools.async_functions
-        assert len(tools.functions) == 0
 
     def test_token_from_env(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "env-token")
@@ -113,21 +100,6 @@ class TestTelegramToolsInit:
         for name in ("send_photo", "send_document", "send_video", "send_audio", "send_animation", "send_sticker"):
             assert name in tools.functions
 
-    def test_media_tools_async_enabled(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(
-            chat_id="12345",
-            async_mode=True,
-            enable_send_video=True,
-            enable_send_audio=True,
-            enable_send_animation=True,
-            enable_send_sticker=True,
-        )
-        for name in ("send_video_async", "send_audio_async", "send_animation_async", "send_sticker_async"):
-            assert name in tools.async_functions
-
     def test_edit_delete_disabled_by_default(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -180,21 +152,12 @@ class TestTelegramToolsInit:
         assert "send_document" in tools.functions
         assert "send_video" not in tools.functions
 
-    def test_sync_mode_creates_only_telebot(self, monkeypatch):
+    def test_creates_telebot_instance(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
 
-        tools = TelegramTools(chat_id="12345", async_mode=False)
+        tools = TelegramTools(chat_id="12345")
         assert hasattr(tools, "bot")
-        assert not hasattr(tools, "async_bot")
-
-    def test_async_mode_creates_only_async_telebot(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        assert hasattr(tools, "async_bot")
-        assert not hasattr(tools, "bot")
 
 
 class TestChatIdProperty:
@@ -223,7 +186,7 @@ class TestChatIdProperty:
             _ = tools._chat_id
 
 
-class TestSendMessageSync:
+class TestSendMessage:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -252,40 +215,7 @@ class TestSendMessageSync:
         assert "Bad Request" in parsed["message"]
 
 
-class TestSendMessageAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 102
-        tools.async_bot.send_message = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_message_async("Hello async")
-        tools.async_bot.send_message.assert_called_once_with("12345", "Hello async")
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 102
-
-    @pytest.mark.asyncio
-    async def test_api_error(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        tools.async_bot.send_message = AsyncMock(
-            side_effect=_FakeApiTelegramException("sendMessage", "Bad Request", 400)
-        )
-
-        result = await tools.send_message_async("Hello")
-        parsed = json.loads(result)
-        assert parsed["status"] == "error"
-        assert "Bad Request" in parsed["message"]
-
-
-class TestSendPhotoSync:
+class TestSendPhoto:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -302,25 +232,7 @@ class TestSendPhotoSync:
         assert parsed["message_id"] == 103
 
 
-class TestSendPhotoAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 104
-        tools.async_bot.send_photo = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_photo_async(b"image-bytes", caption="A photo")
-        tools.async_bot.send_photo.assert_called_once_with("12345", b"image-bytes", caption="A photo")
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 104
-
-
-class TestSendDocumentSync:
+class TestSendDocument:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -337,25 +249,7 @@ class TestSendDocumentSync:
         assert parsed["message_id"] == 105
 
 
-class TestSendDocumentAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 106
-        tools.async_bot.send_document = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_document_async(b"doc-bytes", "report.pdf", caption="Report")
-        tools.async_bot.send_document.assert_called_once_with("12345", ("report.pdf", b"doc-bytes"), caption="Report")
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 106
-
-
-class TestSendVideoSync:
+class TestSendVideo:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -384,25 +278,7 @@ class TestSendVideoSync:
         assert "Bad Request" in parsed["message"]
 
 
-class TestSendVideoAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 108
-        tools.async_bot.send_video = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_video_async(b"video-bytes", caption="A video")
-        tools.async_bot.send_video.assert_called_once_with("12345", b"video-bytes", caption="A video")
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 108
-
-
-class TestSendAudioSync:
+class TestSendAudio:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -431,27 +307,7 @@ class TestSendAudioSync:
         assert "Bad Request" in parsed["message"]
 
 
-class TestSendAudioAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 110
-        tools.async_bot.send_audio = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_audio_async(b"audio-bytes", caption="A song", title="Song Title")
-        tools.async_bot.send_audio.assert_called_once_with(
-            "12345", b"audio-bytes", caption="A song", title="Song Title"
-        )
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 110
-
-
-class TestSendAnimationSync:
+class TestSendAnimation:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -480,25 +336,7 @@ class TestSendAnimationSync:
         assert "Bad Request" in parsed["message"]
 
 
-class TestSendAnimationAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 112
-        tools.async_bot.send_animation = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_animation_async(b"gif-bytes", caption="A GIF")
-        tools.async_bot.send_animation.assert_called_once_with("12345", b"gif-bytes", caption="A GIF")
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 112
-
-
-class TestSendStickerSync:
+class TestSendSticker:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -527,25 +365,7 @@ class TestSendStickerSync:
         assert "Bad Request" in parsed["message"]
 
 
-class TestSendStickerAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 114
-        tools.async_bot.send_sticker = AsyncMock(return_value=mock_result)
-
-        result = await tools.send_sticker_async(b"sticker-bytes")
-        tools.async_bot.send_sticker.assert_called_once_with("12345", b"sticker-bytes")
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 114
-
-
-class TestEditMessageSync:
+class TestEditMessage:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -576,25 +396,7 @@ class TestEditMessageSync:
         assert "Bad Request" in parsed["message"]
 
 
-class TestEditMessageAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True, enable_edit_message=True)
-        mock_result = MagicMock()
-        mock_result.message_id = 42
-        tools.async_bot.edit_message_text = AsyncMock(return_value=mock_result)
-
-        result = await tools.edit_message_async("Updated text", message_id=42)
-        tools.async_bot.edit_message_text.assert_called_once_with("Updated text", chat_id="12345", message_id=42)
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["message_id"] == 42
-
-
-class TestDeleteMessageSync:
+class TestDeleteMessage:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -619,19 +421,3 @@ class TestDeleteMessageSync:
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert "Bad Request" in parsed["message"]
-
-
-class TestDeleteMessageAsync:
-    @pytest.mark.asyncio
-    async def test_success(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        from agno.tools.telegram import TelegramTools
-
-        tools = TelegramTools(chat_id="12345", async_mode=True, enable_delete_message=True)
-        tools.async_bot.delete_message = AsyncMock(return_value=True)
-
-        result = await tools.delete_message_async(message_id=42)
-        tools.async_bot.delete_message.assert_called_once_with("12345", 42)
-        parsed = json.loads(result)
-        assert parsed["status"] == "success"
-        assert parsed["deleted"] is True

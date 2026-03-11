@@ -1,23 +1,23 @@
-"""Telegram workflow with streaming step progress.
+"""
+Streaming Workflow on Telegram
+==============================
 
-Shows real-time step progress in chat:
+Two-step research-and-write workflow with real-time step progress
+in chat. The user sees live status updates as each step runs:
+
   > Running step: research...
   > Completed step: research
   > Running step: write...
-  > Completed step: write
 
-Usage:
-  1. pip install 'agno[telegram,openai]'
-  2. Export env vars:
-       export TELEGRAM_TOKEN="<your-bot-token>"
-       export OPENAI_API_KEY="<your-key>"
-  3. Start server:
-       python cookbook/05_agent_os/interfaces/telegram/streaming_workflow.py
-  4. Start ngrok:
-       ngrok http 7777
-  5. Set webhook:
-       curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<NGROK_URL>/telegram/webhook"
-  6. Message the bot in Telegram and watch step progress appear in real-time.
+Key concepts:
+  - ``stream=True`` on the Telegram interface enables live progress.
+  - ``Steps`` chains sequential ``Step`` objects (research then write).
+  - Each step has its own agent with specialised instructions and tools.
+
+Setup:
+  1. ``pip install 'agno[telegram,openai]'``
+  2. ``export TELEGRAM_TOKEN="..." OPENAI_API_KEY="..."``
+  3. Run this file, then expose via ngrok and set the Telegram webhook.
 """
 
 from agno.agent import Agent
@@ -29,6 +29,10 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db = SqliteDb(
     session_table="telegram_streaming_wf_sessions",
@@ -86,5 +90,15 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    """Run your AgentOS.
+
+    You can see the configuration and available apps at:
+    http://localhost:7777/config
+
+    """
     agent_os.serve(app="streaming_workflow:app", reload=True)

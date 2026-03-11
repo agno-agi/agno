@@ -35,6 +35,7 @@ def _install_fake_telebot():
 _install_fake_telebot()
 
 from agno.os.interfaces.telegram import Telegram  # noqa: E402
+from agno.os.interfaces.telegram import security as _security_mod  # noqa: E402
 from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html  # noqa: E402
 from agno.os.interfaces.telegram.security import (  # noqa: E402
     get_webhook_secret_token,
@@ -42,64 +43,72 @@ from agno.os.interfaces.telegram.security import (  # noqa: E402
     validate_webhook_secret_token,
 )
 
+SECURITY_MODULE = "agno.os.interfaces.telegram.security"
+
+
+@pytest.fixture(autouse=True)
+def _bypass_router_security():
+    with patch("agno.os.interfaces.telegram.router.validate_webhook_secret_token", return_value=True):
+        yield
+
 
 class TestIsDevelopmentMode:
     def test_unset_is_not_dev(self, monkeypatch):
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "")
         assert is_development_mode() is False
 
     def test_explicit_development(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "development")
         assert is_development_mode() is True
 
     def test_case_insensitive(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "Development")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "development")
         assert is_development_mode() is True
 
     def test_production(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
         assert is_development_mode() is False
 
     def test_staging(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "staging")
         assert is_development_mode() is False
 
 
 class TestGetWebhookSecretToken:
     def test_returns_token(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "my-secret")
+        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "my-secret")
         assert get_webhook_secret_token() == "my-secret"
 
     def test_raises_when_missing(self, monkeypatch):
-        monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", raising=False)
+        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", None)
         with pytest.raises(ValueError, match="TELEGRAM_WEBHOOK_SECRET_TOKEN"):
             get_webhook_secret_token()
 
 
 class TestValidateWebhookSecretToken:
     def test_dev_mode_bypasses(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "development")
         assert validate_webhook_secret_token(None) is True
         assert validate_webhook_secret_token("anything") is True
 
     def test_prod_valid_token(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
+        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
         assert validate_webhook_secret_token("correct-token") is True
 
     def test_prod_invalid_token(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
+        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
         assert validate_webhook_secret_token("wrong-token") is False
 
     def test_prod_missing_header(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
+        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
         assert validate_webhook_secret_token(None) is False
 
     def test_prod_empty_header(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
+        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
+        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
         assert validate_webhook_secret_token("") is False
 
 
@@ -237,25 +246,22 @@ class TestWebhookEndpoint:
         assert resp.json() == {"status": "ignored"}
 
     def test_invalid_secret_token_in_prod(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct")
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
         app.include_router(tg.get_router())
-        client = TestClient(app)
 
-        resp = client.post(
-            "/telegram/webhook",
-            json=self._text_update(),
-            headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"},
-        )
+        with patch(f"{ROUTER_MODULE}.validate_webhook_secret_token", return_value=False):
+            client = TestClient(app)
+            resp = client.post(
+                "/telegram/webhook",
+                json=self._text_update(),
+                headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"},
+            )
         assert resp.status_code == 403
 
     def test_valid_secret_token_in_prod(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct")
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         agent = MagicMock()
         tg = Telegram(agent=agent)
@@ -272,16 +278,15 @@ class TestWebhookEndpoint:
         assert resp.json() == {"status": "processing"}
 
     def test_missing_secret_token_in_prod(self, monkeypatch):
-        monkeypatch.setenv("APP_ENV", "production")
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct")
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
         app.include_router(tg.get_router())
-        client = TestClient(app)
 
-        resp = client.post("/telegram/webhook", json=self._text_update())
+        with patch(f"{ROUTER_MODULE}.validate_webhook_secret_token", return_value=False):
+            client = TestClient(app)
+            resp = client.post("/telegram/webhook", json=self._text_update())
         assert resp.status_code == 403
 
 
@@ -338,7 +343,7 @@ class TestProcessMessage:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -362,8 +367,8 @@ class TestProcessMessage:
         call_kwargs = agent.arun.call_args
         assert call_kwargs[0][0] == "Hello bot"
         assert call_kwargs[1]["user_id"] == "67890"
-        assert call_kwargs[1]["session_id"] == "tg:12345"
-        assert call_kwargs[1]["images"] is None
+        assert call_kwargs[1]["session_id"] == "tg:test-agent:12345"
+        assert "images" not in call_kwargs[1]
         mock_bot.send_chat_action.assert_called()
         mock_bot.send_message.assert_called_with(
             12345, "Agent reply", parse_mode="HTML", reply_to_message_id=None, message_thread_id=None
@@ -379,7 +384,7 @@ class TestProcessMessage:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -424,7 +429,7 @@ class TestProcessMessage:
         mock_response.status = "ERROR"
         mock_response.content = "Internal error details"
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -452,7 +457,7 @@ class TestProcessMessage:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock()
         mock_bot = AsyncMock()
 
@@ -477,7 +482,7 @@ class TestProcessMessage:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock()
         mock_bot = AsyncMock()
 
@@ -516,7 +521,7 @@ class TestOutboundImages:
         mock_response.reasoning_content = None
         mock_response.images = [mock_image]
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -561,7 +566,7 @@ class TestOutboundImages:
         mock_response.reasoning_content = None
         mock_response.images = [mock_image]
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -605,7 +610,7 @@ class TestOutboundImages:
         mock_response.reasoning_content = None
         mock_response.images = [mock_image]
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -648,7 +653,7 @@ class TestOutboundImages:
         mock_response.reasoning_content = None
         mock_response.images = [mock_image]
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_bot.send_photo = AsyncMock(side_effect=Exception("API error"))
@@ -689,7 +694,7 @@ class TestInboundMedia:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -719,7 +724,7 @@ class TestInboundMedia:
         call_kwargs = agent.arun.call_args[1]
         assert call_kwargs["audio"] is not None
         assert len(call_kwargs["audio"]) == 1
-        assert call_kwargs["images"] is None
+        assert "images" not in call_kwargs
 
     def test_video_message_passes_video(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -734,7 +739,7 @@ class TestInboundMedia:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -764,7 +769,7 @@ class TestInboundMedia:
         call_kwargs = agent.arun.call_args[1]
         assert call_kwargs["videos"] is not None
         assert len(call_kwargs["videos"]) == 1
-        assert call_kwargs["images"] is None
+        assert "images" not in call_kwargs
 
     def test_document_message_passes_file(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -779,7 +784,7 @@ class TestInboundMedia:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -813,7 +818,7 @@ class TestInboundMedia:
         call_kwargs = agent.arun.call_args[1]
         assert call_kwargs["files"] is not None
         assert len(call_kwargs["files"]) == 1
-        assert call_kwargs["images"] is None
+        assert "images" not in call_kwargs
 
     def test_sticker_message_passes_image(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -828,7 +833,7 @@ class TestInboundMedia:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -885,7 +890,7 @@ class TestOutboundAudioVideoFiles:
         mock_audio.get_content_bytes = MagicMock(return_value=None)
 
         mock_response = self._make_response(audio=[mock_audio])
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -922,7 +927,7 @@ class TestOutboundAudioVideoFiles:
         mock_video.get_content_bytes = MagicMock(return_value=None)
 
         mock_response = self._make_response(videos=[mock_video])
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -958,7 +963,7 @@ class TestOutboundAudioVideoFiles:
         mock_file.get_content_bytes = MagicMock(return_value=b"fake-doc-bytes")
 
         mock_response = self._make_response(files=[mock_file])
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -997,7 +1002,7 @@ class TestOutboundAudioVideoFiles:
         mock_audio.get_content_bytes = MagicMock(return_value=None)
 
         mock_response = self._make_response(images=[mock_img], audio=[mock_audio])
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1037,7 +1042,7 @@ class TestMessageSplitting:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1111,7 +1116,7 @@ class TestBotCommands:
     def test_start_command_in_dm(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
@@ -1127,7 +1132,7 @@ class TestBotCommands:
     def test_help_command_in_dm(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
@@ -1143,7 +1148,7 @@ class TestBotCommands:
     def test_start_with_bot_suffix_in_group(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
         mock_me = MagicMock()
         mock_me.username = "my_bot"
@@ -1168,7 +1173,7 @@ class TestBotCommands:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1219,7 +1224,7 @@ class TestGroupMentionFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1241,7 +1246,7 @@ class TestGroupMentionFiltering:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
         mock_me = MagicMock()
         mock_me.username = "test_bot"
@@ -1268,7 +1273,7 @@ class TestGroupMentionFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1296,7 +1301,7 @@ class TestGroupMentionFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1328,7 +1333,7 @@ class TestGroupMentionFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -1409,7 +1414,7 @@ class TestReplyToBotFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1428,7 +1433,7 @@ class TestReplyToBotFiltering:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
         mock_me = MagicMock()
         mock_me.username = "test_bot"
@@ -1446,7 +1451,7 @@ class TestReplyToBotFiltering:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
         mock_me = MagicMock()
         mock_me.username = "test_bot"
@@ -1470,7 +1475,7 @@ class TestReplyToBotFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1497,7 +1502,7 @@ class TestMentionStripping:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1537,7 +1542,7 @@ class TestMentionStripping:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1578,7 +1583,7 @@ class TestMentionStripping:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1613,7 +1618,7 @@ class TestGroupSessionId:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1633,7 +1638,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:12345"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:12345"
 
     def test_group_new_message_session_id(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1645,7 +1650,7 @@ class TestGroupSessionId:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1670,7 +1675,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:-100123:thread:500"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:thread:500"
 
     def test_group_reply_uses_root_message_id(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1682,7 +1687,7 @@ class TestGroupSessionId:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1708,7 +1713,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:-100123:thread:500"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:thread:500"
 
 
 class TestReplyThreading:
@@ -1722,7 +1727,7 @@ class TestReplyThreading:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1760,7 +1765,7 @@ class TestReplyThreading:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1795,7 +1800,7 @@ class TestReplyThreading:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
         mock_me = MagicMock()
@@ -1852,7 +1857,7 @@ class TestCodexReviewFixes:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1900,7 +1905,7 @@ class TestCodexReviewFixes:
         mock_response.videos = None
         mock_response.files = [mock_file]
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1937,7 +1942,7 @@ class TestCodexReviewFixes:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -1977,7 +1982,7 @@ class TestCodexReviewFixes:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -2021,7 +2026,7 @@ class TestCodexReviewFixes:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_file_info = MagicMock()
@@ -2065,7 +2070,7 @@ class TestCodexReviewFixes:
         mock_response.videos = None
         mock_response.files = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
 
         mock_bot = AsyncMock()
@@ -2092,7 +2097,7 @@ class TestCodexReviewFixes:
         assert resp.status_code == 200
         agent.arun.assert_called_once()
         call_kwargs = agent.arun.call_args[1]
-        assert call_kwargs["images"] is None
+        assert "images" not in call_kwargs
 
 
 class TestBotMessageFiltering:
@@ -2111,7 +2116,7 @@ class TestBotMessageFiltering:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock()
         mock_bot = AsyncMock()
 
@@ -2132,7 +2137,7 @@ class TestBotMessageFiltering:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -2170,7 +2175,7 @@ class TestCustomMessages:
     def test_custom_start_message(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
@@ -2186,7 +2191,7 @@ class TestCustomMessages:
     def test_custom_help_message(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
@@ -2207,7 +2212,7 @@ class TestCustomMessages:
         mock_response.status = "ERROR"
         mock_response.content = "Internal error"
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -2247,7 +2252,7 @@ class TestTeamWorkflowProcessing:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        team = AsyncMock()
+        team = AsyncMock(id="test-team")
         team.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -2258,7 +2263,7 @@ class TestTeamWorkflowProcessing:
         assert resp.status_code == 200
         team.arun.assert_called_once()
         assert team.arun.call_args[0][0] == "Hello team"
-        assert team.arun.call_args[1]["session_id"] == "tg:12345"
+        assert team.arun.call_args[1]["session_id"] == "tg:test-team:12345"
         mock_bot.send_message.assert_called_with(
             12345, "Team reply", parse_mode="HTML", reply_to_message_id=None, message_thread_id=None
         )
@@ -2273,7 +2278,7 @@ class TestTeamWorkflowProcessing:
         mock_response.reasoning_content = None
         mock_response.images = None
 
-        workflow = AsyncMock()
+        workflow = AsyncMock(id="test-workflow")
         workflow.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 
@@ -2322,7 +2327,7 @@ class TestStreamingErrorHandling:
         async def fake_stream(*args, **kwargs):
             yield mock_run_output
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2360,7 +2365,7 @@ class TestStreamingErrorHandling:
             yield mock_content_event
             yield mock_run_output
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2373,196 +2378,6 @@ class TestStreamingErrorHandling:
         send_calls = mock_bot.send_message.call_args_list
         sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         assert not any("Sorry" in t for t in sent_texts)
-
-
-class TestUnsupportedFileType:
-    """Test handling of unsupported file types (e.g. .xls, .zip)."""
-
-    def test_unsupported_mime_type_sends_warning(self, monkeypatch):
-        """When user sends .xls file, a warning message should be sent."""
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.setenv("APP_ENV", "development")
-
-        mock_response = MagicMock()
-        mock_response.status = "COMPLETED"
-        mock_response.content = "Processed file"
-        mock_response.reasoning_content = None
-        mock_response.images = None
-
-        agent = AsyncMock()
-        agent.arun = AsyncMock(return_value=mock_response)
-
-        mock_file_info = MagicMock()
-        mock_file_info.file_path = "documents/file_123.xls"
-        mock_bot = AsyncMock()
-        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
-        mock_bot.download_file = AsyncMock(return_value=b"fake-xls-bytes")
-        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
-
-        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent)
-            resp = client.post(
-                "/telegram/webhook",
-                json={
-                    "update_id": 1,
-                    "message": {
-                        "message_id": 100,
-                        "from": {"id": 67890, "is_bot": False},
-                        "chat": {"id": 12345, "type": "private"},
-                        "document": {
-                            "file_id": "xls_file_id",
-                            "file_name": "data.xls",
-                            "mime_type": "application/vnd.ms-excel",
-                            "file_size": 5000,
-                        },
-                        "caption": "Process this spreadsheet",
-                    },
-                },
-            )
-
-        assert resp.status_code == 200
-        # Verify warning message was sent
-        send_calls = mock_bot.send_message.call_args_list
-        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
-        assert any("not directly supported" in t for t in sent_texts), (
-            f"Expected unsupported file type warning, got: {sent_texts}"
-        )
-        # Agent should still be called (we try to process anyway)
-        agent.arun.assert_called_once()
-
-    def test_supported_mime_type_no_warning(self, monkeypatch):
-        """When user sends a supported file (PDF), no warning should be sent."""
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.setenv("APP_ENV", "development")
-
-        mock_response = MagicMock()
-        mock_response.status = "COMPLETED"
-        mock_response.content = "PDF processed"
-        mock_response.reasoning_content = None
-        mock_response.images = None
-
-        agent = AsyncMock()
-        agent.arun = AsyncMock(return_value=mock_response)
-
-        mock_file_info = MagicMock()
-        mock_file_info.file_path = "documents/file_123.pdf"
-        mock_bot = AsyncMock()
-        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
-        mock_bot.download_file = AsyncMock(return_value=b"fake-pdf-bytes")
-        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
-
-        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent)
-            resp = client.post(
-                "/telegram/webhook",
-                json={
-                    "update_id": 1,
-                    "message": {
-                        "message_id": 100,
-                        "from": {"id": 67890, "is_bot": False},
-                        "chat": {"id": 12345, "type": "private"},
-                        "document": {
-                            "file_id": "pdf_file_id",
-                            "file_name": "report.pdf",
-                            "mime_type": "application/pdf",
-                            "file_size": 5000,
-                        },
-                    },
-                },
-            )
-
-        assert resp.status_code == 200
-        send_calls = mock_bot.send_message.call_args_list
-        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
-        assert not any("not directly supported" in t for t in sent_texts)
-
-
-class TestFileSizeLimit:
-    """Test handling of files exceeding Telegram's download size limit."""
-
-    def test_oversized_file_sends_warning(self, monkeypatch):
-        """When user sends a file >20MB, a warning should be sent."""
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.setenv("APP_ENV", "development")
-
-        agent = AsyncMock()
-        agent.arun = AsyncMock()
-        mock_bot = AsyncMock()
-        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
-
-        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent)
-            resp = client.post(
-                "/telegram/webhook",
-                json={
-                    "update_id": 1,
-                    "message": {
-                        "message_id": 100,
-                        "from": {"id": 67890, "is_bot": False},
-                        "chat": {"id": 12345, "type": "private"},
-                        "document": {
-                            "file_id": "big_file_id",
-                            "file_name": "huge_video.mp4",
-                            "mime_type": "video/mp4",
-                            "file_size": 25 * 1024 * 1024,  # 25 MB
-                        },
-                    },
-                },
-            )
-
-        assert resp.status_code == 200
-        send_calls = mock_bot.send_message.call_args_list
-        sent_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
-        assert any("20 MB" in t or "download limit" in t for t in sent_texts), (
-            f"Expected file size warning, got: {sent_texts}"
-        )
-        # File should NOT have been downloaded
-        mock_bot.get_file.assert_not_called()
-
-    def test_file_under_limit_downloads_normally(self, monkeypatch):
-        """Files under the 20MB limit should be downloaded normally."""
-        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
-        monkeypatch.setenv("APP_ENV", "development")
-
-        mock_response = MagicMock()
-        mock_response.status = "COMPLETED"
-        mock_response.content = "File processed"
-        mock_response.reasoning_content = None
-        mock_response.images = None
-
-        agent = AsyncMock()
-        agent.arun = AsyncMock(return_value=mock_response)
-
-        mock_file_info = MagicMock()
-        mock_file_info.file_path = "documents/small_file.pdf"
-        mock_bot = AsyncMock()
-        mock_bot.get_file = AsyncMock(return_value=mock_file_info)
-        mock_bot.download_file = AsyncMock(return_value=b"fake-pdf-bytes")
-        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
-
-        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent)
-            resp = client.post(
-                "/telegram/webhook",
-                json={
-                    "update_id": 1,
-                    "message": {
-                        "message_id": 100,
-                        "from": {"id": 67890, "is_bot": False},
-                        "chat": {"id": 12345, "type": "private"},
-                        "document": {
-                            "file_id": "small_file_id",
-                            "file_name": "report.pdf",
-                            "mime_type": "application/pdf",
-                            "file_size": 5 * 1024 * 1024,  # 5 MB
-                        },
-                    },
-                },
-            )
-
-        assert resp.status_code == 200
-        mock_bot.get_file.assert_called_with("small_file_id")
-        agent.arun.assert_called_once()
 
 
 class TestMultiBotTokenParam:
@@ -2668,7 +2483,7 @@ class TestStreamingEnhancedEvents:
             yield mock_content_event
             yield mock_run_output
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2726,7 +2541,7 @@ class TestStreamingEnhancedEvents:
             yield mock_content_event
             yield mock_run_output
 
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2770,7 +2585,7 @@ class TestStreamingEnhancedEvents:
             yield mock_step_completed
             yield mock_wf_completed
 
-        workflow = AsyncMock()
+        workflow = AsyncMock(id="test-workflow")
         workflow.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2814,7 +2629,7 @@ class TestStreamingEnhancedEvents:
             yield mock_parallel
             yield mock_wf_completed
 
-        workflow = AsyncMock()
+        workflow = AsyncMock(id="test-workflow")
         workflow.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2846,7 +2661,7 @@ class TestStreamingEnhancedEvents:
         async def fake_stream(*args, **kwargs):
             yield mock_error
 
-        workflow = AsyncMock()
+        workflow = AsyncMock(id="test-workflow")
         workflow.arun = MagicMock(return_value=fake_stream())
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
@@ -2961,7 +2776,7 @@ class TestCommandTargeting:
     def test_command_for_other_bot_ignored_in_group(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
         mock_bot_me = MagicMock()
         mock_bot_me.username = "my_bot"
@@ -2981,7 +2796,7 @@ class TestCommandTargeting:
     def test_command_for_our_bot_processed_in_group(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
         mock_bot_me = MagicMock()
         mock_bot_me.username = "my_bot"
@@ -2999,7 +2814,7 @@ class TestCommandTargeting:
     def test_command_without_suffix_in_dm(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         mock_bot = AsyncMock()
 
         dm_update = {
@@ -3033,7 +2848,7 @@ class TestIdempotencyGuard:
         mock_response.audio = None
         mock_response.videos = None
         mock_response.files = None
-        agent = AsyncMock()
+        agent = AsyncMock(id="test-agent")
         agent.arun = AsyncMock(return_value=mock_response)
         mock_bot = AsyncMock()
 

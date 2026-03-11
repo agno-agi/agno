@@ -1,8 +1,28 @@
+"""
+Basic Telegram Agent
+====================
+
+Minimal Telegram bot that responds to messages in private chats and
+when mentioned in groups. Uses SQLite for session persistence so the
+agent remembers conversation history across restarts.
+
+Key concepts:
+  - ``reply_to_mentions_only=True`` ignores regular group messages and
+    only responds when the bot is mentioned with @.
+  - ``add_history_to_context=True`` feeds the last N runs back into the prompt.
+
+Setup: Set TELEGRAM_TOKEN env var from @BotFather.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.os.app import AgentOS
 from agno.os.interfaces.telegram import Telegram
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(session_table="telegram_sessions", db_file="tmp/telegram_basic.db")
 
@@ -32,5 +52,15 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    """Run your AgentOS.
+
+    You can see the configuration and available apps at:
+    http://localhost:7777/config
+
+    """
     agent_os.serve(app="basic:app", reload=True)

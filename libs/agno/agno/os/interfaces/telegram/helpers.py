@@ -33,7 +33,6 @@ async def _download(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
 
 
 def _get_file_id(message: dict) -> tuple[Optional[str], Optional[str], Optional[str], Optional[dict]]:
-    """Extract file IDs from a Telegram message. Returns (image, audio, video, document_meta)."""
     if message.get("photo"):
         return message["photo"][-1]["file_id"], None, None, None
     if message.get("sticker"):
@@ -55,7 +54,6 @@ def _get_file_id(message: dict) -> tuple[Optional[str], Optional[str], Optional[
 
 
 async def extract_message(bot: "AsyncTeleBot", message: dict) -> Optional[dict]:
-    """Extract text and media from a Telegram message. Returns arun-ready kwargs dict or None."""
     text = message.get("text") or message.get("caption")
     image_id, audio_id, video_id, doc_meta = _get_file_id(message)
 
@@ -115,7 +113,6 @@ async def send_message(
             message_thread_id=message_thread_id,
         )
     return result
-
 
 
 async def send_response_media(

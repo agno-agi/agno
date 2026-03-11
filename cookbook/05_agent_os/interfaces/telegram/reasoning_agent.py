@@ -1,3 +1,19 @@
+"""
+Telegram Reasoning Agent
+========================
+
+Telegram bot powered by Claude with chain-of-thought reasoning and web
+search. Uses ReasoningTools for structured thinking and DuckDuckGo for
+live information retrieval.
+
+Key concepts:
+  - ``ReasoningTools`` gives the agent explicit think/reason tool calls.
+  - ``DuckDuckGoTools`` provides web search for up-to-date information.
+  - SQLite session persistence keeps conversation history across restarts.
+
+Setup: Set TELEGRAM_TOKEN env var from @BotFather.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic.claude import Claude
@@ -5,6 +21,10 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.telegram import Telegram
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
@@ -22,13 +42,15 @@ reasoning_agent = Agent(
 )
 
 
-# Setup our AgentOS app
 agent_os = AgentOS(
     agents=[reasoning_agent],
     interfaces=[Telegram(agent=reasoning_agent)],
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

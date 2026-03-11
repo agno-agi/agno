@@ -1,3 +1,19 @@
+"""
+Telegram Workflow Agent
+=======================
+
+Two-step draft-and-edit workflow on Telegram. A Drafter agent writes an
+initial response, then an Editor agent polishes it for clarity and
+conciseness before sending the final result to the user.
+
+Key concepts:
+  - ``Workflow`` with sequential ``Steps`` chains multiple agents.
+  - The workflow (not individual agents) is passed to the Telegram interface.
+  - SQLite session persistence keeps conversation history across restarts.
+
+Setup: Set TELEGRAM_TOKEN env var from @BotFather.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -6,6 +22,10 @@ from agno.os.interfaces.telegram import Telegram
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(
     session_table="telegram_workflow_sessions", db_file="tmp/telegram_workflow.db"
@@ -62,5 +82,15 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    """Run your AgentOS.
+
+    You can see the configuration and available apps at:
+    http://localhost:7777/config
+
+    """
     agent_os.serve(app="workflow:app", reload=True)

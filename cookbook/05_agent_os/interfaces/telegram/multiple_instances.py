@@ -1,9 +1,29 @@
+"""
+Multiple Telegram Bot Instances
+================================
+
+Runs two agents behind a single Telegram bot using URL path prefixes
+to route messages. Each agent gets its own webhook endpoint and can
+optionally use a separate bot token for full isolation.
+
+Key concepts:
+  - ``prefix="/basic"`` and ``prefix="/web-research"`` give each agent its own webhook path.
+  - Pass ``token=`` per instance to use separate bot tokens, or omit to share one.
+  - Both agents share the same AgentOS server and SQLite database.
+
+Setup: Set TELEGRAM_TOKEN env var from @BotFather.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.telegram import Telegram
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
@@ -27,7 +47,6 @@ web_research_agent = Agent(
     add_datetime_to_context=True,
 )
 
-# Setup our AgentOS app
 # Each Telegram interface can use a different prefix (and optionally a different bot token).
 # If you want truly separate bots, pass token= to each instance:
 #   Telegram(agent=basic_agent, prefix="/basic", token="BOT_TOKEN_1"),
@@ -42,6 +61,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

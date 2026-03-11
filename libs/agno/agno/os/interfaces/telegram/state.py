@@ -22,11 +22,11 @@ if TYPE_CHECKING:
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
-# Minimum seconds between Telegram message edits to avoid 429 rate limits
+# Regular message edits hit Telegram's 1 msg/sec per-chat rate limit
 TG_STREAM_EDIT_INTERVAL = 1.0
 
-# Draft mode uses a dedicated streaming API with less aggressive rate limits.
-TG_DRAFT_EDIT_INTERVAL = 0.3
+# Typing previews are client-side (DM-only) and tolerate faster updates
+TG_TYPING_PREVIEW_INTERVAL = 0.3
 
 
 # Resolved once at startup — maps entity_type to session constructor args
@@ -136,7 +136,9 @@ class StreamState:
         is_team: bool,
         is_workflow: bool,
         error_message: str,
-        use_draft: bool = False,
+        # Typing previews: native animated text display (Telegram DM feature).
+        # Faster updates than message edits, auto-disappears on finalize
+        use_typing_preview: bool = False,
     ):
         self.bot = bot
         self.chat_id = chat_id
@@ -146,16 +148,17 @@ class StreamState:
         self.is_team = is_team
         self.is_workflow = is_workflow
         self.error_message = error_message
-        # Draft mode: sendMessageDraft for native animated streaming (DMs only)
-        self.use_draft = use_draft
-        self.draft_id: int = 0
+        self.use_typing_preview = use_typing_preview
+        self.typing_preview_id: int = 0
 
         self.sent_message_id: Optional[int] = None
+        # Built by event handlers in events.py; rendered by build_display_html()
         self.accumulated_content: str = ""
         self.status_lines: list[str] = []
         self.last_edit_time: float = 0.0
+        # Set by _stream_response in router.py; used post-stream for error/media handling
         self.final_run_output: Optional[Union["RunOutput", "TeamRunOutput"]] = None
-        # Set by workflow run_completed handler; used by finalize to emit final content
+        # Set by _on_step_output in events.py; fallback if workflow omits final RunContent
         self.workflow_final_content: Optional[str] = None
 
     # -- Status line management --
@@ -202,19 +205,19 @@ class StreamState:
             if "message is not modified" not in str(e):
                 log_warning(f"Failed to edit message: {e}")
 
-    async def _draft(self, html: str) -> None:
-        if self.draft_id == 0:
-            self.draft_id = random.randint(1, 2**31 - 1)
+    async def _send_typing_preview(self, html: str) -> None:
+        if self.typing_preview_id == 0:
+            self.typing_preview_id = random.randint(1, 2**31 - 1)
         try:
             await self.bot.send_message_draft(
                 chat_id=self.chat_id,
-                draft_id=self.draft_id,
+                draft_id=self.typing_preview_id,
                 text=html,
                 parse_mode="HTML",
                 message_thread_id=self.message_thread_id,
             )
         except Exception as e:
-            log_warning(f"Failed to send draft: {e}")
+            log_warning(f"Failed to send typing preview: {e}")
 
     async def _send_chunks(self, content: str) -> None:
         await send_message(
@@ -227,12 +230,14 @@ class StreamState:
 
     # -- Public streaming interface --
 
+    # First call sends a new message, subsequent calls edit it.
+    # Typing preview mode always sends new (no edit needed — preview updates in-place)
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
             return
         display = html[:TG_MAX_MESSAGE_LENGTH]
-        if self.use_draft:
-            await self._draft(display)
+        if self.use_typing_preview:
+            await self._send_typing_preview(display)
         elif self.sent_message_id is None:
             msg = await self._send_new(display)
             self.sent_message_id = msg.message_id
@@ -240,20 +245,23 @@ class StreamState:
             await self._edit(display)
         self.last_edit_time = time.monotonic()
 
-    async def flush(self) -> None:
+    async def update_display(self) -> None:
         try:
             await self.send_or_edit(self.build_display_html())
         except Exception as e:
             log_warning(f"Stream display update failed: {e}")
 
+    # Final flush after stream ends.
+    # Typing preview: send as real message (preview auto-disappears).
+    # Regular: edit existing message, or chunk if overflow
     async def finalize(self) -> None:
         self.resolve_all_pending()
         final_html = self.build_display_html()
         if not final_html:
             return
 
-        # Draft mode: send final content as a real message (draft disappears on its own)
-        if self.use_draft:
+        # Typing preview: send final content as a real message (preview disappears on its own)
+        if self.use_typing_preview:
             if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
                 msg = await self._send_new(final_html)
                 self.sent_message_id = msg.message_id

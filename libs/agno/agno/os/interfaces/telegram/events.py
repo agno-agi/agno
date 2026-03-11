@@ -2,7 +2,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict
 
 from agno.agent import RunEvent
-from agno.os.interfaces.telegram.state import TG_DRAFT_EDIT_INTERVAL, TG_STREAM_EDIT_INTERVAL, StreamState
+from agno.os.interfaces.telegram.state import TG_STREAM_EDIT_INTERVAL, TG_TYPING_PREVIEW_INTERVAL, StreamState
 from agno.run.workflow import WorkflowRunEvent
 from agno.utils.log import log_error, log_warning
 
@@ -32,6 +32,8 @@ _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
 _EventHandler = Callable[["BaseRunOutputEvent", StreamState], Awaitable[bool]]
 
 
+# TeamRunEvent prefixes names with "Team" (e.g. "TeamRunStarted");
+# strip prefix to share HANDLERS table with RunEvent
 def _normalize_event(event: str) -> str:
     return event.removeprefix("Team")
 
@@ -43,13 +45,13 @@ def _get_tool_name(chunk: "BaseRunOutputEvent") -> str:
 
 async def _on_reasoning_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     state.add_status("Reasoning...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
 async def _on_reasoning_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     state.update_status("Reasoning...", "Reasoned")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -62,13 +64,14 @@ async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState)
             pass
         return False
 
+    # Teams emit agent_name to show which member uses the tool; agents have no agent_name
     agent_label = ""
     if state.is_team:
         agent_name = getattr(chunk, "agent_name", None)
         if agent_name:
             agent_label = f"[{agent_name}] "
     state.add_status(f"{agent_label}Using {tool_name}...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -81,7 +84,7 @@ async def _on_tool_call_completed(chunk: "BaseRunOutputEvent", state: StreamStat
         if f"Using {tool_name}..." in line:
             state.status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
             break
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -96,7 +99,7 @@ async def _on_tool_call_error(chunk: "BaseRunOutputEvent", state: StreamState) -
             break
     if not found:
         state.add_status(f"{tool_name} failed")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -105,7 +108,7 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
     if content is not None:
         state.accumulated_content += str(content)
         now = time.monotonic()
-        interval = TG_DRAFT_EDIT_INTERVAL if state.use_draft else TG_STREAM_EDIT_INTERVAL
+        interval = TG_TYPING_PREVIEW_INTERVAL if state.use_typing_preview else TG_STREAM_EDIT_INTERVAL
         if now - state.last_edit_time >= interval:
             try:
                 await state.send_or_edit(state.build_display_html())
@@ -141,20 +144,20 @@ async def _on_run_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool
 
 async def _on_memory_update_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     state.add_status("Updating memory...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
 async def _on_memory_update_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     state.update_status("Updating memory...", "Memory updated")
-    await state.flush()
+    await state.update_display()
     return False
 
 
 async def _on_workflow_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     wf_name = getattr(chunk, "workflow_name", None) or "Workflow"
     state.add_status(f"Running workflow: {wf_name}...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -164,6 +167,7 @@ async def _on_workflow_completed(chunk: "BaseRunOutputEvent", state: StreamState
     if content:
         state.accumulated_content = str(content)
     elif state.workflow_final_content:
+        # Step output from final step is fallback when workflow omits final RunContent
         state.accumulated_content = state.workflow_final_content
     return False
 
@@ -177,7 +181,7 @@ async def _on_workflow_error(chunk: "BaseRunOutputEvent", state: StreamState) ->
 async def _on_step_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     step_name = getattr(chunk, "step_name", None) or "unknown"
     state.add_status(f"Running step: {step_name}...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -187,14 +191,14 @@ async def _on_step_completed(chunk: "BaseRunOutputEvent", state: StreamState) ->
     content = getattr(chunk, "content", None)
     if content:
         state.accumulated_content = str(content)
-    await state.flush()
+    await state.update_display()
     return False
 
 
 async def _on_step_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     step_name = getattr(chunk, "step_name", None) or "unknown"
     state.update_status(f"Running step: {step_name}...", f"Step failed: {step_name}")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -208,14 +212,14 @@ async def _on_step_output(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
 async def _on_workflow_agent_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     agent_name = getattr(chunk, "agent_name", None) or "agent"
     state.add_status(f"Running agent: {agent_name}...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
 async def _on_workflow_agent_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     agent_name = getattr(chunk, "agent_name", None) or "agent"
     state.update_status(f"Running agent: {agent_name}...", f"Completed agent: {agent_name}")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -224,7 +228,7 @@ async def _on_loop_execution_started(chunk: "BaseRunOutputEvent", state: StreamS
     max_iter = getattr(chunk, "max_iterations", None)
     label = f"Loop: {step_name}" + (f" (max {max_iter})" if max_iter else "")
     state.add_status(f"{label}...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -234,7 +238,7 @@ async def _on_loop_iteration_started(chunk: "BaseRunOutputEvent", state: StreamS
     max_iter = getattr(chunk, "max_iterations", None)
     label = f"{step_name}: iteration {iteration}" + (f"/{max_iter}" if max_iter else "")
     state.add_status(f"{label}...")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -242,14 +246,14 @@ async def _on_loop_iteration_completed(chunk: "BaseRunOutputEvent", state: Strea
     step_name = getattr(chunk, "step_name", None) or "loop"
     iteration = getattr(chunk, "iteration", 0)
     state.update_status(f"{step_name}: iteration {iteration}...", f"{step_name}: iteration {iteration} done")
-    await state.flush()
+    await state.update_display()
     return False
 
 
 async def _on_loop_execution_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     step_name = getattr(chunk, "step_name", None) or "loop"
     state.update_status(f"Loop: {step_name}", f"Loop: {step_name} completed")
-    await state.flush()
+    await state.update_display()
     return False
 
 
@@ -260,7 +264,7 @@ def _make_wf_handler(label: str, *, started: bool) -> _EventHandler:
             state.add_status(f"{label}...")
         else:
             state.update_status(f"{label}...", f"{label} completed")
-        await state.flush()
+        await state.update_display()
         return False
 
     return handler

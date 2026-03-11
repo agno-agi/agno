@@ -1,3 +1,19 @@
+"""
+Telegram Agent with User Memory
+================================
+
+Personal assistant bot that remembers user preferences, hobbies, and
+interests across conversations. Uses MemoryManager to automatically
+capture and recall personal details from chat history.
+
+Key concepts:
+  - ``MemoryManager`` with custom capture instructions extracts user info.
+  - ``enable_agentic_memory=True`` lets the agent store and retrieve memories.
+  - ``WebSearchTools`` provides live information for conversational context.
+
+Setup: Set TELEGRAM_TOKEN env var from @BotFather.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -7,6 +23,10 @@ from agno.models.google import Gemini
 from agno.os.app import AgentOS
 from agno.os.interfaces.telegram import Telegram
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
@@ -40,13 +60,15 @@ personal_agent = Agent(
 )
 
 
-# Setup our AgentOS app
 agent_os = AgentOS(
     agents=[personal_agent],
     interfaces=[Telegram(agent=personal_agent)],
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

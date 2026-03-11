@@ -1,3 +1,19 @@
+"""
+Telegram Media Agent
+====================
+
+Multimedia Telegram bot that can generate images with DALL-E, produce
+speech and sound effects with ElevenLabs, and analyze images, audio,
+and video that users send.
+
+Key concepts:
+  - ``DalleTools`` for image generation from text prompts.
+  - ``ElevenLabsTools`` for text-to-speech and sound effect generation.
+  - Telegram interface automatically sends generated media files back to chat.
+
+Setup: Set TELEGRAM_TOKEN env var from @BotFather.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
@@ -5,6 +21,10 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.telegram import Telegram
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(
     session_table="telegram_media_sessions", db_file="tmp/telegram_media.db"
@@ -48,5 +68,15 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    """Run your AgentOS.
+
+    You can see the configuration and available apps at:
+    http://localhost:7777/config
+
+    """
     agent_os.serve(app="agent_with_media:app", reload=True)
