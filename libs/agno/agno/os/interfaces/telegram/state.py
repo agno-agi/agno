@@ -9,7 +9,7 @@ from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.telegram.formatting import escape_html, markdown_to_telegram_html
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
-    send_chunked,
+    send_message,
 )
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
@@ -189,7 +189,7 @@ class StreamState:
     # -- Low-level Telegram API helpers --
     # Each tries HTML parse_mode first, falls back to plain on parse error
 
-    async def _send_html(self, html: str) -> Any:
+    async def _send_message(self, html: str) -> Any:
         try:
             return await self.bot.send_message(
                 self.chat_id,
@@ -239,7 +239,7 @@ class StreamState:
                 pass
 
     async def _send_as_chunks(self, content: str) -> None:
-        await send_chunked(
+        await send_message(
             self.bot,
             self.chat_id,
             content,
@@ -256,7 +256,7 @@ class StreamState:
         if self.use_draft:
             await self._draft_html(display)
         elif self.sent_message_id is None:
-            msg = await self._send_html(display)
+            msg = await self._send_message(display)
             self.sent_message_id = msg.message_id
         else:
             await self._edit_html(display)
@@ -294,7 +294,7 @@ class StreamState:
 
     async def _finalize_draft(self, final_html: str) -> None:
         if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
-            msg = await self._send_html(final_html)
+            msg = await self._send_message(final_html)
             self.sent_message_id = msg.message_id
         else:
             await self._send_as_chunks(self.accumulated_content)

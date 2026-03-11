@@ -88,14 +88,14 @@ async def extract_message(bot: "AsyncTeleBot", message: dict) -> Optional[dict]:
     return result
 
 
-async def send_html(
+async def send_message(
     bot: "AsyncTeleBot",
     chat_id: int,
     text: str,
     reply_to_message_id: Optional[int] = None,
     message_thread_id: Optional[int] = None,
 ) -> Any:
-    try:
+    if len(text) <= TG_MAX_MESSAGE_LENGTH:
         return await bot.send_message(
             chat_id,
             markdown_to_telegram_html(text),
@@ -103,44 +103,22 @@ async def send_html(
             reply_to_message_id=reply_to_message_id,
             message_thread_id=message_thread_id,
         )
-    except Exception:
-        return await bot.send_message(
-            chat_id,
-            text,
-            reply_to_message_id=reply_to_message_id,
-            message_thread_id=message_thread_id,
-        )
-
-
-async def edit_html(bot: "AsyncTeleBot", text: str, chat_id: int, message_id: int) -> Any:
-    try:
-        return await bot.edit_message_text(markdown_to_telegram_html(text), chat_id, message_id, parse_mode="HTML")
-    except Exception:
-        return await bot.edit_message_text(text, chat_id, message_id)
-
-
-async def send_chunked(
-    bot: "AsyncTeleBot",
-    chat_id: int,
-    text: str,
-    reply_to_message_id: Optional[int] = None,
-    message_thread_id: Optional[int] = None,
-) -> None:
-    if len(text) <= TG_MAX_MESSAGE_LENGTH:
-        await send_html(
-            bot, chat_id, text, reply_to_message_id=reply_to_message_id, message_thread_id=message_thread_id
-        )
-        return
     chunks: List[str] = [text[i : i + TG_CHUNK_SIZE] for i in range(0, len(text), TG_CHUNK_SIZE)]
+    result = None
     for i, chunk in enumerate(chunks, 1):
         reply_id = reply_to_message_id if i == 1 else None
-        await send_html(
-            bot,
+        result = await bot.send_message(
             chat_id,
-            f"[{i}/{len(chunks)}] {chunk}",
+            markdown_to_telegram_html(f"[{i}/{len(chunks)}] {chunk}"),
+            parse_mode="HTML",
             reply_to_message_id=reply_id,
             message_thread_id=message_thread_id,
         )
+    return result
+
+
+async def edit_html(bot: "AsyncTeleBot", text: str, chat_id: int, message_id: int) -> Any:
+    return await bot.edit_message_text(markdown_to_telegram_html(text), chat_id, message_id, parse_mode="HTML")
 
 
 async def send_response_media(

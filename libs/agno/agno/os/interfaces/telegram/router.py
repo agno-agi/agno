@@ -13,8 +13,7 @@ from agno.os.interfaces.telegram.helpers import (
     TG_MAX_CAPTION_LENGTH,
     extract_message,
     is_bot_mentioned,
-    send_chunked,
-    send_html,
+    send_message,
     send_response_media,
 )
 from agno.os.interfaces.telegram.security import validate_webhook_secret_token
@@ -146,15 +145,15 @@ def attach_routes(
     ) -> bool:
         bot = bot_state.bot
         if cmd == "/start":
-            await send_html(bot, chat_id, start_message, message_thread_id=forum_thread_id)
+            await send_message(bot, chat_id, start_message, message_thread_id=forum_thread_id)
             return True
         if cmd == "/help":
-            await send_html(bot, chat_id, help_message, message_thread_id=forum_thread_id)
+            await send_message(bot, chat_id, help_message, message_thread_id=forum_thread_id)
             return True
         if cmd == "/new":
             cfg = bot_state.session_config
             if not cfg.has_db:
-                await send_html(
+                await send_message(
                     bot,
                     chat_id,
                     "Session management requires storage. Add a database to enable /new.",
@@ -173,10 +172,10 @@ def attach_routes(
                     await cfg.db.upsert_session(session)
                 else:
                     cfg.db.upsert_session(session)
-                await send_html(bot, chat_id, new_message, message_thread_id=forum_thread_id)
+                await send_message(bot, chat_id, new_message, message_thread_id=forum_thread_id)
             except Exception as e:
                 log_warning(f"Failed to persist new session to DB: {e}")
-                await send_html(
+                await send_message(
                     bot,
                     chat_id,
                     "Failed to create new session. Please try again.",
@@ -234,7 +233,7 @@ def attach_routes(
 
         if response.status == "ERROR":
             log_error(response.content)
-            await send_chunked(
+            await send_message(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
             return
@@ -242,7 +241,7 @@ def attach_routes(
         if show_reasoning:
             reasoning = getattr(response, "reasoning_content", None)
             if reasoning:
-                await send_chunked(
+                await send_message(
                     bot,
                     chat_id,
                     f"Reasoning:\n{reasoning}",
@@ -257,9 +256,9 @@ def attach_routes(
         # Match _sync_response: send text that overflows media caption limit
         if response.content:
             if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
-                await send_chunked(bot, chat_id, response.content, message_thread_id=forum_thread_id)
+                await send_message(bot, chat_id, response.content, message_thread_id=forum_thread_id)
             elif not any_media_sent:
-                await send_chunked(
+                await send_message(
                     bot, chat_id, response.content, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
                 )
 
@@ -274,13 +273,13 @@ def attach_routes(
         response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
 
         if not response:
-            await send_chunked(
+            await send_message(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
             return
 
         if response.status == "ERROR":
-            await send_chunked(
+            await send_message(
                 bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
             )
             log_error(response.content)
@@ -289,7 +288,7 @@ def attach_routes(
         if show_reasoning:
             reasoning = getattr(response, "reasoning_content", None)
             if reasoning:
-                await send_chunked(
+                await send_message(
                     bot,
                     chat_id,
                     f"Reasoning:\n{reasoning}",
@@ -303,9 +302,9 @@ def attach_routes(
         # send the full text as a follow-up message so nothing is lost.
         if response.content:
             if any_media_sent and len(response.content) > TG_MAX_CAPTION_LENGTH:
-                await send_chunked(bot, chat_id, response.content, message_thread_id=forum_thread_id)
+                await send_message(bot, chat_id, response.content, message_thread_id=forum_thread_id)
             elif not any_media_sent:
-                await send_chunked(
+                await send_message(
                     bot, chat_id, response.content, reply_to_message_id=reply_to, message_thread_id=forum_thread_id
                 )
 
@@ -390,7 +389,7 @@ def attach_routes(
             message_text = extracted.pop("message", "")
             warning = extracted.pop("warning", None)
             if warning:
-                await send_html(bot, chat_id, warning, message_thread_id=forum_thread_id)
+                await send_message(bot, chat_id, warning, message_thread_id=forum_thread_id)
             images = extracted.get("images")
             audio = extracted.get("audio")
             videos = extracted.get("videos")
@@ -450,7 +449,7 @@ def attach_routes(
         except Exception as e:
             log_error(f"Error processing message: {e}", exc_info=True)
             try:
-                await send_chunked(bot, chat_id, error_message, message_thread_id=forum_thread_id)
+                await send_message(bot, chat_id, error_message, message_thread_id=forum_thread_id)
             except Exception as send_error:
                 log_error(f"Error sending error message: {send_error}")
 
