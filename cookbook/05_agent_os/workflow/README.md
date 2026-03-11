@@ -18,6 +18,7 @@ Examples for `workflow` in AgentOS.
 - `workflow_with_parallel_and_custom_function_step_stream.py` — Workflow With Parallel And Custom Function Step Stream.
 - `workflow_with_router.py` — Workflow With Router.
 - `workflow_with_steps.py` — Workflow With Steps.
+- `get_workflow_version.py` — Get Workflow Version.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).
