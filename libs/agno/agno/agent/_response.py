@@ -994,6 +994,11 @@ def update_run_response(
         run_response.citations = model_response.citations
     if model_response.provider_data is not None:
         run_response.model_provider_data = model_response.provider_data
+        # If the provider returned an actual model name (e.g. after a LiteLLM fallback),
+        # update run_response.model so callers see the model that was really used.
+        _actual_model = model_response.provider_data.get("model")
+        if _actual_model and isinstance(_actual_model, str):
+            run_response.model = _actual_model
 
     # Update the run_response tools with the model response tool_executions
     if model_response.tool_executions is not None:

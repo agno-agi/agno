@@ -838,6 +838,10 @@ class OpenAIChat(Model):
             model_response.provider_data["system_fingerprint"] = response.system_fingerprint
         if response.model_extra:
             model_response.provider_data["model_extra"] = response.model_extra
+        # Capture the model name actually used by the provider (may differ from the
+        # configured id when a router/fallback (e.g. LiteLLM) switches models)
+        if getattr(response, "model", None):
+            model_response.provider_data["model"] = response.model
 
         return model_response
 
