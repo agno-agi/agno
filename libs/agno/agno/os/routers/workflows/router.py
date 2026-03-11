@@ -589,9 +589,18 @@ def get_workflow_router(
         },
         dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
-    async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
+    async def get_workflow(
+        workflow_id: str,
+        request: Request,
+        version: Optional[int] = Query(None, description="Workflow version to retrieve"),
+    ) -> WorkflowResponse:
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            version=version,
+            registry=os.registry,
+            create_fresh=True,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
