@@ -2511,8 +2511,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Get spans table for JOIN
             spans_table = await self._get_table(table_type="spans")
-            if spans_table is None:
-                return None
 
             async with self.async_session_factory() as sess:
                 # Build query with aggregated span counts
@@ -2582,8 +2580,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Get spans table for JOIN
             spans_table = await self._get_table(table_type="spans")
-            if spans_table is None:
-                return [], 0
 
             async with self.async_session_factory() as sess:
                 # Build base query with aggregated span counts
@@ -3322,8 +3318,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return False
             runs_table = await self._get_table(table_type="schedule_runs")
-            if runs_table is None:
-                return False
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if runs_table is not None:
