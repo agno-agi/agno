@@ -11,7 +11,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.telegram.events import process_event
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_CAPTION_LENGTH,
-    extract_message_content,
+    extract_message,
     is_bot_mentioned,
     send_chunked,
     send_html,
@@ -384,14 +384,17 @@ def attach_routes(
             await bot.send_chat_action(chat_id, "typing", message_thread_id=forum_thread_id)
 
             # -- Extract text and media from message --
-            content = await extract_message_content(bot, message)
-            if content is None:
+            extracted = await extract_message(bot, message)
+            if extracted is None:
                 return
-            message_text = content.text
-            images, audio, videos, files = content.images, content.audio, content.videos, content.files
-
-            if content.warning:
-                await send_html(bot, chat_id, content.warning, message_thread_id=forum_thread_id)
+            message_text = extracted.pop("message", "")
+            warning = extracted.pop("warning", None)
+            if warning:
+                await send_html(bot, chat_id, warning, message_thread_id=forum_thread_id)
+            images = extracted.get("images")
+            audio = extracted.get("audio")
+            videos = extracted.get("videos")
+            files = extracted.get("files")
 
             if is_group and message_text:
                 message_text = re.sub(
