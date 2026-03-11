@@ -1,5 +1,6 @@
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, EmbeddingInput
 
 __all__ = [
     "Embedder",
+    "EmbeddingInput",
 ]
