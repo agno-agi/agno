@@ -520,6 +520,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return False
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -552,6 +554,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
@@ -590,6 +594,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -659,6 +665,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -747,6 +755,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
@@ -814,6 +824,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
             session_dict = session.to_dict()
             # Sanitize JSON/dict fields to remove null bytes from nested strings
             if session_dict.get("agent_data"):
@@ -973,6 +985,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -1000,6 +1014,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -1028,6 +1044,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Filter out NULL topics and ensure topics is an array before extracting elements
@@ -1092,6 +1110,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -1150,6 +1170,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1202,6 +1224,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
@@ -1218,6 +1242,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
@@ -1236,6 +1262,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
@@ -1261,6 +1289,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.id == id)
@@ -1314,6 +1344,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess:
                 # Build query with filters
@@ -1371,6 +1403,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             # Generate ID if not present
             if cultural_knowledge.id is None:
@@ -1466,6 +1500,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(
@@ -1527,6 +1563,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             current_time = int(time.time())
 
@@ -1608,6 +1646,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return []
 
             stmt = select(
                 table.c.user_id,
@@ -1679,6 +1719,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -1755,6 +1797,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1786,6 +1830,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             id (str): The ID of the knowledge row to delete.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1805,6 +1851,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
+        if table is None:
+            return None
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1844,6 +1892,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return [], 0
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1885,6 +1935,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
             async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
@@ -1975,6 +2027,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 current_time = int(time.time())
@@ -2013,6 +2067,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
@@ -2034,6 +2090,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
@@ -2066,6 +2124,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -2123,6 +2183,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2194,6 +2256,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize string field to remove null bytes
                 sanitized_name = sanitize_postgres_string(name)
@@ -2344,6 +2408,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             trace_dict = trace.to_dict()
             trace_dict.pop("total_spans", None)
@@ -2440,9 +2506,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Trace
 
             table = await self._get_table(table_type="traces")
+            if table is None:
+                return None
 
             # Get spans table for JOIN
             spans_table = await self._get_table(table_type="spans")
+            if spans_table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 # Build query with aggregated span counts
@@ -2507,9 +2577,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Trace
 
             table = await self._get_table(table_type="traces")
+            if table is None:
+                return [], 0
 
             # Get spans table for JOIN
             spans_table = await self._get_table(table_type="spans")
+            if spans_table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess:
                 # Build base query with aggregated span counts
@@ -2603,6 +2677,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="traces")
+            if table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess:
                 # Build base query grouped by session_id
@@ -2703,6 +2779,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 span_dict = span.to_dict()
@@ -2730,6 +2808,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         try:
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 for span in spans:
@@ -2760,6 +2840,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Span
 
             table = await self._get_table(table_type="spans")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.span_id == span_id)
@@ -2793,6 +2875,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Span
 
             table = await self._get_table(table_type="spans")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess:
                 stmt = select(table)
@@ -3238,6 +3322,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return False
             runs_table = await self._get_table(table_type="schedule_runs")
+            if runs_table is None:
+                return False
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if runs_table is not None:
