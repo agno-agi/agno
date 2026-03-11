@@ -10,6 +10,7 @@ from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
     ApprovalResolve,
     ApprovalResponse,
+    ApprovalStatusResponse,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
@@ -97,6 +98,22 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
     ) -> Dict[str, int]:
         count = await _db_call("get_pending_approval_count", user_id=user_id)
         return {"count": count}
+
+    @router.get("/approvals/{approval_id}/status", response_model=ApprovalStatusResponse)
+    async def get_approval_status(
+        approval_id: str,
+        _: bool = Depends(auth_dependency),
+    ) -> ApprovalStatusResponse:
+        approval = await _db_call("get_approval", approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        return ApprovalStatusResponse(
+            approval_id=approval_id,
+            status=approval.get("status", "unknown"),
+            run_id=approval.get("run_id", ""),
+            resolved_at=approval.get("resolved_at"),
+            resolved_by=approval.get("resolved_by"),
+        )
 
     @router.get("/approvals/{approval_id}", response_model=ApprovalResponse)
     async def get_approval(
