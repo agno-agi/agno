@@ -29,10 +29,6 @@ TG_STREAM_EDIT_INTERVAL = 1.0
 TG_DRAFT_EDIT_INTERVAL = 0.3
 
 
-def _generate_draft_id() -> int:
-    return random.randint(1, 2**31 - 1)
-
-
 # Resolved once at startup — maps entity_type to session constructor args
 _SESSION_DISPATCH = {
     "agent": (SessionType.AGENT, AgentSession, "agent_id"),
@@ -159,6 +155,7 @@ class StreamState:
         self.status_lines: list[str] = []
         self.last_edit_time: float = 0.0
         self.final_run_output: Optional[Union["RunOutput", "TeamRunOutput"]] = None
+        # Set by workflow run_completed handler; used by finalize to emit final content
         self.workflow_final_content: Optional[str] = None
 
     # -- Status line management --
@@ -186,39 +183,28 @@ class StreamState:
             parts.append(markdown_to_telegram_html(self.accumulated_content))
         return "\n".join(parts)
 
-    # -- Low-level Telegram API helpers --
-    # Each tries HTML parse_mode first, falls back to plain on parse error
+    # -- Telegram API helpers --
 
-    async def _send_message(self, html: str) -> Any:
-        try:
-            return await self.bot.send_message(
-                self.chat_id,
-                html,
-                parse_mode="HTML",
-                reply_to_message_id=self.reply_to,
-                message_thread_id=self.message_thread_id,
-            )
-        except Exception:
-            return await self.bot.send_message(
-                self.chat_id,
-                html,
-                reply_to_message_id=self.reply_to,
-                message_thread_id=self.message_thread_id,
-            )
+    async def _send_new(self, html: str) -> Any:
+        return await self.bot.send_message(
+            self.chat_id,
+            html,
+            parse_mode="HTML",
+            reply_to_message_id=self.reply_to,
+            message_thread_id=self.message_thread_id,
+        )
 
-    async def _edit_html(self, html: str) -> None:
+    async def _edit(self, html: str) -> None:
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
+            # "message is not modified" is expected when consecutive chunks produce identical content
             if "message is not modified" not in str(e):
-                try:
-                    await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id)
-                except Exception:
-                    pass
+                log_warning(f"Failed to edit message: {e}")
 
-    async def _draft_html(self, html: str) -> None:
+    async def _draft(self, html: str) -> None:
         if self.draft_id == 0:
-            self.draft_id = _generate_draft_id()
+            self.draft_id = random.randint(1, 2**31 - 1)
         try:
             await self.bot.send_message_draft(
                 chat_id=self.chat_id,
@@ -227,18 +213,10 @@ class StreamState:
                 parse_mode="HTML",
                 message_thread_id=self.message_thread_id,
             )
-        except Exception:
-            try:
-                await self.bot.send_message_draft(
-                    chat_id=self.chat_id,
-                    draft_id=self.draft_id,
-                    text=html,
-                    message_thread_id=self.message_thread_id,
-                )
-            except Exception:
-                pass
+        except Exception as e:
+            log_warning(f"Failed to send draft: {e}")
 
-    async def _send_as_chunks(self, content: str) -> None:
+    async def _send_chunks(self, content: str) -> None:
         await send_message(
             self.bot,
             self.chat_id,
@@ -254,12 +232,12 @@ class StreamState:
             return
         display = html[:TG_MAX_MESSAGE_LENGTH]
         if self.use_draft:
-            await self._draft_html(display)
+            await self._draft(display)
         elif self.sent_message_id is None:
-            msg = await self._send_message(display)
+            msg = await self._send_new(display)
             self.sent_message_id = msg.message_id
         else:
-            await self._edit_html(display)
+            await self._edit(display)
         self.last_edit_time = time.monotonic()
 
     async def flush(self) -> None:
@@ -274,27 +252,25 @@ class StreamState:
         if not final_html:
             return
 
+        # Draft mode: send final content as a real message (draft disappears on its own)
         if self.use_draft:
-            await self._finalize_draft(final_html)
+            if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
+                msg = await self._send_new(final_html)
+                self.sent_message_id = msg.message_id
+            else:
+                await self._send_chunks(self.accumulated_content)
             return
 
         if not self.sent_message_id:
-            await self._send_as_chunks(self.accumulated_content or final_html)
+            await self._send_chunks(self.accumulated_content or final_html)
             return
 
         if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
-            await self._edit_html(final_html)
+            await self._edit(final_html)
         else:
             # Overflow — delete the live-edited message, re-send as chunks
             try:
                 await self.bot.delete_message(self.chat_id, self.sent_message_id)
             except Exception:
                 pass
-            await self._send_as_chunks(self.accumulated_content)
-
-    async def _finalize_draft(self, final_html: str) -> None:
-        if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
-            msg = await self._send_message(final_html)
-            self.sent_message_id = msg.message_id
-        else:
-            await self._send_as_chunks(self.accumulated_content)
+            await self._send_chunks(self.accumulated_content)

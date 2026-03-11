@@ -117,9 +117,6 @@ async def send_message(
     return result
 
 
-async def edit_html(bot: "AsyncTeleBot", text: str, chat_id: int, message_id: int) -> Any:
-    return await bot.edit_message_text(markdown_to_telegram_html(text), chat_id, message_id, parse_mode="HTML")
-
 
 async def send_response_media(
     bot: "AsyncTeleBot",
@@ -130,43 +127,36 @@ async def send_response_media(
 ) -> bool:
     any_media_sent = False
     content = getattr(response, "content", None)
-    raw_caption = str(content)[:TG_MAX_CAPTION_LENGTH] if content else None
+    caption = markdown_to_telegram_html(str(content)[:TG_MAX_CAPTION_LENGTH]) if content else None
 
-    media_senders = [
-        ("images", bot.send_photo),
-        ("audio", bot.send_audio),
-        ("videos", bot.send_video),
-        ("files", bot.send_document),
-    ]
-    for attr, sender in media_senders:
-        items = getattr(response, attr, None)
-        if not items:
+    items: list[tuple[Any, Any]] = []
+    for img in getattr(response, "images", None) or []:
+        items.append((img, bot.send_photo))
+    for aud in getattr(response, "audio", None) or []:
+        items.append((aud, bot.send_audio))
+    for vid in getattr(response, "videos", None) or []:
+        items.append((vid, bot.send_video))
+    for doc in getattr(response, "files", None) or []:
+        items.append((doc, bot.send_document))
+
+    for item, sender in items:
+        data = getattr(item, "url", None) or (item.get_content_bytes() if hasattr(item, "get_content_bytes") else None)
+        if not data:
             continue
-        for item in items:
-            try:
-                data = getattr(item, "url", None)
-                if not data:
-                    get_bytes = getattr(item, "get_content_bytes", None)
-                    data = get_bytes() if callable(get_bytes) else None
-                if data:
-                    caption = markdown_to_telegram_html(raw_caption) if raw_caption else None
-                    send_kwargs: dict = dict(
-                        caption=caption,
-                        reply_to_message_id=reply_to,
-                        message_thread_id=message_thread_id,
-                        parse_mode="HTML" if caption else None,
-                    )
-                    try:
-                        await sender(chat_id, data, **send_kwargs)  # type: ignore[operator]
-                    except Exception:
-                        send_kwargs["caption"] = raw_caption
-                        send_kwargs["parse_mode"] = None
-                        await sender(chat_id, data, **send_kwargs)  # type: ignore[operator]
-                    any_media_sent = True
-                    # Clear caption and reply_to after first successful send
-                    raw_caption = None
-                    reply_to = None
-            except Exception as e:
-                log_error(f"Failed to send {attr.rstrip('s')} to chat {chat_id}: {e}")
+        try:
+            await sender(
+                chat_id,
+                data,
+                caption=caption,
+                reply_to_message_id=reply_to,
+                message_thread_id=message_thread_id,
+                parse_mode="HTML" if caption else None,
+            )
+            any_media_sent = True
+            # Caption and reply_to only on first media
+            caption = None
+            reply_to = None
+        except Exception as e:
+            log_error(f"Failed to send media to chat {chat_id}: {e}")
 
     return any_media_sent

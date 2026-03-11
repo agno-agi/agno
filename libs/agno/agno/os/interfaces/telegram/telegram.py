@@ -32,7 +32,7 @@ class Telegram(BaseInterface):
         team: Optional[Union[Team, RemoteTeam]] = None,
         workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
         prefix: str = "/telegram",
-        tags: Optional[List[str]] = None,  # FastAPI router tags for OpenAPI grouping
+        tags: Optional[List[str]] = None,
         token: Optional[str] = None,
         reply_to_mentions_only: bool = True,
         reply_to_bot_messages: bool = True,
