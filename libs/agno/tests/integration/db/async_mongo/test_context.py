@@ -12,7 +12,7 @@ import time
 import pytest
 
 try:
-    from agno.db.mongo import AsyncMongoDb
+    from agno.db.mongo import AsyncMongoDb  # noqa: F401
 except ImportError:
     pytest.skip(
         "Neither motor nor pymongo async installed, skipping AsyncMongoDb context integration tests",
