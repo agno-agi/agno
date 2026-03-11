@@ -666,7 +666,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="sessions")
             if table is None:
-                return []
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -986,7 +986,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
-                return None
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -1171,7 +1171,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
-                return []
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1345,7 +1345,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="culture", create_table_if_not_found=True)
             if table is None:
-                return []
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess:
                 # Build query with filters
@@ -2184,7 +2184,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="evals")
             if table is None:
-                return []
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2409,7 +2409,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="traces", create_table_if_not_found=True)
             if table is None:
-                return None
+                return
 
             trace_dict = trace.to_dict()
             trace_dict.pop("total_spans", None)
@@ -2780,7 +2780,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
             if table is None:
-                return None
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 span_dict = span.to_dict()
@@ -2809,7 +2809,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
             if table is None:
-                return None
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 for span in spans:
