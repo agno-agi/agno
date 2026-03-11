@@ -95,14 +95,23 @@ class OpenAIResponses(Model):
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
-        """Set the reasoning request parameter."""
-        base_params["reasoning"] = self.reasoning or {}
+        """Set the reasoning request parameter.
+
+        Only adds the 'reasoning' key when there is actual reasoning configuration to send.
+        Sending an empty ``{}`` causes non-reasoning models (e.g. Gemini via OpenRouter)
+        to reject the request with an error, so we skip the key entirely in that case.
+        """
+        reasoning: Dict[str, Any] = dict(self.reasoning) if self.reasoning else {}
 
         if self.reasoning_effort is not None:
-            base_params["reasoning"]["effort"] = self.reasoning_effort
+            reasoning["effort"] = self.reasoning_effort
 
         if self.reasoning_summary is not None:
-            base_params["reasoning"]["summary"] = self.reasoning_summary
+            reasoning["summary"] = self.reasoning_summary
+
+        # Only include the key when there is something meaningful to send
+        if reasoning:
+            base_params["reasoning"] = reasoning
 
         return base_params
 
