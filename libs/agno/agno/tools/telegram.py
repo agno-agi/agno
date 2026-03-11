@@ -53,18 +53,25 @@ class TelegramTools(Toolkit):
         self.chat_id = chat_id or getenv("TELEGRAM_CHAT_ID")
         self.bot = TeleBot(self.token)
 
-        tool_flags = [
-            (enable_send_message, self.send_message),
-            (enable_send_photo, self.send_photo),
-            (enable_send_document, self.send_document),
-            (enable_send_video, self.send_video),
-            (enable_send_audio, self.send_audio),
-            (enable_send_animation, self.send_animation),
-            (enable_send_sticker, self.send_sticker),
-            (enable_edit_message, self.edit_message),
-            (enable_delete_message, self.delete_message),
-        ]
-        tools: List[Any] = [fn for enabled, fn in tool_flags if enable_all or enabled]
+        tools: List[Any] = []
+        if enable_send_message or enable_all:
+            tools.append(self.send_message)
+        if enable_send_photo or enable_all:
+            tools.append(self.send_photo)
+        if enable_send_document or enable_all:
+            tools.append(self.send_document)
+        if enable_send_video or enable_all:
+            tools.append(self.send_video)
+        if enable_send_audio or enable_all:
+            tools.append(self.send_audio)
+        if enable_send_animation or enable_all:
+            tools.append(self.send_animation)
+        if enable_send_sticker or enable_all:
+            tools.append(self.send_sticker)
+        if enable_edit_message or enable_all:
+            tools.append(self.edit_message)
+        if enable_delete_message or enable_all:
+            tools.append(self.delete_message)
 
         super().__init__(name="telegram", tools=tools, **kwargs)
 
