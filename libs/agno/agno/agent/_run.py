@@ -360,6 +360,7 @@ def _run(
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
+        generate_followups,
         generate_response_with_output_model,
         handle_reasoning,
         parse_response_with_parser_model,
@@ -556,12 +557,14 @@ def _run(
                         user_id=user_id,
                     )
 
-                # 8. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 9. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                # 9b. Generate follow-up suggestions if enabled
+                generate_followups(agent, run_response=run_response)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
@@ -744,6 +747,7 @@ def _run_stream(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
+        generate_followups_stream,
         generate_response_with_output_model_stream,
         handle_model_response_stream,
         handle_reasoning_stream,
@@ -963,6 +967,13 @@ def _run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
+                )
+
+                # 7b. Generate follow-up suggestions if enabled
+                yield from generate_followups_stream(
+                    agent,  # type: ignore
+                    run_response=run_response,
+                    stream_events=stream_events,
                 )
 
                 # We should break out of the run function
@@ -1423,6 +1434,7 @@ async def _arun(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
+        agenerate_followups,
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
@@ -1635,9 +1647,11 @@ async def _arun(
                 # 11. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 12. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 11b. Generate follow-up suggestions if enabled
+                await agenerate_followups(agent, run_response=run_response)
+
+                # 12. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 13. Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
@@ -2060,6 +2074,7 @@ async def _arun_stream(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
+        agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
@@ -2284,6 +2299,14 @@ async def _arun_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
+                ):
+                    yield event  # type: ignore
+
+                # 10b. Generate follow-up suggestions if enabled
+                async for event in agenerate_followups_stream(
+                    agent,
+                    run_response=run_response,
+                    stream_events=stream_events,
                 ):
                     yield event  # type: ignore
 
@@ -2973,6 +2996,9 @@ def continue_run_dispatch(
     run_messages = get_continue_run_messages(
         agent,
         input=input,
+        session=agent_session,
+        add_history_to_context=agent.add_history_to_context,
+        run_context=run_context,
     )
 
     # Reset the run state
@@ -3042,6 +3068,7 @@ def _continue_run(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         convert_response_to_structured_format,
+        generate_followups,
         generate_response_with_output_model,
         parse_response_with_parser_model,
         update_run_response,
@@ -3105,9 +3132,11 @@ def _continue_run(
                 # 4. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 5. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 4b. Generate follow-up suggestions if enabled
+                generate_followups(agent, run_response=run_response)
+
+                # 5. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 6. Execute post-hooks
                 if agent.post_hooks is not None:
@@ -3247,7 +3276,11 @@ def _continue_run_stream(
 
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._response import handle_model_response_stream, parse_response_with_parser_model_stream
+    from agno.agent._response import (
+        generate_followups_stream,
+        handle_model_response_stream,
+        parse_response_with_parser_model_stream,
+    )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
 
@@ -3301,6 +3334,13 @@ def _continue_run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
+                )
+
+                # Generate follow-up suggestions if enabled
+                yield from generate_followups_stream(
+                    agent,  # type: ignore
+                    run_response=run_response,
+                    stream_events=stream_events,
                 )
 
                 # Yield RunContentCompletedEvent
@@ -3682,6 +3722,7 @@ async def _acontinue_run(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
+        agenerate_followups,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
         convert_response_to_structured_format,
@@ -3777,8 +3818,6 @@ async def _acontinue_run(
 
                 run_response = cast(RunOutput, run_response)
 
-                run_response.status = RunStatus.running
-
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
                 processed_tools = await agent.aget_tools(
@@ -3802,7 +3841,12 @@ async def _acontinue_run(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -3862,9 +3906,11 @@ async def _acontinue_run(
                 # 10. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 11. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 10b. Generate follow-up suggestions if enabled
+                await agenerate_followups(agent, run_response=run_response)
+
+                # 11. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -4049,6 +4095,7 @@ async def _acontinue_run_stream(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
+        agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
@@ -4142,8 +4189,6 @@ async def _acontinue_run_stream(
 
                 run_response = cast(RunOutput, run_response)
 
-                run_response.status = RunStatus.running
-
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
                 processed_tools = await agent.aget_tools(
@@ -4167,7 +4212,12 @@ async def _acontinue_run_stream(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -4253,6 +4303,14 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
+                ):
+                    yield event  # type: ignore
+
+                # Generate follow-up suggestions if enabled
+                async for event in agenerate_followups_stream(
+                    agent,
+                    run_response=run_response,
+                    stream_events=stream_events,
                 ):
                     yield event  # type: ignore
 
@@ -4554,11 +4612,15 @@ def cleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
+    import copy
+
     from agno.agent import _session
     from agno.run.approval import update_approval_run_status
 
-    # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -4568,18 +4630,19 @@ def cleanup_and_store(
     # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
-        run_response=run_response,
+        run_response=storage_copy,
         input=run_response.input.input_content_string() if run_response.input else "",
         session_id=session.session_id,
         user_id=user_id,
     )
 
-    # Add RunOutput to Agent Session
-    session.upsert_run(run=run_response)
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -4607,32 +4670,36 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
+    import copy
+
     from agno.agent import _session
     from agno.run.approval import aupdate_approval_run_status
 
-    # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
     # Update run_response.session_state before saving
-    # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
-        run_response=run_response,
+        run_response=storage_copy,
         input=run_response.input.input_content_string() if run_response.input else "",
         session_id=session.session_id,
         user_id=user_id,
     )
 
-    # Add RunOutput to Agent Session
-    session.upsert_run(run=run_response)
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)

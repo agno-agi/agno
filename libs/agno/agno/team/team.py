@@ -160,6 +160,9 @@ class Team:
     add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_context: bool = False
+    # Allows for custom datetime format string (e.g. "%Y-%m-%d %H:%M:%S", "%d/%m/%Y")
+    # If None, the default datetime string representation is used
+    datetime_format: Optional[str] = None
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, add the team name to the instructions
@@ -329,6 +332,14 @@ class Team:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
+    # --- Team Followups ---
+    # If True, generate followup prompts after the main response
+    followups: bool = False
+    # Number of followup prompts to generate (default 3)
+    num_followups: int = 3
+    # Optional model to use for generating followups (defaults to team's model)
+    followup_model: Optional[Model] = None
+
     # --- Team Streaming ---
     # Stream the response from the Team
     stream: Optional[bool] = None
@@ -441,6 +452,7 @@ class Team:
         markdown: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        datetime_format: Optional[str] = None,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
         add_member_tools_to_context: bool = False,
@@ -503,6 +515,9 @@ class Team:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        followups: bool = False,
+        num_followups: int = 3,
+        followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -556,6 +571,7 @@ class Team:
             markdown=markdown,
             add_datetime_to_context=add_datetime_to_context,
             add_location_to_context=add_location_to_context,
+            datetime_format=datetime_format,
             timezone_identifier=timezone_identifier,
             add_name_to_context=add_name_to_context,
             add_member_tools_to_context=add_member_tools_to_context,
@@ -618,6 +634,9 @@ class Team:
             reasoning_agent=reasoning_agent,
             reasoning_min_steps=reasoning_min_steps,
             reasoning_max_steps=reasoning_max_steps,
+            followups=followups,
+            num_followups=num_followups,
+            followup_model=followup_model,
             stream=stream,
             stream_events=stream_events,
             store_events=store_events,
