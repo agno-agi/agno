@@ -200,13 +200,6 @@ _PATTERN_MAP: dict[str, re.Pattern[str]] = {
 }
 
 
-def _convert_html_chars(text: str) -> str:
-    text = text.replace("&", "&amp;")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
-    return text
-
-
 def _split_by_tag(text: str, md_tag: str, html_tag: str) -> str:
     pattern = _PATTERN_MAP.get(md_tag)
     if pattern is None:
@@ -252,7 +245,7 @@ def markdown_to_telegram_html(text: str) -> str:
     output, inline_snippets = _extract_inline_code(output)
 
     # 4. Escape HTML entities in remaining text
-    output = _convert_html_chars(output)
+    output = escape_html(output)
 
     # 5. Headings → bold
     output = re.sub(r"^(#{1,6})\s+(.+)$", r"<b>\2</b>", output, flags=re.MULTILINE)
