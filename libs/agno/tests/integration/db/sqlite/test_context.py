@@ -180,12 +180,8 @@ def test_clear_context_items(sqlite_db_real: SqliteDb):
     """Ensure clear_context_items removes all items"""
     now = int(datetime.now().timestamp())
 
-    sqlite_db_real.upsert_context_item(
-        ContextItem(name="prompt_1", content="First", created_at=now, updated_at=now)
-    )
-    sqlite_db_real.upsert_context_item(
-        ContextItem(name="prompt_2", content="Second", created_at=now, updated_at=now)
-    )
+    sqlite_db_real.upsert_context_item(ContextItem(name="prompt_1", content="First", created_at=now, updated_at=now))
+    sqlite_db_real.upsert_context_item(ContextItem(name="prompt_2", content="Second", created_at=now, updated_at=now))
 
     sqlite_db_real.clear_context_items()
 

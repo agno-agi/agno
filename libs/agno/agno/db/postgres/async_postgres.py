@@ -3171,7 +3171,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[ContextItem]: The upserted context item.
         """
         try:
-            table = await self._get_table(table_type="context")
+            table = await self._get_table(table_type="context", create_table_if_not_found=True)
             if table is None:
                 return None
 

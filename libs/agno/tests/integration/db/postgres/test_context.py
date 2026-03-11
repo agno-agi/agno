@@ -198,12 +198,8 @@ def test_clear_context_items(postgres_db_real: PostgresDb):
     """Ensure clear_context_items removes all items"""
     now = int(datetime.now().timestamp())
 
-    postgres_db_real.upsert_context_item(
-        ContextItem(name="prompt_1", content="First", created_at=now, updated_at=now)
-    )
-    postgres_db_real.upsert_context_item(
-        ContextItem(name="prompt_2", content="Second", created_at=now, updated_at=now)
-    )
+    postgres_db_real.upsert_context_item(ContextItem(name="prompt_1", content="First", created_at=now, updated_at=now))
+    postgres_db_real.upsert_context_item(ContextItem(name="prompt_2", content="Second", created_at=now, updated_at=now))
 
     postgres_db_real.clear_context_items()
 

@@ -26,6 +26,7 @@ def async_mysql_db(mock_async_engine) -> AsyncMySQLDb:
         metrics_table="test_metrics",
         eval_table="test_evals",
         knowledge_table="test_knowledge",
+        context_table="test_context_items",
     )
 
 
@@ -60,4 +61,5 @@ async def async_mysql_db_real(async_mysql_engine) -> AsyncMySQLDb:
         metrics_table="test_metrics",
         eval_table="test_evals",
         knowledge_table="test_knowledge",
+        context_table="test_context_items",
     )
