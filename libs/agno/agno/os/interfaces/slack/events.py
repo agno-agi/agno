@@ -222,6 +222,15 @@ async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, str
     ref = _extract_tool_ref(chunk, state, fallback_id=f"tool_error_{state.error_count}")
     error_msg = getattr(chunk, "error", None) or "Tool call failed"
     state.error_count += 1
+
+    # Detect Google OAuth requirement — router will show Connect button
+    import re
+
+    match = re.search(r"Google auth required for team=(\S+) user=(\S+)", str(error_msg))
+    if match:
+        state.auth_required = {"team_id": match.group(1), "user_id": match.group(2)}
+        return True
+
     if ref.tid:
         if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
