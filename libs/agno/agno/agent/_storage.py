@@ -626,6 +626,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_location_to_context"] = agent.add_location_to_context
     if agent.timezone_identifier is not None:
         config["timezone_identifier"] = agent.timezone_identifier
+    if agent.datetime_format is not None:
+        config["datetime_format"] = agent.datetime_format
     if not agent.resolve_in_context:
         config["resolve_in_context"] = agent.resolve_in_context
 
@@ -939,6 +941,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         add_name_to_context=config.get("add_name_to_context", False),
         add_datetime_to_context=config.get("add_datetime_to_context", False),
         add_location_to_context=config.get("add_location_to_context", False),
+        datetime_format=config.get("datetime_format"),
         timezone_identifier=config.get("timezone_identifier"),
         resolve_in_context=config.get("resolve_in_context", True),
         # --- User message settings ---
