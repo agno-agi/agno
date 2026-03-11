@@ -1081,10 +1081,16 @@ class FunctionCall(BaseModel):
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
-            log_exception(e)
-            self.error = str(e)
-            execution_result = FunctionExecutionResult(status="failure", error=str(e))
+            if getattr(e, "propagate", False):
+                log_debug(f"{e.__class__.__name__}: {e}")
+                self.error = str(e)
+                exception_to_raise = e
+                execution_result = FunctionExecutionResult(status="failure", error=str(e))
+            else:
+                log_warning(f"Could not run function {self.get_call_str()}")
+                log_exception(e)
+                self.error = str(e)
+                execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
         finally:
             self._handle_post_hook()
@@ -1301,10 +1307,16 @@ class FunctionCall(BaseModel):
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
-            log_exception(e)
-            self.error = str(e)
-            execution_result = FunctionExecutionResult(status="failure", error=str(e))
+            if getattr(e, "propagate", False):
+                log_debug(f"{e.__class__.__name__}: {e}")
+                self.error = str(e)
+                exception_to_raise = e
+                execution_result = FunctionExecutionResult(status="failure", error=str(e))
+            else:
+                log_warning(f"Could not run function {self.get_call_str()}")
+                log_exception(e)
+                self.error = str(e)
+                execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
         finally:
             if iscoroutinefunction(self.function.post_hook):

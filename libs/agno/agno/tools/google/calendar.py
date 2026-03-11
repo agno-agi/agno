@@ -5,7 +5,10 @@ import uuid
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+
+if TYPE_CHECKING:
+    from agno.tools.google.oauth.token_store import BaseGoogleTokenStore
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info
@@ -40,19 +43,48 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 
 
 def authenticate(func):
-    """Decorator to ensure authentication before executing the method."""
+    """Decorator to ensure authentication before executing the method.
+
+    When token_store is set on the toolkit, extracts (team_id, user_id) from
+    run_context to load per-user credentials from the database.
+    """
+    import inspect
 
     @wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self, *args, run_context=None, **kwargs):
         try:
-            if not self.creds or not self.creds.valid:
+            team_id = None
+            user_id = None
+            if run_context:
+                user_id = run_context.user_id
+                team_id = (run_context.metadata or {}).get("slack_team_id", "default")
+
+            if getattr(self, "token_store", None) and team_id and user_id:
+                user_key = (team_id, user_id)
+                if not self.creds or not self.creds.valid or self._current_user_key != user_key:
+                    self._auth(team_id=team_id, user_id=user_id)
+                    self.service = None
+            elif not self.creds or not self.creds.valid:
                 self._auth()
+
             if not self.service:
                 self.service = build("calendar", "v3", credentials=self.creds)
         except Exception as e:
+            from agno.tools.google.oauth.errors import GoogleAuthRequired
+
+            if isinstance(e, GoogleAuthRequired):
+                raise
             log_error(f"Calendar authentication failed: {e}")
             return json.dumps({"error": f"Calendar authentication failed: {e}"})
         return func(self, *args, **kwargs)
+
+    orig_sig = inspect.signature(func)
+    if "run_context" not in orig_sig.parameters:
+        params = list(orig_sig.parameters.values())
+        params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
+        wrapper.__signature__ = orig_sig.replace(parameters=params)
+        if hasattr(wrapper, "__wrapped__"):
+            del wrapper.__wrapped__
 
     return wrapper
 
@@ -73,6 +105,7 @@ class GoogleCalendarTools(Toolkit):
         scopes: Optional[List[str]] = None,
         oauth_port: int = 8080,
         login_hint: Optional[str] = None,
+        token_store: Optional["BaseGoogleTokenStore"] = None,
         calendar_id: str = "primary",
         allow_update: Optional[bool] = None,
         list_events: bool = True,
@@ -128,6 +161,8 @@ class GoogleCalendarTools(Toolkit):
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.oauth_port = oauth_port
         self.login_hint = login_hint
+        self.token_store = token_store
+        self._current_user_key: Optional[tuple] = None
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
 
@@ -201,8 +236,19 @@ class GoogleCalendarTools(Toolkit):
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
 
-    def _auth(self) -> None:
-        """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
+    def _auth(self, team_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+        """Authenticate with Google Calendar API.
+
+        When team_id and user_id are provided (per-user mode via token_store),
+        loads credentials from the database. Otherwise falls back to legacy auth.
+        """
+        if self.token_store and team_id and user_id:
+            from agno.tools.google.oauth.token_store import load_user_credentials
+
+            self.creds = load_user_credentials(self.token_store, team_id, user_id, self.scopes)
+            self._current_user_key = (team_id, user_id)
+            return
+
         if self.creds and self.creds.valid:
             return
 

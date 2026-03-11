@@ -40,6 +40,80 @@ _IGNORED_SUBTYPES = frozenset(
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
 
+def _handle_google_auth_required(exc: Exception, google_oauth_base_url: Optional[str]) -> bool:
+    """Returns True if exc is a GoogleAuthRequired and we have a base URL to handle it."""
+    try:
+        from agno.tools.google.oauth.errors import GoogleAuthRequired
+
+        return isinstance(exc, GoogleAuthRequired) and google_oauth_base_url is not None
+    except ImportError:
+        return False
+
+
+def _detect_google_auth_in_response(response_content: str, google_oauth_base_url: Optional[str]) -> Optional[Dict[str, str]]:
+    """Check if agent response contains a swallowed GoogleAuthRequired error.
+
+    The agent's tool executor catches GoogleAuthRequired and converts it to an error
+    string in the response. We detect that pattern here and extract team_id/user_id.
+    Returns dict with team_id and user_id if detected, None otherwise.
+    """
+    if not google_oauth_base_url or not response_content:
+        return None
+    import re
+
+    match = re.search(r"Google auth required for team=(\S+) user=(\S+)", response_content)
+    if match:
+        return {"team_id": match.group(1), "user_id": match.group(2)}
+    return None
+
+
+def _google_auth_blocks_from_ids(base_url: str, team_id: str, user_id: str) -> List[Dict[str, Any]]:
+    """Build Slack Block Kit blocks with a 'Connect Google' button from explicit IDs."""
+    auth_url = f"{base_url}/google/auth/initiate?team_id={team_id}&user_id={user_id}"
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "I need access to your Google account to help with this."},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Connect Google"},
+                    "url": auth_url,
+                    "action_id": "connect_google",
+                }
+            ],
+        },
+    ]
+
+
+def _google_auth_blocks(exc: Exception, base_url: Optional[str]) -> List[Dict[str, Any]]:
+    """Build Slack Block Kit blocks with a 'Connect Google' button.
+
+    exc is always GoogleAuthRequired here (checked by _handle_google_auth_required).
+    """
+    auth_url = f"{base_url}/google/auth/initiate?team_id={exc.team_id}&user_id={exc.user_id}"  # type: ignore[attr-defined]
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "I need access to your Google account to help with this."},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Connect Google"},
+                    "url": auth_url,
+                    "action_id": "connect_google",
+                }
+            ],
+        },
+    ]
+
+
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
 
@@ -64,6 +138,7 @@ def attach_routes(
     ssl: Optional[SSLContext] = None,
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
+    google_oauth_base_url: Optional[str] = None,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -178,7 +253,38 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            # Pass Slack team_id so Google toolkits can load per-user tokens
+            _slack_team_id = data.get("team_id") or event.get("team")
+            if _slack_team_id:
+                run_kwargs["metadata"] = {"slack_team_id": _slack_team_id}
+
+            try:
+                response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            except Exception as _auth_exc:
+                if _handle_google_auth_required(_auth_exc, google_oauth_base_url):
+                    await async_client.chat_postMessage(
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        text="I need access to your Google account to help with this.",
+                        blocks=_google_auth_blocks(_auth_exc, google_oauth_base_url),
+                    )
+                    return
+                raise
+
+            # GoogleAuthRequired is swallowed by the tool executor and converted to
+            # an error string in the response — detect it here from the content
+            if response and response.content:
+                _auth_ids = _detect_google_auth_in_response(str(response.content), google_oauth_base_url)
+                if _auth_ids:
+                    await async_client.chat_postMessage(
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        text="I need access to your Google account to help with this.",
+                        blocks=_google_auth_blocks_from_ids(
+                            google_oauth_base_url, _auth_ids["team_id"], _auth_ids["user_id"]  # type: ignore[arg-type]
+                        ),
+                    )
+                    return
 
             if response:
                 if response.status == "ERROR":
@@ -283,7 +389,22 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            # Pass Slack team_id so Google toolkits can load per-user tokens
+            if team_id:
+                run_kwargs["metadata"] = {"slack_team_id": team_id}
+
+            try:
+                response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            except Exception as _auth_exc:
+                if _handle_google_auth_required(_auth_exc, google_oauth_base_url):
+                    await async_client.chat_postMessage(
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        text="I need access to your Google account to help with this.",
+                        blocks=_google_auth_blocks(_auth_exc, google_oauth_base_url),
+                    )
+                    return
+                raise
 
             if response_stream is None:
                 try:
@@ -328,10 +449,24 @@ def attach_routes(
 
             # Default to complete when no terminal error/cancel event arrived
             final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
+
+            # Auth required — stop stream with Connect button inside the bubble
+            if state.auth_required and google_oauth_base_url:
+                await stream.stop(
+                    markdown_text="I need access to your Google account to help with this.",
+                    blocks=_google_auth_blocks_from_ids(
+                        google_oauth_base_url,
+                        state.auth_required["team_id"],
+                        state.auth_required["user_id"],
+                    ),
+                )
+                return
+
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
             stop_kwargs: Dict[str, Any] = {}
-            if state.has_content():
-                stop_kwargs["markdown_text"] = state.flush()
+            _remaining = state.flush() if state.has_content() else ""
+            if _remaining:
+                stop_kwargs["markdown_text"] = _remaining
             if completion_chunks:
                 stop_kwargs["chunks"] = completion_chunks
             await stream.stop(**stop_kwargs)
@@ -339,6 +474,33 @@ def attach_routes(
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 
         except Exception as e:
+            # Clean up stream first so Slack doesn't show stuck progress indicators
+            if stream is not None:
+                try:
+                    stop_kwargs_err: Dict[str, Any] = {}
+                    if state.task_cards:
+                        stop_kwargs_err["chunks"] = state.resolve_all_pending("error")
+                    await stream.stop(**stop_kwargs_err)
+                except Exception:
+                    pass
+                stream = None
+
+            # GoogleAuthRequired during streaming — send Connect button instead of error
+            if _handle_google_auth_required(e, google_oauth_base_url):
+                try:
+                    await async_client.assistant_threads_setStatus(
+                        channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
+                    )
+                except Exception:
+                    pass
+                await async_client.chat_postMessage(
+                    channel=ctx["channel_id"],
+                    thread_ts=ctx["thread_id"],
+                    text="I need access to your Google account to help with this.",
+                    blocks=_google_auth_blocks(e, google_oauth_base_url),
+                )
+                return
+
             log_error(
                 f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
             )
@@ -348,15 +510,6 @@ def attach_routes(
                 )
             except Exception:
                 pass
-            # Clean up open stream so Slack doesn't show stuck progress indicators
-            if stream is not None:
-                try:
-                    stop_kwargs_err: Dict[str, Any] = {}
-                    if state.task_cards:
-                        stop_kwargs_err["chunks"] = state.resolve_all_pending("error")
-                    await stream.stop(**stop_kwargs_err)
-                except Exception:
-                    pass
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
