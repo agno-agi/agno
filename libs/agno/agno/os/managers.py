@@ -327,18 +327,18 @@ class SSESubscriberManager:
     """
 
     def __init__(self) -> None:
-        self._subscribers: Dict[str, List[asyncio.Queue[Optional[str]]]] = {}
+        self._subscribers: Dict[str, List[asyncio.Queue[Optional[tuple[int, str]]]]] = {}
 
-    def subscribe(self, run_id: str) -> "asyncio.Queue[Optional[str]]":
+    def subscribe(self, run_id: str) -> "asyncio.Queue[Optional[tuple[int, str]]]":
         """Register a new subscriber queue for a run. Returns the queue."""
         if run_id not in self._subscribers:
             self._subscribers[run_id] = []
-        queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        queue: asyncio.Queue[Optional[tuple[int, str]]] = asyncio.Queue()
         self._subscribers[run_id].append(queue)
         log_debug(f"SSE subscriber registered for run {run_id}")
         return queue
 
-    def unsubscribe(self, run_id: str, queue: "asyncio.Queue[Optional[str]]") -> None:
+    def unsubscribe(self, run_id: str, queue: "asyncio.Queue[Optional[tuple[int, str]]]") -> None:
         """Remove a subscriber queue."""
         if run_id in self._subscribers:
             try:
@@ -348,21 +348,19 @@ class SSESubscriberManager:
             if not self._subscribers[run_id]:
                 del self._subscribers[run_id]
 
-    async def publish(self, run_id: str, sse_data: str) -> None:
-        """Push an SSE-formatted event string to all subscriber queues for a run."""
-        if run_id not in self._subscribers:
-            return
-        for queue in self._subscribers[run_id]:
+    async def publish(self, run_id: str, event_index: int, sse_data: str) -> None:
+        """Push an (event_index, sse_data) tuple to all subscriber queues for a run."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
             try:
-                await queue.put(sse_data)
+                await queue.put((event_index, sse_data))
             except Exception:
                 pass
 
     async def complete(self, run_id: str) -> None:
         """Signal all subscribers that the run is done by pushing None sentinel."""
-        if run_id not in self._subscribers:
-            return
-        for queue in self._subscribers[run_id]:
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
             try:
                 await queue.put(None)
             except Exception:

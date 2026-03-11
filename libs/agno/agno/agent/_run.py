@@ -1949,6 +1949,9 @@ async def _arun_background_stream(
 
     # 3. Spawn detached background task
     async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
         try:
             async for event in _arun_stream(
                 agent,
@@ -1973,56 +1976,55 @@ async def _arun_background_stream(
                 # Buffer event for reconnection support
                 event_index: Optional[int] = None
                 try:
-                    from agno.os.managers import event_buffer
-
                     event_index = event_buffer.add_event(run_id, event)
                 except Exception:
-                    pass
+                    log_warning(f"Failed to buffer event for run {run_id}")
 
                 # Format as SSE
-                from agno.os.utils import format_sse_event_with_index
-
                 sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
 
                 # Push to primary queue (original client)
                 try:
                     await sse_queue.put(sse_data)
                 except Exception:
-                    pass
+                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
 
                 # Publish to SSE subscribers (resumed clients)
                 try:
-                    from agno.os.managers import sse_subscriber_manager
-
-                    await sse_subscriber_manager.publish(run_id, sse_data)
+                    await sse_subscriber_manager.publish(
+                        run_id, event_index if event_index is not None else -1, sse_data
+                    )
                 except Exception:
-                    pass
+                    log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
 
         except Exception:
             log_error(f"Background stream run {run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                agent_session.upsert_run(run=run_response)
+                await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
         finally:
             # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
             try:
-                from agno.os.managers import event_buffer
-
                 event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
             except Exception:
-                pass
+                log_warning(f"Failed to mark run {run_id} as completed in event buffer")
 
             # Signal SSE subscribers that run is done
             try:
-                from agno.os.managers import sse_subscriber_manager
-
                 await sse_subscriber_manager.complete(run_id)
             except Exception:
-                pass
+                log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
 
             # Signal primary queue that run is done
             try:
                 await sse_queue.put(None)
             except Exception:
-                pass
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)

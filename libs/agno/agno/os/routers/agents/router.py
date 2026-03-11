@@ -228,7 +228,12 @@ async def _resume_stream_generator(
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
         if session_id and not isinstance(agent, RemoteAgent):
-            run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            try:
+                run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            except Exception as e:
+                error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
+                yield f"event: error\ndata: {json.dumps(error)}\n\n"
+                return
             if run_output and run_output.events:
                 meta: dict = {
                     "event": "replay",
@@ -360,19 +365,14 @@ async def _resume_stream_generator(
 
         # Read from queue, dedup events already replayed by event_index
         while True:
-            sse_data = await queue.get()
-            if sse_data is None:
+            item = await queue.get()
+            if item is None:
                 # Sentinel: run completed
                 break
-            # Dedup: extract event_index from the SSE data and skip if already replayed
-            try:
-                data_line = sse_data.split("data: ", 1)[1].split("\n\n")[0]
-                parsed = json.loads(data_line)
-                ev_idx = parsed.get("event_index")
-                if ev_idx is not None and ev_idx <= last_replayed_index:
-                    continue
-            except Exception:
-                pass
+            ev_idx, sse_data = item
+            # Dedup: skip events already replayed during catch-up
+            if ev_idx >= 0 and ev_idx <= last_replayed_index:
+                continue
             yield sse_data
     finally:
         sse_subscriber_manager.unsubscribe(run_id, queue)
