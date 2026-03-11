@@ -962,11 +962,14 @@ class AgentOSClient:
         data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
-    def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    def get_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -975,14 +978,19 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = self._get(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = self._get(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
-    async def aget_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    async def aget_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -991,7 +999,9 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = await self._aget(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = await self._aget(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
     async def run_workflow(
