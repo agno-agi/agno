@@ -1,5 +1,5 @@
-from typing import Any, Dict, Optional
-from unittest.mock import Mock
+from typing import Any, Dict
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -7,63 +7,32 @@ from agno.db.mongo import AsyncMongoDb, MongoDb
 from agno.db.mongo.schemas import get_collection_indexes
 
 
-class _DummySyncCollection:
-    def __init__(self, doc: Optional[Dict[str, Any]] = None):
-        self._doc = doc
-
-    def create_index(self, *args, **kwargs):
-        return None
-
-    def find_one(self, query: Dict[str, Any]):
-        if self._doc is None:
-            return None
-        if self._doc.get("id") == query.get("id"):
-            return dict(self._doc)
-        return None
+@pytest.fixture
+def mock_sync_db():
+    db = MagicMock()
+    db.list_collection_names.return_value = []
+    return db
 
 
-class _DummySyncDatabase:
-    def __init__(self):
-        self._collections: Dict[str, _DummySyncCollection] = {}
-
-    def list_collection_names(self):
-        return list(self._collections.keys())
-
-    def __getitem__(self, name: str):
-        if name not in self._collections:
-            self._collections[name] = _DummySyncCollection()
-        return self._collections[name]
+@pytest.fixture
+def mock_sync_client(mock_sync_db):
+    client = MagicMock()
+    client.append_metadata = MagicMock()
+    client.__getitem__.return_value = mock_sync_db
+    return client
 
 
-class _DummySyncClient:
-    def __init__(self):
-        self._db = _DummySyncDatabase()
-
-    def append_metadata(self, *args, **kwargs):
-        return None
-
-    def __getitem__(self, name: str):
-        return self._db
-
-    def close(self):
-        return None
+@pytest.fixture
+def async_mongo_db():
+    return AsyncMongoDb(
+        db_url="mongodb://localhost:27017",
+        db_name="test_db",
+    )
 
 
-class _DummyAsyncCollection:
-    def __init__(self, doc: Optional[Dict[str, Any]] = None):
-        self._doc = doc
-
-    async def find_one(self, query: Dict[str, Any]):
-        if self._doc is None:
-            return None
-        if self._doc.get("id") == query.get("id"):
-            return dict(self._doc)
-        return None
-
-
-def test_mongo_constructor_maps_scheduler_collections():
+def test_mongo_constructor_maps_scheduler_collections(mock_sync_client):
     db = MongoDb(
-        db_client=_DummySyncClient(),  # type: ignore[arg-type]
+        db_client=mock_sync_client,  # type: ignore[arg-type]
         db_name="test_db",
         schedules_collection="custom_schedules",
         schedule_runs_collection="custom_schedule_runs",
@@ -73,8 +42,9 @@ def test_mongo_constructor_maps_scheduler_collections():
 
 
 def test_mongo_get_schedule_run_returns_doc_without_mongo_id(monkeypatch: pytest.MonkeyPatch):
-    db = MongoDb(db_client=_DummySyncClient(), db_name="test_db")  # type: ignore[arg-type]
-    collection = _DummySyncCollection(doc={"_id": "mongo-id", "id": "run-1", "status": "completed"})
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.find_one.return_value = {"_id": "mongo-id", "id": "run-1", "status": "completed"}
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
 
     result = db.get_schedule_run("run-1")
@@ -83,16 +53,17 @@ def test_mongo_get_schedule_run_returns_doc_without_mongo_id(monkeypatch: pytest
 
 
 def test_mongo_get_schedule_run_missing_returns_none(monkeypatch: pytest.MonkeyPatch):
-    db = MongoDb(db_client=_DummySyncClient(), db_name="test_db")  # type: ignore[arg-type]
-    collection = _DummySyncCollection(doc=None)
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.find_one.return_value = None
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
 
     assert db.get_schedule_run("missing-run") is None
 
 
-def test_mongo_get_collection_supports_scheduler_tables(monkeypatch: pytest.MonkeyPatch):
+def test_mongo_get_collection_supports_scheduler_tables(monkeypatch: pytest.MonkeyPatch, mock_sync_client):
     db = MongoDb(
-        db_client=_DummySyncClient(),  # type: ignore[arg-type]
+        db_client=mock_sync_client,  # type: ignore[arg-type]
         db_name="test_db",
         schedules_collection="custom_schedules",
         schedule_runs_collection="custom_schedule_runs",
@@ -115,9 +86,9 @@ def test_mongo_get_collection_supports_scheduler_tables(monkeypatch: pytest.Monk
     assert ("custom_schedule_runs", "schedule_runs", True) in calls
 
 
-def test_mongo_create_all_tables_includes_scheduler_tables(monkeypatch: pytest.MonkeyPatch):
+def test_mongo_create_all_tables_includes_scheduler_tables(monkeypatch: pytest.MonkeyPatch, mock_sync_client):
     db = MongoDb(
-        db_client=_DummySyncClient(),  # type: ignore[arg-type]
+        db_client=mock_sync_client,  # type: ignore[arg-type]
         db_name="test_db",
         schedules_collection="custom_schedules",
         schedule_runs_collection="custom_schedule_runs",
@@ -161,16 +132,10 @@ def test_async_mongo_constructor_maps_scheduler_collections():
 
 @pytest.mark.asyncio
 async def test_async_mongo_get_schedule_run_returns_doc_without_mongo_id(monkeypatch: pytest.MonkeyPatch):
-    db = AsyncMongoDb(
-        db_url="mongodb://localhost:27017",
-        db_name="test_db",
-    )
-    collection = _DummyAsyncCollection(doc={"_id": "mongo-id", "id": "run-1", "status": "completed"})
-
-    async def _fake_get_collection(table_type: str, create_collection_if_not_found=True):
-        return collection
-
-    monkeypatch.setattr(db, "_get_collection", _fake_get_collection)
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = AsyncMock()
+    collection.find_one.return_value = {"_id": "mongo-id", "id": "run-1", "status": "completed"}
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
 
     result = await db.get_schedule_run("run-1")
 
@@ -179,15 +144,9 @@ async def test_async_mongo_get_schedule_run_returns_doc_without_mongo_id(monkeyp
 
 @pytest.mark.asyncio
 async def test_async_mongo_get_schedule_run_missing_returns_none(monkeypatch: pytest.MonkeyPatch):
-    db = AsyncMongoDb(
-        db_url="mongodb://localhost:27017",
-        db_name="test_db",
-    )
-    collection = _DummyAsyncCollection(doc=None)
-
-    async def _fake_get_collection(table_type: str, create_collection_if_not_found=True):
-        return collection
-
-    monkeypatch.setattr(db, "_get_collection", _fake_get_collection)
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = AsyncMock()
+    collection.find_one.return_value = None
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
 
     assert await db.get_schedule_run("missing-run") is None
