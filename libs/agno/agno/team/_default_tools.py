@@ -587,34 +587,56 @@ def _get_delegate_task_function(
             )
             member_agent_run_response = None
             member_run_id = None
-            for member_agent_run_output_event in member_agent_run_response_stream:
-                # Do NOT break out of the loop, Iterator need to exit properly
-                if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                    member_agent_run_response = member_agent_run_output_event  # type: ignore
-                    continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+            try:
+                for member_agent_run_output_event in member_agent_run_response_stream:
+                    # Do NOT break out of the loop, Iterator need to exit properly
+                    if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
+                        member_agent_run_response = member_agent_run_output_event  # type: ignore
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                # Capture the member's run_id for cancellation propagation
-                if member_run_id is None:
-                    member_run_id = getattr(member_agent_run_output_event, "run_id", None)
+                    # Capture the member's run_id for cancellation propagation
+                    if member_run_id is None:
+                        member_run_id = getattr(member_agent_run_output_event, "run_id", None)
 
-                # Check if the member's own run is cancelled
-                check_if_run_cancelled(member_agent_run_output_event)
+                    # Check if the member's own run is cancelled
+                    check_if_run_cancelled(member_agent_run_output_event)
 
-                # Check if the parent team's run is cancelled - propagate to member
-                try:
-                    if run_response.run_id is not None:
-                        raise_if_cancelled(run_response.run_id)
-                except RunCancelledException:
-                    # Cancel the member's run so it stops generating
-                    if member_run_id:
-                        cancel_run(member_run_id)
-                    raise
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        # Cancel the member's run so it stops generating
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        raise
 
-                # Yield the member event directly
-                member_agent_run_output_event.parent_run_id = (
-                    member_agent_run_output_event.parent_run_id or run_response.run_id
+                    # Yield the member event directly
+                    member_agent_run_output_event.parent_run_id = (
+                        member_agent_run_output_event.parent_run_id or run_response.run_id
+                    )
+                    yield member_agent_run_output_event  # type: ignore
+            except RunCancelledException:
+                # Drain remaining events to capture the cancelled RunOutput
+                with contextlib.suppress(Exception):
+                    for remaining in member_agent_run_response_stream:
+                        if isinstance(remaining, (TeamRunOutput, RunOutput)):
+                            member_agent_run_response = remaining
+                            break
+                raise
+            finally:
+                use_team_logger()
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
                 )
-                yield member_agent_run_output_event  # type: ignore
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    yield f"Member '{member_agent.name}' requires human input before continuing."
+                    return
         else:
             member_agent_run_response = member_agent.run(  # type: ignore
                 input=member_agent_task if not history else history,  # type: ignore
@@ -637,61 +659,57 @@ def _get_delegate_task_function(
                 else None,
             )
 
-            check_if_run_cancelled(member_agent_run_response)  # type: ignore
-            # Also check if the parent team's run was cancelled while the member was executing
-            if run_response.run_id is not None:
-                raise_if_cancelled(run_response.run_id)
-
-        # Check if the member run is paused (HITL)
-        if member_agent_run_response is not None and member_agent_run_response.is_paused:
-            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
-            use_team_logger()
-            _process_delegate_task_to_member(
-                member_agent_run_response,
-                member_agent,
-                member_agent_task,  # type: ignore
-                member_session_state_copy,  # type: ignore
-            )
-            yield f"Member '{member_agent.name}' requires human input before continuing."
-            return
-
-        if not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    content = member_agent_run_response.content.strip()  # type: ignore
-                    if len(content) > 0:
-                        yield content
+                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                # Also check if the parent team's run was cancelled while the member was executing
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
+            except RunCancelledException:
+                raise
+            finally:
+                use_team_logger()
+                # Check if the member run is paused (HITL)
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
+                )
 
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
-                        tool_str = ""
-                        for tool in member_agent_run_response.tools:  # type: ignore
-                            if tool.result:
-                                tool_str += f"{tool.result},"
-                        yield tool_str.rstrip(",")
+            # Check if the member run is paused (HITL) - return after finally has processed
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                yield f"Member '{member_agent.name}' requires human input before continuing."
+                return
 
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
+            if not stream:
+                try:
+                    if member_agent_run_response.content is None and (  # type: ignore
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
+                    ):
+                        yield "No response from the member agent."
+                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                        content = member_agent_run_response.content.strip()  # type: ignore
+                        if len(content) > 0:
+                            yield content
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-            except Exception as e:
-                yield str(e)
+                        # If the content is empty but we have tool calls
+                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
+                            tool_str = ""
+                            for tool in member_agent_run_response.tools:  # type: ignore
+                                if tool.result:
+                                    tool_str += f"{tool.result},"
+                            yield tool_str.rstrip(",")
 
-        # Afterward, switch back to the team logger
-        use_team_logger()
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
+                    else:
+                        import json
 
-        _process_delegate_task_to_member(
-            member_agent_run_response,
-            member_agent,
-            member_agent_task,  # type: ignore
-            member_session_state_copy,  # type: ignore
-        )
+                        yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                except Exception as e:
+                    yield str(e)
 
     async def adelegate_task_to_member(
         member_id: str, task: str
@@ -745,34 +763,58 @@ def _get_delegate_task_function(
             )
             member_agent_run_response = None
             member_run_id = None
-            async for member_agent_run_response_event in member_agent_run_response_stream:
-                # Do NOT break out of the loop, AsyncIterator need to exit properly
-                if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
-                    member_agent_run_response = member_agent_run_response_event  # type: ignore
-                    continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+            try:
+                async for member_agent_run_response_event in member_agent_run_response_stream:
+                    # Do NOT break out of the loop, AsyncIterator need to exit properly
+                    if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
+                        member_agent_run_response = member_agent_run_response_event  # type: ignore
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                # Capture the member's run_id for cancellation propagation
-                if member_run_id is None:
-                    member_run_id = getattr(member_agent_run_response_event, "run_id", None)
+                    # Capture the member's run_id for cancellation propagation
+                    if member_run_id is None:
+                        member_run_id = getattr(member_agent_run_response_event, "run_id", None)
 
-                # Check if the member's own run is cancelled
-                check_if_run_cancelled(member_agent_run_response_event)
+                    # Check if the member's own run is cancelled
+                    check_if_run_cancelled(member_agent_run_response_event)
 
-                # Check if the parent team's run is cancelled - propagate to member
-                try:
-                    if run_response.run_id is not None:
-                        raise_if_cancelled(run_response.run_id)
-                except RunCancelledException:
-                    # Cancel the member's run so it stops generating
-                    if member_run_id:
-                        cancel_run(member_run_id)
-                    raise
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        # Cancel the member's run so it stops generating
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        raise
 
-                # Yield the member event directly
-                member_agent_run_response_event.parent_run_id = member_agent_run_response_event.parent_run_id or (
-                    run_response.run_id if run_response is not None else None
+                    # Yield the member event directly
+                    member_agent_run_response_event.parent_run_id = member_agent_run_response_event.parent_run_id or (
+                        run_response.run_id if run_response is not None else None
+                    )
+                    yield member_agent_run_response_event  # type: ignore
+            except RunCancelledException:
+                # Drain remaining events to capture the cancelled RunOutput
+                with contextlib.suppress(Exception):
+                    async for remaining in member_agent_run_response_stream:
+                        if isinstance(remaining, (TeamRunOutput, RunOutput)):
+                            member_agent_run_response = remaining
+                            break
+                # Don't re-raise — the finally block will persist the member run,
+                # and the team's response handler will detect cancellation via raise_if_cancelled.
+                # Re-raising here would cause models/base.py to log it as a tool error.
+            finally:
+                use_team_logger()
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
                 )
-                yield member_agent_run_response_event  # type: ignore
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    yield f"Member '{member_agent.name}' requires human input before continuing."
+                    return
         else:
             member_agent_run_response = await member_agent.arun(  # type: ignore
                 input=member_agent_task if not history else history,
@@ -794,58 +836,58 @@ def _get_delegate_task_function(
                 if not member_agent.knowledge_filters and member_agent.knowledge
                 else None,
             )
-            check_if_run_cancelled(member_agent_run_response)  # type: ignore
-            # Also check if the parent team's run was cancelled while the member was executing
-            if run_response.run_id is not None:
-                raise_if_cancelled(run_response.run_id)
 
-        # Check if the member run is paused (HITL)
-        if member_agent_run_response is not None and member_agent_run_response.is_paused:
-            _propagate_member_pause(run_response, member_agent, member_agent_run_response)
-            use_team_logger()
-            _process_delegate_task_to_member(
-                member_agent_run_response,
-                member_agent,
-                member_agent_task,  # type: ignore
-                member_session_state_copy,  # type: ignore
-            )
-            yield f"Member '{member_agent.name}' requires human input before continuing."
-            return
-
-        if not stream:
+            is_cancelled = False
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                        yield member_agent_run_response.content  # type: ignore
+                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                # Also check if the parent team's run was cancelled while the member was executing
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
+            except RunCancelledException:
+                is_cancelled = True
+            finally:
+                use_team_logger()
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
+                )
 
-                    # If the content is empty but we have tool calls
-                    elif (
-                        member_agent_run_response.tools is not None  # type: ignore
-                        and len(member_agent_run_response.tools) > 0  # type: ignore
+            if is_cancelled:
+                return
+
+            # Check if the member run is paused (HITL) - return after finally has processed
+            if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                yield f"Member '{member_agent.name}' requires human input before continuing."
+                return
+
+            if not stream:
+                try:
+                    if member_agent_run_response.content is None and (  # type: ignore
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
                     ):
-                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
+                        yield "No response from the member agent."
+                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                        if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
+                            yield member_agent_run_response.content  # type: ignore
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-            except Exception as e:
-                yield str(e)
+                        # If the content is empty but we have tool calls
+                        elif (
+                            member_agent_run_response.tools is not None  # type: ignore
+                            and len(member_agent_run_response.tools) > 0  # type: ignore
+                        ):
+                            yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
+                    else:
+                        import json
 
-        # Afterward, switch back to the team logger
-        use_team_logger()
-
-        _process_delegate_task_to_member(
-            member_agent_run_response,
-            member_agent,
-            member_agent_task,  # type: ignore
-            member_session_state_copy,  # type: ignore
-        )
+                        yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                except Exception as e:
+                    yield str(e)
 
     # When the task should be delegated to all members
     def delegate_task_to_members(task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
@@ -892,33 +934,56 @@ def _get_delegate_task_function(
                 )
                 member_agent_run_response = None
                 member_run_id = None
-                for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    # Do NOT break out of the loop, Iterator need to exit properly
-                    if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
-                        member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+                try:
+                    for member_agent_run_response_chunk in member_agent_run_response_stream:
+                        # Do NOT break out of the loop, Iterator need to exit properly
+                        if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
+                            member_agent_run_response = member_agent_run_response_chunk  # type: ignore
+                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                    # Capture the member's run_id for cancellation propagation
-                    if member_run_id is None:
-                        member_run_id = getattr(member_agent_run_response_chunk, "run_id", None)
+                        # Capture the member's run_id for cancellation propagation
+                        if member_run_id is None:
+                            member_run_id = getattr(member_agent_run_response_chunk, "run_id", None)
 
-                    # Check if the member's own run is cancelled
-                    check_if_run_cancelled(member_agent_run_response_chunk)
+                        # Check if the member's own run is cancelled
+                        check_if_run_cancelled(member_agent_run_response_chunk)
 
-                    # Check if the parent team's run is cancelled - propagate to member
-                    try:
-                        if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
-                    except RunCancelledException:
-                        if member_run_id:
-                            cancel_run(member_run_id)
-                        raise
+                        # Check if the parent team's run is cancelled - propagate to member
+                        try:
+                            if run_response.run_id is not None:
+                                raise_if_cancelled(run_response.run_id)
+                        except RunCancelledException:
+                            if member_run_id:
+                                cancel_run(member_run_id)
+                            raise
 
-                    # Yield the member event directly
-                    member_agent_run_response_chunk.parent_run_id = member_agent_run_response_chunk.parent_run_id or (
-                        run_response.run_id if run_response is not None else None
+                        # Yield the member event directly
+                        member_agent_run_response_chunk.parent_run_id = member_agent_run_response_chunk.parent_run_id or (
+                            run_response.run_id if run_response is not None else None
+                        )
+                        yield member_agent_run_response_chunk  # type: ignore
+                except RunCancelledException:
+                    # Drain remaining events to capture the cancelled RunOutput
+                    with contextlib.suppress(Exception):
+                        for remaining in member_agent_run_response_stream:
+                            if isinstance(remaining, (TeamRunOutput, RunOutput)):
+                                member_agent_run_response = remaining
+                                break
+                    raise
+                finally:
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                    _process_delegate_task_to_member(
+                        member_agent_run_response,
+                        member_agent,
+                        member_agent_task,  # type: ignore
+                        member_session_state_copy,  # type: ignore
                     )
-                    yield member_agent_run_response_chunk  # type: ignore
+
+                # Check if the member run is paused (HITL)
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    yield f"Agent {member_agent.name}: Requires human input before continuing."
+                    continue
 
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
@@ -942,22 +1007,26 @@ def _get_delegate_task_function(
                     metadata=run_context.metadata,
                 )
 
-                check_if_run_cancelled(member_agent_run_response)  # type: ignore
-                if run_response.run_id is not None:
-                    raise_if_cancelled(run_response.run_id)
+                try:
+                    check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                    if run_response.run_id is not None:
+                        raise_if_cancelled(run_response.run_id)
+                except RunCancelledException:
+                    raise
+                finally:
+                    if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                        _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                    _process_delegate_task_to_member(
+                        member_agent_run_response,
+                        member_agent,
+                        member_agent_task,  # type: ignore
+                        member_session_state_copy,  # type: ignore
+                    )
 
-            # Check if the member run is paused (HITL)
-            if member_agent_run_response is not None and member_agent_run_response.is_paused:
-                _propagate_member_pause(run_response, member_agent, member_agent_run_response)
-                use_team_logger()
-                _process_delegate_task_to_member(
-                    member_agent_run_response,
-                    member_agent,
-                    member_agent_task,  # type: ignore
-                    member_session_state_copy,  # type: ignore
-                )
-                yield f"Agent {member_agent.name}: Requires human input before continuing."
-                continue
+                # Check if the member run is paused (HITL)
+                if member_agent_run_response is not None and member_agent_run_response.is_paused:
+                    yield f"Agent {member_agent.name}: Requires human input before continuing."
+                    continue
 
             if not stream:
                 try:
@@ -980,13 +1049,6 @@ def _get_delegate_task_function(
                         yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
-
-            _process_delegate_task_to_member(
-                member_agent_run_response,
-                member_agent,
-                member_agent_task,  # type: ignore
-                member_session_state_copy,  # type: ignore
-            )
 
         # After all the member runs, switch back to the team logger
         use_team_logger()

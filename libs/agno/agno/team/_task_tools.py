@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -429,23 +430,32 @@ def _get_task_management_tools(
                     yield_run_output=True,
                 )
                 member_run_id = None
-                for event in member_stream:
-                    if isinstance(event, (TeamRunOutput, RunOutput)):
-                        member_run_response = event
-                        continue
-                    if member_run_id is None:
-                        member_run_id = getattr(event, "run_id", None)
-                    check_if_run_cancelled(event)
-                    # Check if the parent team's run is cancelled - propagate to member
-                    try:
-                        if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
-                    except RunCancelledException:
-                        if member_run_id:
-                            cancel_run(member_run_id)
-                        raise
-                    event.parent_run_id = event.parent_run_id or run_response.run_id
-                    yield event
+                try:
+                    for event in member_stream:
+                        if isinstance(event, (TeamRunOutput, RunOutput)):
+                            member_run_response = event
+                            continue
+                        if member_run_id is None:
+                            member_run_id = getattr(event, "run_id", None)
+                        check_if_run_cancelled(event)
+                        # Check if the parent team's run is cancelled - propagate to member
+                        try:
+                            if run_response.run_id is not None:
+                                raise_if_cancelled(run_response.run_id)
+                        except RunCancelledException:
+                            if member_run_id:
+                                cancel_run(member_run_id)
+                            raise
+                        event.parent_run_id = event.parent_run_id or run_response.run_id
+                        yield event
+                except RunCancelledException:
+                    # Drain remaining events to capture the cancelled RunOutput
+                    with contextlib.suppress(Exception):
+                        for remaining in member_stream:
+                            if isinstance(remaining, (TeamRunOutput, RunOutput)):
+                                member_run_response = remaining
+                                break
+                    raise
             else:
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -470,6 +480,9 @@ def _get_task_management_tools(
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            # Always post-process the member run on cancellation so it's persisted
+            use_team_logger()
+            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
             raise
         except Exception as e:
             task.status = TaskStatus.failed
@@ -586,23 +599,32 @@ def _get_task_management_tools(
                     yield_run_output=True,
                 )
                 member_run_id = None
-                async for event in member_stream:
-                    if isinstance(event, (TeamRunOutput, RunOutput)):
-                        member_run_response = event
-                        continue
-                    if member_run_id is None:
-                        member_run_id = getattr(event, "run_id", None)
-                    check_if_run_cancelled(event)
-                    # Check if the parent team's run is cancelled - propagate to member
-                    try:
-                        if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
-                    except RunCancelledException:
-                        if member_run_id:
-                            cancel_run(member_run_id)
-                        raise
-                    event.parent_run_id = event.parent_run_id or run_response.run_id
-                    yield event
+                try:
+                    async for event in member_stream:
+                        if isinstance(event, (TeamRunOutput, RunOutput)):
+                            member_run_response = event
+                            continue
+                        if member_run_id is None:
+                            member_run_id = getattr(event, "run_id", None)
+                        check_if_run_cancelled(event)
+                        # Check if the parent team's run is cancelled - propagate to member
+                        try:
+                            if run_response.run_id is not None:
+                                raise_if_cancelled(run_response.run_id)
+                        except RunCancelledException:
+                            if member_run_id:
+                                cancel_run(member_run_id)
+                            raise
+                        event.parent_run_id = event.parent_run_id or run_response.run_id
+                        yield event
+                except RunCancelledException:
+                    # Drain remaining events to capture the cancelled RunOutput
+                    with contextlib.suppress(Exception):
+                        async for remaining in member_stream:
+                            if isinstance(remaining, (TeamRunOutput, RunOutput)):
+                                member_run_response = remaining
+                                break
+                    raise
             else:
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
@@ -627,7 +649,12 @@ def _get_task_management_tools(
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
-            raise
+            # Always post-process the member run on cancellation so it's persisted
+            # Don't re-raise — the team's response handler will detect cancellation via raise_if_cancelled.
+            # Re-raising here would cause models/base.py to log it as a tool error.
+            use_team_logger()
+            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            return
         except Exception as e:
             task.status = TaskStatus.failed
             task.result = f"Member execution error: {e}"

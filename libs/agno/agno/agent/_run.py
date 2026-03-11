@@ -1115,6 +1115,9 @@ def _run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                # Yield the final RunOutput so callers (e.g. team delegation) can capture it
+                if yield_run_output:
+                    yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -2316,6 +2319,9 @@ async def _arun_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                # Yield the final RunOutput so callers (e.g. team delegation) can capture it
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -3279,6 +3285,9 @@ def _continue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                # Yield the final RunOutput so callers (e.g. team delegation) can capture it
+                if yield_run_output:
+                    yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -4248,6 +4257,9 @@ async def _acontinue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                # Yield the final RunOutput so callers (e.g. team delegation) can capture it
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (InputCheckError, OutputCheckError) as e:
