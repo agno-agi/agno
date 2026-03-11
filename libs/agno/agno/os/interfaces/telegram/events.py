@@ -1,9 +1,5 @@
-# Streaming event dispatch table.
-# Events are normalized (Team prefix stripped) for unified handling.
-# Handlers update StreamState; the stream loop in router.py drives iteration.
-
 import time
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict
 
 from agno.agent import RunEvent
 from agno.os.interfaces.telegram.state import TG_DRAFT_EDIT_INTERVAL, TG_STREAM_EDIT_INTERVAL, StreamState
@@ -12,8 +8,6 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.run.base import BaseRunOutputEvent
-
-_DELEGATION_TOOLS = {"delegate_task_to_member", "delegate_task_to_members"}
 
 # Inner-agent events suppressed during workflow streaming to avoid flooding
 # the status blockquote. Only workflow-level progress is shown.
@@ -42,20 +36,9 @@ def _normalize_event(event: str) -> str:
     return event.removeprefix("Team")
 
 
-def _get_tool_info(chunk: "BaseRunOutputEvent") -> tuple[str, Optional[dict]]:
+def _get_tool_name(chunk: "BaseRunOutputEvent") -> str:
     tool = getattr(chunk, "tool", None)
-    name = (tool.tool_name if tool else None) or ""
-    args = tool.tool_args if tool else None
-    return name, args
-
-
-def _delegation_label(tool_name: str, tool_args: Optional[dict], *, started: bool) -> Optional[str]:
-    if tool_name not in _DELEGATION_TOOLS:
-        return None
-    if tool_name == "delegate_task_to_members":
-        return "Delegating to all members..." if started else "Delegated to all members"
-    member = (tool_args or {}).get("member_id", "member")
-    return f"Delegating to {member}..." if started else f"Delegated to {member}"
+    return (tool.tool_name if tool else None) or ""
 
 
 async def _on_reasoning_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
@@ -71,7 +54,7 @@ async def _on_reasoning_completed(chunk: "BaseRunOutputEvent", state: StreamStat
 
 
 async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    tool_name, tool_args = _get_tool_info(chunk)
+    tool_name = _get_tool_name(chunk)
     if not tool_name:
         try:
             await state.bot.send_chat_action(state.chat_id, "typing", message_thread_id=state.message_thread_id)
@@ -79,40 +62,31 @@ async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState)
             pass
         return False
 
-    label = _delegation_label(tool_name, tool_args, started=True)
-    if label is None:
-        agent_label = ""
-        if state.is_team:
-            agent_name = getattr(chunk, "agent_name", None)
-            if agent_name:
-                agent_label = f"[{agent_name}] "
-        label = f"{agent_label}Using {tool_name}..."
-    state.add_status(label)
+    agent_label = ""
+    if state.is_team:
+        agent_name = getattr(chunk, "agent_name", None)
+        if agent_name:
+            agent_label = f"[{agent_name}] "
+    state.add_status(f"{agent_label}Using {tool_name}...")
     await state.flush()
     return False
 
 
 async def _on_tool_call_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    tool_name, tool_args = _get_tool_info(chunk)
+    tool_name = _get_tool_name(chunk)
     if not tool_name:
         return False
 
-    completed = _delegation_label(tool_name, tool_args, started=False)
-    if completed:
-        started = _delegation_label(tool_name, tool_args, started=True)
-        if started:
-            state.update_status(started, completed)
-    else:
-        for i, line in enumerate(state.status_lines):
-            if f"Using {tool_name}..." in line:
-                state.status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
-                break
+    for i, line in enumerate(state.status_lines):
+        if f"Using {tool_name}..." in line:
+            state.status_lines[i] = line.replace(f"Using {tool_name}...", f"Used {tool_name}")
+            break
     await state.flush()
     return False
 
 
 async def _on_tool_call_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    tool_name, _ = _get_tool_info(chunk)
+    tool_name = _get_tool_name(chunk)
     tool_name = tool_name or "tool"
     found = False
     for i, line in enumerate(state.status_lines):

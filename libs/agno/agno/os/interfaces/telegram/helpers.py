@@ -14,84 +14,25 @@ TG_MAX_FILE_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20 MB — Telegram API download 
 _BYTES_PER_MB = 1024 * 1024
 _TG_MAX_FILE_DOWNLOAD_MB = TG_MAX_FILE_DOWNLOAD_SIZE // _BYTES_PER_MB
 
-
-class ParsedMessage(NamedTuple):
-    text: Optional[str]
-    image_file_id: Optional[str]
-    audio_file_id: Optional[str]
-    video_file_id: Optional[str]
-    document_meta: Optional[dict]
+# Binary formats that should stay as File objects, not inlined as text
+_BINARY_MIME_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
 
 
-def message_mentions_bot(message: dict, bot_username: str) -> bool:
+class MessageContent(NamedTuple):
+    text: str
+    images: Optional[List[Image]]
+    audio: Optional[List[Audio]]
+    videos: Optional[List[Video]]
+    files: Optional[List[File]]
+    warning: Optional[str]
+
+
+def is_bot_mentioned(message: dict, bot_username: str) -> bool:
     text = message.get("text", "") or message.get("caption", "")
-    entities = message.get("entities", []) or message.get("caption_entities", [])
-    # NOTE: Telegram entity offsets are UTF-16 code units; Python slices by
-    # code points. Mentions after non-BMP characters (e.g. emoji) may be
-    # misparsed. Acceptable trade-off for now.
-    for entity in entities:
-        if entity.get("type") == "mention":
-            offset = entity["offset"]
-            length = entity["length"]
-            mention = text[offset : offset + length].lstrip("@").lower()
-            if mention == bot_username.lower():
-                return True
-    return False
+    return f"@{bot_username.lower()}" in (text or "").lower()
 
 
-def parse_inbound_message(message: dict) -> ParsedMessage:
-    message_text: Optional[str] = None
-    image_file_id: Optional[str] = None
-    audio_file_id: Optional[str] = None
-    video_file_id: Optional[str] = None
-    document_meta: Optional[dict] = None
-
-    if message.get("text"):
-        message_text = message["text"]
-    elif message.get("photo"):
-        image_file_id = message["photo"][-1]["file_id"]
-        message_text = message.get("caption", "Describe the image")
-    elif message.get("sticker"):
-        sticker = message["sticker"]
-        is_animated = sticker.get("is_animated", False)
-        is_video = sticker.get("is_video", False)
-        emoji = sticker.get("emoji", "")
-        set_name = sticker.get("set_name", "")
-
-        if is_animated or is_video:
-            # Animated (.tgs) and video (.webm) stickers are not valid image
-            # formats for model APIs.  Use the JPEG thumbnail instead.
-            thumbnail = sticker.get("thumbnail") or sticker.get("thumb")
-            if thumbnail:
-                image_file_id = thumbnail["file_id"]
-        else:
-            # Static .webp stickers are natively supported.
-            image_file_id = sticker["file_id"]
-
-        desc = "Describe this sticker"
-        if emoji:
-            desc += f" (emoji: {emoji})"
-        if set_name:
-            desc += f" from set '{set_name}'"
-        message_text = desc
-    elif message.get("voice"):
-        audio_file_id = message["voice"]["file_id"]
-        message_text = message.get("caption", "Transcribe or describe this audio")
-    elif message.get("audio"):
-        audio_file_id = message["audio"]["file_id"]
-        message_text = message.get("caption", "Describe this audio")
-    elif message.get("video") or message.get("video_note") or message.get("animation"):
-        vid: dict = message.get("video") or message.get("video_note") or message.get("animation")  # type: ignore[assignment]
-        video_file_id = vid["file_id"]
-        message_text = message.get("caption", "Describe this video")
-    elif message.get("document"):
-        document_meta = message["document"]
-        message_text = message.get("caption", "Process this file")
-
-    return ParsedMessage(message_text, image_file_id, audio_file_id, video_file_id, document_meta)
-
-
-async def get_file_bytes(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
+async def _download(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
     try:
         file_info = await bot.get_file(file_id)
         file_size = getattr(file_info, "file_size", None)
@@ -105,13 +46,65 @@ async def get_file_bytes(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
         return None
 
 
-async def download_inbound_media(
-    bot: "AsyncTeleBot",
-    image_file_id: Optional[str],
-    audio_file_id: Optional[str],
-    video_file_id: Optional[str],
-    document_meta: Optional[dict],
-) -> tuple[Optional[List[Image]], Optional[List[Audio]], Optional[List[Video]], Optional[List[File]], Optional[str]]:
+def _inline_text_files(text: str, files: Optional[List[File]]) -> tuple[str, Optional[List[File]]]:
+    if not files:
+        return text, files
+    kept: List[File] = []
+    for f in files:
+        if f.mime_type and f.mime_type in _BINARY_MIME_TYPES:
+            kept.append(f)
+        elif f.content:
+            try:
+                decoded = f.content.decode("utf-8", errors="replace") if isinstance(f.content, bytes) else str(f.content)
+                label = f.filename or "file"
+                text += f"\n\n--- {label} ---\n{decoded}"
+            except Exception:
+                kept.append(f)
+        else:
+            kept.append(f)
+    return text, kept or None
+
+
+async def extract_message_content(bot: "AsyncTeleBot", message: dict) -> Optional[MessageContent]:
+    text: Optional[str] = None
+    image_file_id: Optional[str] = None
+    audio_file_id: Optional[str] = None
+    video_file_id: Optional[str] = None
+    document_meta: Optional[dict] = None
+
+    if message.get("text"):
+        text = message["text"]
+    elif message.get("photo"):
+        image_file_id = message["photo"][-1]["file_id"]
+        text = message.get("caption")
+    elif message.get("sticker"):
+        sticker = message["sticker"]
+        if sticker.get("is_animated") or sticker.get("is_video"):
+            # Animated/video stickers aren't valid image formats — use thumbnail
+            thumbnail = sticker.get("thumbnail") or sticker.get("thumb")
+            if thumbnail:
+                image_file_id = thumbnail["file_id"]
+        else:
+            image_file_id = sticker["file_id"]
+    elif message.get("voice"):
+        audio_file_id = message["voice"]["file_id"]
+        text = message.get("caption")
+    elif message.get("audio"):
+        audio_file_id = message["audio"]["file_id"]
+        text = message.get("caption")
+    elif message.get("video") or message.get("video_note") or message.get("animation"):
+        vid: dict = message.get("video") or message.get("video_note") or message.get("animation")  # type: ignore[assignment]
+        video_file_id = vid["file_id"]
+        text = message.get("caption")
+    elif message.get("document"):
+        document_meta = message["document"]
+        text = message.get("caption")
+
+    has_media = image_file_id or audio_file_id or video_file_id or document_meta
+    if text is None and not has_media:
+        return None
+
+    # Download media
     images: Optional[List[Image]] = None
     audio: Optional[List[Audio]] = None
     videos: Optional[List[Video]] = None
@@ -119,17 +112,17 @@ async def download_inbound_media(
     warning: Optional[str] = None
 
     if image_file_id:
-        image_bytes = await get_file_bytes(bot, image_file_id)
-        if image_bytes:
-            images = [Image(content=image_bytes)]
+        data = await _download(bot, image_file_id)
+        if data:
+            images = [Image(content=data)]
     if audio_file_id:
-        audio_bytes = await get_file_bytes(bot, audio_file_id)
-        if audio_bytes:
-            audio = [Audio(content=audio_bytes)]
+        data = await _download(bot, audio_file_id)
+        if data:
+            audio = [Audio(content=data)]
     if video_file_id:
-        video_bytes = await get_file_bytes(bot, video_file_id)
-        if video_bytes:
-            videos = [Video(content=video_bytes)]
+        data = await _download(bot, video_file_id)
+        if data:
+            videos = [Video(content=data)]
     if document_meta:
         doc_name = document_meta.get("file_name", "unknown")
         doc_size = document_meta.get("file_size", 0)
@@ -141,8 +134,8 @@ async def download_inbound_media(
                 "for Telegram bots. Please send a smaller file."
             )
         else:
-            doc_bytes = await get_file_bytes(bot, document_meta["file_id"])
-            if doc_bytes:
+            data = await _download(bot, document_meta["file_id"])
+            if data:
                 doc_mime = document_meta.get("mime_type")
                 valid_mimes = File.valid_mime_types()
                 if doc_mime and doc_mime not in valid_mimes:
@@ -154,13 +147,17 @@ async def download_inbound_media(
                     )
                 files = [
                     File(
-                        content=doc_bytes,
+                        content=data,
                         mime_type=doc_mime if doc_mime in valid_mimes else None,
                         filename=doc_name,
                     )
                 ]
 
-    return images, audio, videos, files, warning
+    # Inline text-based files into message text
+    msg_text = text or ""
+    msg_text, files = _inline_text_files(msg_text, files)
+
+    return MessageContent(msg_text, images, audio, videos, files, warning)
 
 
 async def send_html(

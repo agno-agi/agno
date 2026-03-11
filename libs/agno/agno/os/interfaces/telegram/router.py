@@ -11,9 +11,8 @@ from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.telegram.events import process_event
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_CAPTION_LENGTH,
-    download_inbound_media,
-    message_mentions_bot,
-    parse_inbound_message,
+    extract_message_content,
+    is_bot_mentioned,
     send_chunked,
     send_html,
     send_response_media,
@@ -40,14 +39,6 @@ except ImportError as e:
 # Binary file types that are kept as File attachments rather than inlined as text
 _TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
 
-_BINARY_MIME_TYPES = frozenset(
-    {
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    }
-)
-
-
 class TelegramStatusResponse(BaseModel):
     status: str = Field(default="available")
 
@@ -60,25 +51,6 @@ DEFAULT_START_MESSAGE = "Hello! I'm ready to help. Send me a message to get star
 DEFAULT_HELP_MESSAGE = "Send me text, photos, voice notes, videos, or documents and I'll help you with them."
 DEFAULT_ERROR_MESSAGE = "Sorry, there was an error processing your message. Send /new to start a fresh conversation."
 DEFAULT_NEW_MESSAGE = "New conversation started. How can I help you?"
-
-
-def _inline_text_files(message_text: str, files: Optional[list]) -> tuple[str, Optional[list]]:
-    if not files:
-        return message_text, files
-    kept: list = []
-    for f in files:
-        if f.mime_type and f.mime_type in _BINARY_MIME_TYPES:
-            kept.append(f)
-        elif f.content:
-            try:
-                text = f.content.decode("utf-8", errors="replace") if isinstance(f.content, bytes) else str(f.content)
-                label = f.filename or "file"
-                message_text += f"\n\n--- {label} ---\n{text}"
-            except Exception:
-                kept.append(f)
-        else:
-            kept.append(f)
-    return message_text, kept or None
 
 
 def attach_routes(
@@ -399,7 +371,7 @@ def attach_routes(
             if is_group:
                 bot_username, bot_id = await bot_state.get_bot_info()
                 if reply_to_mentions_only:
-                    is_mentioned = message_mentions_bot(message, bot_username)
+                    is_mentioned = is_bot_mentioned(message, bot_username)
                     reply_msg = message.get("reply_to_message")
                     is_reply = reply_to_bot_messages and bool(
                         reply_msg and reply_msg.get("from", {}).get("id") == bot_id
@@ -411,11 +383,15 @@ def attach_routes(
             # sees immediate feedback while potentially slow file fetches happen.
             await bot.send_chat_action(chat_id, "typing", message_thread_id=forum_thread_id)
 
-            # -- Parse message and download media --
-            parsed = parse_inbound_message(message)
-            if parsed.text is None:
+            # -- Extract text and media from message --
+            content = await extract_message_content(bot, message)
+            if content is None:
                 return
-            message_text = parsed.text
+            message_text = content.text
+            images, audio, videos, files = content.images, content.audio, content.videos, content.files
+
+            if content.warning:
+                await send_html(bot, chat_id, content.warning, message_thread_id=forum_thread_id)
 
             if is_group and message_text:
                 message_text = re.sub(
@@ -424,15 +400,6 @@ def attach_routes(
                     message_text,
                     flags=re.IGNORECASE,  # type: ignore[possibly-undefined]
                 ).strip()
-
-            images, audio, videos, files, file_warning = await download_inbound_media(
-                bot, parsed.image_file_id, parsed.audio_file_id, parsed.video_file_id, parsed.document_meta
-            )
-            if file_warning:
-                await send_html(bot, chat_id, file_warning, message_thread_id=forum_thread_id)
-
-            # Inline text-based files (CSV, TXT, JSON) into message text
-            message_text, files = _inline_text_files(message_text, files)
 
             # -- Resolve session ID: DB lookup with deterministic fallback --
             session_id = base_key
