@@ -22,14 +22,11 @@ jobs:
             const author = pr.user.login;
 
             // Check if this is the author's first PR to this repo
-            const { data: prs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'all',
-              per_page: 2,
+            const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} type:pr author:${author}`,
+              per_page: 1,
             });
-            const authorPrs = prs.filter(p => p.user.login === author);
-            if (authorPrs.length <= 1) {
+            if (searchResult.total_count <= 1) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -70,8 +67,8 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
 
-            // Get the list of changed files
-            const { data: files } = await github.rest.pulls.listFiles({
+            // Get the list of changed files (paginate to cover large PRs)
+            const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: pr.number,
