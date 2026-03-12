@@ -20,20 +20,17 @@ jobs:
 
           stale-pr-message: >
             This pull request has been automatically marked as stale due to 14 days of inactivity.
-            If this is still relevant, please update it or leave a comment. It will be closed in 7 days if no further activity occurs.
-
-          close-pr-message: >
-            This pull request has been closed due to 21 days of inactivity. Feel free to reopen if still relevant.
+            If this is still relevant, please update it or leave a comment.
 
           # Mark issues as stale after 30 days
           days-before-issue-stale: 30
 
-          # Effectively never close issues
+          # Effectively never close issues or PRs
           days-before-issue-close: 99999
+          days-before-pr-close: -1
 
-          # Mark PRs as stale after 14 days, close after 7 more
+          # Mark PRs as stale after 14 days but never auto-close
           days-before-pr-stale: 14
-          days-before-pr-close: 7
 
           stale-issue-label: "stale"
           stale-pr-label: "stale"
