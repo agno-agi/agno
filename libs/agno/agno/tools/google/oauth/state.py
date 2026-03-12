@@ -5,7 +5,7 @@ import json
 import time
 import uuid
 from os import getenv
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 _STATE_TTL_SECONDS = 300  # 5 minutes
 
@@ -23,17 +23,20 @@ def _sign(payload: bytes, hmac_key: bytes) -> str:
 
 
 def create_state(
-    team_id: str,
+    workspace_id: str,
     user_id: str,
     encryption_key: Optional[str] = None,
+    extra: Optional[Dict[str, str]] = None,
 ) -> str:
     hmac_key = _get_hmac_key(encryption_key)
-    payload = {
-        "team_id": team_id,
+    payload: Dict[str, Any] = {
+        "workspace_id": workspace_id,
         "user_id": user_id,
         "nonce": uuid.uuid4().hex,
         "exp": int(time.time()) + _STATE_TTL_SECONDS,
     }
+    if extra:
+        payload.update(extra)
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
     sig = _sign(payload_bytes, hmac_key)
     # Format: base64url(payload).signature
@@ -44,8 +47,8 @@ def create_state(
 def verify_state(
     state: str,
     encryption_key: Optional[str] = None,
-) -> Tuple[str, str]:
-    """Returns (team_id, user_id) if valid, raises ValueError otherwise."""
+) -> Tuple[str, str, Dict[str, Any]]:
+    """Returns (workspace_id, user_id, payload) if valid, raises ValueError otherwise."""
     hmac_key = _get_hmac_key(encryption_key)
 
     parts = state.split(".", 1)
@@ -70,4 +73,4 @@ def verify_state(
     if int(time.time()) > payload.get("exp", 0):
         raise ValueError("State expired — please try connecting again")
 
-    return payload["team_id"], payload["user_id"]
+    return payload["workspace_id"], payload["user_id"], payload

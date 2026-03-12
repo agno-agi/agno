@@ -74,18 +74,28 @@ def create_google_oauth_router(
     router = APIRouter(tags=["google-oauth"])
 
     @router.get("/google/auth/initiate")
-    async def initiate_google_auth(team_id: str, user_id: str):
-        state = create_state(team_id, user_id, encryption_key=_encryption_key)
+    async def initiate_google_auth(
+        workspace_id: str,
+        user_id: str,
+        channel_id: str = "",
+        thread_ts: str = "",
+    ):
+        # Carry Slack thread context so the callback can reply in the same thread
+        extra = {}
+        if channel_id:
+            extra["channel_id"] = channel_id
+        if thread_ts:
+            extra["thread_ts"] = thread_ts
+        state = create_state(workspace_id, user_id, encryption_key=_encryption_key, extra=extra or None)
 
         flow = Flow.from_client_config(client_config, scopes=_scopes, redirect_uri=_redirect_uri)
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             prompt="consent",
             state=state,
-            include_granted_scopes="true",
         )
 
-        log_debug(f"Google OAuth initiated for team={team_id} user={user_id}")
+        log_debug(f"Google OAuth initiated for team={workspace_id} user={user_id}")
         return RedirectResponse(url=auth_url, status_code=302)
 
     @router.get("/google/auth/callback")
@@ -105,13 +115,18 @@ def create_google_oauth_router(
             )
 
         try:
-            team_id, user_id = verify_state(state, encryption_key=_encryption_key)
+            workspace_id, user_id, state_payload = verify_state(state, encryption_key=_encryption_key)
         except ValueError as e:
             log_error(f"Invalid OAuth state: {e}")
             return HTMLResponse(content=_ERROR_HTML.format(error=str(e)), status_code=400)
 
         try:
-            flow = Flow.from_client_config(client_config, scopes=_scopes, redirect_uri=_redirect_uri)
+            # Google may return more scopes than requested (e.g. previously
+            # granted scopes). Use the returned scopes so fetch_token doesn't
+            # raise a "scope has changed" error.
+            returned_scopes_str = request.query_params.get("scope", "")
+            callback_scopes = returned_scopes_str.split() if returned_scopes_str else _scopes
+            flow = Flow.from_client_config(client_config, scopes=callback_scopes, redirect_uri=_redirect_uri)
             flow.fetch_token(code=code)
             creds = flow.credentials
         except Exception as e:
@@ -121,13 +136,18 @@ def create_google_oauth_router(
                 status_code=500,
             )
 
-        token_store.save_token(team_id, user_id, creds, _scopes)
-        log_debug(f"Google OAuth completed for team={team_id} user={user_id}")
+        token_store.save_token(workspace_id, user_id, creds, callback_scopes)
+        log_debug(f"Google OAuth completed for team={workspace_id} user={user_id}")
 
-        # Notify user in Slack via DM
+        # Notify user in Slack — reply in original thread if available, else DM
         if slack_token:
             try:
-                await _notify_slack_user(slack_token, user_id)
+                await _notify_slack_user(
+                    slack_token,
+                    user_id,
+                    channel_id=state_payload.get("channel_id"),
+                    thread_ts=state_payload.get("thread_ts"),
+                )
             except Exception as e:
                 # Non-fatal — token is already saved
                 log_error(f"Failed to send Slack notification: {e}")
@@ -135,8 +155,8 @@ def create_google_oauth_router(
         return HTMLResponse(content=_SUCCESS_HTML, status_code=200)
 
     @router.post("/google/auth/revoke")
-    async def revoke_google_auth(team_id: str, user_id: str):
-        creds = token_store.get_token(team_id, user_id)
+    async def revoke_google_auth(workspace_id: str, user_id: str):
+        creds = token_store.get_token(workspace_id, user_id)
         if creds is None:
             raise HTTPException(status_code=404, detail="No Google token found")
 
@@ -153,20 +173,32 @@ def create_google_oauth_router(
             except Exception as e:
                 log_error(f"Google token revocation failed: {e}")
 
-        token_store.delete_token(team_id, user_id)
+        token_store.delete_token(workspace_id, user_id)
         return {"status": "revoked"}
 
     return router
 
 
-async def _notify_slack_user(slack_token: str, user_id: str) -> None:
+async def _notify_slack_user(
+    slack_token: str,
+    user_id: str,
+    channel_id: Optional[str] = None,
+    thread_ts: Optional[str] = None,
+) -> None:
     try:
         from slack_sdk.web.async_client import AsyncWebClient
     except ImportError:
         return
 
     client = AsyncWebClient(token=slack_token)
-    await client.chat_postMessage(
-        channel=user_id,
-        text="Your Google account has been connected. You can now use Google tools.",
-    )
+    msg_kwargs: dict = {
+        "text": "Your Google account has been connected. Try your request again!",
+    }
+    if channel_id and thread_ts:
+        # Reply in the same thread where the Connect button was shown
+        msg_kwargs["channel"] = channel_id
+        msg_kwargs["thread_ts"] = thread_ts
+    else:
+        # Fall back to DM
+        msg_kwargs["channel"] = user_id
+    await client.chat_postMessage(**msg_kwargs)

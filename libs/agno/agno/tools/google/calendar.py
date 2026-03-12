@@ -118,6 +118,7 @@ class GoogleCalendarTools(Toolkit):
         self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.token_store = token_store
+        self.oauth_base_url: Optional[str] = kwargs.pop("oauth_base_url", None)
         self._current_user_key: Optional[tuple] = None
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None

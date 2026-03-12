@@ -220,6 +220,7 @@ class GmailTools(Toolkit):
         self.port = port
         self.login_hint = login_hint
         self.token_store = token_store
+        self.oauth_base_url: Optional[str] = kwargs.pop("oauth_base_url", None)
         self._current_user_key: Optional[Tuple[str, str]] = None
         self.include_html = include_html
         self.max_body_length = max_body_length
