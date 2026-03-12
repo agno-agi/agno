@@ -67,15 +67,17 @@ if __name__ == "__main__":
             skip_if_exists=True,
         )
 
-        # 2. Insert an image -- a coffee production chart
-        #    text_content is a short label shown to the agent when this result is retrieved
+        # 2. Insert an image with a description
+        #    The image embedding enables cross-modal retrieval (text query finds the image).
+        #    The text_content is what the agent reads when the result is returned, so it
+        #    should contain the key facts from the image.
         await knowledge.ainsert(
-            images=[
-                Image(
-                    filepath=resources / "coffee_production.png", mime_type="image/png"
-                )
-            ],
-            text_content="Coffee production by country (2024)",
+            images=[Image(filepath=resources / "coffee_production.png", mime_type="image/png")],
+            text_content=(
+                "Top coffee producing countries in 2024 (million 60kg bags): "
+                "Brazil 62.6, Vietnam 29.0, Colombia 11.5, Indonesia 11.0, "
+                "Ethiopia 8.7, Honduras 6.3, India 5.8, Uganda 5.5."
+            ),
             skip_if_exists=True,
         )
 
