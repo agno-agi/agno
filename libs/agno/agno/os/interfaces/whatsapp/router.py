@@ -226,7 +226,9 @@ def attach_routes(
             log_warning("Message missing 'from' field, skipping")
             return
         # Resolve storage identity — raw phone by default, encrypted when enabled
-        user_id = _encrypt_phone(phone_number, encryption_key) if enable_encryption else phone_number
+        user_id = (
+            _encrypt_phone(phone_number, encryption_key) if enable_encryption and encryption_key else phone_number
+        )
         try:
             message_id = message.get("id")
             await typing_indicator_async(message_id, config)
