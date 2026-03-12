@@ -442,10 +442,6 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def get_metrics_provider(self) -> str:
-        """Return the provider label used when grouping model metrics."""
-        return self.get_provider()
-
     def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
         """Generate a cache key based on model messages and core parameters."""
         message_data = []

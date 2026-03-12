@@ -667,7 +667,7 @@ def accumulate_model_metrics(
     reasoning_tokens = usage.reasoning_tokens or 0
 
     model_id = model.id
-    model_provider = model.get_metrics_provider()
+    model_provider = model.get_provider()
 
     # Create ModelMetrics entry
     model_metrics = ModelMetrics(

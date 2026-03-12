@@ -99,8 +99,8 @@ class OpenAIChat(Model):
         "model": "assistant",
     }
 
-    def get_metrics_provider(self) -> str:
-        return f"{self.get_provider()} Chat"
+    def get_provider(self) -> str:
+        return f"{super().get_provider()} Chat"
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set

@@ -90,8 +90,8 @@ class OpenAIResponses(Model):
         }
     )
 
-    def get_metrics_provider(self) -> str:
-        return f"{self.get_provider()} Responses"
+    def get_provider(self) -> str:
+        return f"{super().get_provider()} Responses"
 
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
