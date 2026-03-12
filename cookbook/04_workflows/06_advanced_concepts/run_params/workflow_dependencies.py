@@ -11,7 +11,7 @@ This is useful for injecting configuration, database connections, or other
 shared resources that every agent in the workflow should have access to.
 
 Dependency merges follow a precedence rule:
-  - Call-site dependencies win on key conflicts
+  - Run level dependencies win on key conflicts
   - Workflow-level dependencies (self.dependencies) fill in the rest
 """
 
