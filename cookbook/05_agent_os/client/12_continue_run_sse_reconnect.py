@@ -15,7 +15,7 @@ Steps:
 5. Reconnect via /resume and catch up on missed events
 
 Prerequisites:
-1. Start the AgentOS server with an agent that has tools requiring approval
+1. Start the AgentOS server with: python cookbook/05_agent_os/human_in_the_loop/agent_tool_requires_confirmation.py
 2. Run this script: python cookbook/05_agent_os/client/12_continue_run_sse_reconnect.py
 
 Note: This script requires an agent with tools that pause for approval.
