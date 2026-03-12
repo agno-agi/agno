@@ -309,9 +309,9 @@ def attach_routes(
                 if isinstance(media, bytes):
                     run_kwargs["audio"] = [Audio(content=media)]
 
-            # Give agent a user reference; use encrypted ID when encryption is on to avoid leaking raw phone
+            # Inject raw phone into LLM context — independent of encryption (which only protects DB)
             if send_user_number_to_context and entity_type != "workflow":
-                run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {user_id}"}
+                run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {phone_number}"}
                 run_kwargs["add_dependencies_to_context"] = True
 
             # Refresh typing indicator every 20s while the agent runs

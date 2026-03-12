@@ -996,7 +996,7 @@ async def test_encrypted_mode_deterministic():
 
 
 @pytest.mark.asyncio
-async def test_encrypted_mode_hides_raw_phone_in_context():
+async def test_encrypted_mode_keeps_raw_phone_in_context():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
@@ -1011,8 +1011,7 @@ async def test_encrypted_mode_hides_raw_phone_in_context():
         await _wait_for_agent_call(agent_mock)
 
         call_kwargs = agent_mock.arun.call_args.kwargs
-        # user_id is encrypted
+        # user_id is encrypted for DB
         assert call_kwargs["user_id"] != "sender_phone"
-        # Dependencies use encrypted user_id, not raw phone
-        assert call_kwargs["user_id"] in str(call_kwargs["dependencies"])
-        assert "sender_phone" not in str(call_kwargs["dependencies"])
+        # But dependencies have raw phone — encryption only protects DB, not LLM context
+        assert "sender_phone" in str(call_kwargs["dependencies"])
