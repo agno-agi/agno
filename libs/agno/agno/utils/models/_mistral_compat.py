@@ -8,7 +8,7 @@ can simply do:
 
 import importlib.metadata
 
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 
 try:
     _mistral_version = int(importlib.metadata.version("mistralai").split(".")[0])
@@ -36,6 +36,9 @@ if _mistral_version >= 2:
     from mistralai.client.types.basemodel import Unset  # type: ignore[attr-defined]
 else:
     # v1: mistralai < 2.0.0
+    log_debug(
+        f"mistralai v{_mistral_version} detected. v1 support will be deprecated, please consider upgrading: `pip install -U mistralai`"
+    )
     from mistralai import CompletionEvent  # type: ignore[attr-defined,no-redef]
     from mistralai import Mistral as MistralClient  # type: ignore[attr-defined,no-redef]
     from mistralai.models import (  # type: ignore[no-redef]
