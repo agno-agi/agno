@@ -1,5 +1,5 @@
 import asyncio
-import hashlib
+import os
 import time
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -7,8 +7,8 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-# "sender_phone" hashed — matches router.py's sha256(phone_number.encode()).hexdigest()
-_HASHED_SENDER = hashlib.sha256("sender_phone".encode()).hexdigest()
+# Default mode (enable_encryption=False): user_id is the raw phone number
+_RAW_SENDER = "sender_phone"
 
 
 def _build_app(agent_mock: Mock) -> FastAPI:
@@ -203,8 +203,8 @@ async def test_text_message_processing():
         agent_mock.arun.assert_called_once()
         call_args = agent_mock.arun.call_args
         assert call_args[0][0] == "hello world"
-        assert call_args.kwargs["user_id"] == _HASHED_SENDER
-        assert call_args.kwargs["session_id"] == f"wa:test_agent:{_HASHED_SENDER}"
+        assert call_args.kwargs["user_id"] == _RAW_SENDER
+        assert call_args.kwargs["session_id"] == f"wa:test_agent:{_RAW_SENDER}"
 
 
 @pytest.mark.asyncio
@@ -276,7 +276,7 @@ async def test_button_reply_processing():
         agent_mock.arun.assert_called_once()
         call_args = agent_mock.arun.call_args
         assert call_args[0][0] == "Yes"
-        assert call_args.kwargs["user_id"] == _HASHED_SENDER
+        assert call_args.kwargs["user_id"] == _RAW_SENDER
 
 
 @pytest.mark.asyncio
@@ -649,11 +649,10 @@ async def test_send_user_number_to_context():
 
         call_kwargs = agent_mock.arun.call_args.kwargs
         assert "dependencies" in call_kwargs
-        # Raw phone number still passed to agent context (for reply targeting)
+        # Raw phone number passed to agent context (for reply targeting)
         assert "sender_phone" in str(call_kwargs["dependencies"])
         assert call_kwargs["add_dependencies_to_context"] is True
-        # But user_id in storage is hashed
-        assert call_kwargs["user_id"] == _HASHED_SENDER
+        assert call_kwargs["user_id"] == _RAW_SENDER
 
 
 # === Media Response: caption truncation + text fallback ===
@@ -767,7 +766,7 @@ async def test_same_phone_same_session_id():
         # Both calls get the same deterministic session_id and user_id
         assert first_call.kwargs["session_id"] == second_call.kwargs["session_id"]
         assert first_call.kwargs["user_id"] == second_call.kwargs["user_id"]
-        assert first_call.kwargs["session_id"] == f"wa:test_agent:{_HASHED_SENDER}"
+        assert first_call.kwargs["session_id"] == f"wa:test_agent:{_RAW_SENDER}"
 
 
 @pytest.mark.asyncio
@@ -801,7 +800,7 @@ async def test_different_phones_different_session_ids():
 
 
 @pytest.mark.asyncio
-async def test_user_id_is_hashed_not_raw_phone():
+async def test_user_id_is_raw_phone_by_default():
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
@@ -816,12 +815,9 @@ async def test_user_id_is_hashed_not_raw_phone():
         await _wait_for_agent_call(agent_mock)
 
         call_kwargs = agent_mock.arun.call_args.kwargs
-        # Raw phone number must NOT appear in user_id or session_id
-        assert "sender_phone" not in call_kwargs["user_id"]
-        assert "sender_phone" not in call_kwargs["session_id"]
-        # Must be a valid sha256 hex digest (64 chars)
-        assert len(call_kwargs["user_id"]) == 64
-        assert call_kwargs["user_id"] == _HASHED_SENDER
+        # Default mode: raw phone used directly as user_id
+        assert call_kwargs["user_id"] == "sender_phone"
+        assert call_kwargs["session_id"] == f"wa:test_agent:sender_phone"
 
 
 # === /new Session Reset ===
@@ -845,7 +841,7 @@ async def test_new_command_starts_fresh_session():
         client.post("/webhook", json=body)
         await _wait_for_agent_call(agent_mock)
         original_session = agent_mock.arun.call_args.kwargs["session_id"]
-        assert original_session == f"wa:test_agent:{_HASHED_SENDER}"
+        assert original_session == f"wa:test_agent:{_RAW_SENDER}"
 
         # Second: send /new — persists new session to DB
         agent_mock.arun.reset_mock()
@@ -860,8 +856,8 @@ async def test_new_command_starts_fresh_session():
         # Session persisted to DB
         mock_db.upsert_session.assert_called_once()
         persisted = mock_db.upsert_session.call_args[0][0]
-        assert persisted.user_id == _HASHED_SENDER
-        assert persisted.session_id.startswith(f"wa:test_agent:{_HASHED_SENDER}:")
+        assert persisted.user_id == _RAW_SENDER
+        assert persisted.session_id.startswith(f"wa:test_agent:{_RAW_SENDER}:")
         # Confirmation sent to user
         mock_send_text.assert_called_once()
         sent_text = mock_send_text.call_args.kwargs.get(
@@ -878,9 +874,9 @@ async def test_new_command_starts_fresh_session():
 
         assert new_session != original_session
         # /new sessions scoped by entity_id for multi-bot isolation
-        assert new_session.startswith(f"wa:test_agent:{_HASHED_SENDER}:")
+        assert new_session.startswith(f"wa:test_agent:{_RAW_SENDER}:")
         # user_id stays the same — memories persist
-        assert agent_mock.arun.call_args.kwargs["user_id"] == _HASHED_SENDER
+        assert agent_mock.arun.call_args.kwargs["user_id"] == _RAW_SENDER
 
 
 @pytest.mark.asyncio
@@ -927,3 +923,95 @@ async def test_new_with_extra_text_not_intercepted():
         await _wait_for_agent_call(agent_mock)
 
         agent_mock.arun.assert_called_once()
+
+
+# === Phone Encryption Mode ===
+
+_TEST_KEY = os.urandom(32)
+
+
+def _build_encrypted_app(agent_mock: Mock, **extra_kwargs) -> FastAPI:
+    from agno.os.interfaces.whatsapp.router import attach_routes
+
+    app = FastAPI()
+    router = APIRouter()
+    attach_routes(router, agent=agent_mock, enable_encryption=True, encryption_key=_TEST_KEY, **extra_kwargs)
+    app.include_router(router)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_encrypted_phone_mode():
+    from agno.os.interfaces.whatsapp.router import decrypt_phone
+
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_encrypted_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook("text", text={"body": "hello"})
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+
+        call_kwargs = agent_mock.arun.call_args.kwargs
+        # user_id should NOT be the raw phone
+        assert call_kwargs["user_id"] != "sender_phone"
+        # But it should be decryptable back to the original phone
+        assert decrypt_phone(call_kwargs["user_id"], _TEST_KEY) == "sender_phone"
+        # session_id contains the encrypted user_id
+        assert call_kwargs["session_id"] == f"wa:test_agent:{call_kwargs['user_id']}"
+
+
+@pytest.mark.asyncio
+async def test_encrypted_mode_deterministic():
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_encrypted_app(agent_mock)
+        client = TestClient(app)
+
+        body = _make_whatsapp_webhook("text", text={"body": "first"})
+        client.post("/webhook", json=body)
+        await _wait_for_agent_call(agent_mock)
+        first_user_id = agent_mock.arun.call_args.kwargs["user_id"]
+
+        agent_mock.arun.reset_mock()
+        body = _make_whatsapp_webhook("text", text={"body": "second"})
+        client.post("/webhook", json=body)
+        await _wait_for_agent_call(agent_mock)
+        second_user_id = agent_mock.arun.call_args.kwargs["user_id"]
+
+        # Same phone → same encrypted user_id
+        assert first_user_id == second_user_id
+
+
+@pytest.mark.asyncio
+async def test_encrypted_mode_preserves_raw_phone_in_context():
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_encrypted_app(agent_mock, send_user_number_to_context=True)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook("text", text={"body": "hello"})
+        client.post("/webhook", json=body)
+        await _wait_for_agent_call(agent_mock)
+
+        call_kwargs = agent_mock.arun.call_args.kwargs
+        # user_id is encrypted
+        assert call_kwargs["user_id"] != "sender_phone"
+        # But raw phone still in dependencies for agent context
+        assert "sender_phone" in str(call_kwargs["dependencies"])

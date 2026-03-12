@@ -1,3 +1,4 @@
+from os import getenv
 from typing import List, Optional, Union
 
 from fastapi.routing import APIRouter
@@ -27,6 +28,8 @@ class Whatsapp(BaseInterface):
         access_token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         verify_token: Optional[str] = None,
+        enable_encryption: bool = False,
+        encryption_key: Optional[str] = None,
     ):
         self.agent = agent
         self.team = team
@@ -39,6 +42,18 @@ class Whatsapp(BaseInterface):
         self.access_token = access_token
         self.phone_number_id = phone_number_id
         self.verify_token = verify_token
+        self.enable_encryption = enable_encryption
+
+        self._encryption_key: Optional[bytes] = None
+        if enable_encryption:
+            raw_key = encryption_key or getenv("WHATSAPP_ENCRYPTION_KEY")
+            if not raw_key:
+                raise ValueError(
+                    "WHATSAPP_ENCRYPTION_KEY is not set. Set the environment variable or pass encryption_key."
+                )
+            self._encryption_key = bytes.fromhex(raw_key)
+            if len(self._encryption_key) != 32:
+                raise ValueError("encryption_key must be exactly 32 bytes (64 hex chars)")
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Whatsapp requires an agent, team, or workflow")
@@ -56,6 +71,8 @@ class Whatsapp(BaseInterface):
             access_token=self.access_token,
             phone_number_id=self.phone_number_id,
             verify_token=self.verify_token,
+            enable_encryption=self.enable_encryption,
+            encryption_key=self._encryption_key,
         )
 
         return self.router

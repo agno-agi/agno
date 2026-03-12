@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import re
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from time import time
 from typing import Any, Literal, NamedTuple, Optional, Type, Union
 from uuid import uuid4
@@ -103,6 +104,25 @@ class WhatsAppWebhookResponse(BaseModel):
     status: str = Field(default="ok", description="Processing status")
 
 
+def _encrypt_phone(phone: str, key: bytes) -> str:
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        raise ImportError("Install 'cryptography' package: pip install 'agno[whatsapp-crypto]'")
+    # Same phone → same nonce → same ciphertext; safe because identical plaintext
+    nonce = hashlib.sha256(phone.encode()).digest()[:12]
+    ct = AESGCM(key).encrypt(nonce, phone.encode(), None)
+    return urlsafe_b64encode(nonce + ct).decode()
+
+
+def decrypt_phone(token: str, key: bytes) -> str:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    raw = urlsafe_b64decode(token)
+    nonce, ct = raw[:12], raw[12:]
+    return AESGCM(key).decrypt(nonce, ct, None).decode()
+
+
 def attach_routes(
     router: APIRouter,
     agent: Optional[Union[Agent, RemoteAgent]] = None,
@@ -113,6 +133,8 @@ def attach_routes(
     access_token: Optional[str] = None,
     phone_number_id: Optional[str] = None,
     verify_token: Optional[str] = None,
+    enable_encryption: bool = False,
+    encryption_key: Optional[bytes] = None,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
@@ -201,9 +223,8 @@ def attach_routes(
         if not phone_number:
             log_warning("Message missing 'from' field, skipping")
             return
-        # Hash phone number before it reaches storage — deterministic so the
-        # same phone always resolves to the same session, but irreversible
-        hashed_phone = hashlib.sha256(phone_number.encode()).hexdigest()
+        # Resolve storage identity — raw phone by default, encrypted when enabled
+        user_id = _encrypt_phone(phone_number, encryption_key) if enable_encryption else phone_number
         try:
             message_id = message.get("id")
             await typing_indicator_async(message_id, config)
@@ -220,10 +241,10 @@ def attach_routes(
                     )
                     return
                 try:
-                    new_session_id = f"wa:{entity_id}:{hashed_phone}:{uuid4().hex[:8]}"
+                    new_session_id = f"wa:{entity_id}:{user_id}:{uuid4().hex[:8]}"
                     new_session = session_config.session_cls(
                         session_id=new_session_id,
-                        user_id=hashed_phone,
+                        user_id=user_id,
                         created_at=int(time()),
                         **{session_config.id_field: entity_id},
                     )
@@ -237,17 +258,17 @@ def attach_routes(
                     await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
                 return
 
-            log_info(f"Processing message from {hashed_phone[:12]}: {parsed.text}")
+            log_info(f"Processing message from {user_id[:12]}: {parsed.text}")
 
             # Resolve session: check DB for latest, fall back to deterministic ID
-            default_session_id = f"wa:{entity_id}:{hashed_phone}"
+            default_session_id = f"wa:{entity_id}:{user_id}"
             session_id = default_session_id
             if session_config.has_db:
                 try:
                     # Find the most recent session for this user + entity
                     session_filter = dict(
                         session_type=session_config.session_type,
-                        user_id=hashed_phone,
+                        user_id=user_id,
                         component_id=entity_id,
                         limit=1,
                         sort_by="updated_at",
@@ -264,7 +285,7 @@ def attach_routes(
 
             # Download media from Meta servers and wrap as Agno media objects
             run_kwargs: dict = {
-                "user_id": hashed_phone,
+                "user_id": user_id,
                 "session_id": session_id,
             }
             if parsed.image_id:
