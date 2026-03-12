@@ -93,5 +93,3 @@ def test_team_followups_to_dict_flat():
     assert isinstance(d["followups"], list)
     for item in d["followups"]:
         assert isinstance(item, str)
-
-
