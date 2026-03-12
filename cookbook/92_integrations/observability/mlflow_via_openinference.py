@@ -5,7 +5,7 @@ MLflow Via OpenInference
 Demonstrates instrumenting an Agno agent with OpenInference and sending traces to MLflow.
 
 Requirements:
-    pip install mlflow opentelemetry-exporter-otlp-proto-http openinference-instrumentation-agno
+    pip install -U mlflow opentelemetry-exporter-otlp-proto-http openinference-instrumentation-agno
 
 Start MLflow with OTLP tracing enabled:
     mlflow server --host 127.0.0.1 --port 5000
