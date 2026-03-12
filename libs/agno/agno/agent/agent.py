@@ -1606,6 +1606,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
+        background: bool = False,
         **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1624,6 +1625,7 @@ class Agent:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
+            background=background,
             **kwargs,
         )
 
