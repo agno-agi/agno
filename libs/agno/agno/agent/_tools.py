@@ -198,6 +198,16 @@ def get_tools(
     if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
 
+    # If the knowledge object exposes additional tools (e.g. FileSystemKnowledge
+    # provides grep_file / list_files / get_file), add them to the agent.
+    if resolved_knowledge is not None and hasattr(resolved_knowledge, "get_tools"):
+        try:
+            knowledge_tools = resolved_knowledge.get_tools()
+            if knowledge_tools:
+                agent_tools.extend(knowledge_tools)
+        except Exception:
+            pass
+
     # Add tools for accessing skills
     if agent.skills is not None:
         agent_tools.extend(agent.skills.get_tools())
@@ -329,6 +339,23 @@ async def aget_tools(
 
     if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(agent.add_to_knowledge)
+
+    # If the knowledge object exposes additional tools (e.g. FileSystemKnowledge
+    # provides grep_file / list_files / get_file), add them to the agent.
+    if resolved_knowledge is not None and hasattr(resolved_knowledge, "aget_tools"):
+        try:
+            knowledge_tools = await resolved_knowledge.aget_tools()
+            if knowledge_tools:
+                agent_tools.extend(knowledge_tools)
+        except Exception:
+            pass
+    elif resolved_knowledge is not None and hasattr(resolved_knowledge, "get_tools"):
+        try:
+            knowledge_tools = resolved_knowledge.get_tools()
+            if knowledge_tools:
+                agent_tools.extend(knowledge_tools)
+        except Exception:
+            pass
 
     # Add tools for accessing skills
     if agent.skills is not None:
