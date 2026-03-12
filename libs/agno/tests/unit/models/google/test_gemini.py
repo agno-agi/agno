@@ -2,6 +2,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agno.media import File
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
@@ -224,3 +226,183 @@ class TestFormatMessagesEmptyParts:
         assert len(formatted) == 4
         roles = [msg.role for msg in formatted]
         assert roles == ["user", "user", "model", "user"]
+
+
+def test_parallel_search_requires_vertexai():
+    """Test that parallel_search raises an error when vertexai is not enabled."""
+    model = Gemini(
+        vertexai=False,
+        api_key="test-api-key",
+        parallel_search=True,
+        parallel_api_key="test-parallel-key",
+    )
+
+    with pytest.raises(ValueError, match="Parallel search grounding requires vertexai=True"):
+        model.get_request_params()
+
+
+def test_parallel_search_incompatible_with_google_search():
+    """Test that parallel_search cannot be combined with google_search."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            model.get_request_params()
+
+
+def test_parallel_search_incompatible_with_grounding():
+    """Test that parallel_search cannot be combined with grounding."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        grounding=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            model.get_request_params()
+
+
+def test_parallel_search_config_with_api_key():
+    """Test that parallel_search is correctly configured with an explicit API key."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-parallel-key",
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        request_params = model.get_request_params()
+
+    assert "config" in request_params
+    config = request_params["config"]
+    assert config.tools is not None
+    assert len(config.tools) == 1
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key == "test-parallel-key"
+
+
+def test_parallel_search_config_without_api_key():
+    """Test that parallel_search works without an API key (GCP Marketplace subscription)."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            env_backup = os.environ.pop("PARALLEL_API_KEY", None)
+            try:
+                request_params = model.get_request_params()
+            finally:
+                if env_backup is not None:
+                    os.environ["PARALLEL_API_KEY"] = env_backup
+
+    config = request_params["config"]
+    assert config.tools is not None
+    assert len(config.tools) == 1
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key is None
+
+
+def test_parallel_search_with_env_var():
+    """Test that parallel_search can use PARALLEL_API_KEY from environment."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with patch.dict("os.environ", {"PARALLEL_API_KEY": "env-parallel-key"}):
+            request_params = model.get_request_params()
+
+    config = request_params["config"]
+    assert config.tools is not None
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key == "env-parallel-key"
+
+
+def test_parallel_search_with_custom_config():
+    """Test that parallel_config is passed as custom_configs in the tool payload."""
+    custom_config = {"source_policy": {"exclude_domains": ["example.com"]}}
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        parallel_config=custom_config,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        request_params = model.get_request_params()
+
+    config = request_params["config"]
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key == "test-key"
+    assert tool.parallel_ai_search.custom_configs == custom_config
+
+
+def test_parallel_search_with_other_builtin_tools():
+    """Test that parallel_search can coexist with url_context."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        url_context=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        request_params = model.get_request_params()
+
+    config = request_params["config"]
+    assert config.tools is not None
+    assert len(config.tools) == 2
+    tool_types = []
+    for t in config.tools:
+        if t.url_context is not None:
+            tool_types.append("url_context")
+        if t.parallel_ai_search is not None:
+            tool_types.append("parallel_ai_search")
+    assert "url_context" in tool_types
+    assert "parallel_ai_search" in tool_types
+
+
+def test_parallel_search_with_external_tools_logs_warning():
+    """Test that parallel_search with external tools logs the builtin tools info."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with patch("agno.models.google.gemini.log_info") as mock_info:
+            model.get_request_params(tools=[{"type": "function", "function": {"name": "test_fn"}}])
+            mock_info.assert_called_once_with("Built-in tools enabled. External tools will be disabled.")
