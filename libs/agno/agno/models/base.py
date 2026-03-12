@@ -2369,6 +2369,7 @@ class Model(ABC):
                         external_execution_required=True,
                         approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
+                        additional_data=fc.function.additional_data,
                     )
                 )
 
@@ -2573,6 +2574,7 @@ class Model(ABC):
                         external_execution_required=True,
                         approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
+                        additional_data=fc.function.additional_data,
                     )
                 )
 

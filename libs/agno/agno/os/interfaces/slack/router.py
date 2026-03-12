@@ -40,78 +40,33 @@ _IGNORED_SUBTYPES = frozenset(
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
 
-def _handle_google_auth_required(exc: Exception, google_oauth_base_url: Optional[str]) -> bool:
-    """Returns True if exc is a GoogleAuthRequired and we have a base URL to handle it."""
-    try:
-        from agno.tools.google.oauth.errors import GoogleAuthRequired
+def _oauth_connect_blocks(provider: str, auth_url: str) -> List[Dict[str, Any]]:
+    """Build Slack Block Kit blocks with a Connect button for any OAuth provider."""
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"I need access to your {provider} account to help with this."},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": f"Connect {provider}"},
+                    "url": auth_url,
+                    "action_id": f"connect_{provider.lower()}",
+                }
+            ],
+        },
+    ]
 
-        return isinstance(exc, GoogleAuthRequired) and google_oauth_base_url is not None
-    except ImportError:
-        return False
 
-
-def _detect_google_auth_in_response(response_content: str, google_oauth_base_url: Optional[str]) -> Optional[Dict[str, str]]:
-    """Check if agent response contains a swallowed GoogleAuthRequired error.
-
-    The agent's tool executor catches GoogleAuthRequired and converts it to an error
-    string in the response. We detect that pattern here and extract team_id/user_id.
-    Returns dict with team_id and user_id if detected, None otherwise.
-    """
-    if not google_oauth_base_url or not response_content:
-        return None
-    import re
-
-    match = re.search(r"Google auth required for team=(\S+) user=(\S+)", response_content)
-    if match:
-        return {"team_id": match.group(1), "user_id": match.group(2)}
+def _extract_oauth_from_exception(exc: Exception) -> Optional[Dict[str, Any]]:
+    """Extract OAuth metadata from a StopAgentRun exception's additional_data."""
+    extra = getattr(exc, "additional_data", None)
+    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth" and extra.get("auth_url"):
+        return extra
     return None
-
-
-def _google_auth_blocks_from_ids(base_url: str, team_id: str, user_id: str) -> List[Dict[str, Any]]:
-    """Build Slack Block Kit blocks with a 'Connect Google' button from explicit IDs."""
-    auth_url = f"{base_url}/google/auth/initiate?team_id={team_id}&user_id={user_id}"
-    return [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "I need access to your Google account to help with this."},
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Connect Google"},
-                    "url": auth_url,
-                    "action_id": "connect_google",
-                }
-            ],
-        },
-    ]
-
-
-def _google_auth_blocks(exc: Exception, base_url: Optional[str]) -> List[Dict[str, Any]]:
-    """Build Slack Block Kit blocks with a 'Connect Google' button.
-
-    exc is always GoogleAuthRequired here (checked by _handle_google_auth_required).
-    """
-    auth_url = f"{base_url}/google/auth/initiate?team_id={exc.team_id}&user_id={exc.user_id}"  # type: ignore[attr-defined]
-    return [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "I need access to your Google account to help with this."},
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Connect Google"},
-                    "url": auth_url,
-                    "action_id": "connect_google",
-                }
-            ],
-        },
-    ]
 
 
 class SlackEventResponse(BaseModel):
@@ -261,30 +216,16 @@ def attach_routes(
             try:
                 response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
             except Exception as _auth_exc:
-                if _handle_google_auth_required(_auth_exc, google_oauth_base_url):
+                _oauth = _extract_oauth_from_exception(_auth_exc)
+                if _oauth:
                     await async_client.chat_postMessage(
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
-                        text="I need access to your Google account to help with this.",
-                        blocks=_google_auth_blocks(_auth_exc, google_oauth_base_url),
+                        text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
+                        blocks=_oauth_connect_blocks(_oauth.get("provider", ""), _oauth["auth_url"]),
                     )
                     return
                 raise
-
-            # GoogleAuthRequired is swallowed by the tool executor and converted to
-            # an error string in the response — detect it here from the content
-            if response and response.content:
-                _auth_ids = _detect_google_auth_in_response(str(response.content), google_oauth_base_url)
-                if _auth_ids:
-                    await async_client.chat_postMessage(
-                        channel=ctx["channel_id"],
-                        thread_ts=ctx["thread_id"],
-                        text="I need access to your Google account to help with this.",
-                        blocks=_google_auth_blocks_from_ids(
-                            google_oauth_base_url, _auth_ids["team_id"], _auth_ids["user_id"]  # type: ignore[arg-type]
-                        ),
-                    )
-                    return
 
             if response:
                 if response.status == "ERROR":
@@ -396,12 +337,13 @@ def attach_routes(
             try:
                 response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
             except Exception as _auth_exc:
-                if _handle_google_auth_required(_auth_exc, google_oauth_base_url):
+                _oauth = _extract_oauth_from_exception(_auth_exc)
+                if _oauth:
                     await async_client.chat_postMessage(
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
-                        text="I need access to your Google account to help with this.",
-                        blocks=_google_auth_blocks(_auth_exc, google_oauth_base_url),
+                        text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
+                        blocks=_oauth_connect_blocks(_oauth.get("provider", ""), _oauth["auth_url"]),
                     )
                     return
                 raise
@@ -451,14 +393,11 @@ def attach_routes(
             final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
 
             # Auth required — stop stream with Connect button inside the bubble
-            if state.auth_required and google_oauth_base_url:
+            if state.auth_required and state.auth_required.get("auth_url"):
+                provider = state.auth_required.get("provider", "")
                 await stream.stop(
-                    markdown_text="I need access to your Google account to help with this.",
-                    blocks=_google_auth_blocks_from_ids(
-                        google_oauth_base_url,
-                        state.auth_required["team_id"],
-                        state.auth_required["user_id"],
-                    ),
+                    markdown_text=f"I need access to your {provider} account to help with this.",
+                    blocks=_oauth_connect_blocks(provider, state.auth_required["auth_url"]),
                 )
                 return
 
@@ -485,8 +424,9 @@ def attach_routes(
                     pass
                 stream = None
 
-            # GoogleAuthRequired during streaming — send Connect button instead of error
-            if _handle_google_auth_required(e, google_oauth_base_url):
+            # OAuth required during streaming — send Connect button instead of error
+            _oauth = _extract_oauth_from_exception(e)
+            if _oauth:
                 try:
                     await async_client.assistant_threads_setStatus(
                         channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
@@ -496,8 +436,8 @@ def attach_routes(
                 await async_client.chat_postMessage(
                     channel=ctx["channel_id"],
                     thread_ts=ctx["thread_id"],
-                    text="I need access to your Google account to help with this.",
-                    blocks=_google_auth_blocks(e, google_oauth_base_url),
+                    text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
+                    blocks=_oauth_connect_blocks(_oauth.get("provider", ""), _oauth["auth_url"]),
                 )
                 return
 

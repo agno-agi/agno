@@ -70,9 +70,9 @@ def authenticate(func):
             if not self.service:
                 self.service = build("calendar", "v3", credentials=self.creds)
         except Exception as e:
-            from agno.tools.google.oauth.errors import GoogleAuthRequired
+            from agno.exceptions import StopAgentRun
 
-            if isinstance(e, GoogleAuthRequired):
+            if isinstance(e, StopAgentRun):
                 raise
             log_error(f"Calendar authentication failed: {e}")
             return json.dumps({"error": f"Calendar authentication failed: {e}"})
@@ -162,6 +162,7 @@ class GoogleCalendarTools(Toolkit):
         self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.token_store = token_store
+        self.oauth_base_url: Optional[str] = kwargs.get("oauth_base_url")
         self._current_user_key: Optional[tuple] = None
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
@@ -245,7 +246,9 @@ class GoogleCalendarTools(Toolkit):
         if self.token_store and team_id and user_id:
             from agno.tools.google.oauth.token_store import load_user_credentials
 
-            self.creds = load_user_credentials(self.token_store, team_id, user_id, self.scopes)
+            self.creds = load_user_credentials(
+                self.token_store, team_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
+            )
             self._current_user_key = (team_id, user_id)
             return
 

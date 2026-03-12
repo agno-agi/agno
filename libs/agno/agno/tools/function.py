@@ -183,6 +183,10 @@ class Function(BaseModel):
     # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
     external_execution_silent: Optional[bool] = None
 
+    # Structured metadata for paused tools (e.g. OAuth provider, auth URL, scopes).
+    # Passed through to ToolExecution.additional_data when the tool is paused.
+    additional_data: Optional[Dict[str, Any]] = None
+
     # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
     # Set via the @approval decorator, not directly via @tool().
     approval_type: Optional[str] = None
@@ -1081,16 +1085,10 @@ class FunctionCall(BaseModel):
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
-            if getattr(e, "propagate", False):
-                log_debug(f"{e.__class__.__name__}: {e}")
-                self.error = str(e)
-                exception_to_raise = e
-                execution_result = FunctionExecutionResult(status="failure", error=str(e))
-            else:
-                log_warning(f"Could not run function {self.get_call_str()}")
-                log_exception(e)
-                self.error = str(e)
-                execution_result = FunctionExecutionResult(status="failure", error=str(e))
+            log_warning(f"Could not run function {self.get_call_str()}")
+            log_exception(e)
+            self.error = str(e)
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
         finally:
             self._handle_post_hook()
@@ -1307,16 +1305,10 @@ class FunctionCall(BaseModel):
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
-            if getattr(e, "propagate", False):
-                log_debug(f"{e.__class__.__name__}: {e}")
-                self.error = str(e)
-                exception_to_raise = e
-                execution_result = FunctionExecutionResult(status="failure", error=str(e))
-            else:
-                log_warning(f"Could not run function {self.get_call_str()}")
-                log_exception(e)
-                self.error = str(e)
-                execution_result = FunctionExecutionResult(status="failure", error=str(e))
+            log_warning(f"Could not run function {self.get_call_str()}")
+            log_exception(e)
+            self.error = str(e)
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
         finally:
             if iscoroutinefunction(self.function.post_hook):

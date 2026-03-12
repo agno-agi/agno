@@ -208,14 +208,6 @@ async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, str
     error_msg = getattr(chunk, "error", None) or "Tool call failed"
     state.error_count += 1
 
-    # Detect Google OAuth requirement — router will show Connect button
-    import re
-
-    match = re.search(r"Google auth required for team=(\S+) user=(\S+)", str(error_msg))
-    if match:
-        state.auth_required = {"team_id": match.group(1), "user_id": match.group(2)}
-        return True
-
     if ref.tid:
         if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
@@ -260,6 +252,16 @@ async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, strea
 
 async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     state.error_count += 1
+
+    # Check for structured auth requirement from StopAgentRun additional_data
+    extra = getattr(chunk, "additional_data", None)
+    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth":
+        state.auth_required = {
+            "provider": extra.get("provider", ""),
+            "auth_url": extra.get("auth_url", ""),
+        }
+        return True
+
     error_msg = getattr(chunk, "content", None) or "An error occurred"
     state.append_error(error_msg)
     state.terminal_status = "error"

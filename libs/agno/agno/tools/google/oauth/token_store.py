@@ -25,16 +25,13 @@ class BaseGoogleTokenStore(ABC):
         self.encryption_key = encryption_key
 
     @abstractmethod
-    def get_token(self, team_id: str, user_id: str) -> Optional[Credentials]:
-        ...
+    def get_token(self, team_id: str, user_id: str) -> Optional[Credentials]: ...
 
     @abstractmethod
-    def save_token(self, team_id: str, user_id: str, creds: Credentials, scopes: List[str]) -> None:
-        ...
+    def save_token(self, team_id: str, user_id: str, creds: Credentials, scopes: List[str]) -> None: ...
 
     @abstractmethod
-    def delete_token(self, team_id: str, user_id: str) -> None:
-        ...
+    def delete_token(self, team_id: str, user_id: str) -> None: ...
 
     def has_valid_token(self, team_id: str, user_id: str) -> bool:
         creds = self.get_token(team_id, user_id)
@@ -43,24 +40,48 @@ class BaseGoogleTokenStore(ABC):
         return creds.valid or (creds.expired and creds.refresh_token is not None)
 
 
+def _raise_auth_required(
+    team_id: str,
+    user_id: str,
+    scopes: List[str],
+    oauth_base_url: Optional[str] = None,
+) -> None:
+    """Raise StopAgentRun with structured OAuth metadata.
+
+    Interfaces read additional_data to render an auth prompt (e.g. Connect button).
+    """
+    from agno.exceptions import StopAgentRun
+
+    auth_url = f"{oauth_base_url}/google/auth/initiate?team_id={team_id}&user_id={user_id}" if oauth_base_url else None
+    raise StopAgentRun(
+        "Google authentication required",
+        user_message="I need access to your Google account to help with this.",
+        additional_data={
+            "requirement_type": "oauth",
+            "provider": "Google",
+            "auth_url": auth_url,
+            "scopes": scopes,
+        },
+    )
+
+
 def load_user_credentials(
     store: BaseGoogleTokenStore,
     team_id: str,
     user_id: str,
     scopes: List[str],
+    oauth_base_url: Optional[str] = None,
 ) -> Credentials:
     """Load and refresh per-user credentials from the token store.
 
     Shared by all Google toolkits to avoid duplicating the load → refresh → fallback logic.
-    Raises GoogleAuthRequired if no valid token exists or refresh fails.
+    Raises StopAgentRun with OAuth metadata if no valid token exists or refresh fails.
     """
     from google.auth.transport.requests import Request
 
-    from agno.tools.google.oauth.errors import GoogleAuthRequired
-
     creds = store.get_token(team_id, user_id)
     if creds is None:
-        raise GoogleAuthRequired(team_id=team_id, user_id=user_id, scopes=scopes)
+        _raise_auth_required(team_id, user_id, scopes, oauth_base_url)
 
     if creds.expired and creds.refresh_token:
         try:
@@ -68,11 +89,11 @@ def load_user_credentials(
             store.save_token(team_id, user_id, creds, scopes)
         except Exception:
             store.delete_token(team_id, user_id)
-            raise GoogleAuthRequired(team_id=team_id, user_id=user_id, scopes=scopes)
+            _raise_auth_required(team_id, user_id, scopes, oauth_base_url)
 
     if not creds.valid:
         store.delete_token(team_id, user_id)
-        raise GoogleAuthRequired(team_id=team_id, user_id=user_id, scopes=scopes)
+        _raise_auth_required(team_id, user_id, scopes, oauth_base_url)
 
     return creds
 
@@ -153,9 +174,7 @@ class PostgresGoogleTokenStore(BaseGoogleTokenStore):
 
         with engine.connect() as conn:
             row = conn.execute(
-                select(table.c.encrypted_token).where(
-                    and_(table.c.team_id == team_id, table.c.user_id == user_id)
-                )
+                select(table.c.encrypted_token).where(and_(table.c.team_id == team_id, table.c.user_id == user_id))
             ).first()
 
         if row is None:
@@ -285,9 +304,7 @@ class SqliteGoogleTokenStore(BaseGoogleTokenStore):
 
         with engine.connect() as conn:
             row = conn.execute(
-                select(table.c.encrypted_token).where(
-                    and_(table.c.team_id == team_id, table.c.user_id == user_id)
-                )
+                select(table.c.encrypted_token).where(and_(table.c.team_id == team_id, table.c.user_id == user_id))
             ).first()
 
         if row is None:
