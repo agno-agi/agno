@@ -8,13 +8,18 @@ Tests cover:
 - to_dict() / from_dict(): Round-trip serialization of new fields
 - Precedence: Workflow-level deps take precedence over agent-level deps
   when both are set (full replacement, not merge)
+- End-to-end: Full workflow.run() -> step -> agent.run() chain with MockTestModel
 """
 
-from typing import Any, Dict, Optional
-from unittest.mock import MagicMock
+from typing import Any, AsyncIterator, Dict, Iterator, Optional
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agno.agent import Agent
+from agno.metrics import MessageMetrics
+from agno.models.base import Model
+from agno.models.response import ModelResponse
 from agno.run.base import RunContext
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -428,3 +433,249 @@ class TestWorkflowAgentMetadataPrecedence:
         agent_options.apply_to_context(run_context, metadata_provided=False)
 
         assert run_context.metadata == {"agent_tag": "agent-meta"}
+
+
+# =============================================================================
+# MockTestModel for end-to-end tests (no real API calls)
+# =============================================================================
+
+
+class MockTestModel(Model):
+    """Minimal mock model that returns a canned response."""
+
+    def __init__(self):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._mock_response = Mock()
+        self._mock_response.content = "mock response"
+        self._mock_response.role = "assistant"
+        self._mock_response.reasoning_content = None
+        self._mock_response.redacted_reasoning_content = None
+        self._mock_response.tool_calls = None
+        self._mock_response.tool_executions = None
+        self._mock_response.images = None
+        self._mock_response.videos = None
+        self._mock_response.audios = None
+        self._mock_response.audio = None
+        self._mock_response.files = None
+        self._mock_response.citations = None
+        self._mock_response.references = None
+        self._mock_response.metadata = None
+        self._mock_response.provider_data = None
+        self._mock_response.extra = None
+        self._mock_response.response_usage = MessageMetrics()
+        self.response = Mock(return_value=self._mock_response)
+        self.aresponse = AsyncMock(return_value=self._mock_response)
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return await self.aresponse(*args, **kwargs)
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._mock_response
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._mock_response
+        return
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return self._mock_response
+
+
+# =============================================================================
+# End-to-end: workflow.run() -> step.execute() -> agent.run() chain
+# =============================================================================
+
+
+class TestWorkflowRunE2EDependencies:
+    """Full end-to-end tests running a real Workflow with an Agent (mock model)
+    to verify dependency/metadata propagation through the entire chain."""
+
+    def test_workflow_deps_reach_agent_context(self):
+        """Workflow deps are set on RunContext and visible to the agent."""
+        captured_run_context: Dict[str, Any] = {}
+
+        original_run = Agent.run
+
+        def spy_run(self_agent, *args, **kwargs):
+            # Capture the run_context that the agent receives
+            rc = kwargs.get("run_context")
+            if rc is not None:
+                captured_run_context["dependencies"] = rc.dependencies
+                captured_run_context["metadata"] = rc.metadata
+            return original_run(self_agent, *args, **kwargs)
+
+        agent = Agent(
+            name="Test Agent",
+            model=MockTestModel(),
+        )
+        workflow = Workflow(
+            name="E2E Deps Test",
+            steps=[Step(name="step1", agent=agent)],
+            dependencies={"db_url": "postgres://wf", "env": "prod"},
+            metadata={"project": "e2e-test"},
+            add_dependencies_to_context=True,
+        )
+
+        # Monkey-patch Agent.run to spy on run_context
+        Agent.run = spy_run  # type: ignore
+        try:
+            workflow.run(input="hello")
+        finally:
+            Agent.run = original_run  # type: ignore
+
+        assert captured_run_context["dependencies"] == {"db_url": "postgres://wf", "env": "prod"}
+        assert captured_run_context["metadata"] == {"project": "e2e-test"}
+
+    def test_workflow_deps_override_agent_deps_e2e(self):
+        """When both workflow and agent have deps, workflow deps win end-to-end."""
+        captured_deps: Dict[str, Any] = {}
+
+        original_run = Agent.run
+
+        def spy_run(self_agent, *args, **kwargs):
+            result = original_run(self_agent, *args, **kwargs)
+            # After agent.run() completes, check what deps ended up on run_context
+            rc = kwargs.get("run_context")
+            if rc is not None:
+                captured_deps["final"] = rc.dependencies
+            return result
+
+        agent = Agent(
+            name="Agent With Deps",
+            model=MockTestModel(),
+            dependencies={"agent_key": "agent-val", "shared": "agent-version"},
+        )
+        workflow = Workflow(
+            name="Override Test",
+            steps=[Step(name="step1", agent=agent)],
+            dependencies={"wf_key": "wf-val", "shared": "wf-version"},
+            add_dependencies_to_context=True,
+        )
+
+        Agent.run = spy_run  # type: ignore
+        try:
+            workflow.run(input="hello")
+        finally:
+            Agent.run = original_run  # type: ignore
+
+        # Workflow deps win entirely — agent deps not merged
+        assert captured_deps["final"]["wf_key"] == "wf-val"
+        assert captured_deps["final"]["shared"] == "wf-version"
+        assert "agent_key" not in captured_deps["final"]
+
+    def test_no_workflow_deps_agent_deps_used_e2e(self):
+        """When workflow has no deps, agent's own deps are used."""
+        captured_deps: Dict[str, Any] = {}
+
+        original_run = Agent.run
+
+        def spy_run(self_agent, *args, **kwargs):
+            result = original_run(self_agent, *args, **kwargs)
+            rc = kwargs.get("run_context")
+            if rc is not None:
+                captured_deps["final"] = rc.dependencies
+            return result
+
+        agent = Agent(
+            name="Agent With Deps",
+            model=MockTestModel(),
+            dependencies={"agent_key": "agent-val"},
+        )
+        workflow = Workflow(
+            name="Fallback Test",
+            steps=[Step(name="step1", agent=agent)],
+            # No workflow-level dependencies
+            add_dependencies_to_context=True,
+        )
+
+        Agent.run = spy_run  # type: ignore
+        try:
+            workflow.run(input="hello")
+        finally:
+            Agent.run = original_run  # type: ignore
+
+        # Agent deps used as fallback
+        assert captured_deps["final"] == {"agent_key": "agent-val"}
+
+    def test_call_site_deps_merged_with_class_deps_e2e(self):
+        """Call-site deps to workflow.run() merge with class-level deps."""
+        captured_deps: Dict[str, Any] = {}
+
+        original_run = Agent.run
+
+        def spy_run(self_agent, *args, **kwargs):
+            rc = kwargs.get("run_context")
+            if rc is not None:
+                captured_deps["final"] = rc.dependencies
+            return original_run(self_agent, *args, **kwargs)
+
+        agent = Agent(name="Test Agent", model=MockTestModel())
+        workflow = Workflow(
+            name="Merge Test",
+            steps=[Step(name="step1", agent=agent)],
+            dependencies={"class_key": "class-val", "shared": "class-version"},
+            add_dependencies_to_context=True,
+        )
+
+        Agent.run = spy_run  # type: ignore
+        try:
+            workflow.run(
+                input="hello",
+                dependencies={"call_key": "call-val", "shared": "call-version"},
+            )
+        finally:
+            Agent.run = original_run  # type: ignore
+
+        # Call-site wins on conflict, class-level fills gaps
+        assert captured_deps["final"]["call_key"] == "call-val"
+        assert captured_deps["final"]["class_key"] == "class-val"
+        assert captured_deps["final"]["shared"] == "call-version"
+
+    def test_add_dependencies_flag_propagated_e2e(self):
+        """add_dependencies_to_context flag propagates from workflow to agent.run()."""
+        captured_kwargs: Dict[str, Any] = {}
+
+        original_run = Agent.run
+
+        def spy_run(self_agent, *args, **kwargs):
+            captured_kwargs["add_dependencies_to_context"] = kwargs.get("add_dependencies_to_context")
+            captured_kwargs["add_session_state_to_context"] = kwargs.get("add_session_state_to_context")
+            return original_run(self_agent, *args, **kwargs)
+
+        agent = Agent(name="Test Agent", model=MockTestModel())
+        workflow = Workflow(
+            name="Flag Test",
+            steps=[Step(name="step1", agent=agent)],
+            add_dependencies_to_context=True,
+            add_session_state_to_context=True,
+        )
+
+        Agent.run = spy_run  # type: ignore
+        try:
+            workflow.run(input="hello")
+        finally:
+            Agent.run = original_run  # type: ignore
+
+        assert captured_kwargs["add_dependencies_to_context"] is True
+        assert captured_kwargs["add_session_state_to_context"] is True
