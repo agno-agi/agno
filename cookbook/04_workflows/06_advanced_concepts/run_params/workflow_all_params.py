@@ -94,7 +94,7 @@ if __name__ == "__main__":
     )
 
     # Example 2: Call-site overrides for a different audience
-    print("\n=== Example 2: Call-site overrides ===")
+    print("\n=== Example 2: Run level overrides ===")
     print("Overriding: tone=casual, audience=beginners\n")
     content_pipeline.print_response(
         input="Write about getting started with Python.",
