@@ -108,7 +108,7 @@ def _encrypt_phone(phone: str, key: bytes) -> str:
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     except ImportError:
-        raise ImportError("Install 'cryptography' package: pip install 'agno[whatsapp-crypto]'")
+        raise ImportError("`cryptography` not installed. Please install using `pip install cryptography`")
     # Same phone → same nonce → same ciphertext; safe because identical plaintext
     nonce = hashlib.sha256(phone.encode()).digest()[:12]
     ct = AESGCM(key).encrypt(nonce, phone.encode(), None)
