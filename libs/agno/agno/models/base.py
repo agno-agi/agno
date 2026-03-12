@@ -1997,19 +1997,26 @@ class Model(ABC):
         if assistant_message.tool_calls is not None:
             for tool_call in assistant_message.tool_calls:
                 _tool_call_id = tool_call.get("id")
+                _tool_call_name = tool_call.get("function", {}).get("name")
                 _function_call = get_function_call_for_tool_call(tool_call, functions)
                 if _function_call is None:
                     messages.append(
                         Message(
                             role=self.tool_message_role,
                             tool_call_id=_tool_call_id,
+                            tool_name=_tool_call_name,
                             content="Error: The requested tool does not exist or is not available.",
                         )
                     )
                     continue
                 if _function_call.error is not None:
                     messages.append(
-                        Message(role=self.tool_message_role, tool_call_id=_tool_call_id, content=_function_call.error)
+                        Message(
+                            role=self.tool_message_role,
+                            tool_call_id=_tool_call_id,
+                            tool_name=_tool_call_name,
+                            content=_function_call.error,
+                        )
                     )
                     continue
                 function_calls_to_run.append(_function_call)

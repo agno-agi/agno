@@ -766,9 +766,17 @@ class Gemini(Model):
                         part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts.append(part)
                 for tool_call in message.tool_calls:
+                    try:
+                        args = (
+                            json.loads(tool_call["function"]["arguments"])
+                            if "arguments" in tool_call.get("function", {})
+                            else {}
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
                     part = Part.from_function_call(
                         name=tool_call["function"]["name"],
-                        args=json.loads(tool_call["function"]["arguments"]),
+                        args=args,
                     )
                     if "thought_signature" in tool_call:
                         part.thought_signature = base64.b64decode(tool_call["thought_signature"])
