@@ -2090,6 +2090,7 @@ class Model(ABC):
         # Run function calls sequentially
         function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
         stop_after_tool_call_from_exception = False
+        exception_additional_data: Optional[Dict[str, Any]] = None
         try:
             function_execution_result = function_call.execute()
         except AgentRunException as a_exc:
@@ -2098,6 +2099,8 @@ class Model(ABC):
             # If stop_execution is True, mark that we should stop after this tool call
             if a_exc.stop_execution:
                 stop_after_tool_call_from_exception = True
+            # Preserve structured metadata (e.g. OAuth requirements) for interfaces
+            exception_additional_data = a_exc.additional_data
             # Set function call success to False if an exception occurred
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {e}")
@@ -2223,6 +2226,7 @@ class Model(ABC):
                     result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
                     metrics=tool_metrics,
+                    additional_data=exception_additional_data,
                 )
             ],
             event=ModelResponseEvent.tool_call_completed.value,
@@ -2757,6 +2761,7 @@ class Model(ABC):
 
             # Handle AgentRunException
             stop_after_tool_call_from_exception = False
+            exception_additional_data: Optional[Dict[str, Any]] = None
             if isinstance(function_call_success, AgentRunException):
                 a_exc = function_call_success
                 # Update additional messages from function call
@@ -2764,6 +2769,8 @@ class Model(ABC):
                 # If stop_execution is True, mark that we should stop after this tool call
                 if a_exc.stop_execution:
                     stop_after_tool_call_from_exception = True
+                # Preserve structured metadata (e.g. OAuth requirements) for interfaces
+                exception_additional_data = a_exc.additional_data
                 # Set function call success to False if an exception occurred
                 function_call_success = False
 
@@ -2886,6 +2893,7 @@ class Model(ABC):
                         result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
                         metrics=tool_metrics,
+                        additional_data=exception_additional_data,
                     )
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,

@@ -190,6 +190,16 @@ async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, s
 
 
 async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # Check for structured auth requirement from StopAgentRun additional_data
+    tool = getattr(chunk, "tool", None)
+    extra = getattr(tool, "additional_data", None) if tool else None
+    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth":
+        state.auth_required = {
+            "provider": extra.get("provider", ""),
+            "auth_url": extra.get("auth_url", ""),
+        }
+        return True
+
     ref = _extract_tool_ref(chunk, state)
     if ref.tid:
         # Backfill card when Completed arrives without a prior Started event
@@ -252,16 +262,6 @@ async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, strea
 
 async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     state.error_count += 1
-
-    # Check for structured auth requirement from StopAgentRun additional_data
-    extra = getattr(chunk, "additional_data", None)
-    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth":
-        state.auth_required = {
-            "provider": extra.get("provider", ""),
-            "auth_url": extra.get("auth_url", ""),
-        }
-        return True
-
     error_msg = getattr(chunk, "content", None) or "An error occurred"
     state.append_error(error_msg)
     state.terminal_status = "error"
