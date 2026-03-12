@@ -20,6 +20,8 @@ class WhatsAppConfig:
     access_token: str
     phone_number_id: str
     verify_token: Optional[str] = None
+    # Timeout in seconds for media downloads/uploads; configurable via Whatsapp(media_timeout=)
+    media_timeout: int = 30
 
     @classmethod
     def init(
@@ -27,6 +29,7 @@ class WhatsAppConfig:
         access_token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         verify_token: Optional[str] = None,
+        media_timeout: int = 30,
     ) -> "WhatsAppConfig":
         token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
         phone_id = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
@@ -37,7 +40,7 @@ class WhatsAppConfig:
             raise ValueError(
                 "WHATSAPP_PHONE_NUMBER_ID is not set. Set the environment variable or pass phone_number_id."
             )
-        return cls(access_token=token, phone_number_id=phone_id, verify_token=v_token)
+        return cls(access_token=token, phone_number_id=phone_id, verify_token=v_token, media_timeout=media_timeout)
 
     def messages_url(self) -> str:
         return f"{_BASE_URL}/{_API_VERSION}/{self.phone_number_id}/messages"
@@ -117,9 +120,10 @@ _WHATSAPP_AUDIO_MIMES = {"audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "a
 async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, bytes]:
     url = f"{_BASE_URL}/{_API_VERSION}/{media_id}"
     headers = config.auth_headers()
+    timeout = config.media_timeout
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -128,7 +132,7 @@ async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, 
         return {"error": str(e)}
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(media_url, headers=headers)
             response.raise_for_status()
             return response.content
@@ -146,7 +150,7 @@ async def upload_media_async(
     try:
         file_data = io.BytesIO(media_data)
         files = {"file": (filename, file_data, mime_type)}
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=config.media_timeout) as client:
             response = await client.post(url, headers=headers, data=data, files=files)
             response.raise_for_status()
             json_resp = response.json()

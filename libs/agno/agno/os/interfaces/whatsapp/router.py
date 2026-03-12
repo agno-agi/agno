@@ -133,6 +133,7 @@ def attach_routes(
     access_token: Optional[str] = None,
     phone_number_id: Optional[str] = None,
     verify_token: Optional[str] = None,
+    media_timeout: int = 30,
     enable_encryption: bool = False,
     encryption_key: Optional[bytes] = None,
 ) -> APIRouter:
@@ -157,6 +158,7 @@ def attach_routes(
         access_token=access_token,
         phone_number_id=phone_number_id,
         verify_token=verify_token,
+        media_timeout=media_timeout,
     )
 
     @router.get("/status", operation_id=f"whatsapp_status_{op_suffix}")
