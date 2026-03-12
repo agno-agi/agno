@@ -1,28 +1,18 @@
-import base64
 import json
 from datetime import datetime
 from os import getenv
 from typing import Optional
 
+from agno.utils.cryptography import decrypt_data, encrypt_data
 from agno.utils.log import log_error
-
-try:
-    from cryptography.fernet import Fernet, InvalidToken
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-except ImportError:
-    raise ImportError("cryptography package required: pip install cryptography")
 
 try:
     from google.oauth2.credentials import Credentials
 except ImportError:
     raise ImportError("google-auth required: pip install google-auth")
 
-# Fixed salt for key derivation from passphrase — changing this invalidates all stored tokens
-_KDF_SALT = b"agno-google-oauth-v1"
 
-
-def _get_fernet(encryption_key: Optional[str] = None) -> Fernet:
+def _resolve_key(encryption_key: Optional[str] = None) -> str:
     key = encryption_key or getenv("GOOGLE_OAUTH_ENCRYPTION_KEY")
     if not key:
         raise ValueError(
@@ -30,17 +20,7 @@ def _get_fernet(encryption_key: Optional[str] = None) -> Fernet:
             "or pass encryption_key parameter. Generate one with: "
             "python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
         )
-
-    # If it's a valid Fernet key (44 chars, base64), use directly
-    try:
-        return Fernet(key.encode() if isinstance(key, str) else key)
-    except ValueError:
-        pass
-
-    # Otherwise treat as passphrase and derive a key via PBKDF2
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=_KDF_SALT, iterations=480_000)
-    derived = base64.urlsafe_b64encode(kdf.derive(key.encode()))
-    return Fernet(derived)
+    return key
 
 
 def encrypt_credentials(creds: Credentials, encryption_key: Optional[str] = None) -> bytes:
@@ -52,16 +32,12 @@ def encrypt_credentials(creds: Credentials, encryption_key: Optional[str] = None
         "client_secret": creds.client_secret,
         "expiry": creds.expiry.isoformat() if creds.expiry else None,
     }
-    plaintext = json.dumps(data).encode()
-    f = _get_fernet(encryption_key)
-    return f.encrypt(plaintext)
+    return encrypt_data(json.dumps(data).encode(), _resolve_key(encryption_key))
 
 
 def decrypt_credentials(encrypted: bytes, encryption_key: Optional[str] = None) -> Optional[Credentials]:
-    f = _get_fernet(encryption_key)
-    try:
-        plaintext = f.decrypt(encrypted)
-    except InvalidToken:
+    plaintext = decrypt_data(encrypted, _resolve_key(encryption_key))
+    if plaintext is None:
         log_error("Failed to decrypt Google OAuth token — key mismatch or corrupt data")
         return None
 
