@@ -1343,7 +1343,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
             if table is None:
                 return [] if deserialize else ([], 0)
 
@@ -1850,7 +1850,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
+        table = await self._get_table(table_type="knowledge")
         if table is None:
             return None
 
