@@ -54,6 +54,7 @@ token_store = SqliteGoogleTokenStore(
 
 gmail_tools = GmailTools(
     token_store=token_store,
+    oauth_base_url=GOOGLE_OAUTH_BASE_URL,
     get_latest_emails=True,
     search_emails=True,
     send_email=True,

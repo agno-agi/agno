@@ -183,10 +183,6 @@ class Function(BaseModel):
     # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
     external_execution_silent: Optional[bool] = None
 
-    # Structured metadata for paused tools (e.g. OAuth provider, auth URL, scopes).
-    # Passed through to ToolExecution.additional_data when the tool is paused.
-    additional_data: Optional[Dict[str, Any]] = None
-
     # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
     # Set via the @approval decorator, not directly via @tool().
     approval_type: Optional[str] = None

@@ -45,7 +45,7 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 def authenticate(func):
     """Decorator to ensure authentication before executing the method.
 
-    When token_store is set on the toolkit, extracts (team_id, user_id) from
+    When token_store is set on the toolkit, extracts (workspace_id, user_id) from
     run_context to load per-user credentials from the database.
     """
     import inspect
@@ -53,16 +53,16 @@ def authenticate(func):
     @wraps(func)
     def wrapper(self, *args, run_context=None, **kwargs):
         try:
-            team_id = None
+            workspace_id = None
             user_id = None
             if run_context:
                 user_id = run_context.user_id
-                team_id = (run_context.metadata or {}).get("slack_team_id", "default")
+                workspace_id = (run_context.metadata or {}).get("workspace_id", "default")
 
-            if getattr(self, "token_store", None) and team_id and user_id:
-                user_key = (team_id, user_id)
+            if getattr(self, "token_store", None) and workspace_id and user_id:
+                user_key = (workspace_id, user_id)
                 if not self.creds or not self.creds.valid or self._current_user_key != user_key:
-                    self._auth(team_id=team_id, user_id=user_id)
+                    self._auth(workspace_id=workspace_id, user_id=user_id)
                     self.service = None
             elif not self.creds or not self.creds.valid:
                 self._auth()
@@ -162,7 +162,7 @@ class GoogleCalendarTools(Toolkit):
         self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.token_store = token_store
-        self.oauth_base_url: Optional[str] = kwargs.get("oauth_base_url")
+        self.oauth_base_url: Optional[str] = kwargs.pop("oauth_base_url", None)
         self._current_user_key: Optional[tuple] = None
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
@@ -237,19 +237,19 @@ class GoogleCalendarTools(Toolkit):
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
 
-    def _auth(self, team_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+    def _auth(self, workspace_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
         """Authenticate with Google Calendar API.
 
-        When team_id and user_id are provided (per-user mode via token_store),
+        When workspace_id and user_id are provided (per-user mode via token_store),
         loads credentials from the database. Otherwise falls back to legacy auth.
         """
-        if self.token_store and team_id and user_id:
+        if self.token_store and workspace_id and user_id:
             from agno.tools.google.oauth.token_store import load_user_credentials
 
             self.creds = load_user_credentials(
-                self.token_store, team_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
+                self.token_store, workspace_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
             )
-            self._current_user_key = (team_id, user_id)
+            self._current_user_key = (workspace_id, user_id)
             return
 
         if self.creds and self.creds.valid:

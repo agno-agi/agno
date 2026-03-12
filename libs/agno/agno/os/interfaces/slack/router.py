@@ -40,8 +40,17 @@ _IGNORED_SUBTYPES = frozenset(
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
 
-def _oauth_connect_blocks(provider: str, auth_url: str) -> List[Dict[str, Any]]:
+def _oauth_connect_blocks(
+    provider: str,
+    auth_url: str,
+    channel_id: str = "",
+    thread_ts: str = "",
+) -> List[Dict[str, Any]]:
     """Build Slack Block Kit blocks with a Connect button for any OAuth provider."""
+    # Append thread context so the OAuth callback can reply in the same thread
+    url = auth_url
+    if channel_id and thread_ts and "?" in url:
+        url += f"&channel_id={channel_id}&thread_ts={thread_ts}"
     return [
         {
             "type": "section",
@@ -53,7 +62,7 @@ def _oauth_connect_blocks(provider: str, auth_url: str) -> List[Dict[str, Any]]:
                 {
                     "type": "button",
                     "text": {"type": "plain_text", "text": f"Connect {provider}"},
-                    "url": auth_url,
+                    "url": url,
                     "action_id": f"connect_{provider.lower()}",
                 }
             ],
@@ -208,10 +217,10 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            # Pass Slack team_id so Google toolkits can load per-user tokens
-            _slack_team_id = data.get("team_id") or event.get("team")
-            if _slack_team_id:
-                run_kwargs["metadata"] = {"slack_team_id": _slack_team_id}
+            # Pass workspace_id so toolkits can load per-user OAuth tokens
+            _workspace_id = event.get("team")
+            if _workspace_id:
+                run_kwargs["metadata"] = {"workspace_id": _workspace_id}
 
             try:
                 response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
@@ -222,7 +231,12 @@ def attach_routes(
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
                         text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
-                        blocks=_oauth_connect_blocks(_oauth.get("provider", ""), _oauth["auth_url"]),
+                        blocks=_oauth_connect_blocks(
+                            _oauth.get("provider", ""),
+                            _oauth["auth_url"],
+                            channel_id=ctx["channel_id"],
+                            thread_ts=ctx["thread_id"],
+                        ),
                     )
                     return
                 raise
@@ -330,9 +344,9 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            # Pass Slack team_id so Google toolkits can load per-user tokens
+            # Pass workspace_id so toolkits can load per-user OAuth tokens
             if team_id:
-                run_kwargs["metadata"] = {"slack_team_id": team_id}
+                run_kwargs["metadata"] = {"workspace_id": team_id}
 
             try:
                 response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
@@ -343,7 +357,12 @@ def attach_routes(
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
                         text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
-                        blocks=_oauth_connect_blocks(_oauth.get("provider", ""), _oauth["auth_url"]),
+                        blocks=_oauth_connect_blocks(
+                            _oauth.get("provider", ""),
+                            _oauth["auth_url"],
+                            channel_id=ctx["channel_id"],
+                            thread_ts=ctx["thread_id"],
+                        ),
                     )
                     return
                 raise
@@ -392,13 +411,27 @@ def attach_routes(
             # Default to complete when no terminal error/cancel event arrived
             final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
 
-            # Auth required — stop stream with Connect button inside the bubble
+            # Auth required — stop stream with Connect button
             if state.auth_required and state.auth_required.get("auth_url"):
                 provider = state.auth_required.get("provider", "")
-                await stream.stop(
-                    markdown_text=f"I need access to your {provider} account to help with this.",
-                    blocks=_oauth_connect_blocks(provider, state.auth_required["auth_url"]),
-                )
+                # Resolve any leftover in-progress task cards so Slack doesn't
+                # auto-resolve them as "Something went wrong"
+                auth_chunks = state.resolve_all_pending("complete") if state.task_cards else []
+                # Flush any agent text already streamed, then append the button
+                stop_kw: Dict[str, Any] = {
+                    "blocks": _oauth_connect_blocks(
+                        provider,
+                        state.auth_required["auth_url"],
+                        channel_id=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                    ),
+                }
+                remaining = state.flush() if state.has_content() else ""
+                if remaining:
+                    stop_kw["markdown_text"] = remaining
+                if auth_chunks:
+                    stop_kw["chunks"] = auth_chunks
+                await stream.stop(**stop_kw)
                 return
 
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
@@ -424,6 +457,10 @@ def attach_routes(
                     pass
                 stream = None
 
+            # Auth already handled in the normal flow — don't post a duplicate
+            if state.auth_required:
+                return
+
             # OAuth required during streaming — send Connect button instead of error
             _oauth = _extract_oauth_from_exception(e)
             if _oauth:
@@ -437,7 +474,12 @@ def attach_routes(
                     channel=ctx["channel_id"],
                     thread_ts=ctx["thread_id"],
                     text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
-                    blocks=_oauth_connect_blocks(_oauth.get("provider", ""), _oauth["auth_url"]),
+                    blocks=_oauth_connect_blocks(
+                        _oauth.get("provider", ""),
+                        _oauth["auth_url"],
+                        channel_id=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                    ),
                 )
                 return
 
