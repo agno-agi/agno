@@ -371,7 +371,7 @@ class Workflow:
         """
         from agno.utils.merge_dict import merge_dictionaries
 
-        # dependencies: merge call-site with self.dependencies (call-site wins on conflicts)
+        # dependencies: merge run level with self.dependencies (run level wins on conflicts)
         resolved_dependencies: Optional[Dict[str, Any]] = None
         if dependencies is not None and self.dependencies is not None:
             resolved_dependencies = self.dependencies.copy()
