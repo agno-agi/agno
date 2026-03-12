@@ -5,6 +5,8 @@ Cycles through OpenAI Chat, OpenAI Responses, Claude, and Gemini
 with tool calls on every turn, then summarizes from a different provider.
 """
 
+from random import randint
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
@@ -14,7 +16,7 @@ from agno.models.openai import OpenAIChat, OpenAIResponses
 
 def get_weather(city: str) -> str:
     """Get the current weather for a city."""
-    return f"The weather in {city} is sunny and 22C."
+    return f"The weather in {city} is sunny and {randint(-10, 35)}C."
 
 
 db = PostgresDb("postgresql+psycopg://ai:ai@localhost:5532/ai")
