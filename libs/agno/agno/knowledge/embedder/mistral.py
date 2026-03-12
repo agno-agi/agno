@@ -6,11 +6,17 @@ from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
-    from mistralai import Mistral  # type: ignore
-    from mistralai.models.embeddingresponse import EmbeddingResponse  # type: ignore
+    # v2: mistralai >= 2.0.0
+    from mistralai.client import Mistral  # type: ignore[attr-defined]
+    from mistralai.client.models import EmbeddingResponse
 except ImportError:
-    log_error("`mistralai` not installed")
-    raise
+    try:
+        # v1: mistralai < 2.0.0
+        from mistralai import Mistral
+        from mistralai.models.embeddingresponse import EmbeddingResponse
+    except ImportError:
+        log_error("`mistralai` not installed")
+        raise
 
 
 @dataclass

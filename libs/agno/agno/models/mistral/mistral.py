@@ -14,28 +14,43 @@ from agno.utils.log import log_debug, log_error
 from agno.utils.models.mistral import format_messages
 
 try:
-    from mistralai import CompletionEvent
-    from mistralai import Mistral as MistralClient
-    from mistralai.extra import response_format_from_pydantic_model
-    from mistralai.extra.struct_chat import ParsedChatCompletionResponse
-    from mistralai.models import (
+    # v2: mistralai >= 2.0.0
+    from mistralai.client import Mistral as MistralClient  # type: ignore[attr-defined]
+    from mistralai.client.errors import HTTPValidationError, SDKError
+    from mistralai.client.models import (
         AssistantMessage,
-        HTTPValidationError,
-        SDKError,
+        ChatCompletionResponse,
+        CompletionEvent,
+        DeltaMessage,
         SystemMessage,
         ToolMessage,
         UserMessage,
     )
-    from mistralai.models.chatcompletionresponse import (
-        ChatCompletionResponse,
-    )
-    from mistralai.models.deltamessage import DeltaMessage
-    from mistralai.types.basemodel import Unset
-
-    MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
-
+    from mistralai.client.types.basemodel import Unset
 except ImportError:
-    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
+    try:
+        # v1: mistralai < 2.0.0
+        from mistralai import CompletionEvent
+        from mistralai import Mistral as MistralClient
+        from mistralai.models import (
+            AssistantMessage,
+            HTTPValidationError,
+            SDKError,
+            SystemMessage,
+            ToolMessage,
+            UserMessage,
+        )
+        from mistralai.models.chatcompletionresponse import ChatCompletionResponse
+        from mistralai.models.deltamessage import DeltaMessage
+        from mistralai.types.basemodel import Unset
+    except ImportError:
+        raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
+
+# These paths are the same in both v1 and v2
+from mistralai.extra import response_format_from_pydantic_model
+from mistralai.extra.struct_chat import ParsedChatCompletionResponse
+
+MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
 
 @dataclass
