@@ -1115,6 +1115,8 @@ def _run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -1164,6 +1166,8 @@ def _run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -2316,6 +2320,8 @@ async def _arun_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2370,6 +2376,8 @@ async def _arun_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
             except Exception as e:
                 # Check if this is the last attempt
@@ -3279,6 +3287,8 @@ def _continue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -3319,6 +3329,8 @@ def _continue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
 
             except Exception as e:
@@ -4248,6 +4260,8 @@ async def _acontinue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -4306,6 +4320,8 @@ async def _acontinue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
+                if yield_run_output:
+                    yield run_response
                 break
 
             except Exception as e:
