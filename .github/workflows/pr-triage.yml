@@ -99,6 +99,131 @@ jobs:
               });
             }
 
+      - name: Detect duplicate PRs for the same issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = (pr.body || '');
+
+            // Extract issue numbers referenced in the PR body
+            const issueRefs = new Set();
+            const patterns = [
+              /(?:fixes|closes|resolves|fix|close|resolve)\s+#(\d+)/gi,
+              /github\.com\/agno-agi\/agno\/issues\/(\d+)/gi,
+            ];
+
+            for (const pattern of patterns) {
+              let match;
+              while ((match = pattern.exec(body)) !== null) {
+                issueRefs.add(parseInt(match[1], 10));
+              }
+            }
+
+            if (issueRefs.size === 0) {
+              console.log('No issue references found, skipping duplicate check.');
+              return;
+            }
+
+            // For each referenced issue, search for other open PRs that reference the same issue
+            const duplicates = [];
+
+            for (const issueNumber of issueRefs) {
+              const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open ${issueNumber} in:body`,
+                per_page: 10,
+              });
+
+              for (const item of searchResult.items) {
+                if (item.number !== pr.number && item.pull_request) {
+                  duplicates.push({ issue: issueNumber, pr: item.number });
+                }
+              }
+            }
+
+            if (duplicates.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['possible-duplicate'],
+              });
+
+              const prLinks = duplicates.map(d => `- #${d.pr} (also references issue #${d.issue})`).join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: `**Possible duplicate detected.** The following open PRs also reference the same issue(s):\n\n${prLinks}\n\nIf this is intentional, please explain in your PR description why this approach is preferred. Otherwise, consider collaborating on the existing PR instead.`,
+              });
+            }
+
+      - name: Check if linked issue is assigned to someone else
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = (pr.body || '');
+            const prAuthor = pr.user.login;
+
+            // Extract issue numbers referenced in the PR body
+            const issueRefs = new Set();
+            const patterns = [
+              /(?:fixes|closes|resolves|fix|close|resolve)\s+#(\d+)/gi,
+              /github\.com\/agno-agi\/agno\/issues\/(\d+)/gi,
+            ];
+
+            for (const pattern of patterns) {
+              let match;
+              while ((match = pattern.exec(body)) !== null) {
+                issueRefs.add(parseInt(match[1], 10));
+              }
+            }
+
+            if (issueRefs.size === 0) {
+              console.log('No issue references found, skipping assignment check.');
+              return;
+            }
+
+            const conflicts = [];
+
+            for (const issueNumber of issueRefs) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                });
+
+                if (issue.assignees && issue.assignees.length > 0) {
+                  const assignedToAuthor = issue.assignees.some(a => a.login === prAuthor);
+                  if (!assignedToAuthor) {
+                    const assignees = issue.assignees.map(a => `@${a.login}`).join(', ');
+                    conflicts.push({ issue: issueNumber, assignees });
+                  }
+                }
+              } catch (err) {
+                console.log(`Could not fetch issue #${issueNumber}: ${err.message}`);
+              }
+            }
+
+            if (conflicts.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['issue-assigned-to-other'],
+              });
+
+              const details = conflicts.map(c => `- Issue #${c.issue} is assigned to ${c.assignees}`).join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: `**Heads up:** This PR references an issue that is already assigned to someone else.\n\n${details}\n\nPlease confirm with the assignee or a maintainer in the issue comments before proceeding. PRs for assigned issues without prior coordination may be closed.`,
+              });
+            }
+
       - name: Detect low-context PRs
         uses: actions/github-script@v7
         with:
