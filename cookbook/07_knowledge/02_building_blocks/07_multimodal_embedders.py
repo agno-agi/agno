@@ -7,7 +7,15 @@ This enables cross-modal search -- e.g. a text query can find relevant images.
 This example uses Gemini Embedding 2 (gemini-embedding-2-preview), which
 natively supports text, image, audio, and video embedding.
 
+We load a coffee guide (text) and a coffee production chart (image) into the
+same knowledge base, then ask questions that require both sources.
+
 See also: 06_embedders.py for comparing text-only embedders.
+
+Prerequisites:
+    - pip install agno[google,pgvector]
+    - PostgreSQL running (./cookbook/scripts/run_pgvector.sh)
+    - GOOGLE_API_KEY set
 """
 
 import asyncio
@@ -53,26 +61,32 @@ agent = Agent(
 if __name__ == "__main__":
 
     async def main():
-        # Insert an image with a description into the knowledge base
+        # 1. Insert text knowledge -- a coffee brewing guide
         await knowledge.ainsert(
-            images=[Image(filepath=resources / "sample.png", mime_type="image/png")],
-            text_content="A red square test image",
+            path=str(resources / "coffee.md"),
             skip_if_exists=True,
         )
 
-        # Insert a PDF document
+        # 2. Insert an image -- a coffee production chart
+        #    text_content is a short label shown to the agent when this result is retrieved
         await knowledge.ainsert(
-            path=str(resources / "cv_1.pdf"),
+            images=[
+                Image(
+                    filepath=resources / "coffee_production.png", mime_type="image/png"
+                )
+            ],
+            text_content="Coffee production by country (2024)",
             skip_if_exists=True,
         )
 
         print("\n" + "=" * 60)
-        print("Gemini Embedding 2 (multimodal embedder)")
+        print("Multimodal Knowledge: Coffee Guide + Production Data")
         print("=" * 60 + "\n")
 
-        # Text queries search across both text and image embeddings
+        # Query that benefits from both text (brewing methods) and image (production data)
         agent.print_response(
-            "What work experience does the candidate have and what images are in the knowledge base?",
+            "Which countries produce the most coffee and what brewing methods "
+            "would best highlight the flavor profiles from those regions?",
             stream=True,
         )
 

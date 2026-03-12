@@ -96,21 +96,21 @@ class TestMultimodalInsert:
 
     @pytest.mark.asyncio
     async def test_text_query_finds_image(self, knowledge):
-        """Insert image + text PDF, query with text, verify both found."""
+        """Insert image + text content, query with text, verify both found."""
         # Insert image
         await knowledge.ainsert(
-            images=[Image(filepath=RESOURCES / "sample.png", mime_type="image/png")],
-            text_content="A red square test image used for visual testing",
+            images=[Image(filepath=RESOURCES / "coffee_production.png", mime_type="image/png")],
+            text_content="Bar chart showing top coffee producing countries with Brazil leading at 62.6 million bags",
         )
 
-        # Insert text PDF
+        # Insert text content
         await knowledge.ainsert(
-            path=str(RESOURCES / "cv_1.pdf"),
+            path=str(RESOURCES / "coffee.md"),
             skip_if_exists=True,
         )
 
-        # Query should find results
-        results = await knowledge.asearch("test image")
+        # Query should find results from both text and image knowledge
+        results = await knowledge.asearch("coffee production")
         assert len(results) > 0
 
     @pytest.mark.asyncio
