@@ -11,7 +11,7 @@ Tests cover:
 - End-to-end: Full workflow.run() -> step -> agent.run() chain with MockTestModel
 """
 
-from typing import Any, AsyncIterator, Dict, Iterator, Optional
+from typing import Any, AsyncIterator, Dict, Iterator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -22,7 +22,6 @@ from agno.models.base import Model
 from agno.models.response import ModelResponse
 from agno.run.base import RunContext
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
