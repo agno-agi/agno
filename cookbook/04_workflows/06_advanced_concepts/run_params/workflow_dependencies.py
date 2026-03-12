@@ -67,7 +67,7 @@ if __name__ == "__main__":
         input="What configuration are you using? Describe the database and API version.",
     )
 
-    # Example 2: Call-site dependencies merged with class-level
+    # Example 2: Run level dependencies merged with class-level
     # Call-site wins on conflicts (api_version becomes "v3")
     print("\n=== Example 2: Merged dependencies (call-site overrides) ===")
     workflow.print_response(
