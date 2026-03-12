@@ -12,7 +12,7 @@ from agno.utils.log import log_info
 
 def test_tool_use():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -28,7 +28,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -54,7 +54,7 @@ def test_tool_use_stream():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -74,7 +74,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -100,7 +100,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -128,7 +128,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
@@ -145,7 +145,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         markdown=True,
@@ -176,7 +176,7 @@ def test_tool_call_list_parameters():
 async def test_async_tool_use():
     """Test async tool usage with Claude model."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -194,7 +194,7 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     """Test async streaming tool usage."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -212,7 +212,7 @@ async def test_async_tool_use_stream():
 async def test_async_parallel_tool_calls():
     """Test async parallel tool calls."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -234,7 +234,7 @@ async def test_async_parallel_tool_calls():
 async def test_async_multiple_tool_calls():
     """Test async multiple different tool calls."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -263,7 +263,7 @@ async def test_async_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -295,7 +295,7 @@ async def test_async_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
@@ -314,7 +314,7 @@ async def test_async_tool_call_custom_tool_optional_parameters():
 async def test_async_tool_call_list_parameters():
     """Test async tool calls with list parameters."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         markdown=True,

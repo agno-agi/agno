@@ -27,7 +27,7 @@ def _make_mock_session(access_key="ASIATEMP", secret_key="secret", token="token"
 class TestSessionClientNotCached:
     def test_sync_client_recreated_each_call(self):
         mock_session, _ = _make_mock_session()
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         with patch("agno.models.aws.claude.AnthropicBedrock") as MockBedrock:
             mock_client = MagicMock()
@@ -41,7 +41,7 @@ class TestSessionClientNotCached:
 
     def test_async_client_recreated_each_call(self):
         mock_session, _ = _make_mock_session()
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         with patch("agno.models.aws.claude.AsyncAnthropicBedrock") as MockAsyncBedrock:
             mock_client = MagicMock()
@@ -57,7 +57,7 @@ class TestSessionClientNotCached:
 class TestSessionCredsReadEachTime:
     def test_fresh_creds_on_each_sync_get_client(self):
         mock_session, mock_creds = _make_mock_session(access_key="KEY_V1", token="TOKEN_V1")
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         with patch("agno.models.aws.claude.AnthropicBedrock") as MockBedrock:
             mock_client = MagicMock()
@@ -79,7 +79,7 @@ class TestSessionCredsReadEachTime:
 
     def test_fresh_creds_on_each_async_get_client(self):
         mock_session, mock_creds = _make_mock_session(access_key="KEY_V1", token="TOKEN_V1")
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         with patch("agno.models.aws.claude.AsyncAnthropicBedrock") as MockAsyncBedrock:
             mock_client = MagicMock()
@@ -103,7 +103,7 @@ class TestSessionCredsReadEachTime:
 class TestStaticKeyClientCached:
     def test_sync_client_cached(self):
         model = Claude(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key="AKIA_STATIC",
             aws_secret_key="secret",
             aws_region="us-east-1",
@@ -122,7 +122,7 @@ class TestStaticKeyClientCached:
 
     def test_async_client_cached(self):
         model = Claude(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key="AKIA_STATIC",
             aws_secret_key="secret",
             aws_region="us-east-1",
@@ -143,7 +143,7 @@ class TestStaticKeyClientCached:
 class TestAsyncIsClosedCheck:
     def test_closed_async_client_is_recreated(self):
         model = Claude(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key="AKIA_STATIC",
             aws_secret_key="secret",
             aws_region="us-east-1",
@@ -165,7 +165,7 @@ class TestAsyncIsClosedCheck:
 
     def test_open_async_client_is_reused(self):
         model = Claude(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key="AKIA_STATIC",
             aws_secret_key="secret",
             aws_region="us-east-1",
@@ -187,7 +187,7 @@ class TestSessionTokenEnv:
         monkeypatch.setenv("AWS_REGION", "us-west-2")
         monkeypatch.delenv("AWS_BEDROCK_API_KEY", raising=False)
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
         params = model._get_client_params()
 
         assert params["aws_session_token"] == "my-session-token"
@@ -198,7 +198,7 @@ class TestSessionTokenEnv:
         monkeypatch.delenv("AWS_BEDROCK_API_KEY", raising=False)
 
         model = Claude(
-            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            id="anthropic.claude-sonnet-4-5-20250929-v1:0",
             aws_access_key="ASIATEMP",
             aws_secret_key="secret",
             aws_session_token="explicit-token",
@@ -215,7 +215,7 @@ class TestSessionTokenEnv:
         monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
         monkeypatch.delenv("AWS_BEDROCK_API_KEY", raising=False)
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
         params = model._get_client_params()
 
         assert params["aws_session_token"] is None
@@ -226,7 +226,7 @@ class TestApiKeyPath:
         monkeypatch.setenv("AWS_BEDROCK_API_KEY", "br-api-key-123")
         monkeypatch.setenv("AWS_REGION", "us-west-2")
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
         with patch("agno.models.aws.claude.AnthropicBedrock") as MockBedrock:
             mock_client = MagicMock()
@@ -243,7 +243,7 @@ class TestApiKeyPath:
         monkeypatch.setenv("AWS_BEDROCK_API_KEY", "br-api-key-123")
         monkeypatch.setenv("AWS_REGION", "us-west-2")
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
         params = model._get_client_params()
 
         assert params["api_key"] == "br-api-key-123"
@@ -258,7 +258,7 @@ class TestSessionNullCredentials:
         mock_session.profile_name = None
         mock_session.get_credentials.return_value = None
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
 
         with pytest.raises(ValueError, match="boto3 session has no credentials"):
             model._get_client_params()

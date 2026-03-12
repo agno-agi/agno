@@ -5,7 +5,7 @@ from agno.models.aws import AwsBedrock
 
 def test_parse_streaming_tool_call_with_single_chunk():
     """Test parsing a tool call where arguments come in a single chunk."""
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     # Simulate streaming chunks from Bedrock
     current_tool = {}
@@ -51,7 +51,7 @@ def test_parse_streaming_tool_call_with_multiple_chunks():
 
     This tests the bug fix where tool arguments were not being accumulated.
     """
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     current_tool = {}
 
@@ -95,7 +95,7 @@ def test_parse_streaming_tool_call_with_multiple_chunks():
 
 def test_parse_streaming_text_content():
     """Test parsing text content deltas (non-tool response)."""
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     current_tool = {}
 
@@ -114,7 +114,7 @@ def test_parse_streaming_text_content():
 
 def test_parse_streaming_usage_metrics():
     """Test parsing usage metrics from streaming response."""
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     current_tool = {}
 
@@ -136,7 +136,7 @@ def test_parse_streaming_usage_metrics():
 
 def test_parse_streaming_empty_tool_input():
     """Test parsing a tool call with empty/no input."""
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     current_tool = {}
 
@@ -168,7 +168,7 @@ def test_parse_streaming_empty_tool_input():
 
 def test_parse_streaming_multiple_sequential_tools():
     """Test parsing multiple tool calls that come sequentially in the stream."""
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     current_tool = {}
 
@@ -223,7 +223,7 @@ def test_invoke_stream_maintains_tool_state():
     This is a more integrated test that verifies the current_tool dict is passed
     correctly through the streaming loop.
     """
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     # Create sample streaming chunks
     chunks = [

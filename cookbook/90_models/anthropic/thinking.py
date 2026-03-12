@@ -14,7 +14,7 @@ from agno.models.anthropic import Claude
 
 agent = Agent(
     model=Claude(
-        id="claude-3-7-sonnet-20250219",
+        id="claude-sonnet-4-6",
         max_tokens=2048,
         thinking={"type": "enabled", "budget_tokens": 1024},
     ),

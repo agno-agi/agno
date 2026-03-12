@@ -36,19 +36,19 @@ class ResearchTopic(BaseModel):
 # ************* Agents *************
 wikipedia_agent = Agent(
     name="Wikipedia Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     role="Extract key insights and content from Wikipedia articles",
     tools=[WikipediaTools()],
 )
 search_agent = Agent(
     name="Search Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     role="Search the web for the latest news and trends using Firecrawl",
     tools=[FirecrawlTools()],
 )
 writer_agent = Agent(
     name="Writer Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-6"),
     instructions=[
         "Write a detailed report on the provided topic and research content",
     ],

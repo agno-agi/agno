@@ -15,17 +15,17 @@ def test_model_inheritance():
 
     team = Team(
         name="Test Team",
-        model=Claude(id="claude-3-5-sonnet-20241022"),
+        model=Claude(id="claude-sonnet-4-6"),
         members=[agent1, agent2],
     )
 
     team.initialize_team()
 
     assert isinstance(agent1.model, Claude)
-    assert agent1.model.id == "claude-3-5-sonnet-20241022"
+    assert agent1.model.id == "claude-sonnet-4-6"
 
     assert isinstance(agent2.model, Claude)
-    assert agent2.model.id == "claude-3-5-sonnet-20241022"
+    assert agent2.model.id == "claude-sonnet-4-6"
 
 
 def test_explicit_model_retention():
@@ -35,7 +35,7 @@ def test_explicit_model_retention():
 
     team = Team(
         name="Test Team",
-        model=Claude(id="claude-3-5-sonnet-20241022"),
+        model=Claude(id="claude-sonnet-4-6"),
         members=[agent1, agent2],
     )
 
@@ -53,7 +53,7 @@ def test_nested_team_model_inheritance():
 
     sub_team = Team(
         name="Analysis Team",
-        model=Claude(id="claude-3-5-haiku-20241022"),
+        model=Claude(id="claude-haiku-4-5-latest"),
         members=[sub_agent1, sub_agent2],
     )
 
@@ -71,10 +71,10 @@ def test_nested_team_model_inheritance():
     assert main_agent.model.id == "gpt-4o"
 
     assert isinstance(sub_agent1.model, Claude)
-    assert sub_agent1.model.id == "claude-3-5-haiku-20241022"
+    assert sub_agent1.model.id == "claude-haiku-4-5-latest"
 
     assert isinstance(sub_agent2.model, Claude)
-    assert sub_agent2.model.id == "claude-3-5-haiku-20241022"
+    assert sub_agent2.model.id == "claude-haiku-4-5-latest"
 
 
 def test_default_model():

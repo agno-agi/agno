@@ -97,7 +97,7 @@ class Claude(Model):
         "claude-opus-4-0",
     }
 
-    id: str = "claude-sonnet-4-5-20250929"
+    id: str = "claude-sonnet-4-6"
     name: str = "Claude"
     provider: str = "Anthropic"
 

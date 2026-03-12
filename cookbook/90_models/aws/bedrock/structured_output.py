@@ -37,7 +37,7 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0"),
+    model=AwsBedrock(id="us.anthropic.claude-haiku-4-5-20251001-v1:0"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )

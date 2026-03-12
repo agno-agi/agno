@@ -41,9 +41,9 @@ def test_get_model_parses_openai_string():
 
 def test_get_model_parses_anthropic_string():
     """Test get_model() parses Anthropic model string."""
-    model = get_model("anthropic:claude-3-5-sonnet-20241022")
+    model = get_model("anthropic:claude-sonnet-4-6")
     assert isinstance(model, Claude)
-    assert model.id == "claude-3-5-sonnet-20241022"
+    assert model.id == "claude-sonnet-4-6"
 
 
 def test_get_model_strips_whitespace():
@@ -89,8 +89,8 @@ def test_agent_with_all_model_params_as_strings():
     agent = Agent(
         model="openai:gpt-4o",
         reasoning=True,
-        reasoning_model="anthropic:claude-3-5-sonnet-20241022",
-        parser_model="google:gemini-2.0-flash-exp",
+        reasoning_model="anthropic:claude-sonnet-4-6",
+        parser_model="google:gemini-flash-latest",
         output_model="groq:llama-3.1-70b-versatile",
     )
     assert isinstance(agent.model, OpenAIChat)
@@ -109,7 +109,7 @@ def test_agent_backward_compatibility():
 def test_team_with_model_string():
     """Test creating Team with model string."""
     agent = Agent(model="openai:gpt-4o")
-    team = Team(members=[agent], model="anthropic:claude-3-5-sonnet-20241022")
+    team = Team(members=[agent], model="anthropic:claude-sonnet-4-6")
     assert isinstance(team.model, Claude)
 
 
@@ -118,10 +118,10 @@ def test_team_with_all_model_params_as_strings():
     agent = Agent(model="openai:gpt-4o")
     team = Team(
         members=[agent],
-        model="anthropic:claude-3-5-sonnet-20241022",
+        model="anthropic:claude-sonnet-4-6",
         reasoning=True,
         reasoning_model="openai:gpt-4o",
-        parser_model="google:gemini-2.0-flash-exp",
+        parser_model="google:gemini-flash-latest",
         output_model="groq:llama-3.1-70b-versatile",
     )
     assert isinstance(team.model, Claude)

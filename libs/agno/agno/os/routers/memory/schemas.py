@@ -83,7 +83,7 @@ class OptimizeMemoriesRequest(BaseModel):
     user_id: str = Field(..., description="User ID to optimize memories for")
     model: Optional[str] = Field(
         default=None,
-        description="Model to use for optimization in format 'provider:model_id' (e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022', 'google:gemini-2.0-flash-exp'). If not specified, uses MemoryManager's default model (gpt-4o).",
+        description="Model to use for optimization in format 'provider:model_id' (e.g., 'openai:gpt-4o-mini', 'anthropic:claude-sonnet-4-6', 'google:gemini-flash-latest'). If not specified, uses MemoryManager's default model (gpt-4o).",
     )
     apply: bool = Field(
         default=True,

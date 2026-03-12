@@ -40,7 +40,7 @@ custom_memory_manager = MemoryManager(
 
 # Use default memory manager
 jane_memory_manager = MemoryManager(
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=memory_db,
 )
 

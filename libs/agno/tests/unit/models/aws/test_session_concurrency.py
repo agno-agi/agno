@@ -25,7 +25,7 @@ class TestSessionNoSharedState:
         mock_creds.get_frozen_credentials.return_value = _make_frozen_creds()
         mock_session.get_credentials.return_value = mock_creds
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
         assert model.client is None
 
         with patch("agno.models.aws.claude.AnthropicBedrock") as MockBedrock:
@@ -45,7 +45,7 @@ class TestSessionNoSharedState:
         mock_creds.get_frozen_credentials.return_value = _make_frozen_creds()
         mock_session.get_credentials.return_value = mock_creds
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
         assert model.async_client is None
 
         with patch("agno.models.aws.claude.AsyncAnthropicBedrock") as MockAsync:
@@ -80,7 +80,7 @@ class TestSessionConcurrencySafe:
         mock_creds.get_frozen_credentials.side_effect = rotating_frozen_creds
         mock_session.get_credentials.return_value = mock_creds
 
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+        model = Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
         results = {}
 
         with patch("agno.models.aws.claude.AnthropicBedrock") as MockBedrock:

@@ -115,8 +115,8 @@ class TestOpenAIChatClientCaching:
     def test_multiple_models_share_global_httpx_client(self):
         """Verify that multiple models can share the same global httpx client."""
         model1 = OpenAIChat(id="gpt-4o")
-        model2 = OpenAIChat(id="gpt-4-turbo")
-        model3 = OpenAIChat(id="gpt-3.5-turbo")
+        model2 = OpenAIChat(id="gpt-4o")
+        model3 = OpenAIChat(id="gpt-4o-mini")
 
         # Get clients from each model
         model1.get_client()
@@ -349,8 +349,8 @@ class TestResourceLeakPrevention:
         # Create multiple models
         models = [
             OpenAIChat(id="gpt-4o"),
-            OpenAIChat(id="gpt-4-turbo"),
-            OpenAIChat(id="gpt-3.5-turbo"),
+            OpenAIChat(id="gpt-4o"),
+            OpenAIChat(id="gpt-4o-mini"),
             OpenAIResponses(id="gpt-4o"),
         ]
 

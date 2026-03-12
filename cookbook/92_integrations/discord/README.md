@@ -52,7 +52,7 @@ from agno.models.anthropic import Claude
 
 # Create your agent
 agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     instructions=["Your agent instructions here"],
     # Add other agent configurations as needed
 )
