@@ -514,6 +514,11 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        from agno.utils.message import remap_tool_call_ids
+
+        # Remap foreign tool call IDs (e.g. call_*, toolu_*) to fc_* prefix for Responses API
+        messages = remap_tool_call_ids(messages, prefix="fc_")
+
         formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
         messages_to_format = messages
