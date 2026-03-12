@@ -817,7 +817,7 @@ async def test_user_id_is_raw_phone_by_default():
         call_kwargs = agent_mock.arun.call_args.kwargs
         # Default mode: raw phone used directly as user_id
         assert call_kwargs["user_id"] == "sender_phone"
-        assert call_kwargs["session_id"] == f"wa:test_agent:sender_phone"
+        assert call_kwargs["session_id"] == "wa:test_agent:sender_phone"
 
 
 # === /new Session Reset ===
