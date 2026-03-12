@@ -86,13 +86,13 @@ class Claude(Model):
     # This is a closed set — all new Claude models support structured outputs.
     NON_STRUCTURED_OUTPUT_PREFIXES = (
         "claude-3-",  # All 3.x models
-        "claude-sonnet-4-20250514",  # Sonnet 4.0 dated
-        "claude-opus-4-20250514",  # Opus 4.0 dated
     )
-    # Exact aliases that don't include a date suffix
+    # Exact model IDs and aliases that do NOT support native structured outputs.
     NON_STRUCTURED_OUTPUT_ALIASES = {
+        "claude-sonnet-4-20250514",
         "claude-sonnet-4",
         "claude-sonnet-4-0",
+        "claude-opus-4-20250514",
         "claude-opus-4",
         "claude-opus-4-0",
     }
