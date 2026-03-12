@@ -31,9 +31,13 @@ endpoint = f"{MLFLOW_TRACKING_URI}/api/2.0/mlflow/traces"
 
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(
-    SimpleSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
+    SimpleSpanProcessor(
+        OTLPSpanExporter(
+            endpoint=endpoint,
+            headers={"x-mlflow-experiment-id": "0"},
+        )
+    )
 )
-
 # Start instrumenting agno
 AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
