@@ -37,7 +37,7 @@ if _mistral_version >= 2:
 else:
     # v1: mistralai < 2.0.0
     from mistralai import CompletionEvent  # type: ignore[attr-defined,no-redef]
-    from mistralai import Mistral as MistralClient  # type: ignore[assignment,no-redef]
+    from mistralai import Mistral as MistralClient  # type: ignore[attr-defined,no-redef]
     from mistralai.models import (  # type: ignore[no-redef]
         AssistantMessage,
         HTTPValidationError,
