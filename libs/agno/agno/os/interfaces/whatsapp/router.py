@@ -225,7 +225,7 @@ def attach_routes(
         if not phone_number:
             log_warning("Message missing 'from' field, skipping")
             return
-        # Resolve storage identity — raw phone by default, encrypted when enabled
+        # Splits identity: user_id (possibly encrypted) for DB storage, phone_number (raw) for API sends
         user_id = (
             _encrypt_phone(phone_number, encryption_key) if enable_encryption and encryption_key else phone_number
         )
@@ -309,10 +309,9 @@ def attach_routes(
                 if isinstance(media, bytes):
                     run_kwargs["audio"] = [Audio(content=media)]
 
-            # Inject phone number so the agent can reference the user in responses
-            # Workflows don't support add_dependencies_to_context
+            # Give agent a user reference; use encrypted ID when encryption is on to avoid leaking raw phone
             if send_user_number_to_context and entity_type != "workflow":
-                run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {phone_number}"}
+                run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {user_id}"}
                 run_kwargs["add_dependencies_to_context"] = True
 
             # Refresh typing indicator every 20s while the agent runs
