@@ -210,6 +210,43 @@ async def agent_continue_response_streamer(
         yield format_sse_event(error_response)
 
 
+async def agent_resumable_continue_response_streamer(
+    agent: Union[Agent, RemoteAgent],
+    run_id: str,
+    updated_tools: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Resumable SSE generator for continue_run with background=True, stream=True.
+
+    Delegates to agent.acontinue_run(background=True, stream=True) which handles:
+    - Running continue-run in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    extra_kwargs: dict = {}
+    if auth_token and isinstance(agent, RemoteAgent):
+        extra_kwargs["auth_token"] = auth_token
+
+    if background_tasks is not None:
+        extra_kwargs["background_tasks"] = background_tasks
+
+    async for sse_data in agent.acontinue_run(
+        run_id=run_id,
+        updated_tools=updated_tools,
+        session_id=session_id,
+        user_id=user_id,
+        stream=True,
+        stream_events=True,
+        background=True,
+        **extra_kwargs,
+    ):
+        yield sse_data
+
+
 async def _resume_stream_generator(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
@@ -756,6 +793,10 @@ def get_agent_router(
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        background: bool = Form(
+            False,
+            description="Run continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
+        ),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -816,7 +857,25 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
-        if stream:
+        if stream and background:
+            # background=True, stream=True: resumable SSE streaming
+            # Continue-run runs in a detached asyncio.Task that survives client disconnections.
+            # Events are buffered for reconnection via /resume endpoint.
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            return StreamingResponse(
+                agent_resumable_continue_response_streamer(
+                    agent,
+                    run_id=run_id,
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                    auth_token=auth_token,
+                ),
+                media_type="text/event-stream",
+            )
+        elif stream:
             return StreamingResponse(
                 agent_continue_response_streamer(
                     agent,
