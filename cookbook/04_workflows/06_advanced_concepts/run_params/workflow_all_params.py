@@ -93,7 +93,7 @@ if __name__ == "__main__":
         input="Write about the benefits of type hints in Python.",
     )
 
-    # Example 2: Call-site overrides for a different audience
+    # Example 2: Run level overrides for a different audience
     print("\n=== Example 2: Run level overrides ===")
     print("Overriding: tone=casual, audience=beginners\n")
     content_pipeline.print_response(
