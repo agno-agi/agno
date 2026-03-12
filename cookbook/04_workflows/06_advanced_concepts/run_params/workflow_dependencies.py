@@ -68,7 +68,7 @@ if __name__ == "__main__":
     )
 
     # Example 2: Run level dependencies merged with class-level
-    # Call-site wins on conflicts (api_version becomes "v3")
+    # Run level wins on conflicts (api_version becomes "v3")
     print("\n=== Example 2: Merged dependencies (call-site overrides) ===")
     workflow.print_response(
         input="What configuration are you using? Note any changes from defaults.",
