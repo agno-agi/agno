@@ -12,13 +12,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
-from agno.utils import pprint
-from rich.console import Console
-from rich.prompt import Prompt
 from agno.os import AgentOS
-
-console = Console()
-
 
 # This tool will require user confirmation before execution
 @tool(requires_confirmation=True)
