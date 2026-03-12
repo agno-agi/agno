@@ -11,10 +11,12 @@ See also: 06_embedders.py for comparing text-only embedders.
 """
 
 import asyncio
+from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.media import Image
 from agno.models.google import Gemini
 from agno.vectordb.pgvector import PgVector
 
@@ -23,6 +25,7 @@ from agno.vectordb.pgvector import PgVector
 # ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+resources = Path(__file__).parent.parent / "testing_resources"
 
 knowledge = Knowledge(
     vector_db=PgVector(
@@ -50,8 +53,16 @@ agent = Agent(
 if __name__ == "__main__":
 
     async def main():
+        # Insert an image with a description into the knowledge base
         await knowledge.ainsert(
-            path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
+            images=[Image(filepath=resources / "sample.png", mime_type="image/png")],
+            text_content="A red square test image",
+            skip_if_exists=True,
+        )
+
+        # Insert a PDF document
+        await knowledge.ainsert(
+            path=str(resources / "cv_1.pdf"),
             skip_if_exists=True,
         )
 
@@ -59,8 +70,9 @@ if __name__ == "__main__":
         print("Gemini Embedding 2 (multimodal embedder)")
         print("=" * 60 + "\n")
 
+        # Text queries search across both text and image embeddings
         agent.print_response(
-            "What work experience does the candidate have?",
+            "What work experience does the candidate have and what images are in the knowledge base?",
             stream=True,
         )
 

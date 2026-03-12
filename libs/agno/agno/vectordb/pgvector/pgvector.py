@@ -537,23 +537,35 @@ class PgVector(VectorDb):
         Args:
             batch_docs: List of documents to embed
         """
+        # Separate media docs from text docs for batch embedding
+        text_docs = [doc for doc in batch_docs if not doc.has_media]
+        media_docs = [doc for doc in batch_docs if doc.has_media]
+
+        # Individually embed media docs (they use different embedding methods)
+        for doc in media_docs:
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
+
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
-                # Extract content from all documents
-                doc_contents = [doc.content for doc in batch_docs]
+                # Extract content from text-only documents
+                doc_contents = [doc.content for doc in text_docs]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                if doc_contents:
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                # Process documents with pre-computed embeddings
-                for j, doc in enumerate(batch_docs):
-                    try:
-                        if j < len(embeddings):
-                            doc.embedding = embeddings[j]
-                            doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    # Process documents with pre-computed embeddings
+                    for j, doc in enumerate(text_docs):
+                        try:
+                            if j < len(embeddings):
+                                doc.embedding = embeddings[j]
+                                doc.usage = usages[j] if j < len(usages) else None
+                        except Exception as e:
+                            log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -569,7 +581,7 @@ class PgVector(VectorDb):
                 else:
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
 
                     # Check for exceptions and handle them

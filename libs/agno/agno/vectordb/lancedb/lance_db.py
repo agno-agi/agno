@@ -379,16 +379,25 @@ class LanceDb(VectorDb):
 
         log_debug(f"Inserting {len(documents)} documents")
 
+        # Separate media docs from text docs for batch embedding
+        text_docs = [doc for doc in documents if not doc.has_media]
+        media_docs = [doc for doc in documents if doc.has_media]
+
+        # Individually embed media docs (they use different embedding methods)
+        for doc in media_docs:
+            await doc.async_embed(embedder=self.embedder)
+
         # Still do async embedding for performance
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             try:
-                doc_contents = [doc.content for doc in documents]
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                doc_contents = [doc.content for doc in text_docs]
+                if doc_contents:
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                for j, doc in enumerate(documents):
-                    if j < len(embeddings):
-                        doc.embedding = embeddings[j]
-                        doc.usage = usages[j] if j < len(usages) else None
+                    for j, doc in enumerate(text_docs):
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
             except Exception as e:
                 error_str = str(e).lower()
                 is_rate_limit = any(
@@ -400,14 +409,14 @@ class LanceDb(VectorDb):
                     raise e
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                     # Log any embedding failures (they will be re-tried in sync insert)
                     for i, result in enumerate(results):
                         if isinstance(result, Exception):
                             log_warning(f"Async embedding failed for document {i}, will retry in sync insert: {result}")
         else:
-            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
             # Log any embedding failures (they will be re-tried in sync insert)
             for i, result in enumerate(results):
@@ -443,15 +452,24 @@ class LanceDb(VectorDb):
         Note: Uses async embedding for performance, then sync upsert for reliability.
         """
         if len(documents) > 0:
+            # Separate media docs from text docs for batch embedding
+            text_docs = [doc for doc in documents if not doc.has_media]
+            media_docs = [doc for doc in documents if doc.has_media]
+
+            # Individually embed media docs (they use different embedding methods)
+            for doc in media_docs:
+                await doc.async_embed(embedder=self.embedder)
+
             # Do async embedding for performance
             if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
                 try:
-                    doc_contents = [doc.content for doc in documents]
-                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
-                    for j, doc in enumerate(documents):
-                        if j < len(embeddings):
-                            doc.embedding = embeddings[j]
-                            doc.usage = usages[j] if j < len(usages) else None
+                    doc_contents = [doc.content for doc in text_docs]
+                    if doc_contents:
+                        embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                        for j, doc in enumerate(text_docs):
+                            if j < len(embeddings):
+                                doc.embedding = embeddings[j]
+                                doc.usage = usages[j] if j < len(usages) else None
                 except Exception as e:
                     error_str = str(e).lower()
                     is_rate_limit = any(
@@ -462,7 +480,7 @@ class LanceDb(VectorDb):
                         raise e
                     else:
                         logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
-                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
                         results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                         # Log any embedding failures (they will be re-tried in sync upsert)
                         for i, result in enumerate(results):
@@ -471,7 +489,7 @@ class LanceDb(VectorDb):
                                     f"Async embedding failed for document {i}, will retry in sync upsert: {result}"
                                 )
             else:
-                embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
                 results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                 # Log any embedding failures (they will be re-tried in sync upsert)
                 for i, result in enumerate(results):
