@@ -11,6 +11,7 @@ Runnable workflow examples under: cookbook/04_workflows/06_advanced_concepts
 - long_running/: Additional examples for long running.
 - previous_step_outputs/: Additional examples for previous step outputs.
 - run_control/: Additional examples for run control.
+- run_params/: Examples for workflow-level run parameters (metadata, dependencies, context flags).
 - session_state/: Additional examples for session state.
 - structured_io/: Additional examples for structured io.
 - tools/: Additional examples for tools.
