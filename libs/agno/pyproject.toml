@@ -4,16 +4,21 @@ version = "2.5.9"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
 keywords = [
-  "agent"
+  "agent",
+  "reasoning",
+  "llm",
+  "large-language-model",
+  "framework",
 ]
 classifiers = [
-    "Intended Audience :: Developers",
     "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
@@ -22,7 +27,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
-    "License :: OSI Approved :: Apache Software License",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -63,7 +67,7 @@ dev = [
   "types-greenlet",
 ]
 
-os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "croniter>=1.3", "pytz>=2023.3"]
+os = ["fastapi", "uvicorn", "PyJWT"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -98,6 +102,7 @@ tokenizers = ["tiktoken", "tokenizers"]
 cel = ["cel-python"]
 
 # Dependencies for Tools
+agentbay = ["wuying-agentbay-sdk"]
 agentql = ["agentql"]
 apify = ["apify-client"]
 arxiv = ["arxiv"]
@@ -187,9 +192,6 @@ agui = ["ag-ui-protocol"]
 # Dependencies for A2A integration
 a2a = ["a2a-sdk"]
 
-# Dependencies for Slack integration
-slack = ["slack_sdk>=3.40.0"]
-
 # Dependencies for Embedders
 huggingface = [
     "huggingface-hub",
@@ -229,6 +231,7 @@ models = [
 
 # All tools
 tools = [
+  "agno[agentbay]",
   "agno[apify]",
   "agno[arxiv]",
   # "agno[brave]",  # It clashes with other dependencies
@@ -327,7 +330,6 @@ embedders = [
 # All libraries for testing
 tests = [
     "agno[a2a]",
-    "agno[slack]",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",
@@ -361,8 +363,6 @@ demo = [
     "anthropic",
     "chromadb",
     "ddgs",
-    "duckdb",
-    "exa-py",
     "fastapi[standard]",
     "google-genai",
     "matplotlib",
@@ -428,6 +428,7 @@ module = [
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
+  "agentbay.*",
   "apify_client.*",
   "arxiv.*",
   "atlassian.*",
