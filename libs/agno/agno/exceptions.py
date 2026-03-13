@@ -113,6 +113,16 @@ class ModelRateLimitError(ModelProviderError):
         self.error_id = "model_rate_limit_error"
 
 
+class ContextWindowExceededError(ModelProviderError):
+    """Exception raised when the input exceeds a model's context window."""
+
+    def __init__(
+        self, message: str, status_code: int = 400, model_name: Optional[str] = None, model_id: Optional[str] = None
+    ):
+        super().__init__(message, status_code, model_name, model_id)
+        self.error_id = "context_window_exceeded_error"
+
+
 class EvalError(Exception):
     """Exception raised when an evaluation fails."""
 
