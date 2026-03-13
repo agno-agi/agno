@@ -359,7 +359,14 @@ async def upload_and_send_media_async(
         if media_type == "image":
             # WhatsApp only accepts image/jpeg and image/png
             detected = get_image_type(raw_bytes)
-            fmt = detected if detected == "jpeg" else "png"
+            if detected in ("jpeg", "png"):
+                fmt = detected
+            else:
+                # GIF, WebP, HEIC, unknown — unsupported by WhatsApp API
+                log_warning(f"Unsupported image format '{detected}' for WhatsApp, skipping upload")
+                if send_text_fallback and response_content:
+                    await _send_text(recipient=recipient, text=response_content, config=config)
+                return False
             mime_type = f"image/{fmt}"
             filename = f"image.{fmt}"
         elif media_type == "document":

@@ -69,7 +69,7 @@ async def test_send_message_empty_skipped():
 
 @pytest.mark.asyncio
 async def test_upload_images_success():
-    items = [Image(content=b"fake_png")]
+    items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png")]
     with (
         patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
         patch("agno.os.interfaces.whatsapp.helpers._send_media", new_callable=AsyncMock) as mock_send,
@@ -89,7 +89,7 @@ async def test_upload_images_success():
 
 @pytest.mark.asyncio
 async def test_upload_images_long_caption_truncated():
-    items = [Image(content=b"fake_png")]
+    items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png")]
     long_caption = "x" * 1500
     with (
         patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
@@ -104,7 +104,7 @@ async def test_upload_images_long_caption_truncated():
 
 @pytest.mark.asyncio
 async def test_upload_images_upload_failure_sends_text_fallback():
-    items = [Image(content=b"fake_png")]
+    items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png")]
     with (
         patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock) as mock_send_text,
@@ -253,7 +253,7 @@ async def test_upload_audio_single_empty_bytes():
 
 @pytest.mark.asyncio
 async def test_upload_returns_true_on_success():
-    items = [Image(content=b"fake_png")]
+    items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png")]
     with (
         patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
         patch("agno.os.interfaces.whatsapp.helpers._send_media", new_callable=AsyncMock),
@@ -265,7 +265,7 @@ async def test_upload_returns_true_on_success():
 
 @pytest.mark.asyncio
 async def test_upload_returns_false_on_failure():
-    items = [Image(content=b"fake_png")]
+    items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png")]
     with (
         patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
@@ -301,8 +301,8 @@ async def test_upload_image_jpeg_detected_from_bytes():
 
 
 @pytest.mark.asyncio
-async def test_upload_image_non_jpeg_defaults_to_png():
-    # PNG magic or anything else → defaults to PNG
+async def test_upload_image_png_detected_from_bytes():
+    # PNG magic bytes
     items = [Image(content=b"\x89PNG\r\n\x1a\nfake_png_data")]
     with (
         patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
@@ -312,6 +312,34 @@ async def test_upload_image_non_jpeg_defaults_to_png():
         await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG)
         assert mock_upload.call_args.kwargs["mime_type"] == "image/png"
         assert mock_upload.call_args.kwargs["filename"] == "image.png"
+
+
+@pytest.mark.asyncio
+async def test_upload_image_unsupported_format_skipped_with_fallback():
+    # GIF magic bytes — unsupported by WhatsApp, should skip and send text fallback
+    items = [Image(content=b"GIF89afake_gif_data")]
+    with (
+        patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock) as mock_send_text,
+    ):
+        result = await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG, "fallback caption")
+        mock_upload.assert_not_called()
+        mock_send_text.assert_called_once()
+        assert result is False
+
+
+@pytest.mark.asyncio
+async def test_upload_image_unsupported_format_no_fallback():
+    # WebP magic bytes — unsupported, no fallback requested
+    items = [Image(content=b"RIFF\x00\x00\x00\x00WEBPfake")]
+    with (
+        patch("agno.os.interfaces.whatsapp.helpers.upload_media_async", new_callable=AsyncMock) as mock_upload,
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock) as mock_send_text,
+    ):
+        result = await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG)
+        mock_upload.assert_not_called()
+        mock_send_text.assert_not_called()
+        assert result is False
 
 
 # === download_event_media_async ===
