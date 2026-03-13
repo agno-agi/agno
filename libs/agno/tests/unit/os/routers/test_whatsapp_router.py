@@ -399,7 +399,7 @@ async def test_audio_message_processing():
 
         agent_mock.arun.assert_called_once()
         call_args = agent_mock.arun.call_args
-        assert call_args[0][0] == "Reply to audio"
+        assert call_args[0][0] == ""
         audio = call_args.kwargs.get("audio")
         assert audio is not None
         assert len(audio) == 1

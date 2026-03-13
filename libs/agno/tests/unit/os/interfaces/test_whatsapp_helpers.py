@@ -53,10 +53,12 @@ async def test_send_message_italics():
 
 
 @pytest.mark.asyncio
-async def test_send_message_empty():
+async def test_send_message_empty_skipped():
     with patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock) as mock_send:
         await send_whatsapp_message_async("123", "", _TEST_CONFIG)
-        mock_send.assert_called_once_with(recipient="123", text="", config=_TEST_CONFIG)
+        mock_send.assert_not_called()
+        await send_whatsapp_message_async("123", "   ", _TEST_CONFIG)
+        mock_send.assert_not_called()
 
 
 # === upload_and_send_media_async — images ===

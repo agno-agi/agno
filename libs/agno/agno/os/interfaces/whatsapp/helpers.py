@@ -71,22 +71,22 @@ def extract_message_content(message: dict) -> Optional[MessageContent]:
 
     if msg_type == "image":
         return MessageContent(
-            text=message.get("image", {}).get("caption", "Describe the image"),
+            text=message.get("image", {}).get("caption", ""),
             image_id=message["image"]["id"],
         )
 
     if msg_type == "video":
         return MessageContent(
-            text=message.get("video", {}).get("caption", "Describe the video"),
+            text=message.get("video", {}).get("caption", ""),
             video_id=message["video"]["id"],
         )
 
     if msg_type == "audio":
-        return MessageContent(text="Reply to audio", audio_id=message["audio"]["id"])
+        return MessageContent(text="", audio_id=message["audio"]["id"])
 
     if msg_type == "document":
         return MessageContent(
-            text=message.get("document", {}).get("caption", "Process the document"),
+            text=message.get("document", {}).get("caption", ""),
             doc_id=message["document"]["id"],
         )
 
@@ -252,6 +252,9 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
 async def send_whatsapp_message_async(
     recipient: str, message: str, config: WhatsAppConfig, italics: bool = False
 ) -> None:
+    if not message or not message.strip():
+        return
+
     def _format(text: str) -> str:
         if italics:
             return "\n".join([f"_{line}_" for line in text.split("\n")])

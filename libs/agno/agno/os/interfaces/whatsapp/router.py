@@ -339,8 +339,8 @@ def attach_routes(
                 if reasoning:
                     await send_whatsapp_message_async(phone_number, reasoning, config, italics=True)
 
-            # Send media first, then decide whether to also send text
-            has_media = False
+            # Upload media with caption; track whether any actually sent
+            media_sent = False
             for attr, media_type in (
                 ("images", "image"),
                 ("videos", "video"),
@@ -349,22 +349,23 @@ def attach_routes(
             ):
                 items = getattr(response, attr, None)
                 if items:
-                    await upload_and_send_media_async(items, media_type, phone_number, config, response.content)
-                    has_media = True
+                    sent = await upload_and_send_media_async(items, media_type, phone_number, config, response.content)
+                    if sent:
+                        media_sent = True
             if response.response_audio:
-                # Single audio object (not a list) — no text fallback on failure
-                await upload_and_send_media_async(
+                sent = await upload_and_send_media_async(
                     [response.response_audio], "audio", phone_number, config, send_text_fallback=False
                 )
-                has_media = True
+                if sent:
+                    media_sent = True
 
             response_tools = getattr(response, "tools", None)
             tools_sent_message = response_tools and any(t.tool_name in _WA_TOOL_NAMES for t in response_tools)
-            # Only send text if no media was uploaded and no tool already messaged the user
-            if not has_media and not tools_sent_message:
+            # Send text if no media was successfully sent and no tool already messaged the user
+            if not media_sent and not tools_sent_message:
                 await send_whatsapp_message_async(phone_number, response.content or "", config)
             # Media caption is capped at 1024 chars; send full text separately when truncated
-            elif has_media and response.content and len(response.content) > 1024:
+            elif media_sent and response.content and len(response.content) > 1024:
                 await send_whatsapp_message_async(phone_number, response.content, config)
 
         except Exception as e:
