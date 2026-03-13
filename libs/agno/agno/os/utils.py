@@ -456,6 +456,57 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     return input_media
 
 
+def deserialize_media_from_form(
+    kwargs: Dict[str, Any],
+    form_data: Any = None,
+) -> tuple:
+    """Deserialize JSON-encoded media fields from form data.
+
+    Fixes the SDK client flow where media objects are serialized as JSON strings
+    in form fields. Without this:
+    - images/audio/videos in kwargs cause "TypeError: got multiple values"
+    - files JSON is silently dropped (filtered as known field, can't bind as UploadFile)
+
+    Args:
+        kwargs: The kwargs dict from get_request_kwargs (modified in-place to pop media fields)
+        form_data: The raw form data from the request (for extracting files JSON)
+
+    Returns:
+        Tuple of (images, audios, videos, files) media object lists
+    """
+    images: List[Image] = []
+    audios: List[Audio] = []
+    videos: List[Video] = []
+    files: List[FileMedia] = []
+
+    for field_name, media_cls, target in [
+        ("images", Image, images),
+        ("audio", Audio, audios),
+        ("videos", Video, videos),
+    ]:
+        json_str = kwargs.pop(field_name, None)
+        if json_str and isinstance(json_str, str):
+            try:
+                for item in json.loads(json_str):
+                    if isinstance(item, dict):
+                        target.append(media_cls(**item))
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Failed to deserialize {field_name} from form data: {e}")
+
+    # Extract files JSON from form_data (filtered from kwargs as a known field)
+    if form_data is not None:
+        files_value = form_data.get("files")
+        if isinstance(files_value, str):
+            try:
+                for item in json.loads(files_value):
+                    if isinstance(item, dict):
+                        files.append(FileMedia(**item))
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Failed to deserialize files from form data: {e}")
+
+    return images, audios, videos, files
+
+
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
