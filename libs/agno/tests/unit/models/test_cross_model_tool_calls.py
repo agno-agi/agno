@@ -5,10 +5,6 @@ across OpenAI Chat (call_*), OpenAI Responses (fc_*/call_*), Claude (toolu_*),
 and Gemini (UUID-style) ID formats.
 """
 
-import json
-
-import pytest
-
 from agno.models.message import Message
 from agno.utils.message import normalize_tool_messages, reconcile_tool_call_ids, remap_tool_call_ids
 
