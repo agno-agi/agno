@@ -26,6 +26,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
@@ -506,7 +507,8 @@ def _run(
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -1588,7 +1590,8 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -2940,7 +2943,8 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -3705,7 +3709,8 @@ async def _acontinue_run(
                 )
 
                 # 8. Get model response
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,

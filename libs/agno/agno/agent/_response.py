@@ -23,6 +23,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
@@ -1062,7 +1063,8 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    for model_response_event in agent.model.response_stream(
+    for model_response_event in call_model_stream_with_fallback(
+        agent,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1211,7 +1213,8 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    model_response_stream = agent.model.aresponse_stream(
+    model_response_stream = acall_model_stream_with_fallback(
+        agent,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,

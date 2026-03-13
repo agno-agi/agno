@@ -230,6 +230,15 @@ def get_models(agent: Agent) -> None:
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
+    if agent.fallback_models is not None:
+        resolved: list = []
+        for fm in agent.fallback_models:
+            resolved_model = get_model(fm)
+            if resolved_model is not None:
+                resolved_model.model_type = ModelType.MODEL
+                resolved.append(resolved_model)
+        agent.fallback_models = resolved if resolved else None
+
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
