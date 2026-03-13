@@ -561,7 +561,11 @@ def _run(
                 store_media_util(run_response, model_response)
 
                 # 9. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 9b. Generate follow-up suggestions if enabled
                 generate_followups(agent, run_response=run_response)
@@ -1645,7 +1649,11 @@ async def _arun(
                     )
 
                 # 11. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 11b. Generate follow-up suggestions if enabled
                 await agenerate_followups(agent, run_response=run_response)
@@ -2978,7 +2986,11 @@ def _continue_run(
                     )
 
                 # 4. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 4b. Generate follow-up suggestions if enabled
                 generate_followups(agent, run_response=run_response)
@@ -3752,7 +3764,11 @@ async def _acontinue_run(
                     )
 
                 # 10. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                # Skip conversion if stop_after_tool_call was triggered (response content will be empty)
+                if any(tool_call.stop_after_tool_call for tool_call in run_response.tools or []):
+                    log_debug("Skipping structured output conversion: stop_after_tool_call was triggered")
+                else:
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
                 # 10b. Generate follow-up suggestions if enabled
                 await agenerate_followups(agent, run_response=run_response)
