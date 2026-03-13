@@ -2721,6 +2721,33 @@ def continue_run_dispatch(
         session_id=session_id,
         user_id=user_id,
     )
+
+    # Propagate trace metadata to the current OTel span so that
+    # instrumentation (e.g. OpenInference) can attach session_id,
+    # run_id and user_id to the trace — even when continue_run
+    # is called from a new context (e.g. after HITL pause).
+    try:
+        from opentelemetry import trace as _trace_api
+
+        _current_span = _trace_api.get_current_span()
+        if _current_span and _current_span.is_recording():
+            if run_id:
+                _current_span.set_attribute("run_id", run_id)
+                _current_span.set_attribute("agno.run.id", run_id)
+            if session_id:
+                _current_span.set_attribute("session_id", session_id)
+                _current_span.set_attribute("agno.session.id", session_id)
+                _current_span.set_attribute("session.id", session_id)
+            if user_id:
+                _current_span.set_attribute("user_id", user_id)
+                _current_span.set_attribute("agno.user.id", user_id)
+                _current_span.set_attribute("user.id", user_id)
+            if agent.agent_id:
+                _current_span.set_attribute("agent_id", agent.agent_id)
+                _current_span.set_attribute("agno.agent.id", agent.agent_id)
+    except ImportError:
+        pass
+
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
@@ -3450,6 +3477,32 @@ def acontinue_run_dispatch(  # type: ignore
         session_id=session_id,
         user_id=user_id,
     )
+
+    # Propagate trace metadata to the current OTel span so that
+    # instrumentation (e.g. OpenInference) can attach session_id,
+    # run_id and user_id to the trace — even when acontinue_run
+    # is called from a new async context (e.g. after HITL pause).
+    try:
+        from opentelemetry import trace as _trace_api
+
+        _current_span = _trace_api.get_current_span()
+        if _current_span and _current_span.is_recording():
+            if run_id:
+                _current_span.set_attribute("run_id", run_id)
+                _current_span.set_attribute("agno.run.id", run_id)
+            if session_id:
+                _current_span.set_attribute("session_id", session_id)
+                _current_span.set_attribute("agno.session.id", session_id)
+                _current_span.set_attribute("session.id", session_id)
+            if user_id:
+                _current_span.set_attribute("user_id", user_id)
+                _current_span.set_attribute("agno.user.id", user_id)
+                _current_span.set_attribute("user.id", user_id)
+            if agent.agent_id:
+                _current_span.set_attribute("agent_id", agent.agent_id)
+                _current_span.set_attribute("agno.agent.id", agent.agent_id)
+    except ImportError:
+        pass
 
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
