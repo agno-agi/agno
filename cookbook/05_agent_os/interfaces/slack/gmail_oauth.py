@@ -92,7 +92,6 @@ agent_os = AgentOS(
         Slack(
             agent=gmail_agent,
             reply_to_mentions_only=False,
-            google_oauth_base_url=GOOGLE_OAUTH_BASE_URL,
         )
     ],
 )
