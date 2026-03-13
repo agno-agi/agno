@@ -1074,9 +1074,10 @@ class Qdrant(VectorDb):
 
             # Execute all updates
             for operation in update_operations:
-                self.client.set_payload(
-                    collection_name=self.collection, payload=operation.payload, points=operation.points
-                )
+                if operation.points is not None:
+                    self.client.set_payload(
+                        collection_name=self.collection, payload=operation.payload, points=operation.points
+                    )
 
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
 
