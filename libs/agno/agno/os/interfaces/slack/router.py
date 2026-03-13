@@ -11,6 +11,8 @@ from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
+    extract_oauth_from_exception,
+    oauth_connect_blocks,
     send_slack_message_async,
     should_respond,
     upload_response_media_async,
@@ -38,44 +40,6 @@ _IGNORED_SUBTYPES = frozenset(
 
 # User-facing error message for failed requests
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
-
-
-def _oauth_connect_blocks(
-    provider: str,
-    auth_url: str,
-    channel_id: str = "",
-    thread_ts: str = "",
-) -> List[Dict[str, Any]]:
-    """Build Slack Block Kit blocks with a Connect button for any OAuth provider."""
-    # Append thread context so the OAuth callback can reply in the same thread
-    url = auth_url
-    if channel_id and thread_ts and "?" in url:
-        url += f"&channel_id={channel_id}&thread_ts={thread_ts}"
-    return [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"I need access to your {provider} account to help with this."},
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": f"Connect {provider}"},
-                    "url": url,
-                    "action_id": f"connect_{provider.lower()}",
-                }
-            ],
-        },
-    ]
-
-
-def _extract_oauth_from_exception(exc: Exception) -> Optional[Dict[str, Any]]:
-    """Extract OAuth metadata from a StopAgentRun exception's additional_data."""
-    extra = getattr(exc, "additional_data", None)
-    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth" and extra.get("auth_url"):
-        return extra
-    return None
 
 
 class SlackEventResponse(BaseModel):
@@ -225,13 +189,13 @@ def attach_routes(
             try:
                 response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
             except Exception as _auth_exc:
-                _oauth = _extract_oauth_from_exception(_auth_exc)
+                _oauth = extract_oauth_from_exception(_auth_exc)
                 if _oauth:
                     await async_client.chat_postMessage(
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
                         text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
-                        blocks=_oauth_connect_blocks(
+                        blocks=oauth_connect_blocks(
                             _oauth.get("provider", ""),
                             _oauth["auth_url"],
                             channel_id=ctx["channel_id"],
@@ -351,13 +315,13 @@ def attach_routes(
             try:
                 response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
             except Exception as _auth_exc:
-                _oauth = _extract_oauth_from_exception(_auth_exc)
+                _oauth = extract_oauth_from_exception(_auth_exc)
                 if _oauth:
                     await async_client.chat_postMessage(
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
                         text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
-                        blocks=_oauth_connect_blocks(
+                        blocks=oauth_connect_blocks(
                             _oauth.get("provider", ""),
                             _oauth["auth_url"],
                             channel_id=ctx["channel_id"],
@@ -419,7 +383,7 @@ def attach_routes(
                 auth_chunks = state.resolve_all_pending("complete") if state.task_cards else []
                 # Flush any agent text already streamed, then append the button
                 stop_kw: Dict[str, Any] = {
-                    "blocks": _oauth_connect_blocks(
+                    "blocks": oauth_connect_blocks(
                         provider,
                         state.auth_required["auth_url"],
                         channel_id=ctx["channel_id"],
@@ -462,7 +426,7 @@ def attach_routes(
                 return
 
             # OAuth required during streaming — send Connect button instead of error
-            _oauth = _extract_oauth_from_exception(e)
+            _oauth = extract_oauth_from_exception(e)
             if _oauth:
                 try:
                     await async_client.assistant_threads_setStatus(
@@ -474,7 +438,7 @@ def attach_routes(
                     channel=ctx["channel_id"],
                     thread_ts=ctx["thread_id"],
                     text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
-                    blocks=_oauth_connect_blocks(
+                    blocks=oauth_connect_blocks(
                         _oauth.get("provider", ""),
                         _oauth["auth_url"],
                         channel_id=ctx["channel_id"],

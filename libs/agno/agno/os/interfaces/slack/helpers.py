@@ -6,6 +6,44 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error
 
 
+def oauth_connect_blocks(
+    provider: str,
+    auth_url: str,
+    channel_id: str = "",
+    thread_ts: str = "",
+) -> List[Dict[str, Any]]:
+    """Build Slack Block Kit blocks with a Connect button for any OAuth provider."""
+    # Append thread context so the OAuth callback can reply in the same thread
+    url = auth_url
+    if channel_id and thread_ts and "?" in url:
+        url += f"&channel_id={channel_id}&thread_ts={thread_ts}"
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"I need access to your {provider} account to help with this."},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": f"Connect {provider}"},
+                    "url": url,
+                    "action_id": f"connect_{provider.lower()}",
+                }
+            ],
+        },
+    ]
+
+
+def extract_oauth_from_exception(exc: Exception) -> Optional[Dict[str, Any]]:
+    """Extract OAuth metadata from a StopAgentRun exception's additional_data."""
+    extra = getattr(exc, "additional_data", None)
+    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth" and extra.get("auth_url"):
+        return extra
+    return None
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream
