@@ -10,12 +10,12 @@ import json
 import pytest
 
 from agno.models.message import Message
-from agno.utils.message import remap_tool_call_ids, reconcile_tool_call_ids
-
+from agno.utils.message import reconcile_tool_call_ids, remap_tool_call_ids
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _assistant_msg(tool_calls):
     """Create an assistant message with the given tool_calls list."""
@@ -42,6 +42,7 @@ def _make_tool_call(tc_id, name="get_weather", arguments='{"city": "Paris"}', ca
 # ---------------------------------------------------------------------------
 # remap_tool_call_ids — single tool call
 # ---------------------------------------------------------------------------
+
 
 class TestRemapToolCallIds:
     def test_noop_when_prefix_matches(self):
@@ -101,6 +102,7 @@ class TestRemapToolCallIds:
 # ---------------------------------------------------------------------------
 # remap_tool_call_ids — parallel tool calls
 # ---------------------------------------------------------------------------
+
 
 class TestRemapParallelToolCalls:
     def test_parallel_tool_calls_all_remapped(self):
@@ -191,6 +193,7 @@ class TestRemapParallelToolCalls:
 # remap_tool_call_ids — Responses API dual-ID (fc_*/call_*)
 # ---------------------------------------------------------------------------
 
+
 class TestRemapResponsesApiDualId:
     def test_remap_with_existing_call_id(self):
         """When tool_call has both id and call_id, both should be mapped."""
@@ -222,6 +225,7 @@ class TestRemapResponsesApiDualId:
 # ---------------------------------------------------------------------------
 # reconcile_tool_call_ids
 # ---------------------------------------------------------------------------
+
 
 class TestReconcileToolCallIds:
     def test_fixes_call_id_to_fc_id(self):
@@ -278,6 +282,7 @@ class TestReconcileToolCallIds:
 # Claude format_messages — tool result merging
 # ---------------------------------------------------------------------------
 
+
 class TestClaudeFormatMessages:
     def test_parallel_tool_results_merged_into_single_user(self):
         """Multiple consecutive tool results should merge into one user message for Claude."""
@@ -330,6 +335,7 @@ class TestClaudeFormatMessages:
 # Gemini format — individual tool messages
 # ---------------------------------------------------------------------------
 
+
 class TestGeminiFormatMessages:
     def test_individual_tool_msg_formatted(self):
         """Gemini should format individual canonical tool messages correctly."""
@@ -362,9 +368,13 @@ class TestGeminiFormatMessages:
         gemini = Gemini(id="gemini-2.0-flash")
         msgs = [
             Message(role="user", content="Check weather"),
-            Message(role="assistant", content="", tool_calls=[
-                _make_tool_call("toolu_001", name="get_weather"),
-            ]),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    _make_tool_call("toolu_001", name="get_weather"),
+                ],
+            ),
             Message(role="tool", tool_call_id="toolu_001", tool_name=None, content="Sunny"),
         ]
         # Should not raise
