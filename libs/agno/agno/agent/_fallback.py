@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, List, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, List, Optional, Union
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutputEvent
@@ -15,6 +16,27 @@ from agno.utils.log import log_warning
 
 # Stream event type returned by response_stream / aresponse_stream
 StreamEvent = Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]
+
+
+def _get_fallback_models(agent: "Agent", error: Exception) -> Optional[List[Model]]:
+    """Return the appropriate fallback list for the given error.
+
+    Priority:
+    1. Error-specific fallbacks (rate_limit_fallbacks / context_window_fallbacks)
+    2. General fallback_models
+    """
+    if isinstance(error, ModelRateLimitError) and agent.rate_limit_fallbacks:
+        return agent.rate_limit_fallbacks
+    if isinstance(error, ContextWindowExceededError) and agent.context_window_fallbacks:
+        return agent.context_window_fallbacks
+    # For any ModelProviderError that wasn't already classified, try to classify it
+    if isinstance(error, ModelProviderError):
+        classified = Model.classify_error(error)
+        if isinstance(classified, ModelRateLimitError) and agent.rate_limit_fallbacks:
+            return agent.rate_limit_fallbacks
+        if isinstance(classified, ContextWindowExceededError) and agent.context_window_fallbacks:
+            return agent.context_window_fallbacks
+    return agent.fallback_models
 
 
 def call_model_with_fallback(
@@ -29,10 +51,11 @@ def call_model_with_fallback(
     try:
         return model.response(**kwargs)
     except Exception as primary_error:
-        if not agent.fallback_models:
+        fallbacks = _get_fallback_models(agent, primary_error)
+        if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
-        return _try_fallback_models(agent.fallback_models, primary_error, "response", kwargs)
+        return _try_fallback_models(fallbacks, primary_error, "response", kwargs)
 
 
 async def acall_model_with_fallback(
@@ -44,10 +67,11 @@ async def acall_model_with_fallback(
     try:
         return await model.aresponse(**kwargs)
     except Exception as primary_error:
-        if not agent.fallback_models:
+        fallbacks = _get_fallback_models(agent, primary_error)
+        if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
-        return await _atry_fallback_models(agent.fallback_models, primary_error, "aresponse", kwargs)
+        return await _atry_fallback_models(fallbacks, primary_error, "aresponse", kwargs)
 
 
 def call_model_stream_with_fallback(
@@ -62,10 +86,11 @@ def call_model_stream_with_fallback(
     try:
         yield from model.response_stream(**kwargs)
     except Exception as primary_error:
-        if not agent.fallback_models:
+        fallbacks = _get_fallback_models(agent, primary_error)
+        if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
-        yield from _try_fallback_models_stream(agent.fallback_models, primary_error, kwargs)
+        yield from _try_fallback_models_stream(fallbacks, primary_error, kwargs)
 
 
 async def acall_model_stream_with_fallback(
@@ -78,10 +103,11 @@ async def acall_model_stream_with_fallback(
         async for event in model.aresponse_stream(**kwargs):
             yield event
     except Exception as primary_error:
-        if not agent.fallback_models:
+        fallbacks = _get_fallback_models(agent, primary_error)
+        if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
-        async for event in _atry_fallback_models_stream(agent.fallback_models, primary_error, kwargs):
+        async for event in _atry_fallback_models_stream(fallbacks, primary_error, kwargs):
             yield event
 
 

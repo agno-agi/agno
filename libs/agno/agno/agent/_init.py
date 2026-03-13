@@ -239,6 +239,24 @@ def get_models(agent: Agent) -> None:
                 resolved.append(resolved_model)
         agent.fallback_models = resolved if resolved else None
 
+    if agent.rate_limit_fallbacks is not None:
+        resolved_rl: list = []
+        for fm in agent.rate_limit_fallbacks:
+            resolved_model = get_model(fm)
+            if resolved_model is not None:
+                resolved_model.model_type = ModelType.MODEL
+                resolved_rl.append(resolved_model)
+        agent.rate_limit_fallbacks = resolved_rl if resolved_rl else None
+
+    if agent.context_window_fallbacks is not None:
+        resolved_cw: list = []
+        for fm in agent.context_window_fallbacks:
+            resolved_model = get_model(fm)
+            if resolved_model is not None:
+                resolved_model.model_type = ModelType.MODEL
+                resolved_cw.append(resolved_model)
+        agent.context_window_fallbacks = resolved_cw if resolved_cw else None
+
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
