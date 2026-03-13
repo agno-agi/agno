@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Annotated, Any, Dict, Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -706,7 +706,7 @@ class SchemaMetadata(BaseModel):
     """Metadata for schema registry components."""
 
     class_path: str = Field(..., description="Full module path to the schema class")
-    schema_: Optional[Dict[str, Any]] = Field(None, alias="schema", description="JSON schema definition")
+    schema_: Annotated[Optional[Dict[str, Any]], Field(alias="schema", description="JSON schema definition")] = None
     schema_error: Optional[str] = Field(None, description="Error message if schema generation failed")
 
 
