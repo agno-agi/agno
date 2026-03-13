@@ -830,6 +830,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             "Retrieve available readers, chunkers, and configuration options for content processing. "
             "This endpoint provides metadata about supported file types, processing strategies, and filters."
         ),
+        # TODO: update with docling reader
         responses={
             200: {
                 "description": "Knowledge configuration retrieved successfully",
@@ -907,6 +908,19 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                         "AgenticChunker",
                                         "DocumentChunker",
                                         "RecursiveChunker",
+                                    ],
+                                },
+                                "docling": {
+                                    "id": "docling",
+                                    "name": "DoclingReader",
+                                    "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
+                                    "chunkers": [
+                                        "AgenticChunker",
+                                        "CodeChunker",
+                                        "DocumentChunker",
+                                        "FixedSizeChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
                                     ],
                                 },
                                 "docx": {

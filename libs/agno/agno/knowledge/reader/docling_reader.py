@@ -14,7 +14,7 @@ from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
 
 try:
-    from docling.datamodel.base_models import OutputFormat  # type: ignore
+    from docling.datamodel.base_models import DocumentStream, OutputFormat  # type: ignore
     from docling.document_converter import DocumentConverter  # type: ignore
 except ImportError:
     raise ImportError("The `docling` package is not installed. Please install it via `pip install docling`.")
@@ -92,23 +92,58 @@ class DoclingReader(Reader):
 
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
-        """Get the list of supported content types for Docling readers."""
+        """Get the list of supported content types for Docling readers.
+
+        Based on Docling's InputFormat: DOCX, PPTX, HTML, IMAGE, PDF, ASCIIDOC,
+        MD, CSV, XLSX, XML (USPTO/JATS/XBRL), METS_GBS, JSON_DOCLING, AUDIO, VTT, LATEX
+        """
         return [
+            # DOCX formats
             ContentType.DOCX,
+            ContentType.DOTX,
+            ContentType.DOCM,
+            ContentType.DOTM,
+            # PPTX formats
             ContentType.PPTX,
+            ContentType.POTX,
+            ContentType.PPSX,
+            ContentType.POTM,
+            ContentType.PPS,
+            # PDF
             ContentType.PDF,
+            # Markdown
             ContentType.MARKDOWN,
+            # HTML formats
+            ContentType.HTML,
+            ContentType.HTM,
+            ContentType.XHTML,
+            # XML formats (USPTO, JATS, XBRL)
+            ContentType.XML,
+            ContentType.NXML,
+            ContentType.XBRL,
+            # AsciiDoc formats
+            ContentType.ADOC,
+            ContentType.ASCIIDOC,
+            ContentType.ASC,
+            # Spreadsheet formats
             ContentType.CSV,
             ContentType.XLSX,
-            ContentType.URL,
+            ContentType.XLSM,
+            # LaTeX formats
+            ContentType.LATEX,
+            ContentType.LATEX_ALT,
+            # Special formats
+            ContentType.METS_GBS,
             ContentType.VTT,
-            ContentType.IMAGE_TIF,
+            # Image formats
             ContentType.IMAGE_PNG,
             ContentType.IMAGE_JPEG,
             ContentType.IMAGE_JPG,
             ContentType.IMAGE_TIFF,
+            ContentType.IMAGE_TIF,
             ContentType.IMAGE_BMP,
             ContentType.IMAGE_WEBP,
+            # Audio/Video formats
             ContentType.AUDIO_WAV,
             ContentType.AUDIO_MP3,
             ContentType.AUDIO_M4A,
@@ -118,7 +153,6 @@ class DoclingReader(Reader):
             ContentType.AUDIO_MP4,
             ContentType.AUDIO_AVI,
             ContentType.AUDIO_MOV,
-            # TODO: Add more supported content types
         ]
 
     def read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -134,19 +168,29 @@ class DoclingReader(Reader):
         """
         try:
             if isinstance(file, Path):
+                # Handle Path objects
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading: {file}")
                 doc_name = name or file.stem
+                source = file
             elif isinstance(file, str) and file.startswith(("http://", "https://")):
+                # Handle URLs - Docling can process them directly
                 url_path = file.split("?")[0]
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
+                source = file
             else:
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
-                doc_name = name or getattr(file, "name", "docling_file").split(".")[0]
+                if name and "." in name:
+                    doc_name = Path(name).stem
+                    stream_name = name
+                else:
+                    doc_name = name or getattr(file, "name", "docling_file").split(".")[0]
+                    stream_name = f"{doc_name}.pdf"
+                source = DocumentStream(name=stream_name, stream=file)  # type: ignore[arg-type]
 
-            result = self.converter.convert(str(file))
+            result = self.converter.convert(source)
 
             if self.output_format == OutputFormat.TEXT:
                 doc_content = result.document.export_to_text()

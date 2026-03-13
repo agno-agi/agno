@@ -87,7 +87,7 @@ if __name__ == "__main__":
 
         await knowledge.ainsert(
             name="Recipes_URL",
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
             reader=DoclingReader(output_format="text"),
         )
         agent.print_response("What Thai recipes are available?", stream=True)
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         await knowledge.ainsert(
             name="Docling_Paper",
             url="https://arxiv.org/pdf/2408.09869",
-            reader=DoclingReader(output_format="markdown"),
+            reader=DoclingReader(),
         )
         agent.print_response(
             "What is Docling and what are its key features?", stream=True
@@ -148,6 +148,51 @@ if __name__ == "__main__":
         )
         agent.print_response(
             "What sections are in this document?",
+            stream=True,
+        )
+
+        # --- PPTX file with md output ---
+        print("\n" + "=" * 60)
+        print("PPTX file with markdown output")
+        print("=" * 60 + "\n")
+
+        await knowledge.ainsert(
+            name="AI_Presentation",
+            path="cookbook/07_knowledge/testing_resources/ai_presentation.pptx",
+            reader=DoclingReader(),
+        )
+        agent.print_response(
+            "What are the main topics covered in the AI presentation?",
+            stream=True,
+        )
+
+        # --- DOCX file with markdown output ---
+        print("\n" + "=" * 60)
+        print("DOCX file (markdown output)")
+        print("=" * 60 + "\n")
+
+        await knowledge.ainsert(
+            name="Project_Proposal",
+            path="cookbook/07_knowledge/testing_resources/project_proposal.docx",
+            reader=DoclingReader(),
+        )
+        agent.print_response(
+            "What is the budget estimate for the AI analytics platform project?",
+            stream=True,
+        )
+
+        # --- DOTX file with text output ---
+        print("\n" + "=" * 60)
+        print("DOTX file - Word Template (text output)")
+        print("=" * 60 + "\n")
+
+        await knowledge.ainsert(
+            name="Meeting_Template",
+            path="cookbook/07_knowledge/testing_resources/meeting_notes_template.dotx",
+            reader=DoclingReader(output_format="text"),
+        )
+        agent.print_response(
+            "What sections are included in the meeting notes template?",
             stream=True,
         )
 
