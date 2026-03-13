@@ -282,3 +282,31 @@ class TestDaytonaTools:
             result = tools.run_code(mock_agent, "print('test')")
             assert "error" in result
             assert "Execution error" in result
+
+    def test_create_sandbox_with_sandbox_options(self, mock_daytona, mock_agent):
+        """Test that sandbox options are forwarded to CreateSandboxFromSnapshotParams."""
+        mock_client, mock_sandbox, _, _ = mock_daytona
+        mock_volume = MagicMock()
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools(
+                sandbox_name="my-sandbox",
+                snapshot="my-snapshot-v1",
+                auto_archive_interval=120,
+                auto_delete_interval=240,
+                ephemeral=True,
+                network_block_all=True,
+                network_allow_list="10.0.0.0/8,192.168.1.0/24",
+                sandbox_volumes=[mock_volume],
+            )
+            tools._create_new_sandbox(mock_agent)
+
+            call_kwargs = mock_daytona_module.CreateSandboxFromSnapshotParams.call_args.kwargs
+            assert call_kwargs["name"] == "my-sandbox"
+            assert call_kwargs["snapshot"] == "my-snapshot-v1"
+            assert call_kwargs["auto_archive_interval"] == 120
+            assert call_kwargs["auto_delete_interval"] == 240
+            assert call_kwargs["ephemeral"] is True
+            assert call_kwargs["network_block_all"] is True
+            assert call_kwargs["network_allow_list"] == "10.0.0.0/8,192.168.1.0/24"
+            assert call_kwargs["volumes"] == [mock_volume]
