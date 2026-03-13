@@ -63,6 +63,17 @@ except ImportError as e:
     ) from e
 
 
+# Fields the API accepts on input for server tool blocks, per SDK *Param types.
+# Blocks not in this map use fallback stripping of known response-only fields.
+_SERVER_TOOL_BLOCK_ALLOWED_KEYS: Dict[str, set] = {
+    "server_tool_use": {"id", "input", "name", "type", "cache_control", "caller"},
+    "web_fetch_tool_result": {"content", "tool_use_id", "type", "cache_control", "caller"},
+    "web_search_tool_result": {"content", "tool_use_id", "type", "cache_control"},
+}
+# Response-only fields that no *Param type accepts
+_RESPONSE_ONLY_FIELDS = {"citations", "text", "parsed_output"}
+
+
 @dataclass
 class Claude(Model):
     """
@@ -801,6 +812,15 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
+    @staticmethod
+    def _sanitize_server_tool_block(block_dict: Dict[str, Any]) -> Dict[str, Any]:
+        allowed = _SERVER_TOOL_BLOCK_ALLOWED_KEYS.get(block_dict.get("type", ""))
+        if allowed:
+            # Known type: whitelist only accepted fields
+            return {k: v for k, v in block_dict.items() if k in allowed}
+        # Unknown type: strip known response-only fields, keep the rest
+        return {k: v for k, v in block_dict.items() if k not in _RESPONSE_ONLY_FIELDS}
+
     def _parse_provider_response(
         self,
         response: Union[AnthropicMessage, BetaMessage],
@@ -878,6 +898,15 @@ class Claude(Model):
                     }
                 elif block.type == "redacted_thinking":
                     model_response.redacted_reasoning_content = block.data
+                elif block.type not in ("tool_use",):
+                    # Preserve all non-text/thinking blocks for conversation history reconstruction.
+                    # Covers server_tool_use, web_fetch_tool_result, web_search_tool_result,
+                    # code_execution_tool_result, mcp_tool_use/result, container_upload, etc.
+                    # tool_use is handled separately below via stop_reason check.
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
+                    server_blocks.append(self._sanitize_server_tool_block(block.model_dump()))
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -1004,10 +1033,15 @@ class Claude(Model):
             # The text was already streamed via ContentBlockDeltaEvent chunks
             accumulated_text = ""
 
+            server_tool_blocks: List[Dict[str, Any]] = []
+
             for block in response.message.content:  # type: ignore
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
+                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
+                    # Preserve all non-text/thinking/tool_use blocks for history
+                    server_tool_blocks.append(self._sanitize_server_tool_block(block.model_dump()))
 
                 # Handle citations
                 citations = getattr(block, "citations", None)
@@ -1023,6 +1057,11 @@ class Claude(Model):
                         model_response.citations.documents.append(  # type: ignore
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
+
+            # Preserve server tool blocks for conversation history reconstruction
+            if server_tool_blocks:
+                model_response.provider_data = model_response.provider_data or {}
+                model_response.provider_data["server_tool_blocks"] = server_tool_blocks
 
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication
