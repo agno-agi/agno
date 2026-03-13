@@ -125,6 +125,8 @@ def attach_routes(
             elif message.get("type") == "document":
                 message_text = "Process the document"
                 message_doc = message["document"]["id"]
+                doc_filename = message["document"].get("filename")
+                doc_mime_type = message["document"].get("mime_type")
             else:
                 return
 
@@ -138,7 +140,11 @@ def attach_routes(
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",
                     images=[Image(content=await get_media_async(message_image))] if message_image else None,
-                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    files=[
+                        File(content=await get_media_async(message_doc), filename=doc_filename, mime_type=doc_mime_type)
+                    ]
+                    if message_doc
+                    else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
@@ -147,7 +153,11 @@ def attach_routes(
                     message_text,
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",
-                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    files=[
+                        File(content=await get_media_async(message_doc), filename=doc_filename, mime_type=doc_mime_type)
+                    ]
+                    if message_doc
+                    else None,
                     images=[Image(content=await get_media_async(message_image))] if message_image else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
@@ -158,7 +168,11 @@ def attach_routes(
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",
                     images=[Image(content=await get_media_async(message_image))] if message_image else None,
-                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    files=[
+                        File(content=await get_media_async(message_doc), filename=doc_filename, mime_type=doc_mime_type)
+                    ]
+                    if message_doc
+                    else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
