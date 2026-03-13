@@ -535,7 +535,9 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
 
-    def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def delegate_task_to_member(
+        member_id: str, task: str = ""
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
         You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
@@ -674,7 +676,7 @@ def _get_delegate_task_function(
         )
 
     async def adelegate_task_to_member(
-        member_id: str, task: str
+        member_id: str, task: str = ""
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
         You must provide a clear and concise description of the task the member should achieve AND the expected output.
@@ -810,7 +812,7 @@ def _get_delegate_task_function(
         )
 
     # When the task should be delegated to all members
-    def delegate_task_to_members(task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def delegate_task_to_members(task: str = "") -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """
         Use this function to delegate a task to all the member agents and return a response.
         You must provide a clear and concise description of the task the member should achieve AND the expected output.
@@ -938,7 +940,9 @@ def _get_delegate_task_function(
         use_team_logger()
 
     # When the task should be delegated to all members
-    async def adelegate_task_to_members(task: str) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    async def adelegate_task_to_members(
+        task: str = "",
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to all the member agents and return a response.
         You must provide a clear and concise description of the task to send to member agents.
 
@@ -1164,6 +1168,18 @@ def _get_delegate_task_function(
             delegate_function = delegate_task_to_member  # type: ignore
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
+
+    if team.determine_input_for_members is False:
+        # Remove 'task' from the tool schema so the LLM does not craft its own prompt.
+        # The user's original message is forwarded directly to the member.
+        delegate_func.parameters.get("properties", {}).pop("task", None)
+        required = delegate_func.parameters.get("required", [])
+        if "task" in required:
+            required.remove("task")
+        delegate_func.description = (
+            "Use this function to delegate the user's message directly to the selected team member. "
+            "The user's original message will be forwarded to the member without modification."
+        )
 
     if team.respond_directly:
         delegate_func.stop_after_tool_call = True
