@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agno.knowledge.document import Document
+from agno.vectordb.search import SearchType
 from agno.vectordb.pineconedb import PineconeDb
 
 # Configuration for tests
@@ -292,6 +293,17 @@ def test_delete(mock_pinecone_db):
 def test_upsert_available(mock_pinecone_db):
     """Test upsert_available method."""
     assert mock_pinecone_db.upsert_available() is True
+
+
+def test_get_supported_search_types_vector_only(mock_pinecone_db):
+    """Test supported search types when hybrid search is disabled."""
+    assert mock_pinecone_db.get_supported_search_types() == [SearchType.vector]
+
+
+def test_get_supported_search_types_with_hybrid(mock_pinecone_db):
+    """Test supported search types when hybrid search is enabled."""
+    mock_pinecone_db.use_hybrid_search = True
+    assert mock_pinecone_db.get_supported_search_types() == [SearchType.vector, SearchType.hybrid]
 
 
 # Asynchronous Tests
