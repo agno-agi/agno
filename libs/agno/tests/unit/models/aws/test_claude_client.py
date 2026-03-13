@@ -222,8 +222,23 @@ class TestSessionTokenEnv:
 
 
 class TestApiKeyPath:
-    def test_api_key_client_cached(self, monkeypatch):
-        monkeypatch.setenv("AWS_BEDROCK_API_KEY", "br-api-key-123")
+    def test_no_api_key_in_params(self, monkeypatch):
+        """api_key is not a valid AnthropicBedrock param; ensure it is never passed."""
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKID123")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret456")
+        monkeypatch.setenv("AWS_REGION", "us-west-2")
+
+        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        params = model._get_client_params()
+
+        assert "api_key" not in params
+        assert params["aws_access_key"] == "AKID123"
+        assert params["aws_secret_key"] == "secret456"
+        assert params["aws_region"] == "us-west-2"
+
+    def test_aws_creds_client_cached(self, monkeypatch):
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKID123")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret456")
         monkeypatch.setenv("AWS_REGION", "us-west-2")
 
         model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
@@ -238,17 +253,6 @@ class TestApiKeyPath:
 
             assert MockBedrock.call_count == 1
             assert client1 is client2
-
-    def test_api_key_params(self, monkeypatch):
-        monkeypatch.setenv("AWS_BEDROCK_API_KEY", "br-api-key-123")
-        monkeypatch.setenv("AWS_REGION", "us-west-2")
-
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
-        params = model._get_client_params()
-
-        assert params["api_key"] == "br-api-key-123"
-        assert params["aws_region"] == "us-west-2"
-        assert "aws_session_token" not in params
 
 
 class TestSessionNullCredentials:

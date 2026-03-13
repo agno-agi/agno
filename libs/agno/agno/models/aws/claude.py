@@ -37,7 +37,6 @@ class Claude(AnthropicClaude):
     aws_secret_key: Optional[str] = None
     aws_session_token: Optional[str] = None
     aws_region: Optional[str] = None
-    api_key: Optional[str] = None
     session: Optional[Session] = None
 
     client: Optional[AnthropicBedrock] = None  # type: ignore
@@ -71,30 +70,21 @@ class Claude(AnthropicClaude):
                 "aws_region": self.aws_region or self.session.region_name,
             }
         else:
-            self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
-            if self.api_key:
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
-                client_params = {
-                    "api_key": self.api_key,
-                }
-                if self.aws_region:
-                    client_params["aws_region"] = self.aws_region
-            else:
-                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
-                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
-                self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-                client_params = {
-                    "aws_secret_key": self.aws_secret_key,
-                    "aws_access_key": self.aws_access_key,
-                    "aws_session_token": self.aws_session_token,
-                    "aws_region": self.aws_region,
-                }
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_session_token": self.aws_session_token,
+                "aws_region": self.aws_region,
+            }
 
-            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+            if not (self.aws_access_key and self.aws_secret_key):
                 log_warning(
-                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
         if self.timeout is not None:
