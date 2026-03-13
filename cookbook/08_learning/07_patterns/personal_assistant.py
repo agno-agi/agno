@@ -13,6 +13,8 @@ The assistant becomes increasingly personalized without being asked.
 See also: 01_basics/ for individual store examples.
 """
 
+from pprint import pprint
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import (
@@ -64,8 +66,6 @@ def create_personal_assistant(user_id: str, session_id: str) -> Agent:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from rich.pretty import pprint
-
     user_id = "alex@example.com"
 
     # Conversation 1: Introduction
@@ -83,7 +83,7 @@ if __name__ == "__main__":
     print("\n--- Entities ---")
     pprint(agent.learning_machine.entity_memory_store.search(query="sarah", limit=10))
 
-    # Conversation 2: New session (demonstrates memory)
+    # Test memory recall
     print("\n" + "=" * 60)
     print("CONVERSATION 2: New session (memory test)")
     print("=" * 60 + "\n")
