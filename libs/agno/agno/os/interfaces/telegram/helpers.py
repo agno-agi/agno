@@ -9,8 +9,7 @@ if TYPE_CHECKING:
 
 TG_MAX_MESSAGE_LENGTH = 4096
 TG_CHUNK_SIZE = 4000
-TG_MAX_CAPTION_LENGTH = 1024
-TG_MAX_FILE_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20 MB — Telegram API download limit
+TG_MAX_FILE_DOWNLOAD_SIZE = 20 * 1024 * 1024
 _BYTES_PER_MB = 1024 * 1024
 
 
@@ -19,7 +18,7 @@ def is_bot_mentioned(message: dict, bot_username: str) -> bool:
     return f"@{bot_username.lower()}" in (text or "").lower()
 
 
-async def _download(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
+async def _download_file(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
     try:
         file_info = await bot.get_file(file_id)
         file_size = getattr(file_info, "file_size", None)
@@ -32,7 +31,7 @@ async def _download(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
         return None
 
 
-def _get_file_id(message: dict) -> tuple[Optional[str], Optional[str], Optional[str], Optional[dict]]:
+def _extract_media_ids(message: dict) -> tuple[Optional[str], Optional[str], Optional[str], Optional[dict]]:
     if message.get("photo"):
         return message["photo"][-1]["file_id"], None, None, None
     if message.get("sticker"):
@@ -53,9 +52,9 @@ def _get_file_id(message: dict) -> tuple[Optional[str], Optional[str], Optional[
     return None, None, None, None
 
 
-async def extract_message(bot: "AsyncTeleBot", message: dict) -> Optional[dict]:
+async def extract_message_payload(bot: "AsyncTeleBot", message: dict) -> Optional[dict]:
     text = message.get("text") or message.get("caption")
-    image_id, audio_id, video_id, doc_meta = _get_file_id(message)
+    image_id, audio_id, video_id, doc_meta = _extract_media_ids(message)
 
     if text is None and not (image_id or audio_id or video_id or doc_meta):
         return None
@@ -63,15 +62,15 @@ async def extract_message(bot: "AsyncTeleBot", message: dict) -> Optional[dict]:
     result: dict = {"message": text or ""}
 
     if image_id:
-        data = await _download(bot, image_id)
+        data = await _download_file(bot, image_id)
         if data:
             result["images"] = [Image(content=data)]
     if audio_id:
-        data = await _download(bot, audio_id)
+        data = await _download_file(bot, audio_id)
         if data:
             result["audio"] = [Audio(content=data)]
     if video_id:
-        data = await _download(bot, video_id)
+        data = await _download_file(bot, video_id)
         if data:
             result["videos"] = [Video(content=data)]
     if doc_meta:
@@ -79,11 +78,41 @@ async def extract_message(bot: "AsyncTeleBot", message: dict) -> Optional[dict]:
         if doc_size and doc_size > TG_MAX_FILE_DOWNLOAD_SIZE:
             result["warning"] = f"File too large ({doc_size / _BYTES_PER_MB:.1f} MB). Please send a smaller file."
         else:
-            data = await _download(bot, doc_meta["file_id"])
+            data = await _download_file(bot, doc_meta["file_id"])
             if data:
                 result["files"] = [File(content=data, filename=doc_meta.get("file_name"))]
 
     return result
+
+
+def _chunk_html(html_text: str, max_len: int = TG_CHUNK_SIZE) -> List[str]:
+    # Split on paragraph boundaries to avoid cutting mid-tag
+    if len(html_text) <= max_len:
+        return [html_text]
+
+    chunks: List[str] = []
+    remaining = html_text
+    while remaining:
+        if len(remaining) <= max_len:
+            chunks.append(remaining)
+            break
+
+        # Find the last paragraph break (\n\n) within the limit
+        cut = remaining.rfind("\n\n", 0, max_len)
+        if cut <= 0:
+            # Fall back to last newline
+            cut = remaining.rfind("\n", 0, max_len)
+        if cut <= 0:
+            # Fall back to last space outside a tag
+            cut = remaining.rfind(" ", 0, max_len)
+        if cut <= 0:
+            # Hard cut as last resort
+            cut = max_len
+
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip("\n")
+
+    return chunks
 
 
 async def send_message(
@@ -93,21 +122,24 @@ async def send_message(
     reply_to_message_id: Optional[int] = None,
     message_thread_id: Optional[int] = None,
 ) -> Any:
-    if len(text) <= TG_MAX_MESSAGE_LENGTH:
+    # Convert to HTML first, then check length — HTML can be much longer than
+    # raw markdown (e.g. `<` → `&lt;` is 4x expansion)
+    html_text = markdown_to_telegram_html(text)
+    if len(html_text) <= TG_MAX_MESSAGE_LENGTH:
         return await bot.send_message(
             chat_id,
-            markdown_to_telegram_html(text),
+            html_text,
             parse_mode="HTML",
             reply_to_message_id=reply_to_message_id,
             message_thread_id=message_thread_id,
         )
-    chunks: List[str] = [text[i : i + TG_CHUNK_SIZE] for i in range(0, len(text), TG_CHUNK_SIZE)]
+    chunks = _chunk_html(html_text)
     result = None
     for i, chunk in enumerate(chunks, 1):
         reply_id = reply_to_message_id if i == 1 else None
         result = await bot.send_message(
             chat_id,
-            markdown_to_telegram_html(f"[{i}/{len(chunks)}] {chunk}"),
+            chunk,
             parse_mode="HTML",
             reply_to_message_id=reply_id,
             message_thread_id=message_thread_id,
@@ -119,12 +151,10 @@ async def send_response_media(
     bot: "AsyncTeleBot",
     response: Any,
     chat_id: int,
-    reply_to: Optional[int],
+    reply_to_message_id: Optional[int] = None,
     message_thread_id: Optional[int] = None,
 ) -> bool:
     any_media_sent = False
-    content = getattr(response, "content", None)
-    caption = markdown_to_telegram_html(str(content)[:TG_MAX_CAPTION_LENGTH]) if content else None
 
     items: list[tuple[Any, Any]] = []
     for img in getattr(response, "images", None) or []:
@@ -144,15 +174,11 @@ async def send_response_media(
             await sender(
                 chat_id,
                 data,
-                caption=caption,
-                reply_to_message_id=reply_to,
+                reply_to_message_id=reply_to_message_id,
                 message_thread_id=message_thread_id,
-                parse_mode="HTML" if caption else None,
             )
             any_media_sent = True
-            # Caption and reply_to only on first media
-            caption = None
-            reply_to = None
+            reply_to_message_id = None
         except Exception as e:
             log_error(f"Failed to send media to chat {chat_id}: {e}")
 

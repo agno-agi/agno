@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, List, NamedTuple, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, ClassVar, List, Literal, NamedTuple, Optional, Type, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.telegram.formatting import escape_html, markdown_to_telegram_html
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
+    _chunk_html,
     send_message,
 )
 from agno.session.agent import AgentSession
@@ -22,14 +24,16 @@ if TYPE_CHECKING:
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
-# Regular message edits hit Telegram's 1 msg/sec per-chat rate limit
-TG_STREAM_EDIT_INTERVAL = 1.0
+import re as _re
 
-# Typing previews are client-side (DM-only) and tolerate faster updates
+# Matches any HTML tag (opening, closing, self-closing)
+_TAG_RE = _re.compile(r"<[^>]+>")
+
+TG_STREAM_EDIT_INTERVAL = 1.0
 TG_TYPING_PREVIEW_INTERVAL = 0.3
 
+EntityType = Literal["agent", "team", "workflow"]
 
-# Resolved once at startup — maps entity_type to session constructor args
 _SESSION_DISPATCH = {
     "agent": (SessionType.AGENT, AgentSession, "agent_id"),
     "team": (SessionType.TEAM, TeamSession, "team_id"),
@@ -37,19 +41,19 @@ _SESSION_DISPATCH = {
 }
 
 
-class _SessionConfig(NamedTuple):
+class _SessionStoreConfig(NamedTuple):
     session_type: SessionType
     session_cls: Type[Any]
-    id_field: str  # "agent_id" | "team_id" | "workflow_id"
-    db: Any  # Optional[BaseDb | AsyncBaseDb], typed as Any to avoid union complexity
+    id_field: str
+    db: Any
     has_db: bool
     is_async_db: bool
 
 
-def resolve_session_config(entity: object, entity_type: str) -> _SessionConfig:
+def build_session_store_config(entity: object, entity_type: str) -> _SessionStoreConfig:
     session_type, session_cls, id_field = _SESSION_DISPATCH[entity_type]
     db = getattr(entity, "db", None)
-    return _SessionConfig(
+    return _SessionStoreConfig(
         session_type=session_type,
         session_cls=session_cls,
         id_field=id_field,
@@ -59,50 +63,61 @@ def resolve_session_config(entity: object, entity_type: str) -> _SessionConfig:
     )
 
 
-async def find_latest_session(cfg: _SessionConfig, user_id: Optional[str], entity_id: Optional[str]) -> Optional[str]:
+async def find_latest_session_id(
+    cfg: _SessionStoreConfig, user_id: Optional[str], entity_id: Optional[str], session_scope: Optional[str] = None
+) -> Optional[str]:
+    # DB API has no session_id prefix filter, so we fetch recent sessions
+    # and filter client-side to match the chat/thread/topic scope
     query = dict(
         session_type=cfg.session_type,
         user_id=user_id,
         component_id=entity_id,
         sort_by="created_at",
         sort_order="desc",
-        limit=1,
+        # DB has no session_id prefix filter; fetch enough to find scope match client-side
+        limit=50,
         deserialize=False,
     )
     if cfg.is_async_db:
         results = await cfg.db.get_sessions(**query)  # type: ignore[arg-type, misc]
     else:
-        results = cfg.db.get_sessions(**query)  # type: ignore[arg-type]
-    # get_sessions returns List[row] or Tuple[List[row], count]
+        # Sync DB would block the event loop; offload to a thread
+        results = await asyncio.to_thread(cfg.db.get_sessions, **query)  # type: ignore[arg-type]
     rows = results[0] if isinstance(results, tuple) else results
     if not rows:
         return None
-    row = rows[0]
-    return row.get("session_id", "") if isinstance(row, dict) else getattr(row, "session_id", "")
+    for row in rows:
+        sid = row.get("session_id", "") if isinstance(row, dict) else getattr(row, "session_id", "")
+        # Match sessions belonging to this specific chat/thread/topic scope
+        if session_scope and sid and sid.startswith(session_scope):
+            return sid
+    return None
 
 
 @dataclass
 class BotState:
     bot: "AsyncTeleBot"
-    session_config: _SessionConfig
-    entity_type: str = "agent"
+    session_config: _SessionStoreConfig
     entity_id: Optional[str] = None
     bot_username: Optional[str] = None
     bot_id: Optional[int] = None
+    # Tracks seen update_ids to ignore Telegram webhook retries
     processed_updates: dict[int, float] = field(default_factory=dict)
     commands_registered: bool = False
 
-    DEDUP_TTL: ClassVar[float] = 60.0
+    # Seconds before a seen update_id is forgotten (memory cleanup)
+    DEDUP_TTL_SECONDS: ClassVar[float] = 60.0
 
     async def get_bot_info(self) -> tuple[str, int]:
         if self.bot_username is None or self.bot_id is None:
             me = await self.bot.get_me()
             self.bot_username = me.username
             self.bot_id = me.id
-        assert self.bot_username is not None and self.bot_id is not None
+        if self.bot_username is None or self.bot_id is None:
+            raise RuntimeError("Failed to retrieve bot info from Telegram API")
         return self.bot_username, self.bot_id
 
-    async def register_commands(self, commands: Optional[List[dict]], register: bool) -> None:
+    async def ensure_commands_registered(self, commands: Optional[List[dict]], register: bool) -> None:
         if self.commands_registered or not register or not commands:
             return
         try:
@@ -115,9 +130,9 @@ class BotState:
         except Exception as e:
             log_warning(f"Failed to register bot commands: {e}")
 
-    def check_dedup(self, update_id: int) -> bool:
+    def is_duplicate_update(self, update_id: int) -> bool:
         now = time.monotonic()
-        expired = [uid for uid, ts in self.processed_updates.items() if now - ts > self.DEDUP_TTL]
+        expired = [uid for uid, ts in self.processed_updates.items() if now - ts > self.DEDUP_TTL_SECONDS]
         for uid in expired:
             del self.processed_updates[uid]
         if update_id in self.processed_updates:
@@ -133,46 +148,40 @@ class StreamState:
         chat_id: int,
         reply_to: Optional[int],
         message_thread_id: Optional[int],
-        is_team: bool,
-        is_workflow: bool,
+        entity_type: EntityType,
         error_message: str,
-        # Typing previews: native animated text display (Telegram DM feature).
-        # Faster updates than message edits, auto-disappears on finalize
+        # DM-only animated text preview; faster updates, auto-disappears on finalize
         use_typing_preview: bool = False,
     ):
         self.bot = bot
         self.chat_id = chat_id
         self.reply_to = reply_to
         self.message_thread_id = message_thread_id
-        # When True, tool call status shows "[AgentName] Using tool..." for clarity
-        self.is_team = is_team
-        self.is_workflow = is_workflow
+        self.entity_type: EntityType = entity_type
         self.error_message = error_message
         self.use_typing_preview = use_typing_preview
         self.typing_preview_id: int = 0
 
         self.sent_message_id: Optional[int] = None
-        # Built by event handlers in events.py; rendered by build_display_html()
         self.accumulated_content: str = ""
         self.status_lines: list[str] = []
         self.last_edit_time: float = 0.0
-        # Set by _stream_response in router.py; used post-stream for error/media handling
+        # Set by router after stream ends; used for error/media handling
         self.final_run_output: Optional[Union["RunOutput", "TeamRunOutput"]] = None
-        # Set by _on_step_output in events.py; fallback if workflow omits final RunContent
+        # Set by step_output handler; fallback if workflow omits final content
         self.workflow_final_content: Optional[str] = None
-
-    # -- Status line management --
 
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
 
-    def update_status(self, find: str, replace: str) -> None:
+    def replace_status(self, find: str, replace: str) -> bool:
         for i, line in enumerate(self.status_lines):
             if find in line:
                 self.status_lines[i] = replace
-                return
+                return True
+        return False
 
-    def resolve_all_pending(self) -> None:
+    def close_pending_statuses(self) -> None:
         for i, line in enumerate(self.status_lines):
             if line.endswith("..."):
                 self.status_lines[i] = line.removesuffix("...")
@@ -185,8 +194,6 @@ class StreamState:
         if self.accumulated_content:
             parts.append(markdown_to_telegram_html(self.accumulated_content))
         return "\n".join(parts)
-
-    # -- Telegram API helpers --
 
     async def _send_new(self, html: str) -> Any:
         return await self.bot.send_message(
@@ -201,7 +208,6 @@ class StreamState:
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
-            # "message is not modified" is expected when consecutive chunks produce identical content
             if "message is not modified" not in str(e):
                 log_warning(f"Failed to edit message: {e}")
 
@@ -228,14 +234,23 @@ class StreamState:
             message_thread_id=self.message_thread_id,
         )
 
-    # -- Public streaming interface --
+    @staticmethod
+    def _truncate_html(html: str, max_len: int = TG_MAX_MESSAGE_LENGTH) -> str:
+        # Find the last safe cut point that doesn't split inside a tag
+        if len(html) <= max_len:
+            return html
+        cut = max_len
+        for m in _TAG_RE.finditer(html):
+            if m.start() < max_len <= m.end():
+                # Cut right before this tag instead of inside it
+                cut = m.start()
+                break
+        return html[:cut]
 
-    # First call sends a new message, subsequent calls edit it.
-    # Typing preview mode always sends new (no edit needed — preview updates in-place)
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
             return
-        display = html[:TG_MAX_MESSAGE_LENGTH]
+        display = self._truncate_html(html)
         if self.use_typing_preview:
             await self._send_typing_preview(display)
         elif self.sent_message_id is None:
@@ -251,16 +266,22 @@ class StreamState:
         except Exception as e:
             log_warning(f"Stream display update failed: {e}")
 
-    # Final flush after stream ends.
-    # Typing preview: send as real message (preview auto-disappears).
-    # Regular: edit existing message, or chunk if overflow
     async def finalize(self) -> None:
-        self.resolve_all_pending()
+        self.close_pending_statuses()
+        # Workflows: drop status blockquote — user watched progress live
+        if self.entity_type == "workflow":
+            self.status_lines.clear()
         final_html = self.build_display_html()
         if not final_html:
             return
 
-        # Typing preview: send final content as a real message (preview disappears on its own)
+        try:
+            await self._finalize_inner(final_html)
+        except Exception as e:
+            log_warning(f"Finalize failed ({e}), falling back to plain text")
+            await self._finalize_plaintext()
+
+    async def _finalize_inner(self, final_html: str) -> None:
         if self.use_typing_preview:
             if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
                 msg = await self._send_new(final_html)
@@ -276,9 +297,30 @@ class StreamState:
         if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
             await self._edit(final_html)
         else:
-            # Overflow — delete the live-edited message, re-send as chunks
             try:
                 await self.bot.delete_message(self.chat_id, self.sent_message_id)
             except Exception:
                 pass
             await self._send_chunks(self.accumulated_content)
+
+    async def _finalize_plaintext(self) -> None:
+        text = self.accumulated_content or ""
+        if not text.strip():
+            return
+        try:
+            # Delete the partial streaming message before sending chunked plaintext
+            if self.sent_message_id:
+                try:
+                    await self.bot.delete_message(self.chat_id, self.sent_message_id)
+                except Exception:
+                    pass
+            # Use send_message which handles chunking
+            await send_message(
+                self.bot,
+                self.chat_id,
+                text,
+                reply_to_message_id=self.reply_to,
+                message_thread_id=self.message_thread_id,
+            )
+        except Exception as e:
+            log_warning(f"Plain text fallback also failed: {e}")

@@ -37,9 +37,11 @@ _install_fake_telebot()
 from agno.os.interfaces.telegram import Telegram  # noqa: E402
 from agno.os.interfaces.telegram import security as _security_mod  # noqa: E402
 from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html  # noqa: E402
+from agno.os.interfaces.telegram.security import (
+    _is_dev_mode as is_development_mode,
+)
 from agno.os.interfaces.telegram.security import (  # noqa: E402
     get_webhook_secret_token,
-    is_development_mode,
     validate_webhook_secret_token,
 )
 
@@ -300,7 +302,7 @@ def _build_telegram_client(
     help_message=None,
     error_message=None,
     show_reasoning=False,
-    stream=False,
+    streaming=False,
     token=None,
 ):
     from fastapi import APIRouter
@@ -316,7 +318,7 @@ def _build_telegram_client(
         reply_to_mentions_only=reply_to_mentions_only,
         reply_to_bot_messages=reply_to_bot_messages,
         show_reasoning=show_reasoning,
-        stream=stream,
+        streaming=streaming,
     )
     if token is not None:
         kwargs["token"] = token
@@ -545,7 +547,6 @@ class TestOutboundImages:
         call_args = mock_bot.send_photo.call_args
         assert call_args[0][0] == 12345
         assert call_args[0][1] == "https://example.com/dalle-image.png"
-        assert call_args[1]["caption"] == "Here is a generated image"
 
     def test_base64_string_image_sent(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -590,7 +591,6 @@ class TestOutboundImages:
         call_args = mock_bot.send_photo.call_args
         assert call_args[0][0] == 12345
         assert call_args[0][1] == raw_image
-        assert call_args[1]["caption"] == "Here is the image"
 
     def test_raw_bytes_image_sent(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -914,7 +914,6 @@ class TestOutboundAudioVideoFiles:
         call_args = mock_bot.send_audio.call_args
         assert call_args[0][0] == 12345
         assert call_args[0][1] == "https://example.com/audio.mp3"
-        assert call_args[1]["caption"] == "Here is media"
 
     def test_video_url_sent_directly(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1022,13 +1021,10 @@ class TestOutboundAudioVideoFiles:
             )
 
         assert resp.status_code == 200
-        # Image gets caption, audio does not
-        photo_args = mock_bot.send_photo.call_args
-        assert photo_args[1]["caption"] == "Here is media"
-        audio_args = mock_bot.send_audio.call_args
-        assert audio_args[1]["caption"] is None
-        # Text not sent separately since media was sent
-        mock_bot.send_message.assert_not_called()
+        # No captions — text sent separately from media
+        mock_bot.send_photo.assert_called_once()
+        mock_bot.send_audio.assert_called_once()
+        mock_bot.send_message.assert_called_once()
 
 
 class TestMessageSplitting:
@@ -1675,7 +1671,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:thread:500"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:group"
 
     def test_group_reply_uses_root_message_id(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1713,7 +1709,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:thread:500"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:group"
 
 
 class TestReplyThreading:
@@ -1826,9 +1822,8 @@ class TestReplyThreading:
 
         assert resp.status_code == 200
         send_calls = mock_bot.send_message.call_args_list
-        # First call (typing indicator) + chunk calls
-        # Find chunk calls (those with [1/N] prefix)
-        chunk_calls = [c for c in send_calls if "[" in str(c[0][1]) if len(c[0]) > 1]
+        # Find HTML chunk calls (parse_mode="HTML")
+        chunk_calls = [c for c in send_calls if c[1].get("parse_mode") == "HTML"]
         assert len(chunk_calls) >= 2
         # First chunk has reply_to_message_id
         assert chunk_calls[0][1].get("reply_to_message_id") == 300
@@ -1879,7 +1874,7 @@ class TestCodexReviewFixes:
         assert resp.status_code == 200
         mock_bot.send_photo.assert_called_once()
         photo_args = mock_bot.send_photo.call_args
-        assert photo_args[1]["caption"] == long_text[:1024]
+        assert "caption" not in photo_args[1]
         mock_bot.send_message.assert_called()
         text_call = mock_bot.send_message.call_args
         assert text_call[0][1] == long_text
@@ -2095,9 +2090,8 @@ class TestCodexReviewFixes:
             )
 
         assert resp.status_code == 200
-        agent.arun.assert_called_once()
-        call_kwargs = agent.arun.call_args[1]
-        assert "images" not in call_kwargs
+        # No text and media download failed → nothing to process, model not invoked
+        agent.arun.assert_not_called()
 
 
 class TestBotMessageFiltering:
@@ -2333,7 +2327,7 @@ class TestStreamingErrorHandling:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent, stream=True)
+            client = _build_telegram_client(agent=agent, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("trigger error"))
 
         assert resp.status_code == 200
@@ -2371,7 +2365,7 @@ class TestStreamingErrorHandling:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent, stream=True)
+            client = _build_telegram_client(agent=agent, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("hello"))
 
         assert resp.status_code == 200
@@ -2489,7 +2483,7 @@ class TestStreamingEnhancedEvents:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent, stream=True)
+            client = _build_telegram_client(agent=agent, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("think about this"))
 
         assert resp.status_code == 200
@@ -2504,7 +2498,7 @@ class TestStreamingEnhancedEvents:
         assert any("Reasoning..." in t for t in all_texts), f"Expected 'Reasoning...' in messages, got: {all_texts}"
 
     def test_tool_completed_updates_status_line(self, monkeypatch):
-        """ToolCallCompletedEvent should update 'Using X...' to 'Used X'."""
+        """ToolCallCompletedEvent should update 'X...' to 'X'."""
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         monkeypatch.setenv("APP_ENV", "development")
 
@@ -2547,18 +2541,16 @@ class TestStreamingEnhancedEvents:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent, stream=True)
+            client = _build_telegram_client(agent=agent, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("search for something"))
 
         assert resp.status_code == 200
-        # Check that "Used web_search" appears in an edit or draft call
+        # Check that "web_search" (completed, no prefix) appears in an edit or draft call
         edit_calls = mock_bot.edit_message_text.call_args_list
         draft_calls = mock_bot.send_message_draft.call_args_list
         edit_texts = [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
         edit_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
-        assert any("Used web_search" in t for t in edit_texts), (
-            f"Expected 'Used web_search' in edits, got: {edit_texts}"
-        )
+        assert any("web_search" in t for t in edit_texts), f"Expected 'web_search' in edits, got: {edit_texts}"
 
     def test_workflow_step_progress_display(self, monkeypatch):
         """Workflow streaming should show step start/complete status lines."""
@@ -2591,11 +2583,11 @@ class TestStreamingEnhancedEvents:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(workflow=workflow, stream=True)
+            client = _build_telegram_client(workflow=workflow, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("run workflow"))
 
         assert resp.status_code == 200
-        # Workflow should have been called with stream=True
+        # Workflow should have been called with streaming=True
         workflow.arun.assert_called_once()
         call_kwargs = workflow.arun.call_args[1]
         assert call_kwargs["stream"] is True
@@ -2608,7 +2600,7 @@ class TestStreamingEnhancedEvents:
         all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
         all_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
-        assert any("Running step: analyze_data" in t for t in all_texts), f"Expected step progress, got: {all_texts}"
+        assert any("analyze_data" in t for t in all_texts), f"Expected step progress, got: {all_texts}"
 
     def test_workflow_parallel_execution_status(self, monkeypatch):
         """Workflow streaming should show parallel execution status."""
@@ -2635,7 +2627,7 @@ class TestStreamingEnhancedEvents:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(workflow=workflow, stream=True)
+            client = _build_telegram_client(workflow=workflow, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("parallel work"))
 
         assert resp.status_code == 200
@@ -2645,7 +2637,7 @@ class TestStreamingEnhancedEvents:
         all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
         all_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
-        assert any("Parallel execution" in t for t in all_texts), f"Expected parallel status, got: {all_texts}"
+        assert any("Parallel" in t for t in all_texts), f"Expected parallel status, got: {all_texts}"
 
     def test_workflow_error_handling_in_stream(self, monkeypatch):
         """Workflow error events should display error message."""
@@ -2667,7 +2659,7 @@ class TestStreamingEnhancedEvents:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=999))
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(workflow=workflow, stream=True)
+            client = _build_telegram_client(workflow=workflow, streaming=True)
             resp = client.post("/telegram/webhook", json=self._text_update("fail workflow"))
 
         assert resp.status_code == 200

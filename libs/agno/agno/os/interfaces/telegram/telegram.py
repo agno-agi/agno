@@ -39,7 +39,7 @@ class Telegram(BaseInterface):
         start_message: str = DEFAULT_START_MESSAGE,
         help_message: str = DEFAULT_HELP_MESSAGE,
         error_message: str = DEFAULT_ERROR_MESSAGE,
-        stream: bool = True,
+        streaming: bool = True,
         show_reasoning: bool = False,
         commands: Optional[List[Dict[str, str]]] = None,
         register_commands: bool = True,
@@ -56,7 +56,7 @@ class Telegram(BaseInterface):
         self.start_message = start_message
         self.help_message = help_message
         self.error_message = error_message
-        self.stream = stream
+        self.streaming = streaming
         self.show_reasoning = show_reasoning
         self.commands = commands if commands is not None else DEFAULT_BOT_COMMANDS
         self.register_commands = register_commands
@@ -66,10 +66,8 @@ class Telegram(BaseInterface):
             raise ValueError("Telegram requires an agent, team, or workflow")
 
     def get_router(self) -> APIRouter:
-        self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
-
-        self.router = attach_routes(
-            router=self.router,
+        return attach_routes(
+            router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
             agent=self.agent,
             team=self.team,
             workflow=self.workflow,
@@ -79,11 +77,9 @@ class Telegram(BaseInterface):
             start_message=self.start_message,
             help_message=self.help_message,
             error_message=self.error_message,
-            stream=self.stream,
+            streaming=self.streaming,
             show_reasoning=self.show_reasoning,
             commands=self.commands,
             register_commands=self.register_commands,
             new_message=self.new_message,
         )
-
-        return self.router

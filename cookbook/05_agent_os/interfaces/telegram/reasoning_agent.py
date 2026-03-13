@@ -16,7 +16,7 @@ Setup: Set TELEGRAM_TOKEN env var from @BotFather.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.anthropic.claude import Claude
+from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.telegram import Telegram
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -30,7 +30,7 @@ agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
 reasoning_agent = Agent(
     name="Reasoning Research Agent",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=agent_db,
     tools=[
         ReasoningTools(add_instructions=True),

@@ -4,12 +4,12 @@ from typing import Optional
 
 from agno.utils.log import log_warning
 
-# Cached at module load — env vars don't change at runtime
+# Cached at import; tests monkeypatch the module attrs directly
 _APP_ENV = os.getenv("APP_ENV", "").lower()
 _WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN")
 
 
-def is_development_mode() -> bool:
+def _is_dev_mode() -> bool:
     return _APP_ENV == "development"
 
 
@@ -20,7 +20,7 @@ def get_webhook_secret_token() -> str:
 
 
 def validate_webhook_secret_token(secret_token_header: Optional[str]) -> bool:
-    if is_development_mode():
+    if _is_dev_mode():
         log_warning("Bypassing secret token validation in development mode")
         return True
 

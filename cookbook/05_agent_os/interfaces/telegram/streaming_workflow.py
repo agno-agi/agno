@@ -10,7 +10,7 @@ in chat. The user sees live status updates as each step runs:
   > Running step: write...
 
 Key concepts:
-  - ``stream=True`` on the Telegram interface enables live progress.
+  - ``streaming=True`` on the Telegram interface enables live progress.
   - ``Steps`` chains sequential ``Step`` objects (research then write).
   - Each step has its own agent with specialised instructions and tools.
 
@@ -83,7 +83,7 @@ agent_os = AgentOS(
         Telegram(
             workflow=research_write_workflow,
             reply_to_mentions_only=False,
-            stream=True,
+            streaming=True,
             start_message="Research bot ready. Send me a topic and I will research and summarize it.",
         )
     ],

@@ -7,7 +7,7 @@ in real time so the user sees incremental output instead of waiting for
 the full response.
 
 Key concepts:
-  - ``stream=True`` on the Telegram interface enables chunked message edits.
+  - ``streaming=True`` on the Telegram interface enables chunked message edits.
   - Uses OpenAI gpt-4o-mini for fast token generation.
   - SQLite session persistence keeps conversation history across restarts.
 
@@ -49,7 +49,7 @@ agent_os = AgentOS(
         Telegram(
             agent=telegram_agent,
             reply_to_mentions_only=True,
-            stream=True,
+            streaming=True,
         )
     ],
 )
