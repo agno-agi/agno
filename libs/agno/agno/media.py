@@ -24,6 +24,7 @@ class Image(BaseModel):
     detail: Optional[str] = (
         None  # low, medium, high or auto (per OpenAI spec https://platform.openai.com/docs/guides/vision?lang=node#low-or-high-fidelity-image-understanding)
     )
+    use_base64: Optional[bool] = False  # Convert URL to base64 automatically (for local models)
 
     # Output-specific fields (from tools/LLMs)
     original_prompt: Optional[str] = None  # Original generation prompt
@@ -37,6 +38,31 @@ class Image(BaseModel):
             url = data.get("url")
             filepath = data.get("filepath")
             content = data.get("content")
+            use_base64 = data.get("use_base64", False)
+
+            # If use_base64=True and URL is provided, convert to base64 data URI
+            if use_base64 and url and not url.startswith("data:"):
+                import base64
+
+                import httpx
+
+                try:
+                    response = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                    response.raise_for_status()
+                    image_bytes = response.content
+                    base64_str = base64.b64encode(image_bytes).decode("utf-8")
+
+                    # Detect image format from content-type or URL
+                    content_type = response.headers.get("content-type", "image/jpeg")
+                    if "/" in content_type:
+                        image_format = content_type.split("/")[1].split(";")[0]
+                    else:
+                        image_format = "jpeg"
+
+                    # Replace URL with base64 data URI
+                    data["url"] = f"data:image/{image_format};base64,{base64_str}"
+                except Exception as e:
+                    log_error(f"Failed to convert URL to base64: {e}")
 
             # Count non-None sources
             sources = [x for x in [url, filepath, content] if x is not None]
