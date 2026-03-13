@@ -103,7 +103,7 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
 
-def reconcile_tool_call_ids(messages: List[Message]) -> List[Message]:
+def sync_tool_call_ids(messages: List[Message]) -> List[Message]:
     """
     Ensure tool result tool_call_id values match the corresponding assistant tool_calls[].id.
 
@@ -148,7 +148,7 @@ def reconcile_tool_call_ids(messages: List[Message]) -> List[Message]:
     return result
 
 
-def remap_tool_call_ids(messages: List[Message], prefix: str) -> List[Message]:
+def reformat_tool_call_ids(messages: List[Message], prefix: str) -> List[Message]:
     """
     Remap tool call IDs across messages to use a target prefix.
 

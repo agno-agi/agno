@@ -275,13 +275,13 @@ def format_messages(
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    from agno.utils.message import normalize_tool_messages, reconcile_tool_call_ids
+    from agno.utils.message import normalize_tool_messages, sync_tool_call_ids
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
     messages = normalize_tool_messages(messages)
     # Reconcile tool_call_id mismatches (e.g. Responses API stores call_id on tool results
     # but fc_id on assistant tool_calls — Claude needs them to match)
-    messages = reconcile_tool_call_ids(messages)
+    messages = sync_tool_call_ids(messages)
 
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []

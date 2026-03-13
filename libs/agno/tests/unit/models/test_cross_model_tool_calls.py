@@ -1,12 +1,12 @@
 """Tests for cross-model tool call ID remapping and reconciliation.
 
-Covers remap_tool_call_ids, reconcile_tool_call_ids, and parallel tool calls
+Covers reformat_tool_call_ids, sync_tool_call_ids, and parallel tool calls
 across OpenAI Chat (call_*), OpenAI Responses (fc_*/call_*), Claude (toolu_*),
 and Gemini (UUID-style) ID formats.
 """
 
 from agno.models.message import Message
-from agno.utils.message import normalize_tool_messages, reconcile_tool_call_ids, remap_tool_call_ids
+from agno.utils.message import normalize_tool_messages, sync_tool_call_ids, reformat_tool_call_ids
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,16 +36,16 @@ def _make_tool_call(tc_id, name="get_weather", arguments='{"city": "Paris"}', ca
 
 
 # ---------------------------------------------------------------------------
-# remap_tool_call_ids — single tool call
+# reformat_tool_call_ids — single tool call
 # ---------------------------------------------------------------------------
 
 
-class TestRemapToolCallIds:
+class TestReformatToolCallIds:
     def test_noop_when_prefix_matches(self):
         """IDs already matching target prefix should not be remapped."""
         tc = _make_tool_call("call_abc123")
         msgs = [_assistant_msg([tc]), _tool_msg("call_abc123")]
-        result = remap_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, prefix="call_")
         assert result[0].tool_calls[0]["id"] == "call_abc123"
         assert result[1].tool_call_id == "call_abc123"
 
@@ -53,7 +53,7 @@ class TestRemapToolCallIds:
         """Claude toolu_* IDs should be remapped to call_* for OpenAI Chat."""
         tc = _make_tool_call("toolu_01ABC")
         msgs = [_assistant_msg([tc]), _tool_msg("toolu_01ABC")]
-        result = remap_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, prefix="call_")
         assert result[0].tool_calls[0]["id"].startswith("call_")
         assert result[1].tool_call_id == result[0].tool_calls[0]["id"]
 
@@ -61,7 +61,7 @@ class TestRemapToolCallIds:
         """OpenAI Chat call_* IDs should be remapped to fc_* for Responses API."""
         tc = _make_tool_call("call_xyz789")
         msgs = [_assistant_msg([tc]), _tool_msg("call_xyz789")]
-        result = remap_tool_call_ids(msgs, prefix="fc_")
+        result = reformat_tool_call_ids(msgs, prefix="fc_")
         assert result[0].tool_calls[0]["id"].startswith("fc_")
         # Responses API also needs call_id
         assert result[0].tool_calls[0]["call_id"].startswith("call_")
@@ -71,18 +71,18 @@ class TestRemapToolCallIds:
         """Gemini UUID-style IDs should be remapped to toolu_* for Claude."""
         tc = _make_tool_call("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         msgs = [_assistant_msg([tc]), _tool_msg("a1b2c3d4-e5f6-7890-abcd-ef1234567890")]
-        result = remap_tool_call_ids(msgs, prefix="toolu_")
+        result = reformat_tool_call_ids(msgs, prefix="toolu_")
         assert result[0].tool_calls[0]["id"].startswith("toolu_")
         assert result[1].tool_call_id == result[0].tool_calls[0]["id"]
 
     def test_empty_messages(self):
         """Empty message list should return empty."""
-        assert remap_tool_call_ids([], prefix="call_") == []
+        assert reformat_tool_call_ids([], prefix="call_") == []
 
     def test_no_tool_calls(self):
         """Messages without tool calls should pass through unchanged."""
         msgs = [Message(role="user", content="Hello"), Message(role="assistant", content="Hi")]
-        result = remap_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, prefix="call_")
         assert len(result) == 2
         assert result[0].content == "Hello"
 
@@ -90,17 +90,17 @@ class TestRemapToolCallIds:
         """Remapping should not modify the original messages."""
         tc = _make_tool_call("toolu_01ABC")
         msgs = [_assistant_msg([tc]), _tool_msg("toolu_01ABC")]
-        remap_tool_call_ids(msgs, prefix="call_")
+        reformat_tool_call_ids(msgs, prefix="call_")
         assert msgs[0].tool_calls[0]["id"] == "toolu_01ABC"
         assert msgs[1].tool_call_id == "toolu_01ABC"
 
 
 # ---------------------------------------------------------------------------
-# remap_tool_call_ids — parallel tool calls
+# reformat_tool_call_ids — parallel tool calls
 # ---------------------------------------------------------------------------
 
 
-class TestRemapParallelToolCalls:
+class TestReformatParallelToolCalls:
     def test_parallel_tool_calls_all_remapped(self):
         """Multiple tool calls in one assistant message should all be remapped."""
         tcs = [
@@ -114,7 +114,7 @@ class TestRemapParallelToolCalls:
             _tool_msg("toolu_002", content="London: Rainy"),
             _tool_msg("toolu_003", content="Tokyo: Cloudy"),
         ]
-        result = remap_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, prefix="call_")
 
         # All 3 assistant tool_calls should have new call_* IDs
         new_ids = [tc["id"] for tc in result[0].tool_calls]
@@ -137,7 +137,7 @@ class TestRemapParallelToolCalls:
             _tool_msg("call_aaa", tool_name="search", content="result1"),
             _tool_msg("call_bbb", tool_name="calculate", content="result2"),
         ]
-        result = remap_tool_call_ids(msgs, prefix="fc_")
+        result = reformat_tool_call_ids(msgs, prefix="fc_")
 
         for tc in result[0].tool_calls:
             assert tc["id"].startswith("fc_")
@@ -165,7 +165,7 @@ class TestRemapParallelToolCalls:
         ]
 
         # Remap all to call_* (for OpenAI Chat)
-        result = remap_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, prefix="call_")
 
         # call_111 should stay (already has prefix)
         assert result[0].tool_calls[0]["id"] == "call_111"
@@ -186,18 +186,18 @@ class TestRemapParallelToolCalls:
 
 
 # ---------------------------------------------------------------------------
-# remap_tool_call_ids — Responses API dual-ID (fc_*/call_*)
+# reformat_tool_call_ids — Responses API dual-ID (fc_*/call_*)
 # ---------------------------------------------------------------------------
 
 
-class TestRemapResponsesApiDualId:
+class TestReformatResponsesApiDualId:
     def test_remap_with_existing_call_id(self):
         """When tool_call has both id and call_id, both should be mapped."""
         tc = _make_tool_call("fc_original123", call_id="call_original456")
         msgs = [_assistant_msg([tc]), _tool_msg("call_original456")]
 
         # Remap to call_* for OpenAI Chat
-        result = remap_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, prefix="call_")
         new_id = result[0].tool_calls[0]["id"]
         assert new_id.startswith("call_")
         # Tool result referenced call_id, should now match new_id
@@ -211,7 +211,7 @@ class TestRemapResponsesApiDualId:
             # Tool result stored with call_* (as Responses API does)
             _tool_msg("call_def"),
         ]
-        result = remap_tool_call_ids(msgs, prefix="toolu_")
+        result = reformat_tool_call_ids(msgs, prefix="toolu_")
         new_id = result[0].tool_calls[0]["id"]
         assert new_id.startswith("toolu_")
         # Tool result should match even though it referenced call_id
@@ -219,11 +219,11 @@ class TestRemapResponsesApiDualId:
 
 
 # ---------------------------------------------------------------------------
-# reconcile_tool_call_ids
+# sync_tool_call_ids
 # ---------------------------------------------------------------------------
 
 
-class TestReconcileToolCallIds:
+class TestSyncToolCallIds:
     def test_fixes_call_id_to_fc_id(self):
         """Tool results referencing call_* should be reconciled to fc_* when assistant has both."""
         tc = _make_tool_call("fc_abc123", call_id="call_xyz789")
@@ -231,21 +231,21 @@ class TestReconcileToolCallIds:
             _assistant_msg([tc]),
             _tool_msg("call_xyz789"),  # References call_id, not id
         ]
-        result = reconcile_tool_call_ids(msgs)
+        result = sync_tool_call_ids(msgs)
         assert result[1].tool_call_id == "fc_abc123"
 
     def test_noop_when_ids_match(self):
         """No changes needed when tool results already reference the correct id."""
         tc = _make_tool_call("fc_abc123", call_id="call_xyz789")
         msgs = [_assistant_msg([tc]), _tool_msg("fc_abc123")]
-        result = reconcile_tool_call_ids(msgs)
+        result = sync_tool_call_ids(msgs)
         assert result[1].tool_call_id == "fc_abc123"
 
     def test_noop_without_dual_ids(self):
         """Non-Responses API messages (no call_id) should pass through unchanged."""
         tc = _make_tool_call("call_abc123")
         msgs = [_assistant_msg([tc]), _tool_msg("call_abc123")]
-        result = reconcile_tool_call_ids(msgs)
+        result = sync_tool_call_ids(msgs)
         assert result[1].tool_call_id == "call_abc123"
 
     def test_parallel_reconciliation(self):
@@ -261,7 +261,7 @@ class TestReconcileToolCallIds:
             _tool_msg("call_bbb", content="result2"),
             _tool_msg("call_ccc", content="result3"),
         ]
-        result = reconcile_tool_call_ids(msgs)
+        result = sync_tool_call_ids(msgs)
         assert result[1].tool_call_id == "fc_001"
         assert result[2].tool_call_id == "fc_002"
         assert result[3].tool_call_id == "fc_003"
@@ -270,7 +270,7 @@ class TestReconcileToolCallIds:
         """Reconciliation should not modify the original messages."""
         tc = _make_tool_call("fc_abc", call_id="call_xyz")
         msgs = [_assistant_msg([tc]), _tool_msg("call_xyz")]
-        reconcile_tool_call_ids(msgs)
+        sync_tool_call_ids(msgs)
         assert msgs[1].tool_call_id == "call_xyz"
 
 
