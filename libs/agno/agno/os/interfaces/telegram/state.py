@@ -10,7 +10,6 @@ from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.telegram.formatting import escape_html, markdown_to_telegram_html
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
-    _chunk_html,
     send_message,
 )
 from agno.session.agent import AgentSession
