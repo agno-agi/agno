@@ -267,3 +267,69 @@ def test_complex_nested_schema():
     }
     nested_properties = inner_properties["nested_param"]["properties"]
     assert nested_properties["nested_field"] == {"title": "Nested Field", "type": "boolean"}
+
+
+def test_mcp_schema_with_defs_preserved():
+    """Test that $defs from MCP tool schemas are preserved."""
+    # MCP tools use raw JSON schemas from external servers (skip_entrypoint_processing=True),
+    # so we test with raw dicts rather than Function.from_callable()
+    mcp_tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "get_data",
+            "description": "Get data for a device",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request": {
+                        "anyOf": [{"$ref": "#/$defs/DynamicData"}, {"type": "string"}],
+                        "description": "The request data",
+                    }
+                },
+                "required": ["request"],
+                "$defs": {
+                    "DynamicData": {
+                        "type": "object",
+                        "properties": {
+                            "dev": {"type": "string", "minLength": 1},
+                            "startTime": {"type": "string"},
+                            "endTime": {"type": "string"},
+                        },
+                        "required": ["dev", "startTime", "endTime"],
+                    }
+                },
+            },
+        },
+    }
+
+    result = format_tools_for_model([mcp_tool_schema])
+    input_schema = result[0]["input_schema"]
+
+    assert "$defs" in input_schema
+    assert "DynamicData" in input_schema["$defs"]
+    assert input_schema["$defs"]["DynamicData"]["properties"]["dev"]["type"] == "string"
+
+
+def test_mcp_schema_with_definitions_preserved():
+    """Test that definitions (legacy JSON Schema style) are preserved."""
+    # MCP tools use raw JSON schemas from external servers (skip_entrypoint_processing=True),
+    # so we test with raw dicts rather than Function.from_callable()
+    mcp_tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "legacy_tool",
+            "description": "A tool using older JSON Schema style",
+            "parameters": {
+                "type": "object",
+                "properties": {"data": {"$ref": "#/definitions/MyModel"}},
+                "required": ["data"],
+                "definitions": {"MyModel": {"type": "object", "properties": {"field": {"type": "string"}}}},
+            },
+        },
+    }
+
+    result = format_tools_for_model([mcp_tool_schema])
+    input_schema = result[0]["input_schema"]
+
+    assert "definitions" in input_schema
+    assert "MyModel" in input_schema["definitions"]
