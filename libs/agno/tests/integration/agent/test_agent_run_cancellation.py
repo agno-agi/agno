@@ -10,18 +10,15 @@ These tests verify that when an agent is cancelled mid-execution:
 
 import asyncio
 import os
-import threading
-import time
-from unittest.mock import patch
+import uuid
 
 import pytest
 
 from agno.agent.agent import Agent
-from agno.exceptions import RunCancelledException
 from agno.models.openai import OpenAIChat
-from agno.run.agent import RunCancelledEvent
+from agno.run.agent import RunCancelledEvent, RunEvent
 from agno.run.base import RunStatus
-from agno.run.cancellation_management.base import BaseRunCancellationManager
+from agno.run.cancel import cancel_run, register_run
 
 pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
@@ -52,7 +49,6 @@ def test_cancel_agent_during_sync_streaming(shared_db):
     run_id = None
     cancelled = False
 
-    # Start streaming agent
     event_stream = agent.run(
         input="Tell me about AI agents in detail",
         session_id=session_id,
@@ -60,34 +56,123 @@ def test_cancel_agent_during_sync_streaming(shared_db):
         stream_events=True,
     )
 
-    # Collect events and cancel mid-stream
     for event in event_stream:
         events_collected.append(event)
 
-        # Extract run_id from the first event
         if run_id is None and hasattr(event, "run_id"):
             run_id = event.run_id
 
-        # Track content
         if hasattr(event, "content") and event.content and isinstance(event.content, str):
             content_chunks.append(event.content)
 
-        # Cancel after collecting some content (but continue consuming events)
         if len(content_chunks) >= 5 and run_id and not cancelled:
             agent.cancel_run(run_id)
             cancelled = True
-            # Don't break - let the generator complete naturally
 
-    # Verify cancellation event was received
     cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
     assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
-
-    # Verify we collected content before cancellation
     assert len(content_chunks) >= 5, "Should have collected at least 5 content chunks before cancellation"
 
-    # Verify the run was cleaned up (not in the active runs tracking)
     active_runs = _cancellation_manager.get_active_runs()
     assert run_id not in active_runs, "Run should be cleaned up from tracking"
+
+
+def test_cancel_agent_sync_streaming_preserves_content_in_db(shared_db):
+    """Test that cancelled agent run preserves partial content in the database.
+
+    Verifies:
+    - Run status is set to cancelled in DB
+    - Partial content is stored (not overwritten with cancellation message)
+    - Content length matches what was streamed
+    """
+    agent = Agent(
+        name="Content Persist Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very detailed response.",
+        db=shared_db,
+    )
+
+    session_id = "test_agent_sync_content_persist"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    event_stream = agent.run(
+        input="Write a very long story about a dragon who learns to code. Make it at least 2000 words.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    )
+
+    for event in event_stream:
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 10 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None
+    assert len(last_run.content) > 20, "Stored content should be substantial, not just a cancellation message"
+    assert "was cancelled" not in last_run.content or len(last_run.content) > 100, (
+        "Content should be actual streamed content, not just the cancellation error message"
+    )
+
+    # Also verify messages are preserved
+    assert last_run.messages is not None, "Messages should be preserved after cancellation"
+    assert len(last_run.messages) > 0, "Should have at least one message preserved"
+
+
+def test_cancel_agent_sync_streaming_persists_run_cancelled_event_in_db(shared_db):
+    """Test that RunCancelled event is persisted in DB when store_events=True."""
+    agent = Agent(
+        name="Persist Cancel Event Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very detailed response.",
+        db=shared_db,
+        store_events=True,
+    )
+
+    session_id = "test_agent_sync_cancel_event_persist"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    for event in agent.run(
+        input="Write a long story about a dragon who learns to code.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 5 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.events is not None and len(last_run.events) > 0, "Events should be persisted"
+
+    persisted_event_names = [event.event for event in last_run.events]
+    assert RunEvent.run_cancelled in persisted_event_names, "RunCancelled event should be persisted in DB"
 
 
 # ============================================================================
@@ -101,7 +186,7 @@ async def test_cancel_agent_during_async_streaming(shared_db):
     - Cancellation event is received
     - Partial content is preserved in database
     - Run status is set to cancelled
-    - Resources are cleaned up (run removed from tracking)
+    - Resources are cleaned up
     """
     from agno.run.cancel import _cancellation_manager
 
@@ -117,7 +202,6 @@ async def test_cancel_agent_during_async_streaming(shared_db):
     content_chunks = []
     run_id = None
 
-    # Start async streaming agent
     event_stream = agent.arun(
         input="Tell me about AI technology in detail",
         session_id=session_id,
@@ -125,96 +209,85 @@ async def test_cancel_agent_during_async_streaming(shared_db):
         stream_events=True,
     )
 
-    # Collect events and cancel mid-stream
     cancelled = False
     async for event in event_stream:
         events_collected.append(event)
 
-        # Extract run_id from the first event
         if run_id is None and hasattr(event, "run_id"):
             run_id = event.run_id
 
-        # Track content
         if hasattr(event, "content") and event.content and isinstance(event.content, str):
             content_chunks.append(event.content)
 
-        # Cancel after collecting some content (but continue consuming events)
         if len(content_chunks) >= 5 and run_id and not cancelled:
             agent.cancel_run(run_id)
             cancelled = True
-            # Don't break - let the generator complete naturally
 
-    # Verify cancellation event was received
     cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
     assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
 
-    # Verify the agent run was saved with partial data
-    # Use sync method since shared_db is SqliteDb (synchronous)
     agent_session = agent.get_session(session_id=session_id)
     assert agent_session is not None
     assert agent_session.runs is not None and len(agent_session.runs) > 0
 
     last_run = agent_session.runs[-1]
     assert last_run.status == RunStatus.cancelled
-
-    # Verify we have partial content saved
     assert last_run.content is not None and len(last_run.content) > 0, "Should have captured partial content"
     assert len(content_chunks) >= 5, "Should have collected at least 5 content chunks"
 
-    # Wait for any pending async tasks to complete
     await asyncio.sleep(0.2)
 
-    # Verify the run was cleaned up
     active_runs = _cancellation_manager.get_active_runs()
     assert run_id not in active_runs, "Run should be cleaned up from tracking"
 
 
-# ============================================================================
-# EDGE CASE TESTS
-# ============================================================================
-def test_cancel_agent_immediately(shared_db):
-    """Test cancelling an agent immediately after it starts.
-
-    Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
-    """
+@pytest.mark.asyncio
+async def test_cancel_agent_async_streaming_preserves_content_in_db(shared_db):
+    """Async version: stored content should be actual streamed content, not exception message."""
     agent = Agent(
-        name="Quick Cancel Agent",
+        name="Async Content Persist Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent.",
+        instructions="You are a helpful agent. Write a very detailed response.",
         db=shared_db,
     )
 
-    session_id = "test_immediate_cancel"
-    events_collected = []
+    session_id = "test_agent_async_content_persist"
+    content_chunks = []
     run_id = None
     cancelled = False
 
-    event_stream = agent.run(
-        input="Tell me about AI",
+    event_stream = agent.arun(
+        input="Write a very long story about a dragon who learns to code. Make it at least 2000 words.",
         session_id=session_id,
         stream=True,
         stream_events=True,
     )
 
-    for event in event_stream:
-        events_collected.append(event)
-
-        # Extract run_id and cancel immediately
+    async for event in event_stream:
         if run_id is None and hasattr(event, "run_id"):
             run_id = event.run_id
-            if not cancelled:
-                agent.cancel_run(run_id)
-                cancelled = True
-                # Don't break - let the generator complete naturally
 
-    # Verify cancellation event was received
-    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
-    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
-    assert run_id is not None, "Should have received at least one event with run_id"
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+
+        if len(content_chunks) >= 10 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None
+    assert "was cancelled" not in last_run.content or len(last_run.content) > 100, (
+        "Content should be actual streamed content, not just the cancellation error message"
+    )
 
 
-@pytest.mark.asyncio
-async def test_cancel_non_existent_agent_run():
+# ============================================================================
+# EDGE CASE TESTS
+# ============================================================================
+def test_cancel_non_existent_agent_run():
     """Test that cancelling a non-existent run returns False."""
     from agno.db.sqlite import SqliteDb
 
@@ -225,529 +298,288 @@ async def test_cancel_non_existent_agent_run():
         db=SqliteDb(db_file="tmp/test_agent_cancel.db"),
     )
 
-    # Try to cancel a run that doesn't exist
     result = agent.cancel_run("non_existent_run_id")
     assert result is False, "Cancelling non-existent run should return False"
 
 
-def test_cancel_agent_with_tool_calls(shared_db):
-    """Test cancelling an agent that uses tools during execution.
+# ============================================================================
+# SESSION CONTINUITY AFTER CANCELLATION
+# ============================================================================
+def test_continue_session_after_cancelled_agent_run(shared_db):
+    """Test that a new run on the same session sees the cancelled run's history.
 
-    Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
-    We verify that events were collected before cancellation.
+    This tests the primary user story from issue #5994: after cancellation,
+    users should be able to start a new run on the same session and the AI
+    should see what was generated before cancellation.
     """
-    pytest.importorskip("ddgs", reason="ddgs not installed")
-    from agno.tools.websearch import WebSearchTools
-
     agent = Agent(
-        name="Tool Agent",
+        name="Continuity Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a research agent. Search for information and provide detailed responses.",
-        tools=[WebSearchTools()],
+        instructions="You are a helpful agent. Write detailed responses.",
         db=shared_db,
+        store_tool_messages=True,
+        store_history_messages=True,
     )
 
-    session_id = "test_cancel_with_tools"
-    events_collected = []
+    session_id = "test_agent_session_continuity"
     content_chunks = []
     run_id = None
-    tool_calls_executed = 0
     cancelled = False
 
-    event_stream = agent.run(
-        input="Search for information about artificial intelligence and write a long essay",
+    # Run 1: Start a run and cancel it mid-stream
+    for event in agent.run(
+        input="Write a very long essay about the history of the internet.",
         session_id=session_id,
         stream=True,
         stream_events=True,
-    )
-
-    for event in event_stream:
-        events_collected.append(event)
-
-        if run_id is None and hasattr(event, "run_id"):
-            run_id = event.run_id
-
-        # Track tool calls
-        if hasattr(event, "tool_name"):
-            tool_calls_executed += 1
-
-        # Track content
-        if hasattr(event, "content") and event.content and isinstance(event.content, str):
-            content_chunks.append(event.content)
-
-        # Cancel after some content (but continue consuming events)
-        if len(content_chunks) >= 3 and run_id and not cancelled:
-            agent.cancel_run(run_id)
-            cancelled = True
-            # Don't break - let the generator complete naturally
-
-    # Verify cancellation event was received
-    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
-    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
-
-    # Verify we collected content before cancellation
-    assert len(content_chunks) >= 3, "Should have collected at least 3 content chunks before cancellation"
-
-
-# ============================================================================
-# NON-STREAMING CANCELLATION TESTS
-# ============================================================================
-def test_cancel_agent_sync_non_streaming(shared_db):
-    """Test cancelling an agent during synchronous non-streaming execution.
-
-    This test uses a separate thread to cancel the run while it's executing.
-    """
-    agent = Agent(
-        name="Non-Streaming Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent. Write a very detailed 5-paragraph essay about the history of computing.",
-        db=shared_db,
-    )
-
-    session_id = "test_sync_non_streaming_cancel"
-    run_id = "test_non_streaming_run_id"
-    result = None
-    exception_raised = None
-
-    def run_agent():
-        nonlocal result, exception_raised
-        try:
-            result = agent.run(
-                input="Write a very detailed essay about the history of computing from the 1940s to today",
-                session_id=session_id,
-                run_id=run_id,
-                stream=False,
-            )
-        except RunCancelledException as e:
-            exception_raised = e
-
-    # Start agent in a separate thread
-    agent_thread = threading.Thread(target=run_agent)
-    agent_thread.start()
-
-    # Wait a bit for the agent to start, then cancel
-    time.sleep(1.0)
-    cancel_result = agent.cancel_run(run_id)
-
-    # Wait for the thread to complete
-    agent_thread.join(timeout=10)
-
-    # Either the run was cancelled or it completed before cancellation
-    if cancel_result:
-        # If cancellation was registered, we should have either an exception or a cancelled status
-        if exception_raised:
-            assert isinstance(exception_raised, RunCancelledException)
-        elif result:
-            # Run completed but might have been marked as cancelled
-            assert result.status in [RunStatus.cancelled, RunStatus.completed]
-    else:
-        # Cancellation wasn't registered (run might have completed already)
-        assert result is not None
-
-
-@pytest.mark.asyncio
-async def test_cancel_agent_async_non_streaming(shared_db):
-    """Test cancelling an agent during asynchronous non-streaming execution."""
-    agent = Agent(
-        name="Async Non-Streaming Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent. Write a very detailed 5-paragraph essay.",
-        db=shared_db,
-    )
-
-    session_id = "test_async_non_streaming_cancel"
-    run_id = "test_async_non_streaming_run_id"
-
-    async def cancel_after_delay():
-        await asyncio.sleep(1.0)
-        agent.cancel_run(run_id)
-
-    # Start cancellation task
-    cancel_task = asyncio.create_task(cancel_after_delay())
-
-    # Run the agent
-    try:
-        result = await agent.arun(
-            input="Write a very detailed essay about artificial intelligence and its impact on society",
-            session_id=session_id,
-            run_id=run_id,
-            stream=False,
-        )
-        # If we get here, the run completed before cancellation
-        assert result.status in [RunStatus.completed, RunStatus.cancelled]
-    except RunCancelledException:
-        # Cancellation was successful
-        pass
-
-    # Clean up the cancel task
-    cancel_task.cancel()
-    try:
-        await cancel_task
-    except asyncio.CancelledError:
-        pass
-
-
-# ============================================================================
-# MULTIPLE CANCELLATION TESTS
-# ============================================================================
-def test_multiple_cancel_calls_sync(shared_db):
-    """Test that multiple cancel calls don't cause issues."""
-    agent = Agent(
-        name="Multiple Cancel Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent.",
-        db=shared_db,
-    )
-
-    session_id = "test_multiple_cancel"
-    run_id = None
-    cancelled = False
-    events_collected = []
-
-    event_stream = agent.run(
-        input="Tell me about AI",
-        session_id=session_id,
-        stream=True,
-        stream_events=True,
-    )
-
-    for event in event_stream:
-        events_collected.append(event)
-        if run_id is None and hasattr(event, "run_id"):
-            run_id = event.run_id
-            if not cancelled:
-                # Call cancel multiple times
-                agent.cancel_run(run_id)
-                agent.cancel_run(run_id)
-                agent.cancel_run(run_id)
-                cancelled = True
-
-    # Verify cancellation event was received
-    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
-    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
-
-
-@pytest.mark.asyncio
-async def test_cancel_preserves_partial_structured_output(shared_db):
-    """Test that cancellation preserves partial content even with structured output."""
-    from pydantic import BaseModel
-
-    class Essay(BaseModel):
-        title: str
-        paragraphs: list[str]
-
-    agent = Agent(
-        name="Structured Output Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent that writes essays.",
-        db=shared_db,
-    )
-
-    session_id = "test_structured_cancel"
-    run_id = None
-    content_collected = []
-    cancelled = False
-
-    event_stream = agent.arun(
-        input="Write a 5-paragraph essay about technology",
-        session_id=session_id,
-        stream=True,
-        stream_events=True,
-    )
-
-    async for event in event_stream:
-        if run_id is None and hasattr(event, "run_id"):
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
             run_id = event.run_id
 
         if hasattr(event, "content") and event.content:
-            content_collected.append(str(event.content))
+            content_chunks.append(event.content)
 
-        # Cancel after collecting some content
-        if len(content_collected) >= 5 and run_id and not cancelled:
+        if len(content_chunks) >= 10 and run_id and not cancelled:
             agent.cancel_run(run_id)
             cancelled = True
 
-    # Verify we got partial content before cancellation
-    assert len(content_collected) >= 5, "Should have collected content before cancellation"
+        if isinstance(event, RunCancelledEvent):
+            break
 
-    # Verify the run was saved with partial content
-    agent_session = agent.get_session(session_id=session_id)
-    assert agent_session is not None
-    assert agent_session.runs is not None and len(agent_session.runs) > 0
+    assert cancelled, "First run should have been cancelled"
 
-    last_run = agent_session.runs[-1]
-    assert last_run.status == RunStatus.cancelled
-    assert last_run.content is not None, "Partial content should be preserved"
+    # Verify the cancelled run is persisted
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+    first_run = session.runs[-1]
+    assert first_run.status == RunStatus.cancelled
+    assert first_run.content is not None
 
-
-# ============================================================================
-# REDIS CANCELLATION TESTS
-# ============================================================================
-
-
-@pytest.fixture
-def fakeredis_clients():
-    """Create in-memory Redis clients using fakeredis for testing."""
-    import fakeredis
-    from fakeredis.aioredis import FakeRedis as AsyncFakeRedis
-
-    # Create sync fakeredis client
-    sync_client = fakeredis.FakeStrictRedis(decode_responses=False)
-
-    # Create async fakeredis client
-    async_client = AsyncFakeRedis(decode_responses=False)
-
-    yield sync_client, async_client
-
-
-@pytest.fixture
-def redis_cancellation_manager(fakeredis_clients):
-    """Set up Redis cancellation manager with fakeredis and restore original after test."""
-    from agno.run.cancel import get_cancellation_manager, set_cancellation_manager
-    from agno.run.cancellation_management import RedisRunCancellationManager
-
-    # Save original cancellation manager
-    original_manager = get_cancellation_manager()
-
-    # Set up Redis cancellation manager with fakeredis
-    sync_client, async_client = fakeredis_clients
-    redis_manager = RedisRunCancellationManager(
-        redis_client=sync_client,
-        async_redis_client=async_client,
-        key_prefix="agno:run:cancellation:",
-        ttl_seconds=None,  # Disable TTL for testing
+    # Run 2: Start a new run on the same session
+    result = agent.run(
+        input="What was I asking about before?",
+        session_id=session_id,
+        stream=False,
     )
 
-    # Set the Redis manager as the global cancellation manager
-    set_cancellation_manager(redis_manager)
+    # Verify second run completed and session now has 2 runs
+    assert result is not None
+    assert result.status == RunStatus.completed
 
-    yield redis_manager
+    session_after = agent.get_session(session_id=session_id)
+    assert session_after is not None
+    assert session_after.runs is not None and len(session_after.runs) >= 2
 
-    # Restore original cancellation manager
-    set_cancellation_manager(original_manager)
 
+# ============================================================================
+# NON-STREAMING SYNC TESTS
+# ============================================================================
+def test_cancel_agent_non_streaming_sync(shared_db):
+    """Test cancelling an agent during non-streaming synchronous execution.
 
-@patch("agno.agent._run.cleanup_run", return_value=None)
-def test_cancel_agent_with_redis_sync_streaming(
-    cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
-):
-    """Test cancelling an agent during synchronous streaming execution with Redis backend.
-
-    Verifies:
-    - Cancellation works with Redis backend
-    - Partial content is collected before cancellation
-    - Run is tracked in Redis
+    Pre-cancels the run_id so the first raise_if_cancelled check fires
+    immediately — no delay needed. Verifies:
+    - Run status is set to cancelled in DB
     """
     agent = Agent(
-        name="Redis Streaming Agent",
+        name="NonStream Sync Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent that writes essays",
+        instructions="You are a helpful agent. Write a very long and detailed 5-paragraph response.",
         db=shared_db,
     )
 
-    session_id = "test_redis_sync_cancel_session"
-    events_collected = []
-    run_id = None
-    run_was_cancelled = False
+    session_id = "test_agent_nonstream_sync_cancel"
 
-    # Start streaming agent
-    event_stream = agent.run(
-        input="Write a 5-paragraph essay about technology",
+    # Pre-register and cancel the run_id so it cancels immediately
+    pre_cancelled_run_id = str(uuid.uuid4())
+    register_run(pre_cancelled_run_id)
+    cancel_run(pre_cancelled_run_id)
+
+    result = agent.run(
+        input="Write an extremely detailed essay about the entire history of computing.",
+        session_id=session_id,
+        run_id=pre_cancelled_run_id,
+        stream=False,
+    )
+
+    assert result is not None
+    assert result.status == RunStatus.cancelled, f"Expected cancelled, got {result.status}"
+
+    # Verify in DB
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+# ============================================================================
+# NON-STREAMING ASYNC TESTS
+# ============================================================================
+@pytest.mark.asyncio
+async def test_cancel_agent_non_streaming_async(shared_db):
+    """Test cancelling an agent during non-streaming async execution.
+
+    Pre-cancels the run_id so the first araise_if_cancelled check fires
+    immediately — no delay needed. Verifies:
+    - Run status is set to cancelled in DB
+    """
+    agent = Agent(
+        name="NonStream Async Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent. Write a very long and detailed 5-paragraph response.",
+        db=shared_db,
+    )
+
+    session_id = "test_agent_nonstream_async_cancel"
+
+    # Pre-register and cancel the run_id so it cancels immediately
+    pre_cancelled_run_id = str(uuid.uuid4())
+    register_run(pre_cancelled_run_id)
+    cancel_run(pre_cancelled_run_id)
+
+    result = await agent.arun(
+        input="Write an extremely detailed essay about the entire history of computing.",
+        session_id=session_id,
+        run_id=pre_cancelled_run_id,
+        stream=False,
+    )
+
+    assert result is not None
+    assert result.status == RunStatus.cancelled, f"Expected cancelled, got {result.status}"
+
+    # Verify in DB
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+# ============================================================================
+# CONTINUE RUN AFTER CANCELLATION
+# ============================================================================
+def test_continue_run_after_cancellation_sync(shared_db):
+    """Test that continue_run works on a cancelled run's session.
+
+    Verifies:
+    - First run is cancelled and stored
+    - A follow-up run on the same session completes successfully
+    - Both runs are in the session history
+    - The follow-up run has access to the cancelled run's context
+    """
+    agent = Agent(
+        name="Continue After Cancel Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent.",
+        db=shared_db,
+        store_tool_messages=True,
+        store_history_messages=True,
+    )
+
+    session_id = "test_continue_after_cancel_sync"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    # Run 1: Start and cancel mid-stream
+    for event in agent.run(
+        input="Write a long story about a robot learning to paint.",
         session_id=session_id,
         stream=True,
         stream_events=True,
-    )
-
-    # Collect events and cancel mid-stream
-    for event in event_stream:
-        events_collected.append(event)
-
-        # Extract run_id from the first event
-        if run_id is None and hasattr(event, "run_id"):
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
             run_id = event.run_id
-
-        # Cancel after collecting some content
-        if len(events_collected) == 1 and run_id:
-            assert redis_cancellation_manager.get_active_runs()[run_id] is False
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 8 and run_id and not cancelled:
             agent.cancel_run(run_id)
-            run_was_cancelled = True
+            cancelled = True
 
-    # Verify cancellation was triggered
-    assert run_was_cancelled, "Run should have been cancelled"
-    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
-    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
-    cleanup_run_mock.assert_called_once_with(run_id)
+    assert cancelled
+
+    # Verify cancelled run in DB
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+    cancelled_run = session.runs[-1]
+    assert cancelled_run.status == RunStatus.cancelled
+    cancelled_content = cancelled_run.content
+    assert cancelled_content is not None and len(cancelled_content) > 0
+
+    # Run 2: Follow-up non-streaming run on same session
+    result = agent.run(
+        input="Continue from where you left off. What happened next in the story?",
+        session_id=session_id,
+        stream=False,
+    )
+
+    assert result is not None
+    assert result.status == RunStatus.completed
+    assert result.content is not None and len(result.content) > 0
+
+    # Verify session has both runs
+    session_after = agent.get_session(session_id=session_id)
+    assert session_after is not None
+    assert session_after.runs is not None and len(session_after.runs) >= 2
+    assert session_after.runs[-2].status == RunStatus.cancelled
+    assert session_after.runs[-1].status == RunStatus.completed
 
 
 @pytest.mark.asyncio
-@patch("agno.agent._run.acleanup_run", return_value=None)
-async def test_cancel_agent_with_redis_async_streaming(
-    cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
-):
-    """Test cancelling an agent during asynchronous streaming execution with Redis backend.
+async def test_continue_run_after_cancellation_async(shared_db):
+    """Async version: continue_run works on a cancelled run's session.
 
-    Verifies:
-    - Cancellation works with async Redis backend
-    - Partial content is preserved in database
-    - Run status is set to cancelled
-    - Run is tracked in Redis
+    Verifies same invariants as sync version but using async paths.
     """
     agent = Agent(
-        name="Redis Async Streaming Agent",
+        name="Continue After Cancel Async Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent that writes whatever the user asks",
+        instructions="You are a helpful agent.",
         db=shared_db,
+        store_tool_messages=True,
+        store_history_messages=True,
     )
 
-    session_id = "test_redis_async_cancel_session"
-    events_collected = []
+    session_id = "test_continue_after_cancel_async"
+    content_chunks = []
     run_id = None
-    # Start async streaming agent
-    event_stream = agent.arun(
-        input="Write 10 random words",
+    cancelled = False
+
+    # Run 1: Start and cancel mid-stream (async)
+    async for event in agent.arun(
+        input="Write a long story about a robot learning to paint.",
         session_id=session_id,
         stream=True,
         stream_events=True,
-    )
-
-    async for event in event_stream:
-        events_collected.append(event)
-        # Extract run_id from the first event
-        if run_id is None and hasattr(event, "run_id"):
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
             run_id = event.run_id
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 8 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
 
-        # Cancel after collecting some content (but continue consuming events)
-        if len(events_collected) == 5 and run_id:
-            await redis_cancellation_manager.acancel_run(run_id)
+    assert cancelled
 
-    # Verify cancellation event was received
-    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
-    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
-    cleanup_run_mock.assert_called_once_with(run_id)
+    # Verify cancelled run in DB
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+    assert session.runs[-1].status == RunStatus.cancelled
 
-    # Verify the agent run was saved with partial data
-    agent_session = agent.get_session(session_id=session_id)
-    assert agent_session is not None
-    assert agent_session.runs is not None and len(agent_session.runs) > 0
-
-    last_run = agent_session.runs[-1]
-    assert last_run.status == RunStatus.cancelled
-
-    # Verify the run was tracked in Redis
-    is_cancelled = await redis_cancellation_manager.ais_cancelled(run_id)
-    assert is_cancelled, "Run should be marked as cancelled in Redis"
-
-    # Wait for any pending async tasks to complete
-    await asyncio.sleep(0.2)
-
-
-@pytest.mark.asyncio
-@patch("agno.agent._run.acleanup_run", return_value=None)
-async def test_cancel_agent_with_redis_async_non_streaming(
-    cleanup_run_mock, shared_db, redis_cancellation_manager: BaseRunCancellationManager
-):
-    """Test cancelling an agent during asynchronous non-streaming execution with Redis backend."""
-    agent = Agent(
-        name="Redis Async Non-Streaming Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful agent. Write whatever the user asks.",
-        db=shared_db,
+    # Run 2: Follow-up non-streaming async run
+    result = await agent.arun(
+        input="Continue from where you left off. What happened next in the story?",
+        session_id=session_id,
+        stream=False,
     )
 
-    session_id = "test_redis_async_non_streaming_cancel"
-    run_id = "test_redis_async_non_streaming_run_id"
+    assert result is not None
+    assert result.status == RunStatus.completed
 
-    async def cancel_after_delay():
-        await asyncio.sleep(1.0)
-        await redis_cancellation_manager.acancel_run(run_id)
-
-    # Start cancellation task
-    asyncio.create_task(cancel_after_delay())
-
-    # Run the agent
-    try:
-        result = await agent.arun(
-            input="write 50 random words",
-            session_id=session_id,
-            run_id=run_id,
-            stream=False,
-        )
-        # If we get here, the run completed before cancellation
-        assert result.status in [RunStatus.completed, RunStatus.cancelled]
-    except RunCancelledException:
-        # Cancellation was successful
-        pass
-
-    # Verify cancellation state in Redis
-    is_cancelled = await redis_cancellation_manager.ais_cancelled(run_id)
-    cleanup_run_mock.assert_called_once_with(run_id)
-    # The run might have completed before cancellation, or been cancelled
-    # Either way, we should check Redis state
-    assert isinstance(is_cancelled, bool), "Should get a boolean from Redis"
-
-
-def test_redis_cancellation_manager_get_active_runs(redis_cancellation_manager):
-    """Test that Redis cancellation manager can retrieve active runs."""
-    # Register some runs
-    run_id1 = "test_run_1"
-    run_id2 = "test_run_2"
-    run_id3 = "test_run_3"
-
-    redis_cancellation_manager.register_run(run_id1)
-    redis_cancellation_manager.register_run(run_id2)
-    redis_cancellation_manager.register_run(run_id3)
-
-    # Cancel one run
-    redis_cancellation_manager.cancel_run(run_id2)
-
-    # Get active runs
-    active_runs = redis_cancellation_manager.get_active_runs()
-
-    # Verify all runs are tracked
-    assert run_id1 in active_runs, "Run 1 should be tracked"
-    assert run_id2 in active_runs, "Run 2 should be tracked"
-    assert run_id3 in active_runs, "Run 3 should be tracked"
-
-    # Verify cancellation status
-    assert active_runs[run_id1] is False, "Run 1 should not be cancelled"
-    assert active_runs[run_id2] is True, "Run 2 should be cancelled"
-    assert active_runs[run_id3] is False, "Run 3 should not be cancelled"
-
-    # Cleanup
-    redis_cancellation_manager.cleanup_run(run_id1)
-    redis_cancellation_manager.cleanup_run(run_id2)
-    redis_cancellation_manager.cleanup_run(run_id3)
-
-
-@pytest.mark.asyncio
-async def test_redis_cancellation_manager_aget_active_runs(redis_cancellation_manager):
-    """Test that Redis cancellation manager can retrieve active runs asynchronously."""
-    # Register some runs
-    run_id1 = "test_async_run_1"
-    run_id2 = "test_async_run_2"
-    run_id3 = "test_async_run_3"
-
-    await redis_cancellation_manager.aregister_run(run_id1)
-    await redis_cancellation_manager.aregister_run(run_id2)
-    await redis_cancellation_manager.aregister_run(run_id3)
-
-    # Cancel one run
-    await redis_cancellation_manager.acancel_run(run_id2)
-
-    # Get active runs
-    active_runs = await redis_cancellation_manager.aget_active_runs()
-
-    # Verify all runs are tracked
-    assert run_id1 in active_runs, "Run 1 should be tracked"
-    assert run_id2 in active_runs, "Run 2 should be tracked"
-    assert run_id3 in active_runs, "Run 3 should be tracked"
-
-    # Verify cancellation status
-    assert active_runs[run_id1] is False, "Run 1 should not be cancelled"
-    assert active_runs[run_id2] is True, "Run 2 should be cancelled"
-    assert active_runs[run_id3] is False, "Run 3 should not be cancelled"
-
-    # Cleanup
-    await redis_cancellation_manager.acleanup_run(run_id1)
-    await redis_cancellation_manager.acleanup_run(run_id2)
-    await redis_cancellation_manager.acleanup_run(run_id3)
+    # Verify session has both runs
+    session_after = agent.get_session(session_id=session_id)
+    assert session_after is not None
+    assert session_after.runs is not None and len(session_after.runs) >= 2

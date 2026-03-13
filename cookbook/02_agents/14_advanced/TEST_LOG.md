@@ -77,6 +77,15 @@
 
 ---
 
+### agent_run_cancel_persistence.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Cancels an agent run mid-stream and verifies partial content and messages are preserved in the database.
+**Result:** Completed successfully. Status=CANCELLED, content preserved, 2 messages persisted.
+
+---
+
 ### basic_agent_events.py
 
 **Status:** PASS
