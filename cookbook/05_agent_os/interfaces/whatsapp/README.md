@@ -115,8 +115,8 @@ For quick local testing without a full production setup:
    ```
    Use the tunnel URL as your webhook Callback URL (step 7.3). The free ngrok tier
    gives you a random subdomain that changes on restart — update the webhook URL each time.
-4. **Skip signature validation:** Set `APP_ENV=development` to bypass webhook signature
-   checks. Never use this in production.
+4. **Skip signature validation:** Simply omit `WHATSAPP_APP_SECRET` — the server logs a
+   warning but processes messages without signature checks. Never do this in production.
 5. **macOS SSL fix:** If you get certificate errors:
    ```bash
    export SSL_CERT_FILE=$(python3 -c "import certifi; print(certifi.where())")
@@ -164,8 +164,8 @@ The WhatsApp interface validates all incoming webhooks:
    using HMAC-SHA256. If the secret is not set, signature validation is disabled with a warning.
 2. **Replay protection** — Message timestamps must be within 5 minutes of server time.
 
-For local development, set `APP_ENV=development` to skip signature validation
-(never use this in production).
+For local development, omit `WHATSAPP_APP_SECRET` to skip signature validation
+(never do this in production).
 
 ## WhatsApp Formatting
 
