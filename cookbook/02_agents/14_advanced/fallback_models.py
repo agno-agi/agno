@@ -2,17 +2,19 @@
 Fallback Models
 =============================
 
-Example demonstrating how to configure fallback models for an Agent.
+Example demonstrating how to configure fallback models for an Agent
+using FallbackConfig.
 
-- fallback_models: tried on any error from the primary model.
-- rate_limit_fallbacks: tried specifically on rate-limit (429) errors.
-- context_window_fallbacks: tried specifically on context-window-exceeded errors.
+- models: tried on any error from the primary model.
+- rate_limit_models: tried specifically on rate-limit (429) errors.
+- context_window_models: tried specifically on context-window-exceeded errors.
 
-When a specific fallback list (rate_limit_fallbacks or context_window_fallbacks)
-is configured and matches the error type, it takes priority over fallback_models.
+When a specific fallback list (rate_limit_models or context_window_models)
+is configured and matches the error type, it takes priority over models.
 """
 
 from agno.agent import Agent
+from agno.agent.fallback_config import FallbackConfig
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 
@@ -21,7 +23,9 @@ from agno.models.openai import OpenAIChat
 # ---------------------------------------------------------------------------
 agent_with_fallback = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    fallback_models=[Claude(id="claude-sonnet-4-20250514")],
+    fallback_config=FallbackConfig(
+        models=[Claude(id="claude-sonnet-4-20250514")],
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -29,19 +33,21 @@ agent_with_fallback = Agent(
 # ---------------------------------------------------------------------------
 agent_with_specific_fallbacks = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    # On rate-limit errors, try these models (in order)
-    rate_limit_fallbacks=[
-        OpenAIChat(id="gpt-4o-mini"),
-        Claude(id="claude-sonnet-4-20250514"),
-    ],
-    # On context-window-exceeded errors, try a model with a larger context window
-    context_window_fallbacks=[
-        Claude(id="claude-sonnet-4-20250514"),
-    ],
-    # General fallback for all other errors
-    fallback_models=[
-        Claude(id="claude-sonnet-4-20250514"),
-    ],
+    fallback_config=FallbackConfig(
+        # On rate-limit errors, try these models (in order)
+        rate_limit_models=[
+            OpenAIChat(id="gpt-4o-mini"),
+            Claude(id="claude-sonnet-4-20250514"),
+        ],
+        # On context-window-exceeded errors, try a model with a larger context window
+        context_window_models=[
+            Claude(id="claude-sonnet-4-20250514"),
+        ],
+        # General fallback for all other errors
+        models=[
+            Claude(id="claude-sonnet-4-20250514"),
+        ],
+    ),
 )
 
 # ---------------------------------------------------------------------------

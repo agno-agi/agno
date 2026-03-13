@@ -22,21 +22,25 @@ def _get_fallback_models(agent: "Agent", error: Exception) -> Optional[List[Mode
     """Return the appropriate fallback list for the given error.
 
     Priority:
-    1. Error-specific fallbacks (rate_limit_fallbacks / context_window_fallbacks)
-    2. General fallback_models
+    1. Error-specific fallbacks (rate_limit_models / context_window_models)
+    2. General fallback models
     """
-    if isinstance(error, ModelRateLimitError) and agent.rate_limit_fallbacks:
-        return agent.rate_limit_fallbacks
-    if isinstance(error, ContextWindowExceededError) and agent.context_window_fallbacks:
-        return agent.context_window_fallbacks
+    config = agent.fallback_config
+    if config is None:
+        return None
+
+    if isinstance(error, ModelRateLimitError) and config.rate_limit_models:
+        return config.rate_limit_models  # type: ignore[return-value]
+    if isinstance(error, ContextWindowExceededError) and config.context_window_models:
+        return config.context_window_models  # type: ignore[return-value]
     # For any ModelProviderError that wasn't already classified, try to classify it
     if isinstance(error, ModelProviderError):
         classified = Model.classify_error(error)
-        if isinstance(classified, ModelRateLimitError) and agent.rate_limit_fallbacks:
-            return agent.rate_limit_fallbacks
-        if isinstance(classified, ContextWindowExceededError) and agent.context_window_fallbacks:
-            return agent.context_window_fallbacks
-    return agent.fallback_models
+        if isinstance(classified, ModelRateLimitError) and config.rate_limit_models:
+            return config.rate_limit_models  # type: ignore[return-value]
+        if isinstance(classified, ContextWindowExceededError) and config.context_window_models:
+            return config.context_window_models  # type: ignore[return-value]
+    return config.models or None  # type: ignore[return-value]
 
 
 def call_model_with_fallback(

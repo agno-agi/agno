@@ -230,32 +230,18 @@ def get_models(agent: Agent) -> None:
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
-    if agent.fallback_models is not None:
-        resolved: list = []
-        for fm in agent.fallback_models:
-            resolved_model = get_model(fm)
-            if resolved_model is not None:
-                resolved_model.model_type = ModelType.MODEL
-                resolved.append(resolved_model)
-        agent.fallback_models = resolved if resolved else None
-
-    if agent.rate_limit_fallbacks is not None:
-        resolved_rl: list = []
-        for fm in agent.rate_limit_fallbacks:
-            resolved_model = get_model(fm)
-            if resolved_model is not None:
-                resolved_model.model_type = ModelType.MODEL
-                resolved_rl.append(resolved_model)
-        agent.rate_limit_fallbacks = resolved_rl if resolved_rl else None
-
-    if agent.context_window_fallbacks is not None:
-        resolved_cw: list = []
-        for fm in agent.context_window_fallbacks:
-            resolved_model = get_model(fm)
-            if resolved_model is not None:
-                resolved_model.model_type = ModelType.MODEL
-                resolved_cw.append(resolved_model)
-        agent.context_window_fallbacks = resolved_cw if resolved_cw else None
+    if agent.fallback_config is not None:
+        config = agent.fallback_config
+        for attr in ("models", "rate_limit_models", "context_window_models"):
+            raw_list = getattr(config, attr)
+            if raw_list:
+                resolved: list = []
+                for fm in raw_list:
+                    resolved_model = get_model(fm)
+                    if resolved_model is not None:
+                        resolved_model.model_type = ModelType.MODEL
+                        resolved.append(resolved_model)
+                setattr(config, attr, resolved)
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
