@@ -1182,8 +1182,6 @@ def _run_stream(
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
-                    error_type=getattr(e, "type", None),
-                    error_id=getattr(e, "error_id", None),
                     additional_data=getattr(e, "additional_data", None),
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -2404,8 +2402,6 @@ async def _arun_stream(
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
-                    error_type=getattr(e, "type", None),
-                    error_id=getattr(e, "error_id", None),
                     additional_data=getattr(e, "additional_data", None),
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -3377,8 +3373,6 @@ def _continue_run_stream(
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
-                    error_type=getattr(e, "type", None),
-                    error_id=getattr(e, "error_id", None),
                     additional_data=getattr(e, "additional_data", None),
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -3897,8 +3891,6 @@ async def _acontinue_run(
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
-                    error_type=getattr(e, "type", None),
-                    error_id=getattr(e, "error_id", None),
                     additional_data=getattr(e, "additional_data", None),
                 )  # type: ignore
                 run_response.events = add_error_event(error=run_error, events=run_response.events)  # type: ignore
@@ -4388,8 +4380,6 @@ async def _acontinue_run_stream(
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
-                    error_type=getattr(e, "type", None),
-                    error_id=getattr(e, "error_id", None),
                     additional_data=getattr(e, "additional_data", None),
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
