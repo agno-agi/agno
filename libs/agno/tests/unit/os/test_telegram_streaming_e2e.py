@@ -74,7 +74,7 @@ def _build_telegram_client(
         agent=agent,
         team=team,
         workflow=workflow,
-        stream=stream,
+        streaming=stream,
         show_reasoning=show_reasoning,
     )
     if token is not None:
@@ -129,8 +129,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         assert state.build_display_html() == ""
@@ -143,8 +142,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         state.add_status("Reasoning...")
@@ -160,8 +158,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         state.accumulated_content = "Hello **world**"
@@ -177,8 +174,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         state.add_status("Used web_search")
@@ -188,7 +184,7 @@ class TestStreamState:
         assert "Used web_search" in html
         assert "Result" in html
 
-    def test_resolve_all_pending(self):
+    def test_close_pending_statuses(self):
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -196,14 +192,13 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         state.add_status("Using tool...")
         state.add_status("Already done")
         state.add_status("Reasoning...")
-        state.resolve_all_pending()
+        state.close_pending_statuses()
         assert state.status_lines == ["Using tool", "Already done", "Reasoning"]
 
     def test_update_status_replaces_matching_line(self):
@@ -214,13 +209,12 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         state.add_status("Using web_search...")
         state.add_status("Reasoning...")
-        state.update_status("Using web_search...", "Used web_search")
+        state.replace_status("Using web_search...", "Used web_search")
         assert state.status_lines == ["Used web_search", "Reasoning..."]
 
     def test_html_escaping_in_status(self):
@@ -231,8 +225,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         state.add_status("Using <dangerous>&tool...")
@@ -250,8 +243,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         await state.send_or_edit("")
@@ -270,8 +262,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         await state.send_or_edit("<b>hello</b>")
@@ -289,8 +280,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         await state.send_or_edit("<b>hello</b>")
@@ -307,8 +297,7 @@ class TestStreamState:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         await state.finalize()
@@ -322,66 +311,66 @@ class TestStreamState:
 
 class TestBotState:
     def _make_bot_state(self):
-        from agno.os.interfaces.telegram.state import BotState, resolve_session_config
+        from agno.os.interfaces.telegram.state import BotState, build_session_store_config
 
         agent = AsyncMock()
         agent.db = None
-        cfg = resolve_session_config(agent, "agent")
+        cfg = build_session_store_config(agent, "agent")
         return BotState(bot=AsyncMock(), session_config=cfg)
 
     def test_dedup_rejects_duplicate(self):
         bot_state = self._make_bot_state()
-        assert bot_state.check_dedup(1) is False
-        assert bot_state.check_dedup(1) is True
+        assert bot_state.is_duplicate_update(1) is False
+        assert bot_state.is_duplicate_update(1) is True
 
     def test_dedup_allows_different_ids(self):
         bot_state = self._make_bot_state()
-        assert bot_state.check_dedup(1) is False
-        assert bot_state.check_dedup(2) is False
+        assert bot_state.is_duplicate_update(1) is False
+        assert bot_state.is_duplicate_update(2) is False
 
     @pytest.mark.asyncio
     async def test_find_latest_session_returns_none_when_empty(self):
         from agno.db.base import AsyncBaseDb
-        from agno.os.interfaces.telegram.state import find_latest_session, resolve_session_config
+        from agno.os.interfaces.telegram.state import build_session_store_config, find_latest_session_id
 
         mock_db = AsyncMock(spec=AsyncBaseDb)
         mock_db.get_sessions.return_value = ([], 0)
         agent = AsyncMock()
         agent.db = mock_db
-        cfg = resolve_session_config(agent, "agent")
+        cfg = build_session_store_config(agent, "agent")
 
-        result = await find_latest_session(cfg, "user1", "test-agent")
+        result = await find_latest_session_id(cfg, "user1", "test-agent")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_find_latest_session_returns_session_id(self):
         from agno.db.base import AsyncBaseDb
-        from agno.os.interfaces.telegram.state import find_latest_session, resolve_session_config
+        from agno.os.interfaces.telegram.state import build_session_store_config, find_latest_session_id
 
         mock_db = AsyncMock(spec=AsyncBaseDb)
         mock_db.get_sessions.return_value = ([{"session_id": "tg:12345:abc123"}], 1)
         agent = AsyncMock()
         agent.db = mock_db
-        cfg = resolve_session_config(agent, "agent")
+        cfg = build_session_store_config(agent, "agent")
 
-        result = await find_latest_session(cfg, "user1", "test-agent")
+        result = await find_latest_session_id(cfg, "user1", "test-agent", session_scope="tg:12345")
         assert result == "tg:12345:abc123"
         mock_db.get_sessions.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_find_latest_session_no_cache(self):
         from agno.db.base import AsyncBaseDb
-        from agno.os.interfaces.telegram.state import find_latest_session, resolve_session_config
+        from agno.os.interfaces.telegram.state import build_session_store_config, find_latest_session_id
 
         mock_db = AsyncMock(spec=AsyncBaseDb)
         mock_db.get_sessions.return_value = ([{"session_id": "tg:12345:abc123"}], 1)
         agent = AsyncMock()
         agent.db = mock_db
-        cfg = resolve_session_config(agent, "agent")
+        cfg = build_session_store_config(agent, "agent")
 
         # Each call queries DB — no caching
-        await find_latest_session(cfg, "user1", "test-agent")
-        await find_latest_session(cfg, "user1", "test-agent")
+        await find_latest_session_id(cfg, "user1", "test-agent")
+        await find_latest_session_id(cfg, "user1", "test-agent")
         assert mock_db.get_sessions.await_count == 2
 
 
@@ -393,11 +382,11 @@ class TestBotState:
 class TestEventDispatch:
     @pytest.mark.asyncio
     async def test_normalize_strips_team_prefix(self):
-        from agno.os.interfaces.telegram.events import _normalize_event
+        from agno.os.interfaces.telegram.events import _strip_team_prefix
 
-        assert _normalize_event("TeamRunContent") == "RunContent"
-        assert _normalize_event("RunContent") == "RunContent"
-        assert _normalize_event("TeamToolCallStarted") == "ToolCallStarted"
+        assert _strip_team_prefix("TeamRunContent") == "RunContent"
+        assert _strip_team_prefix("RunContent") == "RunContent"
+        assert _strip_team_prefix("TeamToolCallStarted") == "ToolCallStarted"
 
     @pytest.mark.asyncio
     async def test_all_run_events_have_handlers(self):
@@ -456,7 +445,7 @@ class TestEventDispatch:
 
     @pytest.mark.asyncio
     async def test_workflow_suppression(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -464,21 +453,20 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=True,
+            entity_type="workflow",
             error_message="err",
         )
         chunk = MagicMock()
         chunk.content = "should be suppressed"
         # RunContent is suppressed in workflow mode
-        result = await process_event("RunContent", chunk, state)
+        result = await dispatch_stream_event("RunContent", chunk, state)
         assert result is False
         assert state.accumulated_content == ""  # content was suppressed
 
     @pytest.mark.asyncio
     async def test_team_intermediate_content_suppressed(self):
         """For teams, intermediate content should be ignored (team leader consolidates)."""
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -486,21 +474,20 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=True,
-            is_workflow=False,
+            entity_type="team",
             error_message="err",
         )
         chunk = MagicMock()
         chunk.content = "intermediate from member"
         chunk.event = "RunIntermediateContent"
-        result = await process_event("RunIntermediateContent", chunk, state)
+        result = await dispatch_stream_event("RunIntermediateContent", chunk, state)
         assert result is False
         assert state.accumulated_content == ""  # suppressed for teams
 
     @pytest.mark.asyncio
     async def test_agent_intermediate_content_accumulated(self):
         """For non-team agents, intermediate content should be accumulated."""
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -508,19 +495,18 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         chunk = MagicMock()
         chunk.content = "some content"
-        result = await process_event("RunIntermediateContent", chunk, state)
+        result = await dispatch_stream_event("RunIntermediateContent", chunk, state)
         assert result is False
         assert state.accumulated_content == "some content"
 
     @pytest.mark.asyncio
     async def test_run_error_is_terminal(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -528,20 +514,19 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="Error occurred",
         )
         chunk = MagicMock()
         chunk.content = "something went wrong"
-        result = await process_event("RunError", chunk, state)
+        result = await dispatch_stream_event("RunError", chunk, state)
         assert result is True  # terminal
         assert state.accumulated_content != ""
         assert state.accumulated_content == "Error occurred"
 
     @pytest.mark.asyncio
     async def test_run_cancelled_is_terminal(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -549,18 +534,17 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="Error occurred",
         )
         chunk = MagicMock()
         chunk.content = "cancelled"
-        result = await process_event("RunCancelled", chunk, state)
+        result = await dispatch_stream_event("RunCancelled", chunk, state)
         assert result is True
 
     @pytest.mark.asyncio
     async def test_workflow_error_is_terminal(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -568,18 +552,17 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=True,
+            entity_type="workflow",
             error_message="WF Error",
         )
         chunk = MagicMock()
-        result = await process_event("WorkflowError", chunk, state)
+        result = await dispatch_stream_event("WorkflowError", chunk, state)
         assert result is True
         assert state.accumulated_content != ""
 
     @pytest.mark.asyncio
     async def test_unknown_event_ignored(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -587,18 +570,17 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         chunk = MagicMock()
-        result = await process_event("SomeUnknownEvent", chunk, state)
+        result = await dispatch_stream_event("SomeUnknownEvent", chunk, state)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_tool_call_team_agent_prefix(self):
         """In team mode, tool call status should include [AgentName] prefix."""
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         bot = AsyncMock()
@@ -608,8 +590,7 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=True,
-            is_workflow=False,
+            entity_type="team",
             error_message="err",
         )
         chunk = MagicMock()
@@ -618,12 +599,12 @@ class TestEventDispatch:
         tool.tool_args = None
         chunk.tool = tool
         chunk.agent_name = "Researcher"
-        await process_event("ToolCallStarted", chunk, state)
-        assert any("[Researcher] Using web_search..." in line for line in state.status_lines)
+        await dispatch_stream_event("ToolCallStarted", chunk, state)
+        assert any("Researcher: web_search..." in line for line in state.status_lines)
 
     @pytest.mark.asyncio
     async def test_memory_update_lifecycle(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         bot = AsyncMock()
@@ -633,21 +614,20 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=False,
+            entity_type="agent",
             error_message="err",
         )
         chunk = MagicMock()
-        await process_event("MemoryUpdateStarted", chunk, state)
+        await dispatch_stream_event("MemoryUpdateStarted", chunk, state)
         assert "Updating memory..." in state.status_lines
 
-        await process_event("MemoryUpdateCompleted", chunk, state)
-        assert "Memory updated" in state.status_lines
+        await dispatch_stream_event("MemoryUpdateCompleted", chunk, state)
+        assert "Updating memory" in state.status_lines
         assert "Updating memory..." not in state.status_lines
 
     @pytest.mark.asyncio
     async def test_step_output_sets_workflow_final_content(self):
-        from agno.os.interfaces.telegram.events import process_event
+        from agno.os.interfaces.telegram.events import dispatch_stream_event
         from agno.os.interfaces.telegram.state import StreamState
 
         state = StreamState(
@@ -655,13 +635,12 @@ class TestEventDispatch:
             chat_id=1,
             reply_to=None,
             message_thread_id=None,
-            is_team=False,
-            is_workflow=True,
+            entity_type="workflow",
             error_message="err",
         )
         chunk = MagicMock()
         chunk.content = "final output from step"
-        await process_event("StepOutput", chunk, state)
+        await dispatch_stream_event("StepOutput", chunk, state)
         assert state.workflow_final_content == "final output from step"
 
 
