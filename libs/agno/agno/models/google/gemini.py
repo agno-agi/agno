@@ -739,6 +739,11 @@ class Gemini(Model):
             messages (List[Message]): The list of messages to convert.
             compress_tool_results: Whether to compress tool results.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages: List = []
         system_message = None
 

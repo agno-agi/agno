@@ -7,6 +7,44 @@ from agno.models.message import Message
 from agno.utils.log import log_debug
 
 
+def normalize_tool_messages(messages: List[Message]) -> List[Message]:
+    """
+    Split combined tool result messages into individual canonical messages.
+
+    Older Gemini sessions stored all tool results in a single Message with:
+      role="tool", tool_call_id=None, content=[list],
+      tool_calls=[{"tool_call_id": ..., "tool_name": ..., "content": ...}, ...]
+
+    This function detects that format and expands each entry into a separate
+    canonical Message(role="tool", tool_call_id=..., tool_name=..., content=...).
+
+    Messages already in canonical format are passed through unchanged.
+    """
+    result: List[Message] = []
+    for msg in messages:
+        if msg.role == "tool" and msg.tool_call_id is None and msg.tool_calls and isinstance(msg.tool_calls, list):
+            # Combined format — split into individual messages
+            content_list = msg.content if isinstance(msg.content, list) else []
+            for idx, tc in enumerate(msg.tool_calls):
+                # Prefer original content from the list, fall back to tool_call content
+                if idx < len(content_list):
+                    tc_content = content_list[idx]
+                else:
+                    tc_content = tc.get("content", "")
+                split_msg = Message(
+                    role="tool",
+                    tool_call_id=tc.get("tool_call_id"),
+                    tool_name=tc.get("tool_name"),
+                    content=tc_content,
+                )
+                if idx == 0 and msg.metrics is not None:
+                    split_msg.metrics = msg.metrics
+                result.append(split_msg)
+        else:
+            result.append(msg)
+    return result
+
+
 def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     """
     Filter messages (in-place) to keep only the most recent N tool calls.

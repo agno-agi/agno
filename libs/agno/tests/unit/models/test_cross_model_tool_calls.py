@@ -10,7 +10,7 @@ import json
 import pytest
 
 from agno.models.message import Message
-from agno.utils.message import reconcile_tool_call_ids, remap_tool_call_ids
+from agno.utils.message import normalize_tool_messages, reconcile_tool_call_ids, remap_tool_call_ids
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -399,3 +399,83 @@ class TestGeminiFormatMessages:
         formatted, system = gemini._format_messages(msgs)
         # Should format without crashing
         assert len(formatted) > 0
+
+
+# ---------------------------------------------------------------------------
+# normalize_tool_messages — backwards compat for old Gemini combined format
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeToolMessages:
+    def test_splits_combined_format(self):
+        """Old Gemini combined tool message should be split into individual canonical messages."""
+        combined = Message(
+            role="tool",
+            content=["Paris: Sunny", "London: Rainy"],
+            tool_calls=[
+                {"tool_call_id": "id_001", "tool_name": "get_weather", "content": "Paris: Sunny"},
+                {"tool_call_id": "id_002", "tool_name": "get_weather", "content": "London: Rainy"},
+            ],
+        )
+        result = normalize_tool_messages([combined])
+        assert len(result) == 2
+        assert result[0].role == "tool"
+        assert result[0].tool_call_id == "id_001"
+        assert result[0].tool_name == "get_weather"
+        assert result[0].content == "Paris: Sunny"
+        assert result[1].tool_call_id == "id_002"
+        assert result[1].content == "London: Rainy"
+
+    def test_passthrough_canonical_messages(self):
+        """Canonical individual tool messages should pass through unchanged."""
+        msgs = [
+            _tool_msg("id_001", content="result1"),
+            _tool_msg("id_002", content="result2"),
+        ]
+        result = normalize_tool_messages(msgs)
+        assert len(result) == 2
+        assert result[0].tool_call_id == "id_001"
+        assert result[1].tool_call_id == "id_002"
+
+    def test_mixed_combined_and_canonical(self):
+        """Mix of combined and canonical messages should be handled."""
+        combined = Message(
+            role="tool",
+            content=["result1", "result2"],
+            tool_calls=[
+                {"tool_call_id": "id_001", "tool_name": "func1", "content": "result1"},
+                {"tool_call_id": "id_002", "tool_name": "func2", "content": "result2"},
+            ],
+        )
+        canonical = _tool_msg("id_003", content="result3")
+        user_msg = Message(role="user", content="Hello")
+
+        result = normalize_tool_messages([user_msg, combined, canonical])
+        assert len(result) == 4  # user + 2 split + 1 canonical
+        assert result[0].role == "user"
+        assert result[1].tool_call_id == "id_001"
+        assert result[2].tool_call_id == "id_002"
+        assert result[3].tool_call_id == "id_003"
+
+    def test_preserves_metrics_on_first(self):
+        """Metrics from combined message should be preserved on first split message only."""
+        from agno.models.metrics import MessageMetrics
+
+        metrics = MessageMetrics(input_tokens=100)
+        combined = Message(
+            role="tool",
+            content=["r1", "r2"],
+            tool_calls=[
+                {"tool_call_id": "id_001", "tool_name": "f1", "content": "r1"},
+                {"tool_call_id": "id_002", "tool_name": "f2", "content": "r2"},
+            ],
+            metrics=metrics,
+        )
+        result = normalize_tool_messages([combined])
+        assert result[0].metrics is not None
+        assert result[0].metrics.input_tokens == 100
+        assert result[1].metrics.input_tokens == 0
+
+    def test_empty_list(self):
+        """Empty message list should return empty."""
+        assert normalize_tool_messages([]) == []
