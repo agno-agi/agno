@@ -35,7 +35,6 @@ def _install_fake_telebot():
 _install_fake_telebot()
 
 from agno.os.interfaces.telegram import Telegram  # noqa: E402
-from agno.os.interfaces.telegram import security as _security_mod  # noqa: E402  # kept for potential future use
 from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html  # noqa: E402
 from agno.os.interfaces.telegram.security import (  # noqa: E402
     _is_dev_mode as is_development_mode,
