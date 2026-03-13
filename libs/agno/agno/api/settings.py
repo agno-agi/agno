@@ -17,6 +17,7 @@ class AgnoAPISettings(BaseSettings):
     alpha_features: bool = False
 
     api_url: str = "https://os-api.agno.com"
+    telemetry_timeout: int = 3
 
     model_config = SettingsConfigDict(env_prefix="AGNO_")
 
