@@ -71,7 +71,10 @@ from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from agno.tools.google.oauth.token_store import BaseGoogleTokenStore
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -94,19 +97,54 @@ except ImportError:
 
 
 def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
+    """Decorator to ensure authentication before executing a function.
+
+    When token_store is set on the toolkit, extracts (workspace_id, user_id) from
+    run_context to load per-user credentials from the database.
+    Falls back to legacy single-user _auth() when token_store is None.
+    """
+    import inspect
 
     @wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self, *args, run_context=None, **kwargs):
         try:
-            if not self.creds or not self.creds.valid:
+            workspace_id = None
+            user_id = None
+            if run_context:
+                user_id = run_context.user_id
+                workspace_id = (run_context.metadata or {}).get("workspace_id", "default")
+
+            if getattr(self, "token_store", None) and workspace_id and user_id:
+                # Per-user mode: load credentials from token store
+                user_key = (workspace_id, user_id)
+                if not self.creds or not self.creds.valid or self._current_user_key != user_key:
+                    self._auth(workspace_id=workspace_id, user_id=user_id)
+                    self.service = None
+            elif not self.creds or not self.creds.valid:
                 self._auth()
+
             if not self.service:
                 self.service = build("gmail", "v1", credentials=self.creds)
         except Exception as e:
+            from agno.exceptions import StopAgentRun
+
+            if isinstance(e, StopAgentRun):
+                raise
             log_error(f"Gmail authentication failed: {e}")
             return json.dumps({"error": f"Gmail authentication failed: {e}"})
         return func(self, *args, **kwargs)
+
+    # Inject run_context into visible signature so the framework auto-injects it.
+    # @wraps sets __wrapped__, which inspect.signature() follows back to the
+    # original function. We override __signature__ and remove __wrapped__ so
+    # the framework sees run_context and injects it via _build_entrypoint_args().
+    orig_sig = inspect.signature(func)
+    if "run_context" not in orig_sig.parameters:
+        params = list(orig_sig.parameters.values())
+        params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
+        wrapper.__signature__ = orig_sig.replace(parameters=params)
+        if hasattr(wrapper, "__wrapped__"):
+            del wrapper.__wrapped__
 
     return wrapper
 
@@ -152,6 +190,7 @@ class GmailTools(Toolkit):
         scopes: Optional[List[str]] = None,
         port: Optional[int] = None,
         login_hint: Optional[str] = None,
+        token_store: Optional["BaseGoogleTokenStore"] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
         attachment_dir: Optional[str] = None,
@@ -230,6 +269,9 @@ class GmailTools(Toolkit):
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.port = port
         self.login_hint = login_hint
+        self.token_store = token_store
+        self.oauth_base_url: Optional[str] = kwargs.pop("oauth_base_url", None)
+        self._current_user_key: Optional[Tuple[str, str]] = None
         self.include_html = include_html
         self.max_body_length = max_body_length
         self.attachment_dir = attachment_dir
@@ -370,8 +412,25 @@ class GmailTools(Toolkit):
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
 
-    def _auth(self) -> None:
-        """Authenticate with Gmail API using service account (priority) or OAuth flow."""
+    def _auth(self, workspace_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+        """Authenticate with Gmail API.
+
+        When workspace_id and user_id are provided (per-user mode via token_store),
+        loads credentials from the database. Otherwise falls back to legacy
+        service account or local OAuth flow.
+        """
+        # Per-user mode: load from token store (used when called from Slack)
+        if self.token_store and workspace_id and user_id:
+            from agno.tools.google.oauth.token_store import load_user_credentials
+
+            self.creds = load_user_credentials(
+                self.token_store, workspace_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
+            )
+            self._current_user_key = (workspace_id, user_id)
+            return
+
+        # Legacy mode below — unchanged from original
+
         if self.creds and self.creds.valid:
             return
 

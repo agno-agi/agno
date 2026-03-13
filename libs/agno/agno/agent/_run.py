@@ -1179,7 +1179,11 @@ def _run_stream(
 
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    additional_data=getattr(e, "additional_data", None),
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -2395,7 +2399,11 @@ async def _arun_stream(
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    additional_data=getattr(e, "additional_data", None),
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -3362,7 +3370,11 @@ def _continue_run_stream(
                     continue
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    additional_data=getattr(e, "additional_data", None),
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -3876,7 +3888,11 @@ async def _acontinue_run(
 
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))  # type: ignore
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    additional_data=getattr(e, "additional_data", None),
+                )  # type: ignore
                 run_response.events = add_error_event(error=run_error, events=run_response.events)  # type: ignore
 
                 # If the content is None, set it to the error message
@@ -4361,7 +4377,11 @@ async def _acontinue_run_stream(
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    additional_data=getattr(e, "additional_data", None),
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message

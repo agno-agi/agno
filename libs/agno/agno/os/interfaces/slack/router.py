@@ -11,6 +11,8 @@ from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
+    extract_oauth_from_exception,
+    oauth_connect_blocks,
     send_slack_message_async,
     should_respond,
     upload_response_media_async,
@@ -178,7 +180,29 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            # Pass workspace_id so toolkits can load per-user OAuth tokens
+            _workspace_id = event.get("team")
+            if _workspace_id:
+                run_kwargs["metadata"] = {"workspace_id": _workspace_id}
+
+            try:
+                response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            except Exception as _auth_exc:
+                _oauth = extract_oauth_from_exception(_auth_exc)
+                if _oauth:
+                    await async_client.chat_postMessage(
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
+                        blocks=oauth_connect_blocks(
+                            _oauth.get("provider", ""),
+                            _oauth["auth_url"],
+                            channel_id=ctx["channel_id"],
+                            thread_ts=ctx["thread_id"],
+                        ),
+                    )
+                    return
+                raise
 
             if response:
                 if response.status == "ERROR":
@@ -283,7 +307,28 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            # Pass workspace_id so toolkits can load per-user OAuth tokens
+            if team_id:
+                run_kwargs["metadata"] = {"workspace_id": team_id}
+
+            try:
+                response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            except Exception as _auth_exc:
+                _oauth = extract_oauth_from_exception(_auth_exc)
+                if _oauth:
+                    await async_client.chat_postMessage(
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
+                        blocks=oauth_connect_blocks(
+                            _oauth.get("provider", ""),
+                            _oauth["auth_url"],
+                            channel_id=ctx["channel_id"],
+                            thread_ts=ctx["thread_id"],
+                        ),
+                    )
+                    return
+                raise
 
             if response_stream is None:
                 try:
@@ -328,10 +373,35 @@ def attach_routes(
 
             # Default to complete when no terminal error/cancel event arrived
             final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
+
+            # Auth required — stop stream with Connect button
+            if state.auth_required and state.auth_required.get("auth_url"):
+                provider = state.auth_required.get("provider", "")
+                # Resolve any leftover in-progress task cards so Slack doesn't
+                # auto-resolve them as "Something went wrong"
+                auth_chunks = state.resolve_all_pending("complete") if state.task_cards else []
+                # Flush any agent text already streamed, then append the button
+                stop_kw: Dict[str, Any] = {
+                    "blocks": oauth_connect_blocks(
+                        provider,
+                        state.auth_required["auth_url"],
+                        channel_id=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                    ),
+                }
+                remaining = state.flush() if state.has_content() else ""
+                if remaining:
+                    stop_kw["markdown_text"] = remaining
+                if auth_chunks:
+                    stop_kw["chunks"] = auth_chunks
+                await stream.stop(**stop_kw)
+                return
+
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
             stop_kwargs: Dict[str, Any] = {}
-            if state.has_content():
-                stop_kwargs["markdown_text"] = state.flush()
+            _remaining = state.flush() if state.has_content() else ""
+            if _remaining:
+                stop_kwargs["markdown_text"] = _remaining
             if completion_chunks:
                 stop_kwargs["chunks"] = completion_chunks
             await stream.stop(**stop_kwargs)
@@ -339,6 +409,43 @@ def attach_routes(
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 
         except Exception as e:
+            # Clean up stream first so Slack doesn't show stuck progress indicators
+            if stream is not None:
+                try:
+                    stop_kwargs_err: Dict[str, Any] = {}
+                    if state.task_cards:
+                        stop_kwargs_err["chunks"] = state.resolve_all_pending("error")
+                    await stream.stop(**stop_kwargs_err)
+                except Exception:
+                    pass
+                stream = None
+
+            # Auth already handled in the normal flow — don't post a duplicate
+            if state.auth_required:
+                return
+
+            # OAuth required during streaming — send Connect button instead of error
+            _oauth = extract_oauth_from_exception(e)
+            if _oauth:
+                try:
+                    await async_client.assistant_threads_setStatus(
+                        channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
+                    )
+                except Exception:
+                    pass
+                await async_client.chat_postMessage(
+                    channel=ctx["channel_id"],
+                    thread_ts=ctx["thread_id"],
+                    text=f"I need access to your {_oauth.get('provider', '')} account to help with this.",
+                    blocks=oauth_connect_blocks(
+                        _oauth.get("provider", ""),
+                        _oauth["auth_url"],
+                        channel_id=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                    ),
+                )
+                return
+
             log_error(
                 f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
             )
@@ -348,15 +455,6 @@ def attach_routes(
                 )
             except Exception:
                 pass
-            # Clean up open stream so Slack doesn't show stuck progress indicators
-            if stream is not None:
-                try:
-                    stop_kwargs_err: Dict[str, Any] = {}
-                    if state.task_cards:
-                        stop_kwargs_err["chunks"] = state.resolve_all_pending("error")
-                    await stream.stop(**stop_kwargs_err)
-                except Exception:
-                    pass
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],

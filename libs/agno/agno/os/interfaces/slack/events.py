@@ -190,6 +190,21 @@ async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, s
 
 
 async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # Check for structured auth requirement from StopAgentRun additional_data
+    tool = getattr(chunk, "tool", None)
+    extra = getattr(tool, "additional_data", None) if tool else None
+    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth":
+        state.auth_required = {
+            "provider": extra.get("provider", ""),
+            "auth_url": extra.get("auth_url", ""),
+        }
+        # Resolve the tool card so Slack doesn't show "Something went wrong"
+        ref = _extract_tool_ref(chunk, state)
+        if ref.tid and ref.tid in state.task_cards:
+            state.complete_task(ref.tid)
+            await _emit_task(stream, ref.tid, ref.label, "complete")
+        return True
+
     ref = _extract_tool_ref(chunk, state)
     if ref.tid:
         # Backfill card when Completed arrives without a prior Started event
@@ -207,6 +222,7 @@ async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, str
     ref = _extract_tool_ref(chunk, state, fallback_id=f"tool_error_{state.error_count}")
     error_msg = getattr(chunk, "error", None) or "Tool call failed"
     state.error_count += 1
+
     if ref.tid:
         if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
@@ -250,6 +266,17 @@ async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, strea
 
 
 async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # StopAgentRun with OAuth additional_data also emits RunError — suppress it
+    if state.auth_required:
+        return True
+    extra = getattr(chunk, "additional_data", None)
+    if isinstance(extra, dict) and extra.get("requirement_type") == "oauth":
+        # Set auth_required here too, in case RunError arrives before tool_call_completed
+        state.auth_required = {
+            "provider": extra.get("provider", ""),
+            "auth_url": extra.get("auth_url", ""),
+        }
+        return True
     state.error_count += 1
     error_msg = getattr(chunk, "content", None) or "An error occurred"
     state.append_error(error_msg)
