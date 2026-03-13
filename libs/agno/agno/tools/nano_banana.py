@@ -33,7 +33,7 @@ except ImportError as exc:
 
 
 # Note: Expand this list as new models become supported by the Google Content Generation API.
-ALLOWED_MODELS = ["gemini-2.5-flash-image"]
+ALLOWED_MODELS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"]
 ALLOWED_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
 
 
