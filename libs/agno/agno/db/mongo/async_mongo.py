@@ -45,8 +45,8 @@ except ImportError:
 
 try:
     from pymongo import AsyncMongoClient  # type: ignore
-    from pymongo.collection import AsyncCollection  # type: ignore
-    from pymongo.database import AsyncDatabase  # type: ignore
+    from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
+    from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
 
     PYMONGO_ASYNC_AVAILABLE = True
 except ImportError:
@@ -272,7 +272,11 @@ class AsyncMongoDb(AsyncBaseDb):
         all database connections.
         """
         if self._client is not None:
-            self._client.close()
+            import inspect
+
+            close_result = self._client.close()
+            if inspect.isawaitable(close_result):
+                await close_result
             self._client = None
             self._database = None
 
