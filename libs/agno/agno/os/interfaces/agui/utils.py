@@ -192,6 +192,32 @@ def extract_response_chunk_content(response: RunContentEvent) -> str:
     return get_text_from_message(response.content) if response.content is not None else ""
 
 
+def _extract_source_metadata(chunk: Union[RunOutputEvent, TeamRunOutputEvent]) -> Dict[str, str]:
+    """Extract source metadata (type, id, name) from a chunk for AG-UI event enrichment."""
+    metadata: Dict[str, str] = {}
+    agent_id = getattr(chunk, "agent_id", "")
+    agent_name = getattr(chunk, "agent_name", "")
+    team_id = getattr(chunk, "team_id", "")
+    team_name = getattr(chunk, "team_name", "")
+
+    # Use camelCase keys to stay consistent with ag_ui's alias_generator
+    # (extra fields bypass alias_generator, so we apply the convention manually)
+    if team_id or team_name:
+        metadata["sourceType"] = "team"
+        if team_id:
+            metadata["sourceId"] = team_id
+        if team_name:
+            metadata["sourceName"] = team_name
+    elif agent_id or agent_name:
+        metadata["sourceType"] = "agent"
+        if agent_id:
+            metadata["sourceId"] = agent_id
+        if agent_name:
+            metadata["sourceName"] = agent_name
+
+    return metadata
+
+
 def _create_events_from_chunk(
     chunk: Union[RunOutputEvent, TeamRunOutputEvent],
     message_id: str,
@@ -211,6 +237,9 @@ def _create_events_from_chunk(
         Tuple of (events_to_emit, new_message_started_state, message_id)
     """
     events_to_emit: List[BaseEvent] = []
+
+    # Extract source metadata for enriching AG-UI events
+    source_metadata = _extract_source_metadata(chunk)
 
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_content:
@@ -234,6 +263,7 @@ def _create_events_from_chunk(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=message_id,
                 role="assistant",
+                **source_metadata,
             )
             events_to_emit.append(start_event)
 
