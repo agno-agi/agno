@@ -29,9 +29,11 @@ class OxylabsTools(Toolkit):
                 "No Oxylabs credentials provided. Please set the OXYLABS_USERNAME and OXYLABS_PASSWORD environment variables or pass them to the OxylabsTools constructor."
             )
 
+        sdk_type = "oxylabs-agno-sdk-python/1.0.0 (1.0.0; 64bit)"
+
         try:
             log_debug(f"Initializing Oxylabs client with username: {self.username[:5]}...")
-            self.client = RealtimeClient(self.username, self.password)
+            self.client = RealtimeClient(self.username, self.password, sdk_type=sdk_type)
             log_debug("Oxylabs client initialized successfully")
         except Exception as e:
             log_debug(f"Failed to initialize Oxylabs client: {e}")
