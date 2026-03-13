@@ -147,7 +147,7 @@ class TestStreamState:
         )
         state.add_status("Reasoning...")
         html = state.build_display_html()
-        assert "<blockquote expandable>" in html
+        assert "<blockquote>" in html
         assert "Reasoning..." in html
 
     def test_build_display_html_content_only(self):
@@ -180,7 +180,7 @@ class TestStreamState:
         state.add_status("Used web_search")
         state.accumulated_content = "Result"
         html = state.build_display_html()
-        assert "<blockquote expandable>" in html
+        assert "<blockquote>" in html
         assert "Used web_search" in html
         assert "Result" in html
 
@@ -705,11 +705,7 @@ class TestRouterStreaming:
         assert call_kwargs["yield_run_output"] is True
 
         # Verify status lines were sent (may be via send, edit, or draft)
-        all_calls = (
-            mock_bot.send_message.call_args_list
-            + mock_bot.edit_message_text.call_args_list
-            + mock_bot.send_message_draft.call_args_list
-        )
+        all_calls = mock_bot.send_message.call_args_list + mock_bot.edit_message_text.call_args_list
         all_text = " ".join(str(c) for c in all_calls)
         assert "Reasoning" in all_text
         assert "calculator" in all_text

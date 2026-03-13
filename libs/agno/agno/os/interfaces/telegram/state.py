@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, List, Literal, NamedTuple, Optional, Type, Union
@@ -29,7 +28,6 @@ import re as _re
 _TAG_RE = _re.compile(r"<[^>]+>")
 
 TG_STREAM_EDIT_INTERVAL = 1.0
-TG_TYPING_PREVIEW_INTERVAL = 0.3
 
 EntityType = Literal["agent", "team", "workflow"]
 
@@ -149,8 +147,6 @@ class StreamState:
         message_thread_id: Optional[int],
         entity_type: EntityType,
         error_message: str,
-        # DM-only animated text preview; faster updates, auto-disappears on finalize
-        use_typing_preview: bool = False,
     ):
         self.bot = bot
         self.chat_id = chat_id
@@ -158,8 +154,6 @@ class StreamState:
         self.message_thread_id = message_thread_id
         self.entity_type: EntityType = entity_type
         self.error_message = error_message
-        self.use_typing_preview = use_typing_preview
-        self.typing_preview_id: int = 0
 
         self.sent_message_id: Optional[int] = None
         self.accumulated_content: str = ""
@@ -175,7 +169,7 @@ class StreamState:
 
     def replace_status(self, find: str, replace: str) -> bool:
         for i, line in enumerate(self.status_lines):
-            if find in line:
+            if line == find:
                 self.status_lines[i] = replace
                 return True
         return False
@@ -189,7 +183,7 @@ class StreamState:
         parts: list[str] = []
         if self.status_lines:
             escaped_status = escape_html("\n".join(self.status_lines))
-            parts.append(f"<blockquote expandable>{escaped_status}</blockquote>")
+            parts.append(f"<blockquote>{escaped_status}</blockquote>")
         if self.accumulated_content:
             parts.append(markdown_to_telegram_html(self.accumulated_content))
         return "\n".join(parts)
@@ -209,20 +203,6 @@ class StreamState:
         except Exception as e:
             if "message is not modified" not in str(e):
                 log_warning(f"Failed to edit message: {e}")
-
-    async def _send_typing_preview(self, html: str) -> None:
-        if self.typing_preview_id == 0:
-            self.typing_preview_id = random.randint(1, 2**31 - 1)
-        try:
-            await self.bot.send_message_draft(
-                chat_id=self.chat_id,
-                draft_id=self.typing_preview_id,
-                text=html,
-                parse_mode="HTML",
-                message_thread_id=self.message_thread_id,
-            )
-        except Exception as e:
-            log_warning(f"Failed to send typing preview: {e}")
 
     async def _send_chunks(self, content: str) -> None:
         await send_message(
@@ -250,9 +230,7 @@ class StreamState:
         if not html or not html.strip():
             return
         display = self._truncate_html(html)
-        if self.use_typing_preview:
-            await self._send_typing_preview(display)
-        elif self.sent_message_id is None:
+        if self.sent_message_id is None:
             msg = await self._send_new(display)
             self.sent_message_id = msg.message_id
         else:
@@ -267,9 +245,6 @@ class StreamState:
 
     async def finalize(self) -> None:
         self.close_pending_statuses()
-        # Workflows: drop status blockquote — user watched progress live
-        if self.entity_type == "workflow":
-            self.status_lines.clear()
         final_html = self.build_display_html()
         if not final_html:
             return
@@ -281,14 +256,6 @@ class StreamState:
             await self._finalize_plaintext()
 
     async def _finalize_inner(self, final_html: str) -> None:
-        if self.use_typing_preview:
-            if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
-                msg = await self._send_new(final_html)
-                self.sent_message_id = msg.message_id
-            else:
-                await self._send_chunks(self.accumulated_content)
-            return
-
         if not self.sent_message_id:
             await self._send_chunks(self.accumulated_content or final_html)
             return
@@ -296,10 +263,15 @@ class StreamState:
         if len(final_html) <= TG_MAX_MESSAGE_LENGTH:
             await self._edit(final_html)
         else:
+            # Content too long for one message — send blockquote header + chunked content
             try:
                 await self.bot.delete_message(self.chat_id, self.sent_message_id)
             except Exception:
                 pass
+            # Preserve the status blockquote as a separate message
+            if self.status_lines:
+                status_html = f"<blockquote>{escape_html(chr(10).join(self.status_lines))}</blockquote>"
+                await self._send_new(status_html)
             await self._send_chunks(self.accumulated_content)
 
     async def _finalize_plaintext(self) -> None:

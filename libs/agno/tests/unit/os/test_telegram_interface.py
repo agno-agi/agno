@@ -2487,14 +2487,10 @@ class TestStreamingEnhancedEvents:
             resp = client.post("/telegram/webhook", json=self._text_update("think about this"))
 
         assert resp.status_code == 200
-        # Check that "Reasoning..." was sent in a message (may be via send_message,
-        # edit_message_text, or send_message_draft depending on chat type)
         send_calls = mock_bot.send_message.call_args_list
         edit_calls = mock_bot.edit_message_text.call_args_list
-        draft_calls = mock_bot.send_message_draft.call_args_list
         all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
-        all_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
         assert any("Reasoning..." in t for t in all_texts), f"Expected 'Reasoning...' in messages, got: {all_texts}"
 
     def test_tool_completed_updates_status_line(self, monkeypatch):
@@ -2545,11 +2541,8 @@ class TestStreamingEnhancedEvents:
             resp = client.post("/telegram/webhook", json=self._text_update("search for something"))
 
         assert resp.status_code == 200
-        # Check that "web_search" (completed, no prefix) appears in an edit or draft call
         edit_calls = mock_bot.edit_message_text.call_args_list
-        draft_calls = mock_bot.send_message_draft.call_args_list
         edit_texts = [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
-        edit_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
         assert any("web_search" in t for t in edit_texts), f"Expected 'web_search' in edits, got: {edit_texts}"
 
     def test_workflow_step_progress_display(self, monkeypatch):
@@ -2593,13 +2586,10 @@ class TestStreamingEnhancedEvents:
         assert call_kwargs["stream"] is True
         assert call_kwargs["stream_events"] is True
 
-        # Check for step progress in messages (may be via send, edit, or draft)
         send_calls = mock_bot.send_message.call_args_list
         edit_calls = mock_bot.edit_message_text.call_args_list
-        draft_calls = mock_bot.send_message_draft.call_args_list
         all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
-        all_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
         assert any("analyze_data" in t for t in all_texts), f"Expected step progress, got: {all_texts}"
 
     def test_workflow_parallel_execution_status(self, monkeypatch):
@@ -2633,10 +2623,8 @@ class TestStreamingEnhancedEvents:
         assert resp.status_code == 200
         send_calls = mock_bot.send_message.call_args_list
         edit_calls = mock_bot.edit_message_text.call_args_list
-        draft_calls = mock_bot.send_message_draft.call_args_list
         all_texts = [str(call[0][1]) if len(call[0]) > 1 else "" for call in send_calls]
         all_texts += [str(call[0][0]) if len(call[0]) > 0 else "" for call in edit_calls]
-        all_texts += [str(call.kwargs.get("text", "")) for call in draft_calls]
         assert any("Parallel" in t for t in all_texts), f"Expected parallel status, got: {all_texts}"
 
     def test_workflow_error_handling_in_stream(self, monkeypatch):

@@ -2,7 +2,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict
 
 from agno.agent import RunEvent
-from agno.os.interfaces.telegram.state import TG_STREAM_EDIT_INTERVAL, TG_TYPING_PREVIEW_INTERVAL, StreamState
+from agno.os.interfaces.telegram.state import TG_STREAM_EDIT_INTERVAL, StreamState
 from agno.run.workflow import WorkflowRunEvent
 from agno.utils.log import log_error, log_warning
 
@@ -51,17 +51,19 @@ def _status_handler(
     label: str = "",
     *,
     started: bool,
-    attr: str = "",
-    default: str = "",
-    fmt: str = "{name}",
+    name_attr: str = "",
+    indent: bool = False,
 ) -> _EventHandler:
-    # When attr is set, label is resolved dynamically from the chunk attribute.
-    # When attr is empty, label is used as-is (e.g. "Reasoning", "Parallel")
     async def handler(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-        resolved = label
-        if attr:
-            name = getattr(chunk, attr, None) or default
-            resolved = fmt.format(name=name)
+        name = getattr(chunk, name_attr, None) if name_attr else None
+        if name and label:
+            resolved = f"{label}: {name}"
+        elif name:
+            resolved = str(name)
+        else:
+            resolved = label
+        if indent:
+            resolved = f"\u2003{resolved}"
         if started:
             state.add_status(f"{resolved}...")
         else:
@@ -111,7 +113,7 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
     if content is not None:
         state.accumulated_content += str(content)
         now = time.monotonic()
-        interval = TG_TYPING_PREVIEW_INTERVAL if state.use_typing_preview else TG_STREAM_EDIT_INTERVAL
+        interval = TG_STREAM_EDIT_INTERVAL
         if now - state.last_edit_time >= interval:
             try:
                 await state.send_or_edit(state.build_display_html())
@@ -151,7 +153,6 @@ async def _on_workflow_started(chunk: "BaseRunOutputEvent", state: StreamState) 
 
 
 async def _on_workflow_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    state.replace_status("Workflow:", "Workflow:")
     content = getattr(chunk, "content", None)
     if content:
         state.accumulated_content = str(content)
@@ -161,7 +162,11 @@ async def _on_workflow_completed(chunk: "BaseRunOutputEvent", state: StreamState
 
 
 async def _on_workflow_error(_chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    state.replace_status("Workflow:", "Workflow failed")
+    # Mark the workflow line as failed while preserving the workflow name
+    for i, line in enumerate(state.status_lines):
+        if line.startswith("Workflow:"):
+            state.status_lines[i] = line.removesuffix("...") + " (failed)"
+            break
     state.accumulated_content = state.error_message or "Error: workflow failed"
     return True
 
@@ -224,30 +229,30 @@ HANDLERS: Dict[str, _EventHandler] = {
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
     WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
-    WorkflowRunEvent.step_started.value: _status_handler(started=True, attr="step_name", default="step"),
-    WorkflowRunEvent.step_completed.value: _status_handler(started=False, attr="step_name", default="step"),
+    WorkflowRunEvent.step_started.value: _status_handler(started=True, name_attr="step_name", indent=True),
+    WorkflowRunEvent.step_completed.value: _status_handler(started=False, name_attr="step_name", indent=True),
     WorkflowRunEvent.step_error.value: _on_step_error,
     WorkflowRunEvent.step_output.value: _on_step_output,
-    WorkflowRunEvent.workflow_agent_started.value: _status_handler(
-        started=True, attr="agent_name", default="agent", fmt="Running: {name}"
-    ),
-    WorkflowRunEvent.workflow_agent_completed.value: _status_handler(
-        started=False, attr="agent_name", default="agent", fmt="Running: {name}"
-    ),
+    WorkflowRunEvent.workflow_agent_started.value: _status_handler("Running", started=True, name_attr="agent_name"),
+    WorkflowRunEvent.workflow_agent_completed.value: _status_handler("Running", started=False, name_attr="agent_name"),
     WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
     WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
     WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
-    WorkflowRunEvent.loop_execution_completed.value: _status_handler(
-        started=False, attr="step_name", default="loop", fmt="Loop: {name}"
+    WorkflowRunEvent.loop_execution_completed.value: _status_handler("Loop", started=False, name_attr="step_name"),
+    WorkflowRunEvent.parallel_execution_started.value: _status_handler("Parallel", started=True, name_attr="step_name"),
+    WorkflowRunEvent.parallel_execution_completed.value: _status_handler(
+        "Parallel", started=False, name_attr="step_name"
     ),
-    WorkflowRunEvent.parallel_execution_started.value: _status_handler("Parallel", started=True),
-    WorkflowRunEvent.parallel_execution_completed.value: _status_handler("Parallel", started=False),
-    WorkflowRunEvent.condition_execution_started.value: _status_handler("Condition", started=True),
-    WorkflowRunEvent.condition_execution_completed.value: _status_handler("Condition", started=False),
-    WorkflowRunEvent.router_execution_started.value: _status_handler("Router", started=True),
-    WorkflowRunEvent.router_execution_completed.value: _status_handler("Router", started=False),
-    WorkflowRunEvent.steps_execution_started.value: _status_handler("Steps", started=True),
-    WorkflowRunEvent.steps_execution_completed.value: _status_handler("Steps", started=False),
+    WorkflowRunEvent.condition_execution_started.value: _status_handler(
+        "Condition", started=True, name_attr="step_name"
+    ),
+    WorkflowRunEvent.condition_execution_completed.value: _status_handler(
+        "Condition", started=False, name_attr="step_name"
+    ),
+    WorkflowRunEvent.router_execution_started.value: _status_handler("Router", started=True, name_attr="step_name"),
+    WorkflowRunEvent.router_execution_completed.value: _status_handler("Router", started=False, name_attr="step_name"),
+    WorkflowRunEvent.steps_execution_started.value: _status_handler("Steps", started=True, name_attr="step_name"),
+    WorkflowRunEvent.steps_execution_completed.value: _status_handler("Steps", started=False, name_attr="step_name"),
 }
 
 

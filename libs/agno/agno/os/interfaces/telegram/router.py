@@ -239,9 +239,6 @@ def attach_routes(
             message_thread_id=message_thread_id,
             entity_type=entity_type,  # type: ignore[arg-type]
             error_message=error_message,
-            # Typing previews are DM-only; workflows use message edits
-            # because typing preview commits as a separate message on finalize
-            use_typing_preview=is_private and not is_workflow,
         )
 
         try:
