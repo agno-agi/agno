@@ -140,7 +140,16 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
-        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
+        # Read knowledge_table from the knowledge's own contents_db, not agent.db.
+        # agent.db is the session/state database; when the user configures a
+        # separate contents_db with a custom knowledge_table the config must
+        # reflect that custom table name, not the agent-level default.
+        _contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+        knowledge_table = (
+            _contents_db.knowledge_table_name
+            if _contents_db is not None
+            else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -159,9 +168,8 @@ class AgentResponse(BaseModel):
             "cache_session": agent.cache_session,
         }
 
-        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
-            "db_id": contents_db.id if contents_db else None,
+            "db_id": _contents_db.id if _contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": (
