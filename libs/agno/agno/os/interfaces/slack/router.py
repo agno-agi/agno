@@ -66,7 +66,6 @@ def attach_routes(
     ssl: Optional[SSLContext] = None,
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
-    google_oauth_base_url: Optional[str] = None,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow

@@ -33,7 +33,6 @@ class Slack(BaseInterface):
         ssl: Optional[SSLContext] = None,
         buffer_size: int = 100,
         max_file_size: int = 1_073_741_824,  # 1GB
-        google_oauth_base_url: Optional[str] = None,
     ):
         self.agent = agent
         self.team = team
@@ -51,7 +50,6 @@ class Slack(BaseInterface):
         self.ssl = ssl
         self.buffer_size = buffer_size
         self.max_file_size = max_file_size
-        self.google_oauth_base_url = google_oauth_base_url
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -73,7 +71,6 @@ class Slack(BaseInterface):
             ssl=self.ssl,
             buffer_size=self.buffer_size,
             max_file_size=self.max_file_size,
-            google_oauth_base_url=self.google_oauth_base_url,
         )
 
         return self.router
