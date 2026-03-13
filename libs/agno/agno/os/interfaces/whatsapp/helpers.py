@@ -319,11 +319,10 @@ async def upload_and_send_media_async(
                 await send_whatsapp_message_async(recipient, response_content or "", config)
             continue
 
-        # Caption only for image/document; audio has no caption field
-        # WhatsApp caps captions at 1024 chars — truncate explicitly
-        caption = response_content if media_type in ("image", "video", "document") else None
-        if caption and len(caption) > 1024:
-            caption = caption[:1021] + "..."
+        # Caption only the first item to avoid repeating text on every media
+        caption = None
+        if not any_sent and media_type in ("image", "video", "document") and response_content:
+            caption = response_content[:1021] + "..." if len(response_content) > 1024 else response_content
         await _send_media(
             media_type=media_type,
             media_id=mid,
