@@ -156,3 +156,111 @@ async def test_async_prompt_caching():
     assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
+
+
+# --- Multi-block system prompt caching tests ---
+
+
+def test_multi_block_system_message_caching():
+    """Test that a two-element list system message produces two blocks with cache_control on the first."""
+    claude = Claude(cache_system_prompt=True)
+    system_message = ["Static instructions here.", "Dynamic datetime: 2026-02-26"]
+    kwargs = claude._prepare_request_kwargs(system_message)
+
+    assert len(kwargs["system"]) == 2
+    assert kwargs["system"][0] == {
+        "text": "Static instructions here.",
+        "type": "text",
+        "cache_control": {"type": "ephemeral"},
+    }
+    assert kwargs["system"][1] == {
+        "text": "Dynamic datetime: 2026-02-26",
+        "type": "text",
+    }
+
+
+def test_multi_block_extended_cache_time():
+    """Test multi-block system message with extended cache time."""
+    claude = Claude(cache_system_prompt=True, extended_cache_time=True)
+    system_message = ["Static instructions.", "Dynamic context."]
+    kwargs = claude._prepare_request_kwargs(system_message)
+
+    assert len(kwargs["system"]) == 2
+    assert kwargs["system"][0] == {
+        "text": "Static instructions.",
+        "type": "text",
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+    }
+    assert kwargs["system"][1] == {
+        "text": "Dynamic context.",
+        "type": "text",
+    }
+
+
+def test_multi_block_empty_dynamic():
+    """Test that when the dynamic portion is empty, only one cached block is produced."""
+    claude = Claude(cache_system_prompt=True)
+    system_message = ["Static instructions only.", ""]
+    kwargs = claude._prepare_request_kwargs(system_message)
+
+    assert len(kwargs["system"]) == 1
+    assert kwargs["system"][0] == {
+        "text": "Static instructions only.",
+        "type": "text",
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def test_single_string_backward_compatibility():
+    """Test that a plain string system message still produces the old single-block format."""
+    claude = Claude(cache_system_prompt=True)
+    system_message = "You are a helpful assistant."
+    kwargs = claude._prepare_request_kwargs(system_message)
+
+    expected_system = [{"text": system_message, "type": "text", "cache_control": {"type": "ephemeral"}}]
+    assert kwargs["system"] == expected_system
+
+
+def test_multi_block_no_caching():
+    """Test that without cache_system_prompt, a list is joined into a single block."""
+    claude = Claude(cache_system_prompt=False)
+    system_message = ["Static part.", "Dynamic part."]
+    kwargs = claude._prepare_request_kwargs(system_message)
+
+    assert len(kwargs["system"]) == 1
+    assert kwargs["system"][0] == {
+        "text": "Static part. Dynamic part.",
+        "type": "text",
+    }
+
+
+def test_format_messages_multi_block():
+    """Test that format_messages preserves multi-block system message content."""
+    from agno.models.message import Message
+    from agno.utils.models.claude import format_messages
+
+    messages = [
+        Message(role="system", content=["Static instructions.", "Dynamic context."]),
+        Message(role="user", content="Hello"),
+    ]
+    chat_messages, system_message = format_messages(messages)
+
+    assert isinstance(system_message, list)
+    assert len(system_message) == 2
+    assert system_message[0] == "Static instructions."
+    assert system_message[1] == "Dynamic context."
+
+
+def test_format_messages_single_string():
+    """Test that format_messages still returns a string for single-string system messages."""
+    from agno.models.message import Message
+    from agno.utils.models.claude import format_messages
+
+    messages = [
+        Message(role="system", content="You are helpful."),
+        Message(role="user", content="Hello"),
+    ]
+    chat_messages, system_message = format_messages(messages)
+
+    assert isinstance(system_message, str)
+    assert system_message == "You are helpful."

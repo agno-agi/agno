@@ -231,6 +231,8 @@ def get_system_message(
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
+    # Dynamic content that changes per request (used for multi-block prompt caching)
+    dynamic_message_content: str = ""
     # 3.3.1 First add the Agent description if provided
     if agent.description is not None:
         system_message_content += f"{agent.description}\n"
@@ -253,12 +255,12 @@ def get_system_message(
                     system_message_content += f"- {_upi}\n"
             else:
                 system_message_content += instructions[0] + "\n\n"
-    # 3.3.4 Add additional information
+    # 3.3.4 Add additional information (dynamic: contains datetime, location)
     if len(additional_information) > 0:
-        system_message_content += "<additional_information>"
+        dynamic_message_content += "<additional_information>"
         for _ai in additional_information:
-            system_message_content += f"\n- {_ai}"
-        system_message_content += "\n</additional_information>\n\n"
+            dynamic_message_content += f"\n- {_ai}"
+        dynamic_message_content += "\n</additional_information>\n\n"
     # 3.3.5 Then add instructions for the tools
     if agent._tool_instructions is not None:
         for _ti in agent._tool_instructions:
@@ -283,7 +285,7 @@ def get_system_message(
         skills_snippet = agent.skills.get_system_prompt_snippet()
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
-    # 3.3.9 Then add memories to the system prompt
+    # 3.3.9 Then add memories to the system prompt (dynamic: loaded from DB per request)
     if agent.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -295,17 +297,17 @@ def get_system_message(
         user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
         if user_memories and len(user_memories) > 0:
-            system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-            system_message_content += "<memories_from_previous_interactions>"
+            dynamic_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
+            dynamic_message_content += "<memories_from_previous_interactions>"
             for _memory in user_memories:  # type: ignore
-                system_message_content += f"\n- {_memory.memory}"
-            system_message_content += "\n</memories_from_previous_interactions>\n\n"
-            system_message_content += (
+                dynamic_message_content += f"\n- {_memory.memory}"
+            dynamic_message_content += "\n</memories_from_previous_interactions>\n\n"
+            dynamic_message_content += (
                 "Note: this information is from previous interactions and may be updated in this conversation. "
                 "You should always prefer information from this conversation over the past memories.\n"
             )
         else:
-            system_message_content += (
+            dynamic_message_content += (
                 "You have the capability to retain memories from previous interactions with the user, "
                 "but have not had any interactions with the user yet.\n"
             )
@@ -324,7 +326,7 @@ def get_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # 3.3.10 Then add cultural knowledge to the system prompt
+    # 3.3.10 Then add cultural knowledge to the system prompt (dynamic: loaded from DB)
     if agent.add_culture_to_context:
         _culture_manager_not_set = False
         if not agent.culture_manager:
@@ -334,7 +336,7 @@ def get_system_message(
         cultural_knowledge = agent.culture_manager.get_all_knowledge()  # type: ignore
 
         if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
+            dynamic_message_content += (
                 "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
                 "for your reasoning, communication, and decision-making. "
                 "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
@@ -350,15 +352,15 @@ def get_system_message(
                 "collective intelligence of the system.\n\n"
                 "Below is the currently available Cultural Knowledge for this context:\n\n"
             )
-            system_message_content += "<cultural_knowledge>"
+            dynamic_message_content += "<cultural_knowledge>"
             for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
+                dynamic_message_content += "\n---"
+                dynamic_message_content += f"\nName: {_knowledge.name}"
+                dynamic_message_content += f"\nSummary: {_knowledge.summary}"
+                dynamic_message_content += f"\nContent: {_knowledge.content}"
+            dynamic_message_content += "\n</cultural_knowledge>\n"
         else:
-            system_message_content += (
+            dynamic_message_content += (
                 "You have the capability to access shared **Cultural Knowledge**, which normally provides "
                 "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
                 "is currently available in this session.\n"
@@ -385,18 +387,18 @@ def get_system_message(
                 "</contributing_to_culture>\n\n"
             )
 
-    # 3.3.11 Then add a summary of the interaction to the system prompt
+    # 3.3.11 Then add a summary of the interaction to the system prompt (dynamic)
     if agent.add_session_summary_to_context and session.summary is not None:
-        system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-        system_message_content += "<summary_of_previous_interactions>\n"
-        system_message_content += session.summary.summary
-        system_message_content += "\n</summary_of_previous_interactions>\n\n"
-        system_message_content += (
+        dynamic_message_content += "Here is a brief summary of your previous interactions:\n\n"
+        dynamic_message_content += "<summary_of_previous_interactions>\n"
+        dynamic_message_content += session.summary.summary
+        dynamic_message_content += "\n</summary_of_previous_interactions>\n\n"
+        dynamic_message_content += (
             "Note: this information is from previous interactions and may be outdated. "
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # 3.3.12 then add learnings to the system prompt
+    # 3.3.12 then add learnings to the system prompt (dynamic)
     if agent._learning is not None and agent.add_learnings_to_context:
         learning_context = agent._learning.build_context(
             user_id=user_id,
@@ -404,7 +406,7 @@ def get_system_message(
             agent_id=agent.id,
         )
         if learning_context:
-            system_message_content += learning_context + "\n"
+            dynamic_message_content += learning_context + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
@@ -438,16 +440,27 @@ def get_system_message(
     if output_schema is not None and agent.parser_model is not None and not isinstance(output_schema, dict):
         system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
-    # 3.3.17 Add the session state to the system message
+    # 3.3.17 Add the session state to the system message (dynamic)
     if add_session_state_to_context and session_state is not None:
-        system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+        dynamic_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
     # Return the system message
-    return (
-        Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
-        if system_message_content
-        else None
-    )
+    # When both static and dynamic content exist AND the model supports multi-block
+    # prompt caching (cache_system_prompt=True on Claude models), return as a two-element
+    # list so the static block gets cached separately from the dynamic block.
+    # For all other models, concatenate into a single string to avoid breaking their APIs.
+    static = system_message_content.strip()
+    dynamic = dynamic_message_content.strip()
+
+    use_multi_block = static and dynamic and getattr(agent.model, "cache_system_prompt", False)
+
+    if use_multi_block:
+        return Message(role=agent.system_message_role, content=[static, dynamic])  # type: ignore
+
+    combined = (static + "\n\n" + dynamic).strip() if static and dynamic else (static or dynamic)
+    if combined:
+        return Message(role=agent.system_message_role, content=combined)  # type: ignore
+    return None
 
 
 async def aget_system_message(
@@ -579,6 +592,8 @@ async def aget_system_message(
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
+    # Dynamic content that changes per request (used for multi-block prompt caching)
+    dynamic_message_content: str = ""
     # 3.3.1 First add the Agent description if provided
     if agent.description is not None:
         system_message_content += f"{agent.description}\n"
@@ -601,12 +616,12 @@ async def aget_system_message(
                     system_message_content += f"- {_upi}\n"
             else:
                 system_message_content += instructions[0] + "\n\n"
-    # 3.3.4 Add additional information
+    # 3.3.4 Add additional information (dynamic: contains datetime, location)
     if len(additional_information) > 0:
-        system_message_content += "<additional_information>"
+        dynamic_message_content += "<additional_information>"
         for _ai in additional_information:
-            system_message_content += f"\n- {_ai}"
-        system_message_content += "\n</additional_information>\n\n"
+            dynamic_message_content += f"\n- {_ai}"
+        dynamic_message_content += "\n</additional_information>\n\n"
     # 3.3.5 Then add instructions for the tools
     if agent._tool_instructions is not None:
         for _ti in agent._tool_instructions:
@@ -631,7 +646,7 @@ async def aget_system_message(
         skills_snippet = agent.skills.get_system_prompt_snippet()
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
-    # 3.3.9 Then add memories to the system prompt
+    # 3.3.9 Then add memories to the system prompt (dynamic: loaded from DB per request)
     if agent.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -646,17 +661,17 @@ async def aget_system_message(
             user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
         if user_memories and len(user_memories) > 0:
-            system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-            system_message_content += "<memories_from_previous_interactions>"
+            dynamic_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
+            dynamic_message_content += "<memories_from_previous_interactions>"
             for _memory in user_memories:  # type: ignore
-                system_message_content += f"\n- {_memory.memory}"
-            system_message_content += "\n</memories_from_previous_interactions>\n\n"
-            system_message_content += (
+                dynamic_message_content += f"\n- {_memory.memory}"
+            dynamic_message_content += "\n</memories_from_previous_interactions>\n\n"
+            dynamic_message_content += (
                 "Note: this information is from previous interactions and may be updated in this conversation. "
                 "You should always prefer information from this conversation over the past memories.\n"
             )
         else:
-            system_message_content += (
+            dynamic_message_content += (
                 "You have the capability to retain memories from previous interactions with the user, "
                 "but have not had any interactions with the user yet.\n"
             )
@@ -675,7 +690,7 @@ async def aget_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # 3.3.10 Then add cultural knowledge to the system prompt
+    # 3.3.10 Then add cultural knowledge to the system prompt (dynamic: loaded from DB)
     if agent.add_culture_to_context:
         _culture_manager_not_set = False
         if not agent.culture_manager:
@@ -685,7 +700,7 @@ async def aget_system_message(
         cultural_knowledge = await agent.culture_manager.aget_all_knowledge()  # type: ignore
 
         if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
+            dynamic_message_content += (
                 "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
                 "for your reasoning, communication, and decision-making.\n\n"
                 "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
@@ -701,15 +716,15 @@ async def aget_system_message(
                 "collective intelligence of the system.\n\n"
                 "Below is the currently available Cultural Knowledge for this context:\n\n"
             )
-            system_message_content += "<cultural_knowledge>"
+            dynamic_message_content += "<cultural_knowledge>"
             for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
+                dynamic_message_content += "\n---"
+                dynamic_message_content += f"\nName: {_knowledge.name}"
+                dynamic_message_content += f"\nSummary: {_knowledge.summary}"
+                dynamic_message_content += f"\nContent: {_knowledge.content}"
+            dynamic_message_content += "\n</cultural_knowledge>\n"
         else:
-            system_message_content += (
+            dynamic_message_content += (
                 "You have the capability to access shared **Cultural Knowledge**, which normally provides "
                 "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
                 "is currently available in this session.\n"
@@ -736,18 +751,18 @@ async def aget_system_message(
                 "</contributing_to_culture>\n\n"
             )
 
-    # 3.3.11 Then add a summary of the interaction to the system prompt
+    # 3.3.11 Then add a summary of the interaction to the system prompt (dynamic)
     if agent.add_session_summary_to_context and session.summary is not None:
-        system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-        system_message_content += "<summary_of_previous_interactions>\n"
-        system_message_content += session.summary.summary
-        system_message_content += "\n</summary_of_previous_interactions>\n\n"
-        system_message_content += (
+        dynamic_message_content += "Here is a brief summary of your previous interactions:\n\n"
+        dynamic_message_content += "<summary_of_previous_interactions>\n"
+        dynamic_message_content += session.summary.summary
+        dynamic_message_content += "\n</summary_of_previous_interactions>\n\n"
+        dynamic_message_content += (
             "Note: this information is from previous interactions and may be outdated. "
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # 3.3.12 then add learnings to the system prompt
+    # 3.3.12 then add learnings to the system prompt (dynamic)
     if agent._learning is not None and agent.add_learnings_to_context:
         learning_context = await agent._learning.abuild_context(
             user_id=user_id,
@@ -755,7 +770,7 @@ async def aget_system_message(
             agent_id=agent.id,
         )
         if learning_context:
-            system_message_content += learning_context + "\n"
+            dynamic_message_content += learning_context + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
@@ -797,16 +812,27 @@ async def aget_system_message(
     if output_schema is not None and agent.parser_model is not None and not isinstance(output_schema, dict):
         system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
-    # 3.3.17 Add the session state to the system message
+    # 3.3.17 Add the session state to the system message (dynamic)
     if add_session_state_to_context and session_state is not None:
-        system_message_content += get_formatted_session_state_for_system_message(agent, session_state)
+        dynamic_message_content += get_formatted_session_state_for_system_message(agent, session_state)
 
     # Return the system message
-    return (
-        Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
-        if system_message_content
-        else None
-    )
+    # When both static and dynamic content exist AND the model supports multi-block
+    # prompt caching (cache_system_prompt=True on Claude models), return as a two-element
+    # list so the static block gets cached separately from the dynamic block.
+    # For all other models, concatenate into a single string to avoid breaking their APIs.
+    static = system_message_content.strip()
+    dynamic = dynamic_message_content.strip()
+
+    use_multi_block = static and dynamic and getattr(agent.model, "cache_system_prompt", False)
+
+    if use_multi_block:
+        return Message(role=agent.system_message_role, content=[static, dynamic])  # type: ignore
+
+    combined = (static + "\n\n" + dynamic).strip() if static and dynamic else (static or dynamic)
+    if combined:
+        return Message(role=agent.system_message_role, content=combined)  # type: ignore
+    return None
 
 
 def get_formatted_session_state_for_system_message(agent: Agent, session_state: Dict[str, Any]) -> str:
