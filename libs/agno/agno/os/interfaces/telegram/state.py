@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, List, Literal, NamedTuple, Optional, Type, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.telegram.formatting import escape_html, markdown_to_telegram_html
 from agno.os.interfaces.telegram.helpers import (
     TG_MAX_MESSAGE_LENGTH,
@@ -163,6 +164,11 @@ class StreamState:
         self.final_run_output: Optional[Union["RunOutput", "TeamRunOutput"]] = None
         # Set by step_output handler; fallback if workflow omits final content
         self.workflow_final_content: Optional[str] = None
+        # Media collected from streaming events (workflow steps, agent runs)
+        self.images: list[Image] = []
+        self.videos: list[Video] = []
+        self.audio: list[Audio] = []
+        self.files: list[File] = []
 
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
@@ -178,6 +184,22 @@ class StreamState:
         for i, line in enumerate(self.status_lines):
             if line.endswith("..."):
                 self.status_lines[i] = line.removesuffix("...")
+
+    def collect_media(self, chunk: Any) -> None:
+        # Collect media from streaming events so it can be sent after finalize.
+        # Follows the same pattern as Slack StreamState.collect_media()
+        for img in getattr(chunk, "images", None) or []:
+            if img not in self.images:
+                self.images.append(img)
+        for vid in getattr(chunk, "videos", None) or []:
+            if vid not in self.videos:
+                self.videos.append(vid)
+        for aud in getattr(chunk, "audio", None) or []:
+            if aud not in self.audio:
+                self.audio.append(aud)
+        for f in getattr(chunk, "files", None) or []:
+            if f not in self.files:
+                self.files.append(f)
 
     def build_display_html(self) -> str:
         parts: list[str] = []

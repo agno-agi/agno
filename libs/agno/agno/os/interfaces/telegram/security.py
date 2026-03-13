@@ -4,19 +4,16 @@ from typing import Optional
 
 from agno.utils.log import log_warning
 
-# Cached at import; tests monkeypatch the module attrs directly
-_APP_ENV = os.getenv("APP_ENV", "").lower()
-_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN")
-
 
 def _is_dev_mode() -> bool:
-    return _APP_ENV == "development"
+    return os.getenv("APP_ENV", "").lower() == "development"
 
 
 def get_webhook_secret_token() -> str:
-    if not _WEBHOOK_SECRET:
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN")
+    if not secret:
         raise ValueError("TELEGRAM_WEBHOOK_SECRET_TOKEN environment variable is not set in production mode")
-    return _WEBHOOK_SECRET
+    return secret
 
 
 def validate_webhook_secret_token(secret_token_header: Optional[str]) -> bool:

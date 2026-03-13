@@ -37,8 +37,10 @@ def _extract_media_ids(message: dict) -> tuple[Optional[str], Optional[str], Opt
     if message.get("sticker"):
         sticker = message["sticker"]
         if sticker.get("is_animated") or sticker.get("is_video"):
+            # Prefer thumbnail (static png); fall back to sticker file_id itself
             thumb = sticker.get("thumbnail") or sticker.get("thumb")
-            return (thumb["file_id"] if thumb else None), None, None, None
+            file_id = thumb["file_id"] if thumb else sticker["file_id"]
+            return file_id, None, None, None
         return sticker["file_id"], None, None, None
     if message.get("voice"):
         return None, message["voice"]["file_id"], None, None
@@ -85,28 +87,25 @@ async def extract_message_payload(bot: "AsyncTeleBot", message: dict) -> Optiona
     return result
 
 
-def _chunk_html(html_text: str, max_len: int = TG_CHUNK_SIZE) -> List[str]:
-    # Split on paragraph boundaries to avoid cutting mid-tag
-    if len(html_text) <= max_len:
-        return [html_text]
+def _chunk_text(text: str, max_len: int = TG_CHUNK_SIZE) -> List[str]:
+    # Split raw markdown on natural boundaries BEFORE HTML conversion so
+    # each chunk can be independently converted to valid HTML
+    if len(text) <= max_len:
+        return [text]
 
     chunks: List[str] = []
-    remaining = html_text
+    remaining = text
     while remaining:
         if len(remaining) <= max_len:
             chunks.append(remaining)
             break
 
-        # Find the last paragraph break (\n\n) within the limit
         cut = remaining.rfind("\n\n", 0, max_len)
         if cut <= 0:
-            # Fall back to last newline
             cut = remaining.rfind("\n", 0, max_len)
         if cut <= 0:
-            # Fall back to last space outside a tag
             cut = remaining.rfind(" ", 0, max_len)
         if cut <= 0:
-            # Hard cut as last resort
             cut = max_len
 
         chunks.append(remaining[:cut])
@@ -122,8 +121,7 @@ async def send_message(
     reply_to_message_id: Optional[int] = None,
     message_thread_id: Optional[int] = None,
 ) -> Any:
-    # Convert to HTML first, then check length — HTML can be much longer than
-    # raw markdown (e.g. `<` → `&lt;` is 4x expansion)
+    # Try single-message fast path
     html_text = markdown_to_telegram_html(text)
     if len(html_text) <= TG_MAX_MESSAGE_LENGTH:
         return await bot.send_message(
@@ -133,13 +131,16 @@ async def send_message(
             reply_to_message_id=reply_to_message_id,
             message_thread_id=message_thread_id,
         )
-    chunks = _chunk_html(html_text)
+    # Chunk raw markdown first, then convert each chunk independently
+    # so every chunk produces self-contained valid HTML
+    raw_chunks = _chunk_text(text)
     result = None
-    for i, chunk in enumerate(chunks, 1):
+    for i, chunk in enumerate(raw_chunks, 1):
+        chunk_html = markdown_to_telegram_html(chunk)
         reply_id = reply_to_message_id if i == 1 else None
         result = await bot.send_message(
             chat_id,
-            chunk,
+            chunk_html,
             parse_mode="HTML",
             reply_to_message_id=reply_id,
             message_thread_id=message_thread_id,

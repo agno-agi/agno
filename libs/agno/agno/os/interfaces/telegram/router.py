@@ -78,7 +78,6 @@ def _build_session_scope(
 def _build_stable_group_scope(
     entity_id: Optional[str],
     chat_id: int,
-    message: dict,
 ) -> str:
     # For groups without forum topics, use chat-level scope so all messages
     # in the same group chat share one session (stable across reply chains)
@@ -154,7 +153,7 @@ def attach_routes(
             if update_id is not None and bot_state.is_duplicate_update(update_id):
                 return TelegramWebhookResponse(status="duplicate")
 
-            message = body.get("message")
+            message = body.get("message") or body.get("edited_message")
             if not message:
                 return TelegramWebhookResponse(status="ignored")
 
@@ -246,6 +245,7 @@ def attach_routes(
                 if isinstance(event, (RunOutput, TeamRunOutput)):
                     state.final_run_output = event
                     continue
+                state.collect_media(event)
                 ev_raw = getattr(event, "event", "")
                 if ev_raw and await dispatch_stream_event(ev_raw, event, state):
                     break
@@ -263,6 +263,18 @@ def attach_routes(
                     reply_to_message_id=reply_to,
                     message_thread_id=message_thread_id,
                 )
+
+        # Workflows don't yield RunOutput, so media is only available via
+        # streaming events collected in state. Agent/team media is already
+        # sent above from final_run_output.
+        if is_workflow and (state.images or state.videos or state.audio or state.files):
+            await send_response_media(
+                bot,
+                state,
+                chat_id,
+                reply_to_message_id=reply_to,
+                message_thread_id=message_thread_id,
+            )
 
     async def _sync_response(
         message_text: str,
@@ -320,7 +332,7 @@ def attach_routes(
 
             if is_group and not message_thread_id:
                 # Use stable chat-level scope so reply-chain changes don't create new sessions
-                session_scope = _build_stable_group_scope(entity_id, chat_id, message)
+                session_scope = _build_stable_group_scope(entity_id, chat_id)
             else:
                 session_scope = _build_session_scope(entity_id, chat_id, is_group, message_thread_id, message)
 

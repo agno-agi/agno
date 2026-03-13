@@ -35,7 +35,7 @@ def _install_fake_telebot():
 _install_fake_telebot()
 
 from agno.os.interfaces.telegram import Telegram  # noqa: E402
-from agno.os.interfaces.telegram import security as _security_mod  # noqa: E402
+from agno.os.interfaces.telegram import security as _security_mod  # noqa: E402  # kept for potential future use
 from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html  # noqa: E402
 from agno.os.interfaces.telegram.security import (  # noqa: E402
     _is_dev_mode as is_development_mode,
@@ -56,61 +56,62 @@ def _bypass_router_security():
 
 class TestIsDevelopmentMode:
     def test_unset_is_not_dev(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "")
+        monkeypatch.delenv("APP_ENV", raising=False)
         assert is_development_mode() is False
 
     def test_explicit_development(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "development")
+        monkeypatch.setenv("APP_ENV", "development")
         assert is_development_mode() is True
 
     def test_case_insensitive(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "development")
+        monkeypatch.setenv("APP_ENV", "Development")
         assert is_development_mode() is True
 
     def test_production(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
+        monkeypatch.setenv("APP_ENV", "production")
         assert is_development_mode() is False
 
     def test_staging(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "staging")
+        monkeypatch.setenv("APP_ENV", "staging")
         assert is_development_mode() is False
 
 
 class TestGetWebhookSecretToken:
     def test_returns_token(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "my-secret")
+        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "my-secret")
         assert get_webhook_secret_token() == "my-secret"
 
     def test_raises_when_missing(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", None)
+        monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", raising=False)
         with pytest.raises(ValueError, match="TELEGRAM_WEBHOOK_SECRET_TOKEN"):
             get_webhook_secret_token()
 
 
 class TestValidateWebhookSecretToken:
     def test_dev_mode_bypasses(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "development")
+        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", raising=False)
         assert validate_webhook_secret_token(None) is True
         assert validate_webhook_secret_token("anything") is True
 
     def test_prod_valid_token(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
-        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
         assert validate_webhook_secret_token("correct-token") is True
 
     def test_prod_invalid_token(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
-        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
         assert validate_webhook_secret_token("wrong-token") is False
 
     def test_prod_missing_header(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
-        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
         assert validate_webhook_secret_token(None) is False
 
     def test_prod_empty_header(self, monkeypatch):
-        monkeypatch.setattr(_security_mod, "_APP_ENV", "production")
-        monkeypatch.setattr(_security_mod, "_WEBHOOK_SECRET", "correct-token")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "correct-token")
         assert validate_webhook_secret_token("") is False
 
 
