@@ -40,6 +40,14 @@ jobs:
         with:
           script: |
             const pr = context.payload.pull_request;
+
+            // Skip this check for org members and collaborators
+            const association = pr.author_association;
+            if (['MEMBER', 'OWNER', 'COLLABORATOR'].includes(association)) {
+              console.log(`Skipping missing-issue-link check for ${association} (${pr.user.login}).`);
+              return;
+            }
+
             const body = (pr.body || '').toLowerCase();
 
             const hasIssueRef = /(?:fixes|closes|resolves|fix|close|resolve)\s+#\d+/.test(body)
