@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Union
 
 from pydantic import BaseModel
 
@@ -63,6 +63,40 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     # Log filtering information
     num_filtered = tool_call_count - len(tool_call_ids_to_keep)
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
+
+
+def inject_dependencies_block(content: Any, dependencies_block: str) -> Any:
+    """Inject a dependencies block into message content, handling both string and multimodal formats.
+
+    Args:
+        content: The message content (str or list of multimodal parts).
+        dependencies_block: The formatted dependencies string to inject.
+
+    Returns:
+        The modified content with dependencies injected.
+    """
+    if isinstance(content, str):
+        return content + dependencies_block
+    elif isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+        # Multimodal with "type" key (OpenAI format)
+        if "type" in content[0]:
+            for part in reversed(content):
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                    part["text"] += dependencies_block
+                    return content
+            # No text part found, append one
+            content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+            return content
+        # Dicts with "text" but no "type" key (some providers)
+        if "text" in content[0]:
+            for part in reversed(content):
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    part["text"] += dependencies_block
+                    return content
+            content.append({"text": dependencies_block.lstrip("\n")})
+            return content
+    # Fallback: convert to string
+    return (get_text_from_message(content) if content is not None else "") + dependencies_block
 
 
 def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -> str:

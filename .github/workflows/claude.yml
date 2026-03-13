@@ -23,7 +23,7 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body || '', '@claude') || contains(github.event.issue.title || '', '@claude')))
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
       id-token: write
@@ -58,6 +58,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
+          github_token: ${{ github.token }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: |
             code-review@claude-code-plugins
@@ -72,3 +73,4 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_CI_API_KEY }}
+          github_token: ${{ github.token }}
