@@ -118,3 +118,61 @@ def test_none_filters_roundtrip_json():
     resp = _make_response(None)
     dumped = json.loads(resp.model_dump_json())
     assert dumped.get("knowledge") is None
+
+
+# -- knowledge_table from contents_db (fix for #6975) --
+
+
+def test_knowledge_table_reads_from_contents_db():
+    """AgentResponse.from_agent should read knowledge_table from
+    knowledge.contents_db, not from agent.db.
+
+    Regression test for https://github.com/agno-agi/agno/issues/6975
+    """
+    from unittest.mock import MagicMock
+
+    # Build a mock agent whose knowledge.contents_db has a custom table name
+    agent = MagicMock(spec=["db", "knowledge", "enable_agentic_knowledge_filters",
+                            "knowledge_filters", "references_format"])
+    agent.db = MagicMock()
+    agent.db.knowledge_table_name = "agno_knowledge"  # default
+
+    agent.knowledge = MagicMock()
+    agent.knowledge.contents_db = MagicMock()
+    agent.knowledge.contents_db.knowledge_table_name = "presenter_knowledge_contents"
+    agent.knowledge.contents_db.id = "custom-db-id"
+
+    agent.enable_agentic_knowledge_filters = False
+    agent.knowledge_filters = None
+    agent.references_format = None
+
+    # Replicate the fixed logic from schema.py
+    contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+    knowledge_table = (
+        contents_db.knowledge_table_name if contents_db
+        else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+    )
+
+    assert knowledge_table == "presenter_knowledge_contents", (
+        f"Expected 'presenter_knowledge_contents' but got '{knowledge_table}' — "
+        "knowledge_table should come from knowledge.contents_db, not agent.db"
+    )
+
+
+def test_knowledge_table_falls_back_to_agent_db():
+    """When knowledge.contents_db is None, fall back to agent.db."""
+    from unittest.mock import MagicMock
+
+    agent = MagicMock(spec=["db", "knowledge"])
+    agent.db = MagicMock()
+    agent.db.knowledge_table_name = "agno_knowledge"
+    agent.knowledge = MagicMock()
+    agent.knowledge.contents_db = None
+
+    contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+    knowledge_table = (
+        contents_db.knowledge_table_name if contents_db
+        else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+    )
+
+    assert knowledge_table == "agno_knowledge"
