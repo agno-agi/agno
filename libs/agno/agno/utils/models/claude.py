@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
-from agno.models.message import Message
+from agno.models.message import Message, SystemPromptBlock
 from agno.utils.log import log_error, log_warning
 
 try:
@@ -262,9 +262,48 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     return None
 
 
+def build_system_blocks(
+    system_message: Union[str, List[SystemPromptBlock]],
+    cache_system_prompt: bool,
+    extended_cache_time: bool = False,
+) -> List[Dict[str, Any]]:
+    """Build the system parameter blocks for the Anthropic API.
+
+    Converts either a plain string or a list of SystemPromptBlock into the
+    list-of-dicts format the Anthropic API expects for the ``system`` field,
+    applying ``cache_control`` only to blocks marked as cacheable.
+
+    TTL resolution for each cached block:
+    - Explicit block.ttl wins: "5m" => plain ephemeral (5m is the default),
+      "1h" => ephemeral with ttl key.
+    - block.ttl is None => falls back to model-level extended_cache_time.
+    """
+    if isinstance(system_message, str):
+        entry: Dict[str, Any] = {"text": system_message, "type": "text"}
+        if cache_system_prompt:
+            cc: Dict[str, str] = {"type": "ephemeral"}
+            if extended_cache_time:
+                cc["ttl"] = "1h"
+            entry["cache_control"] = cc
+        return [entry]
+
+    result: List[Dict[str, Any]] = []
+    for block in system_message:
+        b: Dict[str, Any] = {"text": block.text, "type": "text"}
+        if cache_system_prompt and block.cache:
+            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time
+            effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
+            cc = {"type": "ephemeral"}
+            if effective_ttl == "1h":
+                cc["ttl"] = "1h"
+            b["cache_control"] = cc
+        result.append(b)
+    return result
+
+
 def format_messages(
     messages: List[Message], compress_tool_results: bool = False
-) -> Tuple[List[Dict[str, Union[str, list]]], str]:
+) -> Tuple[List[Dict[str, Union[str, list]]], Union[str, List[SystemPromptBlock]]]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
@@ -273,16 +312,20 @@ def format_messages(
         compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple containing the list of API messages and either a plain string or
+        List[SystemPromptBlock] when multi-block caching is in use.
     """
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
+    system_blocks: Optional[List[SystemPromptBlock]] = None
 
     for message in messages:
         content = message.content or ""
         # Both "system" and "developer" roles should be extracted as system messages
         if message.role in ("system", "developer"):
-            if content is not None:
+            if message.system_prompt_blocks is not None:
+                system_blocks = message.system_prompt_blocks
+            elif content is not None:
                 system_messages.append(content)  # type: ignore
             continue
         elif message.role == "user":
@@ -362,6 +405,9 @@ def format_messages(
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
+
+    if system_blocks is not None:
+        return chat_messages, system_blocks
     return chat_messages, " ".join(system_messages)
 
 
