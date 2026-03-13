@@ -167,6 +167,9 @@ class DoclingReader(Reader):
             List of Document objects
         """
         try:
+            # Declare source type - can be Path, str (URL), or DocumentStream
+            source: Union[Path, str, DocumentStream]
+
             if isinstance(file, Path):
                 # Handle Path objects
                 if not file.exists():
