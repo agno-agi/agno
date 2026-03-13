@@ -2744,6 +2744,9 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
+                                        # Re-raise cancellation — it is not an error
+                                        if isinstance(error, RunCancelledException):
+                                            raise error
                                         # Handle async generator exceptions gracefully like sync generators
                                         log_error(
                                             f"Error while iterating async generator for {function_call.function.name}: {error}"

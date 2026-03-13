@@ -625,7 +625,7 @@ def _get_delegate_task_function(
                     )
                     yield member_agent_run_output_event  # type: ignore
                 if _draining_after_cancel:
-                    raise RunCancelledException(run_response.run_id)
+                    raise RunCancelledException(run_response.run_id or "")
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,  # type: ignore
@@ -804,7 +804,7 @@ def _get_delegate_task_function(
                     )
                     yield member_agent_run_response_event  # type: ignore
                 if _draining_after_cancel:
-                    raise RunCancelledException(run_response.run_id)
+                    raise RunCancelledException(run_response.run_id or "")
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -972,7 +972,7 @@ def _get_delegate_task_function(
                         )
                         yield member_agent_run_response_chunk  # type: ignore
                     if _draining_after_cancel:
-                        raise RunCancelledException(run_response.run_id)
+                        raise RunCancelledException(run_response.run_id or "")
 
                 else:
                     member_agent_run_response = member_agent.run(  # type: ignore
@@ -1137,7 +1137,7 @@ def _get_delegate_task_function(
                             )
                             await queue.put(member_agent_run_output_event)
                         if _draining_after_cancel:
-                            raise RunCancelledException(run_response.run_id)
+                            raise RunCancelledException(run_response.run_id or "")
                     finally:
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:

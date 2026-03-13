@@ -454,7 +454,7 @@ def _get_task_management_tools(
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
                 if _draining_after_cancel:
-                    raise RunCancelledException(run_response.run_id)
+                    raise RunCancelledException(run_response.run_id or "")
             else:
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -623,7 +623,7 @@ def _get_task_management_tools(
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
                 if _draining_after_cancel:
-                    raise RunCancelledException(run_response.run_id)
+                    raise RunCancelledException(run_response.run_id or "")
             else:
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
