@@ -49,7 +49,6 @@ _WA_TOOL_NAMES = frozenset(
         "send_document",
         "send_location",
         "send_reaction",
-        "mark_as_read",
     }
 )
 
@@ -226,9 +225,7 @@ def attach_routes(
             log_warning("Message missing 'from' field, skipping")
             return
         # Splits identity: user_id (possibly encrypted) for DB storage, phone_number (raw) for API sends
-        user_id = (
-            _encrypt_phone(phone_number, encryption_key) if enable_encryption and encryption_key else phone_number
-        )
+        user_id = _encrypt_phone(phone_number, encryption_key) if enable_encryption and encryption_key else phone_number
         try:
             message_id = message.get("id")
             await typing_indicator_async(message_id, config)
@@ -309,9 +306,11 @@ def attach_routes(
                 if isinstance(media, bytes):
                     run_kwargs["audio"] = [Audio(content=media)]
 
-            # Inject raw phone into LLM context — independent of encryption (which only protects DB)
-            if send_user_number_to_context and entity_type != "workflow":
-                run_kwargs["dependencies"] = {"User info": f"User's Whatsapp number = {phone_number}"}
+            if send_user_number_to_context:
+                run_kwargs["dependencies"] = {
+                    "User's WhatsApp number": phone_number,
+                    "Incoming WhatsApp message ID": message_id,
+                }
                 run_kwargs["add_dependencies_to_context"] = True
 
             # Refresh typing indicator every 20s while the agent runs

@@ -51,7 +51,6 @@ deep_research_agent = Agent(
         WhatsAppTools(
             enable_send_reply_buttons=True,
             enable_send_reaction=True,
-            enable_mark_as_read=True,
         ),
     ],
     instructions=[
@@ -62,8 +61,7 @@ deep_research_agent = Agent(
         "For technical topics, also search Arxiv for relevant research papers.",
         "Use the calculator for any numerical analysis or comparisons.",
         "Use newspaper4k to read full articles when you find interesting URLs.",
-        "First, mark the incoming message as read using mark_as_read.",
-        "Then ask the user how they want the output delivered using send_reply_buttons "
+        "Ask the user how they want the output delivered using send_reply_buttons "
         "with options: 'Text Summary' (id=text) and 'PDF Report' (id=pdf).",
         "If the user picks PDF, generate a structured report with sections using generate_pdf_file.",
         "After delivering the results, react to the original message with a checkmark emoji.",
@@ -83,4 +81,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="streaming_deep_research:app", reload=True)
+    agent_os.serve(app="streaming_deep_research:app", reload=True, port=8000)

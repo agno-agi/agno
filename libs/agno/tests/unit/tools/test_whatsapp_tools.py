@@ -52,7 +52,7 @@ def test_init_registers_default_tools():
 def test_init_all_flag_enables_all():
     with patch.dict("os.environ", ENV):
         tools = WhatsAppTools(all=True)
-        assert len(tools.functions) == 9
+        assert len(tools.functions) == 8
 
 
 def test_init_selective_enable():
@@ -82,7 +82,6 @@ def test_send_text_message_default_recipient(whatsapp_tools):
 
 
 def test_send_text_message_no_recipient():
-    # Explicitly unset WHATSAPP_RECIPIENT_WAID so default_recipient stays None
     env = {**ENV, "WHATSAPP_RECIPIENT_WAID": ""}
     with patch.dict("os.environ", env, clear=False):
         with patch("agno.tools.whatsapp.httpx"):
@@ -123,7 +122,7 @@ def test_send_template_message_with_components(whatsapp_tools):
     assert payload["template"]["components"] == components
 
 
-# === New Tools ===
+# === Interactive Tools ===
 
 
 def test_send_reply_buttons(whatsapp_tools):
@@ -272,25 +271,12 @@ def test_send_reaction(whatsapp_tools):
     assert payload["reaction"]["emoji"] == "\U0001f44d"
 
 
-def test_mark_as_read(whatsapp_tools):
-    whatsapp_tools._mock_httpx.post.return_value.json.return_value = {"success": True}
-    result = whatsapp_tools.mark_as_read(message_id="wamid.abc123")
-    parsed = json.loads(result)
-    assert parsed["ok"] is True
-
-    call_args = whatsapp_tools._mock_httpx.post.call_args
-    payload = call_args.kwargs.get("json") or call_args[1].get("json")
-    assert payload["status"] == "read"
-    assert payload["message_id"] == "wamid.abc123"
-
-
 # === Edge Cases ===
 
 
 def test_send_reply_buttons_empty_list(whatsapp_tools):
     result = whatsapp_tools.send_reply_buttons(body_text="Choose", buttons=[], recipient="+1234567890")
     parsed = json.loads(result)
-    # Empty buttons should still be sent (API will reject)
     assert parsed["ok"] is True or "error" in parsed
 
 
@@ -331,7 +317,6 @@ def test_send_document_by_media_id(whatsapp_tools):
 
 
 def test_send_image_both_url_and_media_id(whatsapp_tools):
-    # media_id takes precedence over URL
     result = whatsapp_tools.send_image(
         image_url="https://example.com/img.png", media_id="media_123", recipient="+1234567890"
     )
@@ -353,6 +338,9 @@ def test_send_location_without_name_and_address(whatsapp_tools):
     payload = call_args.kwargs.get("json") or call_args[1].get("json")
     assert "name" not in payload["location"]
     assert "address" not in payload["location"]
+
+
+# === Error Cases ===
 
 
 def test_send_template_message_error(whatsapp_tools):
@@ -396,12 +384,5 @@ def test_send_location_error(whatsapp_tools):
 def test_send_reaction_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("reaction API error")
     result = whatsapp_tools.send_reaction(message_id="wamid.abc", emoji="\U0001f44d", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
-
-
-def test_mark_as_read_error(whatsapp_tools):
-    whatsapp_tools._mock_httpx.post.side_effect = Exception("mark_read API error")
-    result = whatsapp_tools.mark_as_read(message_id="wamid.abc")
     parsed = json.loads(result)
     assert "error" in parsed

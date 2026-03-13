@@ -47,7 +47,6 @@ class WhatsAppTools(Toolkit):
         enable_send_document: bool = False,
         enable_send_location: bool = False,
         enable_send_reaction: bool = False,
-        enable_mark_as_read: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -84,8 +83,6 @@ class WhatsAppTools(Toolkit):
             tools.append(self.send_location)
         if enable_send_reaction or all:
             tools.append(self.send_reaction)
-        if enable_mark_as_read or all:
-            tools.append(self.mark_as_read)
 
         super().__init__(name="whatsapp", tools=tools, **kwargs)
 
@@ -475,7 +472,7 @@ class WhatsAppTools(Toolkit):
         """React to a WhatsApp message with an emoji.
 
         Args:
-            message_id: The wamid of the message to react to.
+            message_id: The WhatsApp message ID of the message to react to.
             emoji: The emoji to react with (e.g., thumbs up).
             recipient: Recipient phone number. Uses default if not provided.
 
@@ -501,25 +498,4 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": resp_message_id})
         except Exception as e:
             logger.error(f"Error sending reaction: {e}")
-            return json.dumps({"error": str(e)})
-
-    def mark_as_read(self, message_id: str) -> str:
-        """Send a read receipt for a WhatsApp message.
-
-        Args:
-            message_id: The wamid of the message to mark as read.
-
-        Returns:
-            A JSON string with success status or error.
-        """
-        try:
-            data = {
-                "messaging_product": "whatsapp",
-                "status": "read",
-                "message_id": message_id,
-            }
-            response = self._send_message(data)
-            return json.dumps({"ok": True, "success": response.get("success", True)})
-        except Exception as e:
-            logger.error(f"Error marking message as read: {e}")
             return json.dumps({"error": str(e)})

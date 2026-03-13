@@ -649,8 +649,9 @@ async def test_send_user_number_to_context():
 
         call_kwargs = agent_mock.arun.call_args.kwargs
         assert "dependencies" in call_kwargs
-        # Raw phone number passed to agent context (for reply targeting)
-        assert "sender_phone" in str(call_kwargs["dependencies"])
+        deps = call_kwargs["dependencies"]
+        assert deps["User's WhatsApp number"] == _RAW_SENDER
+        assert "Incoming WhatsApp message ID" in deps
         assert call_kwargs["add_dependencies_to_context"] is True
         assert call_kwargs["user_id"] == _RAW_SENDER
 
@@ -1013,5 +1014,5 @@ async def test_encrypted_mode_keeps_raw_phone_in_context():
         call_kwargs = agent_mock.arun.call_args.kwargs
         # user_id is encrypted for DB
         assert call_kwargs["user_id"] != "sender_phone"
-        # But dependencies have raw phone — encryption only protects DB, not LLM context
-        assert "sender_phone" in str(call_kwargs["dependencies"])
+        # Dependencies have raw phone — encryption only protects DB, not LLM context
+        assert call_kwargs["dependencies"]["User's WhatsApp number"] == "sender_phone"
