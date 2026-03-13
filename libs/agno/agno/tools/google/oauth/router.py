@@ -1,3 +1,4 @@
+from html import escape as html_escape
 from os import getenv
 from typing import List, Optional
 
@@ -106,11 +107,11 @@ def create_google_oauth_router(
 
         if error:
             log_error(f"Google OAuth error: {error}")
-            return HTMLResponse(content=_ERROR_HTML.format(error=error), status_code=400)
+            return HTMLResponse(content=_ERROR_HTML.format(error=html_escape(error)), status_code=400)
 
         if not code or not state:
             return HTMLResponse(
-                content=_ERROR_HTML.format(error="Missing authorization code or state"),
+                content=_ERROR_HTML.format(error=html_escape("Missing authorization code or state")),
                 status_code=400,
             )
 
@@ -118,7 +119,7 @@ def create_google_oauth_router(
             workspace_id, user_id, state_payload = verify_state(state, encryption_key=_encryption_key)
         except ValueError as e:
             log_error(f"Invalid OAuth state: {e}")
-            return HTMLResponse(content=_ERROR_HTML.format(error=str(e)), status_code=400)
+            return HTMLResponse(content=_ERROR_HTML.format(error=html_escape(str(e))), status_code=400)
 
         try:
             # Google may return more scopes than requested (e.g. previously
@@ -132,7 +133,7 @@ def create_google_oauth_router(
         except Exception as e:
             log_error(f"Token exchange failed: {e}")
             return HTMLResponse(
-                content=_ERROR_HTML.format(error="Failed to exchange authorization code"),
+                content=_ERROR_HTML.format(error=html_escape("Failed to exchange authorization code")),
                 status_code=500,
             )
 
