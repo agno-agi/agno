@@ -209,16 +209,20 @@ async def test_text_message_processing():
 
 @pytest.mark.asyncio
 async def test_image_message_processing():
+    from agno.media import Image
+
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
-        patch("agno.os.interfaces.whatsapp.router.get_media_async", new_callable=AsyncMock) as mock_get_media,
+        patch(
+            "agno.os.interfaces.whatsapp.router.download_event_media_async",
+            new_callable=AsyncMock,
+            return_value=({"images": [Image(content=b"\x89PNG")]}, []),
+        ),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_get_media.return_value = b"\x89PNG"
-
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook("image", image={"id": "media_123", "caption": "Check this"})
@@ -353,15 +357,20 @@ def test_empty_messages_no_crash():
 
 @pytest.mark.asyncio
 async def test_video_message_processing():
+    from agno.media import Video
+
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
-        patch("agno.os.interfaces.whatsapp.router.get_media_async", new_callable=AsyncMock) as mock_get_media,
+        patch(
+            "agno.os.interfaces.whatsapp.router.download_event_media_async",
+            new_callable=AsyncMock,
+            return_value=({"videos": [Video(content=b"\x00\x00\x00\x1cftypisom")]}, []),
+        ),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_get_media.return_value = b"\x00\x00\x00\x1cftypisom"
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook("video", video={"id": "vid_123", "caption": "Watch this"})
@@ -380,15 +389,20 @@ async def test_video_message_processing():
 
 @pytest.mark.asyncio
 async def test_audio_message_processing():
+    from agno.media import Audio
+
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
-        patch("agno.os.interfaces.whatsapp.router.get_media_async", new_callable=AsyncMock) as mock_get_media,
+        patch(
+            "agno.os.interfaces.whatsapp.router.download_event_media_async",
+            new_callable=AsyncMock,
+            return_value=({"audio": [Audio(content=b"\xff\xfb\x90\x00", mime_type="audio/mpeg")]}, []),
+        ),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_get_media.return_value = b"\xff\xfb\x90\x00"
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook("audio", audio={"id": "aud_123"})
@@ -407,15 +421,20 @@ async def test_audio_message_processing():
 
 @pytest.mark.asyncio
 async def test_document_message_processing():
+    from agno.media import File
+
     agent_mock = _make_agent_mock()
     with (
         patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
         patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
         patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
-        patch("agno.os.interfaces.whatsapp.router.get_media_async", new_callable=AsyncMock) as mock_get_media,
+        patch(
+            "agno.os.interfaces.whatsapp.router.download_event_media_async",
+            new_callable=AsyncMock,
+            return_value=({"files": [File(content=b"%PDF-1.4")]}, []),
+        ),
         patch.dict("os.environ", WHATSAPP_ENV),
     ):
-        mock_get_media.return_value = b"%PDF-1.4"
         app = _build_app(agent_mock)
         client = TestClient(app)
         body = _make_whatsapp_webhook("document", document={"id": "doc_123", "caption": "Review this PDF"})
@@ -1016,3 +1035,64 @@ async def test_encrypted_mode_keeps_raw_phone_in_context():
         assert call_kwargs["user_id"] != "sender_phone"
         # Dependencies have raw phone — encryption only protects DB, not LLM context
         assert call_kwargs["dependencies"]["User's WhatsApp number"] == "sender_phone"
+
+
+# === Media Download Skip Notice ===
+
+
+@pytest.mark.asyncio
+async def test_media_download_failure_prepends_skip_notice():
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch(
+            "agno.os.interfaces.whatsapp.router.download_event_media_async",
+            new_callable=AsyncMock,
+            return_value=({}, ["image (download failed: 404)"]),
+        ),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook("image", image={"id": "media_bad", "caption": "Look at this"})
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+
+        agent_mock.arun.assert_called_once()
+        message_text = agent_mock.arun.call_args[0][0]
+        assert message_text.startswith("[Some media could not be downloaded:")
+        assert "Look at this" in message_text
+
+
+@pytest.mark.asyncio
+async def test_media_download_success_no_skip_notice():
+    from agno.media import Image
+
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch("agno.os.interfaces.whatsapp.helpers._send_text", new_callable=AsyncMock),
+        patch("agno.os.interfaces.whatsapp.router.typing_indicator_async", new_callable=AsyncMock),
+        patch(
+            "agno.os.interfaces.whatsapp.router.download_event_media_async",
+            new_callable=AsyncMock,
+            return_value=({"images": [Image(content=b"\x89PNG")]}, []),
+        ),
+        patch.dict("os.environ", WHATSAPP_ENV),
+    ):
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        body = _make_whatsapp_webhook("image", image={"id": "media_ok", "caption": "Nice photo"})
+        response = client.post("/webhook", json=body)
+        assert response.status_code == 200
+
+        await _wait_for_agent_call(agent_mock)
+
+        agent_mock.arun.assert_called_once()
+        message_text = agent_mock.arun.call_args[0][0]
+        # No skip notice — clean caption only
+        assert message_text == "Nice photo"

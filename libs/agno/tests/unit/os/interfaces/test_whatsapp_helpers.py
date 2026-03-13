@@ -1,11 +1,14 @@
 import struct
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from agno.media import Audio, File, Image
 from agno.os.interfaces.whatsapp.helpers import (
+    MessageContent,
     WhatsAppConfig,
+    download_event_media_async,
     send_whatsapp_message_async,
     upload_and_send_media_async,
 )
@@ -309,3 +312,62 @@ async def test_upload_image_non_jpeg_defaults_to_png():
         await upload_and_send_media_async(items, "image", "phone", _TEST_CONFIG)
         assert mock_upload.call_args.kwargs["mime_type"] == "image/png"
         assert mock_upload.call_args.kwargs["filename"] == "image.png"
+
+
+# === download_event_media_async ===
+
+
+def _mock_response(json_data=None, content=None, status_code=200):
+    resp = httpx.Response(status_code=status_code, request=httpx.Request("GET", "https://test"))
+    if json_data is not None:
+        resp._content = httpx._content.json_dumps(json_data).encode() if isinstance(json_data, dict) else json_data
+    elif content is not None:
+        resp._content = content
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_download_event_media_image_success():
+    parsed = MessageContent(text="caption", image_id="img_123")
+    metadata_resp = httpx.Response(
+        200,
+        json={"url": "https://cdn/img", "mime_type": "image/jpeg"},
+        request=httpx.Request("GET", "https://graph.facebook.com/v22.0/img_123"),
+    )
+    content_resp = httpx.Response(
+        200,
+        content=b"\xff\xd8\xff",
+        request=httpx.Request("GET", "https://cdn/img"),
+    )
+
+    async def _mock_get(url, **kwargs):
+        if "graph.facebook.com" in str(url):
+            return metadata_resp
+        return content_resp
+
+    with patch("httpx.AsyncClient.get", side_effect=_mock_get):
+        media_kwargs, skipped = await download_event_media_async(parsed, _TEST_CONFIG)
+
+    assert skipped == []
+    assert "images" in media_kwargs
+    assert media_kwargs["images"][0].mime_type == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_download_event_media_failure_returns_skip():
+    parsed = MessageContent(text="caption", image_id="img_bad")
+
+    with patch("httpx.AsyncClient.get", side_effect=httpx.HTTPError("404")):
+        media_kwargs, skipped = await download_event_media_async(parsed, _TEST_CONFIG)
+
+    assert media_kwargs == {}
+    assert len(skipped) == 1
+    assert "image" in skipped[0]
+
+
+@pytest.mark.asyncio
+async def test_download_event_media_no_media_ids():
+    parsed = MessageContent(text="just text")
+    media_kwargs, skipped = await download_event_media_async(parsed, _TEST_CONFIG)
+    assert media_kwargs == {}
+    assert skipped == []

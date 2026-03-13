@@ -13,11 +13,10 @@ from pydantic import BaseModel, Field
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
+    download_event_media_async,
     extract_message_content,
-    get_media_async,
     send_whatsapp_message_async,
     typing_indicator_async,
     upload_and_send_media_async,
@@ -285,26 +284,17 @@ def attach_routes(
                     log_warning(f"Session lookup failed, using default: {e}")
 
             # Download media from Meta servers and wrap as Agno media objects
+            media_kwargs, skipped_media = await download_event_media_async(parsed, config)
             run_kwargs: dict = {
                 "user_id": user_id,
                 "session_id": session_id,
+                **media_kwargs,
             }
-            if parsed.image_id:
-                media = await get_media_async(parsed.image_id, config)
-                if isinstance(media, bytes):
-                    run_kwargs["images"] = [Image(content=media)]
-            if parsed.doc_id:
-                media = await get_media_async(parsed.doc_id, config)
-                if isinstance(media, bytes):
-                    run_kwargs["files"] = [File(content=media)]
-            if parsed.video_id:
-                media = await get_media_async(parsed.video_id, config)
-                if isinstance(media, bytes):
-                    run_kwargs["videos"] = [Video(content=media)]
-            if parsed.audio_id:
-                media = await get_media_async(parsed.audio_id, config)
-                if isinstance(media, bytes):
-                    run_kwargs["audio"] = [Audio(content=media)]
+
+            # Prepend skip notice so the agent (and user) knows media was dropped
+            if skipped_media:
+                notice = "[Some media could not be downloaded: " + "; ".join(skipped_media) + "]\n\n"
+                parsed.text = notice + parsed.text
 
             if send_user_number_to_context:
                 run_kwargs["dependencies"] = {

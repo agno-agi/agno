@@ -1,8 +1,8 @@
 import io
 import mimetypes
 import os
-from dataclasses import dataclass
-from typing import Optional, Union
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, Union
 
 import httpx
 
@@ -138,6 +138,74 @@ async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, 
             return response.content
     except httpx.HTTPError as e:
         return {"error": str(e)}
+
+
+@dataclass
+class _MediaResult:
+    content: Optional[bytes] = None
+    mime_type: Optional[str] = None
+    skip_reason: Optional[str] = None
+
+
+async def _download_media(media_id: str, media_label: str, config: WhatsAppConfig) -> _MediaResult:
+    url = f"{_BASE_URL}/{_API_VERSION}/{media_id}"
+    headers = config.auth_headers()
+    timeout = config.media_timeout
+    mime_type: Optional[str] = None
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            metadata = resp.json()
+        media_url = metadata.get("url")
+        mime_type = metadata.get("mime_type")
+    except httpx.HTTPError as e:
+        reason = f"{media_label} (metadata fetch failed: {e})"
+        log_warning(f"Media download skipped: {reason}")
+        return _MediaResult(skip_reason=reason)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(media_url, headers=headers)
+            resp.raise_for_status()
+            return _MediaResult(content=resp.content, mime_type=mime_type)
+    except httpx.HTTPError as e:
+        reason = f"{media_label} (download failed: {e})"
+        log_warning(f"Media download skipped: {reason}")
+        return _MediaResult(skip_reason=reason)
+
+
+_MEDIA_FIELDS = ("image_id", "video_id", "audio_id", "doc_id")
+_MEDIA_LABELS = ("image", "video", "audio", "document")
+
+
+async def download_event_media_async(parsed: "MessageContent", config: WhatsAppConfig) -> Tuple[dict, List[str]]:
+    from agno.media import Audio, File, Image, Video
+
+    run_kwargs: dict = {}
+    skipped: List[str] = []
+
+    for field_name, label in zip(_MEDIA_FIELDS, _MEDIA_LABELS):
+        media_id = getattr(parsed, field_name, None)
+        if not media_id:
+            continue
+        result = await _download_media(media_id, label, config)
+        if result.skip_reason:
+            skipped.append(result.skip_reason)
+            continue
+        content = result.content
+        mime = result.mime_type
+        if label == "image":
+            run_kwargs["images"] = [Image(content=content, mime_type=mime)]
+        elif label == "video":
+            run_kwargs["videos"] = [Video(content=content, mime_type=mime)]
+        elif label == "audio":
+            run_kwargs["audio"] = [Audio(content=content, mime_type=mime)]
+        elif label == "document":
+            run_kwargs["files"] = [File(content=content, mime_type=mime)]
+
+    return run_kwargs, skipped
 
 
 async def upload_media_async(
