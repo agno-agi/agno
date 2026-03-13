@@ -14,6 +14,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Claude(id=model_id)
 
+    elif model_provider == "avian":
+        from agno.models.avian import Avian
+
+        return Avian(id=model_id)
+
     elif model_provider == "aws-bedrock":
         from agno.models.aws import AwsBedrock
 
