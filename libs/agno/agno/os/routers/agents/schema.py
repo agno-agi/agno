@@ -140,7 +140,6 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
-        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
 
         tools_info = {
             "tools": formatted_tools,
@@ -160,6 +159,14 @@ class AgentResponse(BaseModel):
         }
 
         contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+        # Use the knowledge's own contents_db table name when available,
+        # falling back to agent.db for agents without a custom Knowledge config.
+        if contents_db and hasattr(contents_db, "knowledge_table_name"):
+            knowledge_table = contents_db.knowledge_table_name
+        elif agent.db and agent.knowledge:
+            knowledge_table = agent.db.knowledge_table_name
+        else:
+            knowledge_table = None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
