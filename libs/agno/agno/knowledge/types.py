@@ -17,12 +17,38 @@ class ContentType(str, Enum):
     # Document file extensions
     PDF = ".pdf"
     TXT = ".txt"
-    MARKDOWN = ".md"
-    DOCX = ".docx"
     DOC = ".doc"
-    PPTX = ".pptx"
     JSON = ".json"
     VTT = ".vtt"
+    MARKDOWN = ".md"
+
+    DOCX = ".docx"
+    DOTX = ".dotx"
+    DOCM = ".docm"
+    DOTM = ".dotm"
+
+    PPTX = ".pptx"
+    POTX = ".potx"
+    PPSX = ".ppsx"
+    POTM = ".pptm"
+    PPS = ".ppsm"
+
+    HTML = ".html"
+    HTM = ".htm"
+    XHTML = ".xhtml"
+
+    XML = ".xml"
+    NXML = ".nxml"
+    XBRL = ".xbrl"
+
+    ADOC = ".adoc"
+    ASCIIDOC = ".asciidoc"
+    ASC = ".asc"
+
+    METS_GBS = "tar.gz"
+
+    LATEX = ".tex"
+    LATEX_ALT = ".latex"
 
     # Image formats
     IMAGE_PNG = ".png"
@@ -37,6 +63,7 @@ class ContentType(str, Enum):
     CSV = ".csv"
     XLSX = ".xlsx"
     XLS = ".xls"
+    XLSM = ".xlsm"
 
     # Audio formats
     AUDIO_WAV = ".wav"

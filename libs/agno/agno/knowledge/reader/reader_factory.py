@@ -365,6 +365,7 @@ class ReaderFactory:
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:
         """Get the appropriate reader for a file extension."""
+        # TODO: add docling for unique file extensions eg: images, audios, etc.
         extension = extension.lower()
 
         if extension in [".pdf", "application/pdf"]:
