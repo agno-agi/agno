@@ -253,6 +253,32 @@ class AwsBedrock(Model):
 
         return parsed_tools
 
+    def _format_tool_choice(self, tool_choice: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if isinstance(tool_choice, dict):
+            if "auto" in tool_choice or "any" in tool_choice or "tool" in tool_choice:
+                return tool_choice
+            name = tool_choice.get("name")
+            if not name:
+                func_dict = tool_choice.get("function", {})
+                name = func_dict.get("name") if isinstance(func_dict, dict) else None
+            if name:
+                return {"tool": {"name": name}}
+            return None
+
+        if isinstance(tool_choice, str):
+            choice_lower = tool_choice.lower()
+            if choice_lower == "auto":
+                return {"auto": {}}
+            if choice_lower == "any":
+                return {"any": {}}
+            if choice_lower == "none":
+                log_warning("Bedrock Converse API does not support tool_choice='none'. Ignoring tool_choice.")
+                return None
+            # Treat as a tool name
+            return {"tool": {"name": tool_choice}}
+
+        return None
+
     def _get_inference_config(self) -> Dict[str, Any]:
         """
         Get the inference config.
@@ -491,9 +517,13 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
@@ -537,9 +567,13 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
@@ -587,9 +621,13 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
@@ -636,9 +674,13 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
