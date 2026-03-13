@@ -1,40 +1,31 @@
-# Telegram Interface
+# Telegram Cookbook
 
-Connect your Agno agents to Telegram as a bot with full media support.
+Examples for connecting Agno agents, teams, and workflows to Telegram using the
+`Telegram` interface in AgentOS. Supports text, media, streaming, and multi-agent
+teams via Telegram's Bot API with webhook-based message delivery.
 
-## Overview
+## Telegram Bot Setup
 
-The Telegram interface lets you serve an Agno Agent, Team, or Workflow as a Telegram bot. It handles inbound messages (text, photos, voice, video, documents), runs them through your agent, and sends back text or media responses. Built on FastAPI with webhook-based message delivery.
+Follow these steps to create and configure a Telegram bot for use with Agno.
 
-## Prerequisites
+### 1. Create the Bot
 
-- A Telegram bot token from [@BotFather](https://t.me/BotFather)
-- A model API key (examples use Google Gemini or OpenAI)
-- [ngrok](https://ngrok.com/) for local development (exposes localhost to the internet)
+1. Open Telegram and message [@BotFather](https://t.me/BotFather).
+2. Send `/newbot` and follow the prompts to choose a display name and username
+   (username must end in `bot`, e.g. `my_agno_bot`).
+3. Copy the bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`).
 
-## Getting Started
+Optional BotFather commands to polish your bot:
 
-### 1. Install dependencies
+| Command | Purpose |
+|---------|---------|
+| `/setdescription` | Bio shown on the bot's profile page |
+| `/setabouttext` | Short description in the chat list |
+| `/setcommands` | Register slash commands so users see a `/` menu |
+| `/setuserpic` | Set the bot's avatar |
+| `/setprivacy` | Toggle group privacy mode (see Group Chat Support below) |
 
-If using the demo virtual environment (recommended):
-
-```bash
-./scripts/demo_setup.sh
-```
-
-Or install manually:
-
-```bash
-pip install 'agno[telegram]'
-```
-
-### 2. Create a Telegram bot
-
-1. Open Telegram and message [@BotFather](https://t.me/BotFather)
-2. Send `/newbot` and follow the prompts to name your bot
-3. Copy the bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
-
-### 3. Set environment variables
+### 2. Set Environment Variables
 
 ```bash
 export TELEGRAM_TOKEN="your-bot-token-from-botfather"
@@ -42,9 +33,25 @@ export GOOGLE_API_KEY="your-google-api-key"       # For Gemini examples
 export APP_ENV="development"                        # Bypasses webhook secret validation
 ```
 
-The `APP_ENV=development` setting is important for local testing. Without it, the server runs in production mode and requires a `TELEGRAM_WEBHOOK_SECRET_TOKEN`, returning 403 errors on every webhook request.
+The `APP_ENV=development` setting is important for local testing. Without it, the
+server runs in production mode and requires a `TELEGRAM_WEBHOOK_SECRET_TOKEN`,
+returning 403 errors on every webhook request.
 
-### 4. Run the bot
+### 3. Start a Tunnel
+
+Telegram needs a public HTTPS URL to deliver webhook events. Use
+[ngrok](https://ngrok.com/) or
+[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
+
+```bash
+ngrok http 7777
+# or: cloudflared tunnel --url http://localhost:7777
+```
+
+Copy the public HTTPS URL (e.g. `https://abc123.ngrok-free.app`). The free ngrok
+tier gives you a random subdomain that changes on restart.
+
+### 4. Run an Example
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/interfaces/telegram/basic.py
@@ -52,19 +59,9 @@ The `APP_ENV=development` setting is important for local testing. Without it, th
 
 The server starts on `http://localhost:7777`.
 
-### 5. Expose with ngrok
+### 5. Set the Webhook
 
-In a separate terminal:
-
-```bash
-ngrok http 7777
-```
-
-Copy the `https://` forwarding URL (e.g., `https://abc123.ngrok-free.app`).
-
-### 6. Set the webhook
-
-Tell Telegram to send updates to your ngrok URL:
+Tell Telegram to send updates to your tunnel URL:
 
 ```bash
 curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=https://YOUR-NGROK-URL/telegram/webhook"
@@ -72,7 +69,9 @@ curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=https://YOUR-
 
 You should see `{"ok":true,"result":true,"description":"Webhook was set"}`.
 
-### 7. Verify it works
+> Verify anytime with: `curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"`
+
+### 6. Verify It Works
 
 Open your bot in Telegram and send `/start` or any message. You should see:
 - A "typing..." indicator in the chat
@@ -81,13 +80,32 @@ Open your bot in Telegram and send `/start` or any message. You should see:
 
 ## Examples
 
-| File | Model | Description |
-|------|-------|-------------|
-| `basic.py` | Gemini `gemini-2.5-pro` | Basic agent with conversation history and group chat mention filtering |
-| `agent_with_user_memory.py` | Gemini `gemini-2.0-flash` | Remembers user preferences across sessions using MemoryManager |
-| `agent_with_media.py` | Gemini + DALL-E + ElevenLabs | Generates images and audio, analyzes inbound media |
-| `reasoning_agent.py` | Claude `claude-3-7-sonnet` | Uses ReasoningTools and DuckDuckGo for research |
-| `multiple_instances.py` | OpenAI `gpt-5.2` | One bot with two agents on separate webhook paths (`/basic`, `/web-research`) |
+### Getting Started
+
+- `basic.py` -- Minimal agent with conversation history and group chat mention filtering (Gemini).
+- `workflow.py` -- Two-step draft-and-edit workflow where a Drafter writes and an Editor polishes.
+
+### Streaming
+
+Streaming is opt-in via `streaming=True` on the Telegram interface. Tokens arrive
+in real-time by editing the message progressively, so the user sees incremental
+output instead of waiting for the full response.
+
+- `streaming.py` -- Token-by-token streaming with live message edits (OpenAI).
+- `streaming_workflow.py` -- Two-step research-and-write workflow with real-time step progress.
+
+### Teams and Workflows
+
+- `team.py` -- Multi-agent team with a Researcher and a Writer, coordinated by a team leader.
+- `workflow.py` -- Sequential draft-and-edit workflow with two specialized agents.
+- `streaming_workflow.py` -- Streaming variant of the research workflow with live status updates.
+
+### Tools and Features
+
+- `agent_with_user_memory.py` -- Agent with MemoryManager that learns and remembers user preferences.
+- `agent_with_media.py` -- Multimedia bot with DALL-E image generation, ElevenLabs audio, and inbound media analysis.
+- `reasoning_agent.py` -- Claude agent with chain-of-thought reasoning and DuckDuckGo search.
+- `multiple_instances.py` -- Two agents behind one bot on separate webhook paths (`/basic`, `/web-research`).
 
 Run any example:
 
@@ -97,7 +115,8 @@ Run any example:
 
 ## Group Chat Support
 
-By default, the bot only responds when mentioned (`@your_bot`) or replied to in group chats. This is controlled by the `reply_to_mentions_only` flag:
+By default, the bot only responds when mentioned (`@your_bot`) or replied to in
+group chats. This is controlled by the `reply_to_mentions_only` flag:
 
 ```python
 Telegram(
@@ -109,13 +128,17 @@ Telegram(
 
 To have the bot respond to all messages in a group, set `reply_to_mentions_only=False`.
 
-**BotFather privacy mode:** By default, Telegram bots in groups only receive messages that mention them or are commands. If you want the bot to see all group messages (for `reply_to_mentions_only=False`), message @BotFather, send `/setprivacy`, select your bot, and choose **Disable**.
+**BotFather privacy mode:** By default, Telegram bots in groups only receive
+messages that mention them or are commands. If you want the bot to see all group
+messages (for `reply_to_mentions_only=False`), message @BotFather, send
+`/setprivacy`, select your bot, and choose **Disable**.
 
 ## Features
 
 - Text messages with conversation history
 - Inbound media: photos, stickers, voice notes, audio, video, video notes, animations, documents
 - Outbound media: images, audio, video, files from agent responses (URL, bytes, or filepath)
+- Streaming responses with progressive message edits
 - Typing indicators while processing
 - Long message chunking (Telegram's 4096 character limit)
 - Per-user session tracking (`tg:{chat_id}`)
@@ -148,22 +171,19 @@ curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
   }'
 ```
 
-- Telegram requires HTTPS for webhook URLs. Use a reverse proxy (nginx, Caddy) with TLS in production.
+- Telegram requires HTTPS for webhook URLs (ports 443, 80, 88, or 8443). Use a reverse proxy (nginx, Caddy) with TLS in production.
 - The server runs on port 7777 by default via AgentOS.
+- Rate limits: 30 messages/second globally, 1 message/second per chat, 20 messages/minute per group.
+- File limits: bots can download files up to 20 MB and upload up to 50 MB.
 
 ## Troubleshooting
 
-**403 errors on webhook requests:**
-You're running in production mode without a webhook secret. Either set `APP_ENV=development` for local testing, or set `TELEGRAM_WEBHOOK_SECRET_TOKEN` and register the webhook with the matching `secret_token`.
-
-**"Bad Request: invalid file_id" when sending media:**
-This happens when the bot receives a file_id from a different bot token or an expired file. File IDs are scoped to a specific bot token. Re-send the media to get a fresh file_id.
-
-**"Bad Request: message to be replied not found":**
-The bot tried to reply to a message that was deleted or is in a different chat. This can happen in group chats when messages are deleted before the bot responds. The error is logged and the bot sends a generic error message instead.
-
-**No response from the bot:**
-1. Check that the server is running (`curl http://localhost:7777/telegram/status`)
-2. Verify ngrok is forwarding (`curl https://YOUR-NGROK-URL/telegram/status`)
-3. Confirm the webhook is set (`curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"`)
-4. Check server logs for error messages
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| 403 errors on webhook requests | Running in production mode without a webhook secret | Set `APP_ENV=development` for local testing, or set `TELEGRAM_WEBHOOK_SECRET_TOKEN` and register the webhook with the matching `secret_token` |
+| "Bad Request: invalid file_id" | File ID from a different bot token or expired | File IDs are scoped to a specific bot token -- re-send the media to get a fresh one |
+| "message to be replied not found" | Original message was deleted before bot responded | Happens in group chats -- the bot logs the error and sends a fallback message |
+| No response from the bot | Server not running or webhook not set | 1. Check server: `curl http://localhost:7777/telegram/status` 2. Check tunnel: `curl https://YOUR-NGROK-URL/telegram/status` 3. Check webhook: `curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"` |
+| Bot ignores group messages | Privacy mode enabled (default) | Message @BotFather, send `/setprivacy`, select your bot, choose **Disable** |
+| Blank or missing streaming edits | `streaming=True` not set on the Telegram interface | Pass `streaming=True` when creating the `Telegram` instance |
+| `TELEGRAM_TOKEN is not set` | Missing env var | Export `TELEGRAM_TOKEN` before running |
