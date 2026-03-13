@@ -1199,30 +1199,40 @@ def _get_delegate_task_function(
                 ) -> tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
 
-                    member_agent_run_response = await member_agent.arun(
-                        input=member_agent_task if not history else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        stream_events=stream_events,
-                        debug_mode=debug_mode,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
-                        dependencies=run_context.dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
-                        add_session_state_to_context=add_session_state_to_context,
-                        metadata=run_context.metadata,
-                    )
-                    check_if_run_cancelled(member_agent_run_response)
-                    if run_response.run_id is not None:
-                        raise_if_cancelled(run_response.run_id)
+                    try:
+                        member_agent_run_response = await member_agent.arun(
+                            input=member_agent_task if not history else history,
+                            user_id=user_id,
+                            # All members have the same session_id
+                            session_id=session.session_id,
+                            session_state=member_session_state_copy,  # Send a copy to the agent
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=False,
+                            stream_events=stream_events,
+                            debug_mode=debug_mode,
+                            knowledge_filters=run_context.knowledge_filters
+                            if not member_agent.knowledge_filters and member_agent.knowledge
+                            else None,
+                            dependencies=run_context.dependencies,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            metadata=run_context.metadata,
+                        )
+                        check_if_run_cancelled(member_agent_run_response)
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        # Persist the member's partial run before re-raising
+                        _process_delegate_task_to_member(
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
+                        )
+                        raise
 
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
 

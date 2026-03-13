@@ -5781,7 +5781,7 @@ async def _acontinue_run(
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
@@ -6197,7 +6197,7 @@ async def _acontinue_run_stream(
                 yield run_error
                 break
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)

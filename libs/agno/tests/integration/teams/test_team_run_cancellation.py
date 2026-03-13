@@ -11,12 +11,14 @@ These tests verify that when a team run is cancelled mid-execution:
 
 import asyncio
 import os
+import uuid
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.base import RunStatus
+from agno.run.cancel import cancel_run, register_run
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.team import Team
@@ -393,6 +395,286 @@ def test_continue_session_after_cancelled_run(shared_db):
     )
 
     # Verify second run completed and session now has 2 runs
+    assert result is not None
+    assert result.status == RunStatus.completed
+
+    session_after = team.get_session(session_id=session_id)
+    assert session_after is not None
+    assert session_after.runs is not None and len(session_after.runs) >= 2
+
+
+# ============================================================================
+# NON-STREAMING SYNC TEAM TESTS
+# ============================================================================
+def test_cancel_team_non_streaming_sync(shared_db):
+    """Test cancelling a team during non-streaming synchronous execution.
+
+    Pre-cancels the run_id so the first raise_if_cancelled check fires
+    immediately — no delay needed. Verifies:
+    - Run status is set to cancelled in DB
+    """
+    team = _make_team(shared_db, name="NonStream Sync Team")
+
+    session_id = "test_team_nonstream_sync_cancel"
+
+    # Pre-register and cancel the run_id so it cancels immediately
+    pre_cancelled_run_id = str(uuid.uuid4())
+    register_run(pre_cancelled_run_id)
+    cancel_run(pre_cancelled_run_id)
+
+    result = team.run(
+        input="Write an extremely detailed essay about the entire history of computing.",
+        session_id=session_id,
+        run_id=pre_cancelled_run_id,
+        stream=False,
+    )
+
+    assert result is not None
+    assert result.status == RunStatus.cancelled, f"Expected cancelled, got {result.status}"
+
+    # Verify in DB
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+# ============================================================================
+# NON-STREAMING ASYNC TEAM TESTS
+# ============================================================================
+@pytest.mark.asyncio
+async def test_cancel_team_non_streaming_async(shared_db):
+    """Test cancelling a team during non-streaming async execution.
+
+    Pre-cancels the run_id so the first araise_if_cancelled check fires
+    immediately — no delay needed. Verifies:
+    - Run status is set to cancelled in DB
+    """
+    team = _make_team(shared_db, name="NonStream Async Team")
+
+    session_id = "test_team_nonstream_async_cancel"
+
+    # Pre-register and cancel the run_id so it cancels immediately
+    pre_cancelled_run_id = str(uuid.uuid4())
+    register_run(pre_cancelled_run_id)
+    cancel_run(pre_cancelled_run_id)
+
+    result = await team.arun(
+        input="Write an extremely detailed essay about the entire history of computing.",
+        session_id=session_id,
+        run_id=pre_cancelled_run_id,
+        stream=False,
+    )
+
+    assert result is not None
+    assert result.status == RunStatus.cancelled, f"Expected cancelled, got {result.status}"
+
+    # Verify in DB
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+# ============================================================================
+# MEMBER RUN PERSISTENCE ON TEAM CANCELLATION
+# ============================================================================
+def test_member_run_in_team_run_output_on_cancellation_sync(shared_db):
+    """Test that member run content is preserved when a streaming team is cancelled.
+
+    Verifies:
+    - Team run status is cancelled
+    - Content is preserved (not overwritten)
+    """
+    researcher = Agent(
+        name="Researcher",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a researcher. Write a very long detailed analysis.",
+    )
+    team = Team(
+        name="Member Persist Team",
+        members=[researcher],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        store_tool_messages=True,
+        store_history_messages=True,
+    )
+
+    session_id = "test_member_persist_on_cancel_sync"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    for event in team.run(
+        input="Write an extremely detailed 10-paragraph analysis of quantum computing history.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 5 and run_id and not cancelled:
+            team.cancel_run(run_id)
+            cancelled = True
+
+    assert cancelled
+
+    # Verify team run is cancelled
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None
+
+
+@pytest.mark.asyncio
+async def test_member_run_in_team_run_output_on_cancellation_async(shared_db):
+    """Async version: member run content is preserved when a streaming team is cancelled."""
+    researcher = Agent(
+        name="Researcher",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a researcher. Write a very long detailed analysis.",
+    )
+    team = Team(
+        name="Member Persist Async Team",
+        members=[researcher],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        store_tool_messages=True,
+        store_history_messages=True,
+    )
+
+    session_id = "test_member_persist_on_cancel_async"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    async for event in team.arun(
+        input="Write an extremely detailed 10-paragraph analysis of quantum computing history.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 5 and run_id and not cancelled:
+            team.cancel_run(run_id)
+            cancelled = True
+
+    assert cancelled
+
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) > 0
+
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    assert last_run.content is not None
+
+
+# ============================================================================
+# CONTINUE SESSION AFTER TEAM CANCELLATION
+# ============================================================================
+def test_continue_team_session_after_cancellation_sync(shared_db):
+    """Test continuing a team session after cancellation (sync).
+
+    Verifies:
+    - First run cancelled and stored
+    - Second run on same session completes
+    - Both runs in session history
+    """
+    team = _make_team(shared_db, name="Continue Team Sync")
+
+    session_id = "test_team_continue_after_cancel_sync"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    for event in team.run(
+        input="Write a long story about space exploration.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
+            run_id = event.run_id
+        if hasattr(event, "content") and event.content:
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 8 and run_id and not cancelled:
+            team.cancel_run(run_id)
+            cancelled = True
+
+    assert cancelled
+
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+    assert session.runs[-1].status == RunStatus.cancelled
+
+    # Run 2: Follow-up non-streaming
+    result = team.run(
+        input="What was I asking about before?",
+        session_id=session_id,
+        stream=False,
+    )
+
+    assert result is not None
+    assert result.status == RunStatus.completed
+
+    session_after = team.get_session(session_id=session_id)
+    assert session_after is not None
+    assert session_after.runs is not None and len(session_after.runs) >= 2
+    assert session_after.runs[-2].status == RunStatus.cancelled
+    assert session_after.runs[-1].status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_continue_team_session_after_cancellation_async(shared_db):
+    """Async version: continuing a team session after cancellation.
+
+    Verifies same invariants as sync version.
+    """
+    team = _make_team(shared_db, name="Continue Team Async")
+
+    session_id = "test_team_continue_after_cancel_async"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    async for event in team.arun(
+        input="Write a long story about space exploration.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id") and event.run_id:
+            run_id = event.run_id
+        if hasattr(event, "content") and event.content:
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 8 and run_id and not cancelled:
+            team.cancel_run(run_id)
+            cancelled = True
+
+    assert cancelled
+
+    session = team.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None and len(session.runs) >= 1
+    assert session.runs[-1].status == RunStatus.cancelled
+
+    # Run 2: Follow-up non-streaming async
+    result = await team.arun(
+        input="What was I asking about before?",
+        session_id=session_id,
+        stream=False,
+    )
+
     assert result is not None
     assert result.status == RunStatus.completed
 
