@@ -449,6 +449,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /approvals": ["approvals:read"],
         "GET /approvals/count": ["approvals:read"],
         "GET /approvals/*": ["approvals:read"],
+        "GET /approvals/*/status": ["approvals:read"],
         "POST /approvals/*/resolve": ["approvals:write"],
         "DELETE /approvals/*": ["approvals:delete"],
     }
