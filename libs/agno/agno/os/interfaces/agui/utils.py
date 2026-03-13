@@ -10,6 +10,7 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
+    RawEvent,
     RunFinishedEvent,
     StepFinishedEvent,
     StepStartedEvent,
@@ -27,6 +28,7 @@ from pydantic import BaseModel
 from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
@@ -212,6 +214,12 @@ def _create_events_from_chunk(
     """
     events_to_emit: List[BaseEvent] = []
 
+    # Serialize the agno chunk once for raw_event attachment
+    try:
+        raw_dict = chunk.to_dict()
+    except Exception:
+        raw_dict = None
+
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_content:
         content = extract_response_chunk_content(chunk)  # type: ignore
@@ -234,6 +242,7 @@ def _create_events_from_chunk(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=message_id,
                 role="assistant",
+                raw_event=raw_dict,
             )
             events_to_emit.append(start_event)
 
@@ -243,6 +252,7 @@ def _create_events_from_chunk(
                 type=EventType.TEXT_MESSAGE_CONTENT,
                 message_id=message_id,
                 delta=content,
+                raw_event=raw_dict,
             )
             events_to_emit.append(content_event)  # type: ignore
 
@@ -255,7 +265,9 @@ def _create_events_from_chunk(
             current_message_id = message_id
             if message_started:
                 # End the current text message
-                end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_message_id)
+                end_message_event = TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END, message_id=current_message_id, raw_event=raw_dict
+                )
                 events_to_emit.append(end_message_event)
 
                 # Set this message as the parent for any upcoming tool calls
@@ -278,12 +290,14 @@ def _create_events_from_chunk(
                     type=EventType.TEXT_MESSAGE_START,
                     message_id=parent_message_id,
                     role="assistant",
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(text_start)
 
                 text_end = TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END,
                     message_id=parent_message_id,
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(text_end)
 
@@ -295,6 +309,7 @@ def _create_events_from_chunk(
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
                 tool_call_name=tool_call.tool_name,  # type: ignore
                 parent_message_id=parent_message_id,
+                raw_event=raw_dict,
             )
             events_to_emit.append(start_event)
 
@@ -302,6 +317,7 @@ def _create_events_from_chunk(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
                 delta=json.dumps(tool_call.tool_args),
+                raw_event=raw_dict,
             )
             events_to_emit.append(args_event)  # type: ignore
 
@@ -313,6 +329,7 @@ def _create_events_from_chunk(
                 end_event = ToolCallEndEvent(
                     type=EventType.TOOL_CALL_END,
                     tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(end_event)
 
@@ -323,33 +340,40 @@ def _create_events_from_chunk(
                         content=str(tool_call.result),
                         role="tool",
                         message_id=str(uuid.uuid4()),
+                        raw_event=raw_dict,
                     )
                     events_to_emit.append(result_event)
 
     # Handle reasoning
-    elif chunk.event == RunEvent.reasoning_started:
-        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
+    elif chunk.event == RunEvent.reasoning_started or chunk.event == TeamRunEvent.reasoning_started:
+        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning", raw_event=raw_dict)
         events_to_emit.append(step_started_event)
-    elif chunk.event == RunEvent.reasoning_completed:
-        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
+    elif chunk.event == RunEvent.reasoning_completed or chunk.event == TeamRunEvent.reasoning_completed:
+        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning", raw_event=raw_dict)
         events_to_emit.append(step_finished_event)
 
     # Handle custom events
-    elif chunk.event == RunEvent.custom_event:
+    elif chunk.event == RunEvent.custom_event or chunk.event == TeamRunEvent.custom_event:
         # Use the name of the event class if available, otherwise default to the CustomEvent
         try:
             custom_event_name = chunk.__class__.__name__
         except Exception:
             custom_event_name = chunk.event
 
-        # Use the complete Agno event as value if parsing it works, else the event content field
-        try:
-            custom_event_value = chunk.to_dict()
-        except Exception:
-            custom_event_value = chunk.content  # type: ignore
+        # Reuse the already-serialized raw_dict, falling back to content
+        custom_event_value = raw_dict if raw_dict is not None else chunk.content  # type: ignore
 
-        custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
+        custom_event = CustomEvent(name=custom_event_name, value=custom_event_value, raw_event=raw_dict)
         events_to_emit.append(custom_event)
+
+    else:
+        # Catch-all: emit unmapped agno events as RawEvent for frontend visibility
+        raw_event = RawEvent(
+            type=EventType.RAW,
+            event=raw_dict if raw_dict is not None else {"event": str(chunk.event)},
+            source="agno",
+        )
+        events_to_emit.append(raw_event)
 
     return events_to_emit, message_started, message_id
 
@@ -365,23 +389,34 @@ def _create_completion_events(
     """Create events for run completion."""
     events_to_emit: List[BaseEvent] = []
 
+    # Serialize the completion chunk once for raw_event attachment
+    try:
+        raw_dict = chunk.to_dict()
+    except Exception:
+        raw_dict = None
+
     # End remaining active tool calls if needed
+    # These are synthetic cleanup events, not direct translations of the completion chunk,
+    # so raw_event is set to None to avoid misleading attribution.
     for tool_call_id in list(event_buffer.active_tool_call_ids):
         if tool_call_id not in event_buffer.ended_tool_call_ids:
             end_event = ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id,
+                raw_event=None,
             )
             events_to_emit.append(end_event)
 
     # End the message and run, denoting the end of the session
     if message_started:
-        end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+        end_message_event = TextMessageEndEvent(
+            type=EventType.TEXT_MESSAGE_END, message_id=message_id, raw_event=raw_dict
+        )
         events_to_emit.append(end_message_event)
 
     # Emit external execution tools
-    if isinstance(chunk, RunPausedEvent):
-        external_tools = chunk.tools_awaiting_external_execution
+    if isinstance(chunk, (RunPausedEvent, TeamRunPausedEvent)):
+        external_tools = getattr(chunk, "tools_awaiting_external_execution", None) or []
         if external_tools:
             # First, emit an assistant message for external tool calls
             assistant_message_id = str(uuid.uuid4())
@@ -389,6 +424,7 @@ def _create_completion_events(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=assistant_message_id,
                 role="assistant",
+                raw_event=raw_dict,
             )
             events_to_emit.append(assistant_start_event)
 
@@ -398,6 +434,7 @@ def _create_completion_events(
                     type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=assistant_message_id,
                     delta=str(chunk.content),
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(content_event)
 
@@ -405,6 +442,7 @@ def _create_completion_events(
             assistant_end_event = TextMessageEndEvent(
                 type=EventType.TEXT_MESSAGE_END,
                 message_id=assistant_message_id,
+                raw_event=raw_dict,
             )
             events_to_emit.append(assistant_end_event)
 
@@ -418,6 +456,7 @@ def _create_completion_events(
                     tool_call_id=tool.tool_call_id,
                     tool_call_name=tool.tool_name,
                     parent_message_id=assistant_message_id,  # Use the assistant message as parent
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(start_event)
 
@@ -425,16 +464,20 @@ def _create_completion_events(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=tool.tool_call_id,
                     delta=json.dumps(tool.tool_args),
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(args_event)
 
                 end_event = ToolCallEndEvent(
                     type=EventType.TOOL_CALL_END,
                     tool_call_id=tool.tool_call_id,
+                    raw_event=raw_dict,
                 )
                 events_to_emit.append(end_event)
 
-    run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
+    run_finished_event = RunFinishedEvent(
+        type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id, raw_event=raw_dict
+    )
     events_to_emit.append(run_finished_event)
 
     return events_to_emit
@@ -474,6 +517,7 @@ def stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
@@ -534,6 +578,7 @@ async def async_stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
