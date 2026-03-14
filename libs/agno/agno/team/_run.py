@@ -94,6 +94,20 @@ from agno.utils.log import (
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
 
+# Strong references to in-flight cleanup tasks shielded from CancelledError.
+# Tasks remove themselves via done-callback.
+_pending_cleanups: set[asyncio.Task[None]] = set()
+
+
+def _log_cleanup_exception(task: asyncio.Task[None]) -> None:
+    """Done-callback: log exceptions from shielded cleanup tasks and release strong ref."""
+    _pending_cleanups.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log_warning(f"Shielded session cleanup failed: {exc}")
+
 if TYPE_CHECKING:
     from agno.team.team import Team
 
@@ -4007,44 +4021,69 @@ async def _acleanup_and_store(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    import copy
+    """Prepare run data and persist the session.
 
-    from agno.run.approval import aupdate_approval_run_status
-    from agno.team._session import update_session_metrics
+    The entire body runs inside ``asyncio.shield()`` so that middleware cancel
+    scopes (e.g. Starlette ``BaseHTTPMiddleware`` on client disconnect) cannot
+    interrupt session persistence.  On cancellation the inner task continues
+    running independently as best-effort background persistence.
+    """
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
-    scrub_run_output_for_storage(team, storage_copy)
+    async def _inner() -> None:
+        import copy
 
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
+        from agno.run.approval import aupdate_approval_run_status
+        from agno.team._session import update_session_metrics
 
-    # Update run_response.session_state before saving
-    if run_context is not None and run_context.session_state is not None:
-        run_response.session_state = run_context.session_state
-        storage_copy.session_state = run_context.session_state
+        # Scrub a shallow copy for storage — the original run_response is never
+        # mutated so the caller always sees generated media regardless of store_media.
+        storage_copy = copy.copy(run_response)
+        scrub_run_output_for_storage(team, storage_copy)
 
-    # Add scrubbed RunOutput to Team Session
-    session.upsert_run(run_response=storage_copy)
+        # Stop the timer for the Run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
-    # Calculate session metrics
-    update_session_metrics(team, session=session, run_response=run_response)
+        # Update run_response.session_state before saving
+        if run_context is not None and run_context.session_state is not None:
+            run_response.session_state = run_context.session_state
+            storage_copy.session_state = run_context.session_state
 
-    # Update session state before saving the session
-    if run_context is not None and run_context.session_state is not None:
-        if session.session_data is not None:
-            session.session_data["session_state"] = run_context.session_state
+        # Add scrubbed RunOutput to Team Session
+        session.upsert_run(run_response=storage_copy)
+
+        # Calculate session metrics
+        update_session_metrics(team, session=session, run_response=run_response)
+
+        # Update session state before saving the session
+        if run_context is not None and run_context.session_state is not None:
+            if session.session_data is not None:
+                session.session_data["session_state"] = run_context.session_state
+            else:
+                session.session_data = {"session_state": run_context.session_state}
+
+        # Save session to memory
+        await team.asave_session(session=session)
+
+        # Update approval run_status if this run has an associated approval.
+        if run_response.status is not None and run_response.run_id is not None:
+            await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
+
+    # Shield from CancelledError so the session save runs to completion
+    # even when the parent task is cancelled by middleware cancel scopes.
+    task = asyncio.ensure_future(_inner())
+    _pending_cleanups.add(task)
+    task.add_done_callback(_log_cleanup_exception)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if task.done():
+            log_warning("Session cleanup task completed before shield caught cancel")
         else:
-            session.session_data = {"session_state": run_context.session_state}
-
-    # Save session to memory
-    await team.asave_session(session=session)
-
-    # Update approval run_status if this run has an associated approval.
-    if run_response.status is not None and run_response.run_id is not None:
-        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
+            log_warning(
+                "Session cleanup shielded from CancelledError — "
+                "persistence continues in background"
+            )
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
