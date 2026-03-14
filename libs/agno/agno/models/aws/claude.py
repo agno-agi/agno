@@ -71,14 +71,16 @@ class Claude(AnthropicClaude):
                 "aws_region": self.aws_region or self.session.region_name,
             }
         else:
-            self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
-            if self.api_key:
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
-                client_params = {
-                    "api_key": self.api_key,
-                }
-                if self.aws_region:
-                    client_params["aws_region"] = self.aws_region
+            _legacy_api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
+            if _legacy_api_key:
+                raise ValueError(
+                    "AWS Bedrock does not support API key authentication. "
+                    "AnthropicBedrock() does not accept an 'api_key' parameter.\n"
+                    "Please authenticate using AWS credentials instead:\n"
+                    "  - Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, or\n"
+                    "  - Pass a boto3 Session via the 'session' parameter.\n"
+                    "See: https://docs.agno.com/models/providers/cloud/aws-claude/overview"
+                )
             else:
                 self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
                 self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
@@ -92,9 +94,9 @@ class Claude(AnthropicClaude):
                     "aws_region": self.aws_region,
                 }
 
-            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+            if not (self.aws_access_key and self.aws_secret_key):
                 log_warning(
-                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
         if self.timeout is not None:
