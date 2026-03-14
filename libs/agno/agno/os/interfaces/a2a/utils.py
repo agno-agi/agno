@@ -82,6 +82,17 @@ from agno.run.agent import (
 )
 from agno.run.base import RunStatus
 
+from pydantic import BaseModel
+
+
+def _serialize_content(content: Any) -> str:
+    """Serialize content to a string, handling Pydantic models and dicts."""
+    if isinstance(content, BaseModel):
+        return content.model_dump_json()
+    if isinstance(content, dict):
+        return json.dumps(content)
+    return str(content)
+
 
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
     """Map A2A SendMessageRequest to Agno RunInput.
@@ -348,11 +359,12 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            serialized = _serialize_content(event.content)
+            accumulated_content += serialized
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=serialized))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
