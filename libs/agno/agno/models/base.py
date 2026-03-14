@@ -1111,11 +1111,11 @@ class Model(ABC):
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
         # Update model response with assistant message content and audio
+        # Use assignment (not +=) so RunOutput.content reflects only the last
+        # assistant message, not a concatenation of all intermediate responses
+        # (e.g. tool-call preambles). Full message history is in RunOutput.messages.
         if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+            model_response.content = assistant_message.get_content_string()
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1174,11 +1174,11 @@ class Model(ABC):
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
         # Update model response with assistant message content and audio
+        # Use assignment (not +=) so RunOutput.content reflects only the last
+        # assistant message, not a concatenation of all intermediate responses
+        # (e.g. tool-call preambles). Full message history is in RunOutput.messages.
         if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+            model_response.content = assistant_message.get_content_string()
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
