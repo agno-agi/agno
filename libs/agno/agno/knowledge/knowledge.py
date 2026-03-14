@@ -27,6 +27,9 @@ from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
+# Web extensions that should not be treated as binary files
+_WEB_EXTENSIONS = {".html", ".htm", ".xhtml"}
+
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
 
@@ -1183,6 +1186,8 @@ class Knowledge(RemoteKnowledge):
             return self.markdown_reader, ""
         elif file_extension in [".xlsx", ".xls"]:
             return self.excel_reader, ""
+        elif file_extension in [".html", ".htm", ".xhtml"]:
+            return self.website_reader, ""
         else:
             return self.text_reader, ""
 
@@ -1564,7 +1569,7 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        if file_extension and file_extension not in _WEB_EXTENSIONS:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
@@ -1716,7 +1721,7 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        if file_extension and file_extension not in _WEB_EXTENSIONS:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
