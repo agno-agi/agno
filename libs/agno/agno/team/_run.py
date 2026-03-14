@@ -2264,6 +2264,11 @@ async def _arun_tasks(
         run_response = cast(TeamRunOutput, run_response)
         run_response.status = RunStatus.cancelled
         run_response.content = "Operation cancelled by user"
+        try:
+            if team_session is not None:
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        except Exception:
+            pass
         return run_response
 
     except Exception as e:

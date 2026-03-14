@@ -190,6 +190,14 @@ async def test_cleanup_propagates_exception_on_normal_path():
 # ---------------------------------------------------------------------------
 
 
+def test_arun_tasks_calls_cleanup_on_cancel():
+    """_arun_tasks CancelledError handler must call _acleanup_and_store."""
+    branch = _get_cancel_handler_source(team_run._arun_tasks)
+    assert "_acleanup_and_store" in branch, (
+        "_arun_tasks CancelledError branch must call _acleanup_and_store"
+    )
+
+
 def test_arun_tasks_stream_calls_cleanup_on_cancel():
     """_arun_tasks_stream CancelledError handler must call _acleanup_and_store."""
     branch = _get_cancel_handler_source(team_run._arun_tasks_stream)
