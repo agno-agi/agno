@@ -246,9 +246,10 @@ class TestApiKeyPath:
         model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
         params = model._get_client_params()
 
-        assert params["api_key"] == "br-api-key-123"
+        assert params["default_headers"]["Authorization"] == "Bearer br-api-key-123"
         assert params["aws_region"] == "us-west-2"
         assert "aws_session_token" not in params
+        assert "api_key" not in params
 
 
 class TestSessionNullCredentials:
