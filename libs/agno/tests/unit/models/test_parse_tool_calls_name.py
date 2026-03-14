@@ -186,6 +186,8 @@ def _make_chunks(provider: str, specs: List[Dict[str, Any]]) -> List[Any]:
             result.append(_cerebras_chunk(**spec))
         elif provider == "watsonx":
             result.append(_watsonx_chunk(**spec))
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
     return result
 
 
