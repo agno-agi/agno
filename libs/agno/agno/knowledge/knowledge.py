@@ -1564,14 +1564,15 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        _web_extensions = {".html", ".htm"}
+        if file_extension and file_extension not in _web_extensions:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if file_extension and file_extension not in _web_extensions:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
@@ -1716,13 +1717,14 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        _web_extensions = {".html", ".htm"}
+        if file_extension and file_extension not in _web_extensions:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if file_extension and file_extension not in _web_extensions:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
