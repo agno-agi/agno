@@ -2,6 +2,7 @@ from agno.knowledge.remote_content.azure_blob import AzureBlobConfig
 from agno.knowledge.remote_content.base import BaseStorageConfig, ListFilesResult
 from agno.knowledge.remote_content.gcs import GcsConfig
 from agno.knowledge.remote_content.github import GitHubConfig
+from agno.knowledge.remote_content.local import LocalStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     AzureBlobContent,
     GCSContent,
@@ -23,6 +24,7 @@ __all__ = [
     "SharePointConfig",
     "GitHubConfig",
     "AzureBlobConfig",
+    "LocalStorageConfig",
     # Content classes
     "RemoteContent",
     "S3Content",

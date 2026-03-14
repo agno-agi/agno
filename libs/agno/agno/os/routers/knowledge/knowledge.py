@@ -11,7 +11,12 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
-from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
+from agno.knowledge.utils import (
+    RESERVED_AGNO_KEY,
+    get_all_chunkers_info,
+    get_all_readers_info,
+    get_content_types_to_readers_mapping,
+)
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
     ChunkerSchema,
@@ -112,6 +117,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
         chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
+        backup: Optional[bool] = Form(
+            None, description="Store backup content copy. None=auto (store if configured), True=force, False=skip"
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
@@ -200,7 +208,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+        background_tasks.add_task(
+            process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap, backup
+        )
 
         response = ContentResponseSchema(
             id=content.id,
@@ -255,6 +265,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply"),
         chunk_size: Optional[int] = Form(None, description="Chunk size for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap for processing"),
+        backup: Optional[bool] = Form(
+            None, description="Store backup content copy. None=auto (store if configured), True=force, False=skip"
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
@@ -307,7 +320,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+        background_tasks.add_task(
+            process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap, backup
+        )
 
         response = ContentResponseSchema(
             id=content.id,
@@ -1364,7 +1379,100 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             ),
         )
 
+    @router.post(
+        "/knowledge/content/{content_id}/refresh",
+        response_model=ContentStatusResponse,
+        status_code=202,
+        operation_id="refresh_content",
+        summary="Refresh Content",
+        description=(
+            "Refresh content by re-fetching from its original source and re-embedding. "
+            "Sources are resolved in priority order: original cloud source first, then backup storage as fallback. "
+            "Use cases: embeddings lost, switching embedding model, or source content updated."
+        ),
+        responses={
+            202: {
+                "description": "Content refresh accepted for processing",
+            },
+            400: {
+                "description": "Cannot refresh - no source available",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
+    )
+    async def refresh_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_id: str = Path(..., description="Content ID to refresh"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID (name)"),
+    ) -> ContentStatusResponse:
+        knowledge = get_knowledge_instance(knowledge_instances, knowledge_id=knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Content refresh not yet supported for RemoteKnowledge")
+
+        # Verify content exists
+        content = await knowledge.aget_content_by_id(content_id=content_id)
+        if not content:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
+        # Verify there is a source to refresh from
+        agno_meta = (content.metadata or {}).get(RESERVED_AGNO_KEY, {})
+        if not isinstance(agno_meta, dict):
+            agno_meta = {}
+
+        has_raw = bool(agno_meta.get("backup_storage_type"))
+        has_source = bool(agno_meta.get("source_type"))
+        # Also check top-level metadata for backward compatibility
+        has_legacy_source = bool(content.metadata and content.metadata.get("source_type"))
+
+        if not has_raw and not has_source and not has_legacy_source:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot refresh: no backup storage or original source available",
+            )
+
+        # Mark as processing
+        from agno.knowledge.content import ContentStatus as KnowledgeContentStatus
+
+        content.status = KnowledgeContentStatus.PROCESSING
+        content.status_message = "refreshing"
+        await knowledge.apatch_content(content)
+
+        background_tasks.add_task(process_refresh, knowledge, content_id)
+
+        return ContentStatusResponse(
+            id=content_id,
+            status=ContentStatus.PROCESSING,
+            status_message="refreshing",
+        )
+
     return router
+
+
+async def process_refresh(knowledge: Knowledge, content_id: str):
+    """Background task to refresh content by re-fetching and re-embedding."""
+    try:
+        await knowledge.arefresh_content(content_id)
+        log_info(f"Content {content_id} refreshed successfully")
+    except Exception as e:
+        log_error(f"Error refreshing content {content_id}: {e}")
+        try:
+            from agno.knowledge.content import ContentStatus as KnowledgeContentStatus
+
+            content = await knowledge.aget_content_by_id(content_id)
+            if content:
+                # Content still has valid vectors — keep COMPLETED status
+                # but remove refresh_available since the source is no longer accessible
+                content.status = KnowledgeContentStatus.COMPLETED
+                content.status_message = f"refresh_failed: {e}"
+                if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                    await knowledge.apatch_content(content)
+                else:
+                    knowledge.patch_content(content)
+        except Exception:
+            pass
 
 
 async def process_content(
@@ -1374,6 +1482,7 @@ async def process_content(
     chunker: Optional[str] = None,
     chunk_size: Optional[int] = None,
     chunk_overlap: Optional[int] = None,
+    backup: Optional[bool] = None,
 ):
     """Background task to process the content"""
 
@@ -1406,7 +1515,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
+        await knowledge._aload_content(content, upsert=False, skip_if_exists=True, backup=backup)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")

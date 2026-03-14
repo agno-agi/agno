@@ -139,6 +139,7 @@ class AzureBlobLoader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from Azure Blob Storage (async).
 
@@ -261,6 +262,8 @@ class AzureBlobLoader(BaseLoader):
                     await self._aupdate_content(content_entry)
                     continue
 
+                await self._abackup_bytes(content_entry, blob_data, file_name, backup)
+
                 # Select reader and read content
                 reader = self._select_reader_by_uri(file_name, content.reader)
                 if reader is None:
@@ -285,6 +288,7 @@ class AzureBlobLoader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from Azure Blob Storage (sync).
 
@@ -397,13 +401,16 @@ class AzureBlobLoader(BaseLoader):
                 try:
                     blob_client = container_client.get_blob_client(blob_name)
                     download_stream = blob_client.download_blob()
-                    file_content = BytesIO(download_stream.readall())
+                    blob_data = download_stream.readall()
+                    file_content = BytesIO(blob_data)
                 except Exception as e:
                     log_error(f"Error downloading Azure blob {blob_name}: {e}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     self._update_content(content_entry)
                     continue
+
+                self._backup_bytes(content_entry, blob_data, file_name, backup)
 
                 # Select reader and read content
                 reader = self._select_reader_by_uri(file_name, content.reader)
