@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
+from pydantic import BaseModel
 from typing_extensions import AsyncIterator, List, Union
 
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
@@ -192,6 +193,13 @@ def _map_run_status_to_task_state(status: Optional[RunStatus]) -> TaskState:
     return _mapping.get(status, TaskState.completed)
 
 
+def _serialize_content(content: Any) -> str:
+    """Serialize content to a string, handling Pydantic models via JSON serialization."""
+    if isinstance(content, BaseModel):
+        return content.model_dump_json()
+    return str(content)
+
+
 def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) -> Task:
     """Map the given RunOutput or WorkflowRunOutput into an A2A Task.
 
@@ -210,7 +218,7 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
 
     # 1. Handle output content
     if run_output.content:
-        parts.append(Part(root=TextPart(text=str(run_output.content))))
+        parts.append(Part(root=TextPart(text=_serialize_content(run_output.content))))
 
     # 2. Handle output media
     artifacts: List[Artifact] = []
@@ -348,11 +356,12 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            content_str = _serialize_content(event.content)
+            accumulated_content += content_str
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=content_str))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
@@ -804,7 +813,7 @@ async def stream_a2a_response(
 
         final_parts: List[Part] = []
         if final_content:
-            final_parts.append(Part(root=TextPart(text=str(final_content))))
+            final_parts.append(Part(root=TextPart(text=_serialize_content(final_content))))
 
         # Handle all media artifacts
         artifacts: List[Artifact] = []
