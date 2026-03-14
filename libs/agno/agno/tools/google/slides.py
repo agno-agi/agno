@@ -127,6 +127,30 @@ class GoogleSlidesTools(Toolkit):
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         oauth_port: int = 0,
+        # ── Per-tool boolean flags ──────────────────────────
+        # Safe / read-only tools → default True
+        enable_create_presentation: bool = True,
+        enable_get_presentation: bool = True,
+        enable_list_presentations: bool = True,
+        enable_get_presentation_metadata: bool = True,
+        enable_get_page: bool = True,
+        enable_get_slide_text: bool = True,
+        enable_read_all_text: bool = True,
+        enable_get_thumbnail_url: bool = True,
+        enable_add_slide: bool = True,
+        enable_add_text_box: bool = True,
+        enable_add_table: bool = True,
+        enable_set_background_image: bool = True,
+        enable_duplicate_slide: bool = True,
+        enable_move_slides: bool = True,
+        enable_insert_youtube_video: bool = True,
+        enable_insert_drive_video: bool = True,
+        enable_batch_update_presentation: bool = True,
+        # Destructive tools → default False
+        enable_delete_presentation: bool = False,
+        enable_delete_slide: bool = False,
+        # Master override
+        all: bool = False,
         include_tools: Optional[List[str]] = None,
         exclude_tools: Optional[List[str]] = None,
         **kwargs,
@@ -141,29 +165,51 @@ class GoogleSlidesTools(Toolkit):
         self.slides_service: Any = None
         self.drive_service: Any = None
 
+        # ── Build tool list based on flags ──────────────
+        tools = []
+        if all or enable_create_presentation:
+            tools.append(self.create_presentation)
+        if all or enable_get_presentation:
+            tools.append(self.get_presentation)
+        if all or enable_list_presentations:
+            tools.append(self.list_presentations)
+        if all or enable_get_presentation_metadata:
+            tools.append(self.get_presentation_metadata)
+        if all or enable_get_page:
+            tools.append(self.get_page)
+        if all or enable_get_slide_text:
+            tools.append(self.get_slide_text)
+        if all or enable_read_all_text:
+            tools.append(self.read_all_text)
+        if all or enable_get_thumbnail_url:
+            tools.append(self.get_thumbnail_url)
+        if all or enable_add_slide:
+            tools.append(self.add_slide)
+        if all or enable_add_text_box:
+            tools.append(self.add_text_box)
+        if all or enable_add_table:
+            tools.append(self.add_table)
+        if all or enable_set_background_image:
+            tools.append(self.set_background_image)
+        if all or enable_duplicate_slide:
+            tools.append(self.duplicate_slide)
+        if all or enable_move_slides:
+            tools.append(self.move_slides)
+        if all or enable_insert_youtube_video:
+            tools.append(self.insert_youtube_video)
+        if all or enable_insert_drive_video:
+            tools.append(self.insert_drive_video)
+        if all or enable_batch_update_presentation:
+            tools.append(self.batch_update_presentation)
+        # Destructive — only if explicitly enabled or `all=True`
+        if all or enable_delete_presentation:
+            tools.append(self.delete_presentation)
+        if all or enable_delete_slide:
+            tools.append(self.delete_slide)
+
         super().__init__(
             name="google_slides_tools",
-            tools=[
-                self.create_presentation,
-                self.get_presentation,
-                self.list_presentations,
-                self.delete_presentation,
-                self.add_slide,
-                self.delete_slide,
-                self.duplicate_slide,
-                self.move_slides,
-                self.add_text_box,
-                self.add_table,
-                self.set_background_image,
-                self.read_all_text,
-                self.get_thumbnail_url,
-                self.get_presentation_metadata,
-                self.get_page,
-                self.get_slide_text,
-                self.batch_update_presentation,
-                self.insert_youtube_video,
-                self.insert_drive_video,
-            ],
+            tools=tools,
             instructions=(
                 "Use these tools to create and manage Google Slides presentations. "
                 "When starting: call create_presentation or list_presentations. "
