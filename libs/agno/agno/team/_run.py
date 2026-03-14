@@ -3691,6 +3691,8 @@ async def _arun_stream(
 
             except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = cast(TeamRunOutput, run_response)
+                run_response.status = RunStatus.cancelled
+                run_response.content = "Operation cancelled by user"
                 try:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception:
