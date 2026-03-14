@@ -1,7 +1,7 @@
 import io
 import mimetypes
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import httpx
