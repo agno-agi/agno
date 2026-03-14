@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from typing import Dict, List, Union
 
@@ -63,6 +64,70 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     # Log filtering information
     num_filtered = tool_call_count - len(tool_call_ids_to_keep)
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
+
+
+def _safe_json_length(value: object) -> int:
+    """Safely estimate the length of a JSON representation of `value`.
+
+    Falls back to `len(str(value))` if JSON serialization fails.
+    """
+    try:
+        return len(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        # Fallback for circular references or other edge cases
+        return len(str(value))
+
+
+def _estimate_message_tokens(message: Message) -> int:
+    """Estimate the token count for a message using the ~4 chars per token heuristic."""
+    char_count = 0
+    if message.content is not None:
+        if isinstance(message.content, str):
+            char_count += len(message.content)
+        else:
+            char_count += _safe_json_length(message.content)
+    if message.tool_calls:
+        char_count += _safe_json_length(message.tool_calls)
+    if message.role:
+        char_count += len(message.role)
+    if message.name:
+        char_count += len(message.name)
+    # ~4 characters per token (use conservative ceiling division)
+    return max((char_count + 3) // 4, 1)
+
+
+def truncate_history_by_tokens(messages: List[Message], max_tokens: int) -> None:
+    """Truncate history messages (in-place) to fit within a token budget.
+
+    Keeps the most recent messages, dropping the oldest ones first.
+
+    Args:
+        messages: List of history messages to truncate (modified in-place)
+        max_tokens: Maximum number of tokens to allow
+    """
+    if not messages or max_tokens <= 0:
+        messages[:] = []
+        return
+
+    # Calculate tokens for each message (from most recent to oldest)
+    total_tokens = 0
+    keep_from_index = len(messages)
+    for i in range(len(messages) - 1, -1, -1):
+        msg_tokens = _estimate_message_tokens(messages[i])
+        if total_tokens + msg_tokens > max_tokens:
+            break
+        total_tokens += msg_tokens
+        keep_from_index = i
+
+    num_dropped = keep_from_index
+    if num_dropped > 0:
+        messages[:] = messages[keep_from_index:]
+        # Drop leading tool messages that may be orphaned after truncation.
+        # Some providers require tool messages to be preceded by an assistant message.
+        while messages and getattr(messages[0], "role", None) == "tool":
+            messages.pop(0)
+            num_dropped += 1
+        log_debug(f"Truncated {num_dropped} history messages to fit within {max_tokens} token budget")
 
 
 def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -> str:
