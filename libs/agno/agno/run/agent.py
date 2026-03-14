@@ -157,6 +157,9 @@ class RunEvent(str, Enum):
     pre_hook_started = "PreHookStarted"
     pre_hook_completed = "PreHookCompleted"
 
+    model_hook_started = "ModelHookStarted"
+    model_hook_completed = "ModelHookCompleted"
+
     post_hook_started = "PostHookStarted"
     post_hook_completed = "PostHookCompleted"
 
@@ -348,6 +351,18 @@ class PreHookCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ModelHookStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.model_hook_started.value
+    model_hook_name: Optional[str] = None
+
+
+@dataclass
+class ModelHookCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.model_hook_completed.value
+    model_hook_name: Optional[str] = None
+
+
+@dataclass
 class PostHookStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.post_hook_started.value
     post_hook_name: Optional[str] = None
@@ -529,6 +544,8 @@ RunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    ModelHookStartedEvent,
+    ModelHookCompletedEvent,
     PostHookStartedEvent,
     PostHookCompletedEvent,
     ReasoningStartedEvent,

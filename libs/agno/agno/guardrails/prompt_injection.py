@@ -1,3 +1,4 @@
+import warnings
 from typing import List, Optional, Union
 
 from agno.exceptions import CheckTrigger, InputCheckError
@@ -7,13 +8,14 @@ from agno.run.team import TeamRunInput
 
 
 class PromptInjectionGuardrail(BaseGuardrail):
-    """Guardrail for detecting prompt injection attempts.
-
-    Args:
-        injection_patterns (Optional[List[str]]): A list of patterns to check for. Defaults to a list of common prompt injection patterns.
-    """
+    """Deprecated. Use ContentGuardrail(check_jailbreak=True) instead."""
 
     def __init__(self, injection_patterns: Optional[List[str]] = None):
+        warnings.warn(
+            "PromptInjectionGuardrail is deprecated. Use ContentGuardrail(check_jailbreak=True) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.injection_patterns = injection_patterns or [
             "ignore previous instructions",
             "ignore your instructions",
@@ -44,7 +46,7 @@ class PromptInjectionGuardrail(BaseGuardrail):
             )
 
     async def async_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Asynchronously check for prompt injection patterns in the input."""
+        """Async check for prompt injection patterns in the input."""
         if any(keyword in run_input.input_content_string().lower() for keyword in self.injection_patterns):
             raise InputCheckError(
                 "Potential jailbreaking or prompt injection detected.",

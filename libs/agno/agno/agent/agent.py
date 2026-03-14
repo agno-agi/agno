@@ -176,6 +176,8 @@ class Agent:
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
+    # Functions called after context is built but before model is called
+    model_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
@@ -420,6 +422,7 @@ class Agent:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+        model_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -581,6 +584,7 @@ class Agent:
         self.tool_hooks = tool_hooks
 
         self.pre_hooks = pre_hooks
+        self.model_hooks = model_hooks
         self.post_hooks = post_hooks
 
         self.reasoning = reasoning
