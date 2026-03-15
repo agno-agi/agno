@@ -1,7 +1,7 @@
 import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, TypeAlias, Union
 from uuid import uuid4
 
 try:
@@ -70,25 +70,10 @@ if not MOTOR_AVAILABLE and not PYMONGO_ASYNC_AVAILABLE:
         "  - `pip install -U motor` (legacy, deprecated)\n"
     )
 
-# Create union types for client, database, and collection
-if TYPE_CHECKING:
-    if MOTOR_AVAILABLE and PYMONGO_ASYNC_AVAILABLE:
-        AsyncMongoClientType = Union[AsyncIOMotorClient, AsyncMongoClient]  # type: ignore
-        AsyncMongoDatabaseType = Union[AsyncIOMotorDatabase, AsyncDatabase]  # type: ignore
-        AsyncMongoCollectionType = Union[AsyncIOMotorCollection, AsyncCollection]  # type: ignore
-    elif MOTOR_AVAILABLE:
-        AsyncMongoClientType = AsyncIOMotorClient  # type: ignore
-        AsyncMongoDatabaseType = AsyncIOMotorDatabase  # type: ignore
-        AsyncMongoCollectionType = AsyncIOMotorCollection  # type: ignore
-    else:
-        AsyncMongoClientType = AsyncMongoClient  # type: ignore
-        AsyncMongoDatabaseType = AsyncDatabase  # type: ignore
-        AsyncMongoCollectionType = AsyncCollection  # type: ignore
-else:
-    # Runtime type - use Any to avoid import issues
-    AsyncMongoClientType = Any
-    AsyncMongoDatabaseType = Any
-    AsyncMongoCollectionType = Any
+# Async Mongo concrete types vary by installed driver; keep aliases permissive for static checks.
+AsyncMongoClientType: TypeAlias = Any
+AsyncMongoDatabaseType: TypeAlias = Any
+AsyncMongoCollectionType: TypeAlias = Any
 
 
 # Client type constants (defined before class to allow use in _detect_client_type)
@@ -143,7 +128,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
     def __init__(
         self,
-        db_client: Optional[Union["AsyncIOMotorClient", "AsyncMongoClient"]] = None,
+        db_client: Optional[AsyncMongoClientType] = None,
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
@@ -538,6 +523,15 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting collection {collection_name}: {e}")
             raise
+
+    async def _aggregate_to_list(
+        self, collection: AsyncMongoCollectionType, pipeline: List[Dict[str, Any]], length: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Run aggregate for both Motor and PyMongo async clients and return materialized results."""
+        aggregate_cursor_or_coro: Any = collection.aggregate(pipeline)
+        if asyncio.iscoroutine(aggregate_cursor_or_coro):
+            aggregate_cursor_or_coro = await aggregate_cursor_or_coro
+        return await aggregate_cursor_or_coro.to_list(length=length)
 
     def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
@@ -1374,7 +1368,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -1383,7 +1377,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
                 pipeline.append({"$limit": limit})  # type: ignore
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
 
             formatted_results = [
                 {
@@ -2719,7 +2713,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -2727,7 +2721,7 @@ class AsyncMongoDb(AsyncBaseDb):
             pipeline.append({"$skip": skip})
             pipeline.append({"$limit": limit or 20})
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
 
             # Convert to list of dicts with datetime objects
             stats_list = []
