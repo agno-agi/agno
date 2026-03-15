@@ -1,5 +1,4 @@
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
 from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
@@ -9,23 +8,6 @@ from agno.metrics import ToolCallMetrics
 from agno.models.message import Citations
 from agno.models.metrics import MessageMetrics
 from agno.tools.function import UserFeedbackQuestion, UserInputField
-
-
-def _sanitize_datetime(obj: Any) -> Any:
-    """Recursively convert datetime/date objects to ISO format strings.
-
-    This ensures that tool_args and other arbitrary dicts can be safely
-    serialized to JSON even when they contain datetime objects.
-    """
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, date):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {k: _sanitize_datetime(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [_sanitize_datetime(item) for item in obj]
-    return obj
 
 
 class ModelResponseEvent(str, Enum):
@@ -94,10 +76,6 @@ class ToolExecution:
 
         if self.user_feedback_schema is not None:
             _dict["user_feedback_schema"] = [q.to_dict() for q in self.user_feedback_schema]
-
-        # Sanitize tool_args to convert datetime/date objects to ISO strings
-        if _dict.get("tool_args") is not None:
-            _dict["tool_args"] = _sanitize_datetime(_dict["tool_args"])
 
         return _dict
 
