@@ -13,3 +13,6 @@ class Embedder:
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         raise NotImplementedError
+
+    def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        return [self.get_embedding(text) for text in texts]
