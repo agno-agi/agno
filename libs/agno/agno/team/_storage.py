@@ -496,6 +496,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_datetime_to_context"] = team.add_datetime_to_context
     if team.add_location_to_context:
         config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
     if team.timezone_identifier is not None:
         config["timezone_identifier"] = team.timezone_identifier
     if team.add_name_to_context:
@@ -917,6 +919,7 @@ def from_dict(
             markdown=config.get("markdown", False),
             add_datetime_to_context=config.get("add_datetime_to_context", False),
             add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),
