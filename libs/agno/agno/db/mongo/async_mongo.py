@@ -2869,6 +2869,180 @@ class AsyncMongoDb(AsyncBaseDb):
             return []
 
     # -- Scheduler methods --
+    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"id": schedule_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"name": name})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if enabled is not None:
+                query["enabled"] = enabled
+
+            total_count = await collection.count_documents(query)
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            schedules = await cursor.to_list(length=None)
+            for schedule in schedules:
+                schedule.pop("_id", None)
+            return schedules, total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = await self._get_collection(table_type="schedules", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedules collection")
+
+            await collection.insert_one(schedule_data)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {e}")
+            raise e
+
+    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            kwargs["updated_at"] = int(time.time())
+            result = await collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return await self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            schedules_collection = await self._get_collection(table_type="schedules")
+            if schedules_collection is None:
+                return False
+
+            runs_collection = await self._get_collection(table_type="schedule_runs")
+            if runs_collection is not None:
+                await runs_collection.delete_many({"schedule_id": schedule_id})
+
+            result = await schedules_collection.delete_one({"id": schedule_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            result = await collection.find_one_and_update(
+                {
+                    "enabled": True,
+                    "next_run_at": {"$lte": now},
+                    "$or": [
+                        {"locked_by": None},
+                        {"locked_at": {"$lte": stale_lock_threshold}},
+                    ],
+                },
+                {"$set": {"locked_by": worker_id, "locked_at": now}},
+                sort=[("next_run_at", 1)],
+                return_document=ReturnDocument.AFTER,
+            )
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+
+            result = await collection.update_one({"id": schedule_id}, {"$set": updates})
+            return result.matched_count > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedule runs collection")
+
+            await collection.insert_one(run_data)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {e}")
+            raise e
+
+    async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+
+            result = await collection.update_one({"id": schedule_run_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return await self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
     async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID from the configured schedule runs collection."""
         try:
@@ -2885,6 +3059,29 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
             return None
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return [], 0
+
+            query = {"schedule_id": schedule_id}
+            total_count = await collection.count_documents(query)
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            runs = await cursor.to_list(length=None)
+            for run in runs:
+                run.pop("_id", None)
+            return runs, total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
 
     # -- Learning methods --
     async def get_learning(
