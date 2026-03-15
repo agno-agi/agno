@@ -68,6 +68,26 @@ def json_serializer(obj: Any) -> str:
     return json.dumps(obj, cls=CustomJSONEncoder)
 
 
+def sanitize_jsonb_value(value: Any) -> Any:
+    """Sanitize a value for PostgreSQL JSONB storage.
+
+    Performs a JSON round-trip using CustomJSONEncoder to convert
+    non-serializable types (datetime, date, UUID, Message, Metrics, etc.)
+    to JSON-compatible values. This ensures JSONB columns can store the
+    data even when the SQLAlchemy engine was created without a custom
+    json_serializer.
+
+    Args:
+        value: The value to sanitize (dict, list, or any JSON-compatible type).
+
+    Returns:
+        The sanitized value with all non-serializable types converted.
+    """
+    if value is None:
+        return None
+    return json.loads(json.dumps(value, cls=CustomJSONEncoder))
+
+
 def serialize_session_json_fields(session: dict) -> dict:
     """Serialize all JSON fields in the given Session dictionary.
 
