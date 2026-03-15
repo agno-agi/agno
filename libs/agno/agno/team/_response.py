@@ -912,6 +912,65 @@ def _update_run_response(
                 update_reasoning_content_from_tool_call(team, run_response, tool_name, tool_args)
 
 
+def _stamp_child_run_ids(run_response: TeamRunOutput) -> None:
+    """Stamp child_run_id on tool entries using member_responses.
+
+    In non-streaming mode, run_response.tools is populated by _update_run_response()
+    AFTER tool functions have already executed. Tool functions like delegate_task_to_member
+    and execute_task call their post-processing helpers during execution, but at that point
+    run_response.tools is still None, so child_run_id never gets set.
+
+    This function does a post-hoc pass to fill in the missing child_run_ids by matching
+    tool_args["member_id"] to the member responses already collected via add_member_run().
+    """
+    if not run_response.tools or not run_response.member_responses:
+        return
+
+    from agno.utils.string import url_safe_string
+
+    # Build a queue of run_ids keyed by the url-safe member identifier.
+    # A member may appear more than once if delegated to multiple times.
+    member_run_id_queues: Dict[str, List[str]] = {}
+    for mr in run_response.member_responses:
+        if mr.run_id is None:
+            continue
+        # Reconstruct the url-safe member_id that get_member_id() would return.
+        # member_responses can be RunOutput (agent) or TeamRunOutput (sub-team).
+        candidate_keys: List[str] = []
+        if isinstance(mr, RunOutput):
+            if mr.agent_id is not None:
+                candidate_keys.append(mr.agent_id)
+                safe_id = url_safe_string(mr.agent_id)
+                if safe_id != mr.agent_id:
+                    candidate_keys.append(safe_id)
+            if mr.agent_name is not None:
+                candidate_keys.append(url_safe_string(mr.agent_name))
+        else:
+            # TeamRunOutput: use team_id / team_name
+            if mr.team_id is not None:
+                candidate_keys.append(mr.team_id)
+                safe_id = url_safe_string(mr.team_id)
+                if safe_id != mr.team_id:
+                    candidate_keys.append(safe_id)
+            if mr.team_name is not None:
+                candidate_keys.append(url_safe_string(mr.team_name))
+        for key in candidate_keys:
+            member_run_id_queues.setdefault(key, []).append(mr.run_id)
+
+    for tool in run_response.tools:
+        if tool.child_run_id is not None:
+            continue
+        tool_name = (tool.tool_name or "").lower()
+        tool_args = tool.tool_args or {}
+
+        if tool_name in ("delegate_task_to_member", "execute_task"):
+            member_id = tool_args.get("member_id")
+            if member_id and member_id in member_run_id_queues:
+                queue = member_run_id_queues[member_id]
+                if queue:
+                    tool.child_run_id = queue.pop(0)
+
+
 # ---------------------------------------------------------------------------
 # Model response stream processing (moved from _hooks.py)
 # ---------------------------------------------------------------------------
