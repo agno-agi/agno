@@ -80,6 +80,7 @@ azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
 infinity = ["infinity_client"]
+zeroentropy = ["zeroentropy"]
 google = ["google-genai>=1.52.0"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
@@ -224,7 +225,8 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[portkey]"
+  "agno[portkey]",
+  "agno[zeroentropy]"
 ]
 
 # All tools
@@ -558,6 +560,7 @@ module = [
   "yaml.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "zeroentropy.*",
   "couchbase.*",
   "acouchbase.*",
   "zep_cloud.*",
