@@ -1,57 +1,43 @@
 """
-This example demonstrates how to use the Google Drive Toolkit, allowing your Agents to interact with Google Drive.
+Google Drive Toolkit — cookbook examples for all 6 tools.
 
-Google Drive Toolkit can be used to read, create, update and duplicate Google Drive files.
+Setup:
+1. Go to Google Cloud Console > APIs & Services > Enable Google Drive API
+2. Create OAuth 2.0 credentials (Desktop app)
+3. Set env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID
+4. First run opens a browser for consent; token is cached in token.json
 
-Setup instructions for the Auth flow:
-1. Go to the Google Cloud Console.
-2. Navigate to "APIs & Services" > "Credentials".
-3. Select your OAuth 2.0 Client ID from the list.
-4. In the "Authorized redirect URIs" section, click "Add URI".
-5. Enter the complete redirect URI, with the port number included (e.g., http://localhost:5050).
-6. Click "Save" to apply the changes.
-
-After setup, remember to set the GOOGLE_AUTH_PORT and GOOGLE_CLOUD_QUOTA_PROJECT_ID environment variables.
-
-The Tool Kit Functions are:
-1. List Files
-2. Upload File
-3. Download File
+Tools:
+1. search_files — Search Drive with query syntax
+2. list_files — List recent files (delegates to search_files)
+3. get_file_metadata — Get file metadata by ID
+4. read_file — Read Docs/Sheets/Slides as text, regular files via download
+5. upload_file — Upload a local file (disabled by default)
+6. download_file — Download a file locally (disabled by default)
 """
 
 from agno.agent import Agent
 from agno.tools.google.drive import GoogleDriveTools
 
-# ---------------------------------------------------------------------------
-# Create Agent
-# ---------------------------------------------------------------------------
-
-
-google_drive_tools = GoogleDriveTools(auth_port=5050)
-
 agent = Agent(
-    tools=[google_drive_tools],
+    tools=[GoogleDriveTools()],
     instructions=[
-        "You help users interact with Google Drive using tools that use the Google Drive API",
-        "Before asking for file details, first attempt the operation as the user may have already configured the credentials in the constructor",
+        "You help users interact with Google Drive.",
+        "When listing or searching files, show the file ID, name, and type.",
+        "When reading files, summarize the content briefly.",
     ],
+    markdown=True,
 )
 
-# Example 1: List files in Google Drive
-
-# ---------------------------------------------------------------------------
-# Run Agent
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent.print_response("Please list the files in my Google Drive")
+    # Test 1: List recent files
+    agent.print_response("List the 5 most recent files in my Google Drive")
 
-    # Example 2: Upload a file to Google Drive
-    # file_path = ...
-    # agent.print_response(
-    #     "Please upload this file to my Google Drive", files=[File(path=file_path)]
-    # )
+    # Test 2: Search files
+    agent.print_response("Search my Google Drive for spreadsheets")
 
-    # Example 3: Download a file from Google Drive
-    # agent.print_response(
-    #     "Please download the 'test.txt' file from my Google Drive. It's in the 'test_files' folder."
-    # )
+    # Test 3: Read a Google Doc (uncomment and replace with a real file ID)
+    # agent.print_response("Read the Google Drive file with ID <FILE_ID> and summarize it")
+
+    # Test 4: Get file metadata (uncomment and replace with a real file ID)
+    # agent.print_response("Get metadata for Google Drive file ID <FILE_ID>")
