@@ -1,5 +1,6 @@
 """WorkflowAgent - A restricted Agent for workflow orchestration"""
 
+import json
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from agno.agent import Agent
@@ -178,6 +179,8 @@ Guidelines:
                     return result.content
                 elif isinstance(result.content, BaseModel):
                     return result.content.model_dump_json(exclude_none=True)
+                elif isinstance(result.content, dict):
+                    return json.dumps(result.content)
                 else:
                     return str(result.content)
 
@@ -293,6 +296,8 @@ Guidelines:
                     yield result.content
                 elif isinstance(result.content, BaseModel):
                     yield result.content.model_dump_json(exclude_none=True)
+                elif isinstance(result.content, dict):
+                    yield json.dumps(result.content)
                 else:
                     yield str(result.content)
 
