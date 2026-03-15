@@ -1,43 +1,101 @@
 """
-Google Drive Toolkit — cookbook examples for all 6 tools.
-
-Setup:
-1. Go to Google Cloud Console > APIs & Services > Enable Google Drive API
-2. Create OAuth 2.0 credentials (Desktop app)
-3. Set env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID
-4. First run opens a browser for consent; token is cached in token.json
-
-Tools:
-1. search_files — Search Drive with query syntax
-2. list_files — List recent files (delegates to search_files)
-3. get_file_metadata — Get file metadata by ID
-4. read_file — Read Docs/Sheets/Slides as text, regular files via download
-5. upload_file — Upload a local file (disabled by default)
-6. download_file — Download a file locally (disabled by default)
+Google Drive Agent that can search, list, read, upload, and download files using Google Drive.
 """
 
 from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.tools.google.drive import GoogleDriveTools
 
-agent = Agent(
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+# Example 1: Read-only Drive agent (default — upload and download disabled)
+read_only_agent = Agent(
+    name="Drive Reader Agent",
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GoogleDriveTools()],
+    description="You are a Google Drive specialist that can search and read files.",
     instructions=[
-        "You help users interact with Google Drive.",
-        "When listing or searching files, show the file ID, name, and type.",
+        "You can search, list, and read files from the user's Google Drive.",
+        "When listing or searching files, show the file ID, name, type, and last modified date.",
         "When reading files, summarize the content briefly.",
+        "Google Docs and Slides are exported as plain text, Sheets as CSV.",
     ],
     markdown=True,
 )
 
+# Example 2: Full Drive agent with upload enabled
+full_drive_agent = Agent(
+    name="Full Drive Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GoogleDriveTools(upload_file=True, download_file=True)],
+    description="You are a Google Drive agent with full read and write capabilities.",
+    instructions=[
+        "You can search, list, read, upload, and download files from Google Drive.",
+        "When uploading files, confirm the file path with the user first.",
+        "When downloading files, ask for the destination path.",
+        "Show file metadata in a structured markdown format.",
+    ],
+    markdown=True,
+)
+
+# Example 3: Drive agent with custom content length for large documents
+large_doc_agent = Agent(
+    name="Large Document Reader",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GoogleDriveTools(max_content_length=50000)],
+    description="You are a Google Drive agent optimized for reading large documents.",
+    instructions=[
+        "You specialize in reading and summarizing large documents from Google Drive.",
+        "You can read up to 50,000 characters of content from each file.",
+        "Provide structured summaries with key sections and bullet points.",
+    ],
+    markdown=True,
+)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Test 1: List recent files
-    agent.print_response("List the 5 most recent files in my Google Drive")
+    # Example 1: List recent files
+    read_only_agent.print_response(
+        "List the 5 most recent files in my Google Drive",
+        stream=True,
+    )
 
-    # Test 2: Search files
-    agent.print_response("Search my Google Drive for spreadsheets")
+    # Example 2: Search for specific file types
+    read_only_agent.print_response(
+        "Search my Google Drive for spreadsheets",
+        stream=True,
+    )
 
-    # Test 3: Read a Google Doc (uncomment and replace with a real file ID)
-    # agent.print_response("Read the Google Drive file with ID <FILE_ID> and summarize it")
+    # Example 3: Read a Google Doc and summarize
+    # read_only_agent.print_response(
+    #     "Read the Google Drive file with ID <FILE_ID> and summarize it",
+    #     stream=True,
+    # )
 
-    # Test 4: Get file metadata (uncomment and replace with a real file ID)
-    # agent.print_response("Get metadata for Google Drive file ID <FILE_ID>")
+    # Example 4: Get file metadata
+    # read_only_agent.print_response(
+    #     "Get metadata for Google Drive file ID <FILE_ID>",
+    #     stream=True,
+    # )
+
+    # Example 5: Search files in a specific folder
+    # read_only_agent.print_response(
+    #     "What files are inside the folder called 'Projects'?",
+    #     stream=True,
+    # )
+
+    # Example 6: Upload a file (requires full_drive_agent)
+    # full_drive_agent.print_response(
+    #     "Upload the file at /path/to/document.pdf to my Google Drive",
+    #     stream=True,
+    # )
+
+    # Example 7: Download a file (requires full_drive_agent)
+    # full_drive_agent.print_response(
+    #     "Download the file 'report.csv' from my Google Drive to /tmp/report.csv",
+    #     stream=True,
+    # )
