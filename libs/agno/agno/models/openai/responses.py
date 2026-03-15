@@ -90,6 +90,9 @@ class OpenAIResponses(Model):
         }
     )
 
+    def get_provider(self) -> str:
+        return f"{super().get_provider()} Responses"
+
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
@@ -307,6 +310,71 @@ class OpenAIResponses(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
+    @staticmethod
+    def _has_file_search_tool(tools: Optional[List[Union[Function, Dict[str, Any]]]] = None) -> bool:
+        """Check if any tool in the list is a file_search tool."""
+        if not tools:
+            return False
+        return any(isinstance(tool, dict) and tool.get("type") == "file_search" for tool in tools)
+
+    @staticmethod
+    def _format_file_for_input(file: File) -> Optional[Dict[str, Any]]:
+        """Format a File object as an input_file content block for the Responses API.
+
+        Routes to the correct variant:
+        - file_url: when the file has a URL (most efficient, OpenAI fetches server-side)
+        - file_data: when the file has local content or filepath (base64 encoded)
+        - file_id: when the file has an OpenAI file ID (starts with "file-")
+        """
+        import base64
+        import mimetypes
+        import os
+
+        # Determine filename
+        filename = file.filename or file.name
+        if not filename and file.filepath:
+            filename = os.path.basename(str(file.filepath))
+        if not filename:
+            filename = "document"
+
+        # URL passthrough — let OpenAI fetch it server-side
+        if file.url:
+            return {
+                "type": "input_file",
+                "file_url": file.url,
+            }
+
+        # Local file or raw bytes — base64 encode as data URI
+        if file.filepath or file.content:
+            content_bytes = file.get_content_bytes()
+            if content_bytes is None:
+                log_warning(f"Could not read content from file: {file.filepath or file.filename or 'unknown'}")
+                return None
+
+            # Resolve MIME type
+            mime_type = file.mime_type
+            if not mime_type:
+                source_path = str(file.filepath) if file.filepath else filename
+                mime_type = mimetypes.guess_type(source_path)[0] or "application/octet-stream"
+
+            encoded = base64.b64encode(content_bytes).decode("utf-8")
+            file_data = f"data:{mime_type};base64,{encoded}"
+
+            return {
+                "type": "input_file",
+                "filename": filename,
+                "file_data": file_data,
+            }
+
+        # OpenAI file ID reference
+        if file.id and isinstance(file.id, str) and file.id.startswith("file-"):
+            return {
+                "type": "input_file",
+                "file_id": file.id,
+            }
+
+        return None
+
     def _upload_file(self, file: File) -> Optional[str]:
         """Upload a file to the OpenAI vector database."""
         from pathlib import Path
@@ -349,7 +417,11 @@ class OpenAIResponses(Model):
         for file_id in file_ids:
             self.get_client().vector_stores.files.create(vector_store_id=vector_store.id, file_id=file_id)
         while True:
-            uploaded_files = self.get_client().vector_stores.files.list(vector_store_id=vector_store.id)
+            uploaded_files = list(self.get_client().vector_stores.files.list(vector_store_id=vector_store.id))
+            # Wait until all files appear in the list (eventual consistency)
+            if len(uploaded_files) < len(file_ids):
+                time.sleep(1)
+                continue
             all_completed = True
             failed = False
             for file in uploaded_files:
@@ -388,15 +460,16 @@ class OpenAIResponses(Model):
                 else:
                     formatted_tools.append(_tool)
 
-        # Find files to upload to the OpenAI vector database
+        # Only upload files to vector store when file_search tool is present.
+        # Otherwise, files will be embedded inline via _format_messages().
         file_ids = []
-        for message in messages:
-            # Upload any attached files to the OpenAI vector database
-            if message.files is not None and len(message.files) > 0:
-                for file in message.files:
-                    file_id = self._upload_file(file)
-                    if file_id is not None:
-                        file_ids.append(file_id)
+        if self._has_file_search_tool(tools):
+            for message in messages:
+                if message.files is not None and len(message.files) > 0:
+                    for file in message.files:
+                        file_id = self._upload_file(file)
+                        if file_id is not None:
+                            file_ids.append(file_id)
 
         vector_store_id = self._create_vector_store(file_ids) if file_ids else None
 
@@ -407,8 +480,31 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
+    def _build_fc_id_to_call_id_map(self, messages: List[Message]) -> Dict[str, str]:
+        """Build a mapping from function_call id (fc_*) to call_id (call_*) from assistant tool_calls.
+
+        The OpenAI Responses API uses two ID systems:
+        - `id` (e.g. "fc_xxx"): internal function call identifier
+        - `call_id` (e.g. "call_xxx"): the ID expected by the API for function_call_output
+
+        This mapping is needed to translate between the two when formatting tool results.
+        """
+        fc_id_to_call_id: Dict[str, str] = {}
+        for msg in messages:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    fc_id = tc.get("id")
+                    call_id = tc.get("call_id") or fc_id
+                    if isinstance(fc_id, str) and isinstance(call_id, str):
+                        fc_id_to_call_id[fc_id] = call_id
+        return fc_id_to_call_id
+
     def _format_messages(
-        self, messages: List[Message], compress_tool_results: bool = False
+        self,
+        messages: List[Message],
+        compress_tool_results: bool = False,
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
@@ -416,6 +512,7 @@ class OpenAIResponses(Model):
         Args:
             messages (List[Message]): The message to format.
             compress_tool_results: Whether to compress tool results.
+            tools: The tools list, used to detect if file_search is present.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -445,16 +542,7 @@ class OpenAIResponses(Model):
 
                     break
 
-        # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
-        fc_id_to_call_id: Dict[str, str] = {}
-        for msg in messages:
-            tool_calls = getattr(msg, "tool_calls", None)
-            if tool_calls:
-                for tc in tool_calls:
-                    fc_id = tc.get("id")
-                    call_id = tc.get("call_id") or fc_id
-                    if isinstance(fc_id, str) and isinstance(call_id, str):
-                        fc_id_to_call_id[fc_id] = call_id
+        fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
             if message.role in ["user", "system"]:
@@ -479,6 +567,15 @@ class OpenAIResponses(Model):
 
                 if message.videos is not None and len(message.videos) > 0:
                     log_warning("Video input is currently unsupported.")
+
+                # Embed files inline as input_file blocks when file_search is not present
+                if message.files and not self._has_file_search_tool(tools):
+                    if not isinstance(message_dict.get("content"), list):
+                        message_dict["content"] = [{"type": "input_text", "text": message_dict.get("content") or ""}]
+                    for file in message.files:
+                        file_block = self._format_file_for_input(file)
+                        if file_block:
+                            message_dict["content"].append(file_block)
 
                 formatted_messages.append(message_dict)
 
@@ -535,7 +632,7 @@ class OpenAIResponses(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools is not None else None
 
             response = self.get_client().responses.input_tokens.count(
@@ -557,7 +654,7 @@ class OpenAIResponses(Model):
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
             response = await self.get_async_client().responses.input_tokens.count(
@@ -593,7 +690,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compress_tool_results),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
 
@@ -663,7 +760,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compress_tool_results),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
 
@@ -734,7 +831,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compress_tool_results),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
             ):
@@ -808,7 +905,7 @@ class OpenAIResponses(Model):
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compress_tool_results),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
             )
@@ -860,21 +957,30 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        tool_call_ids: List[str],
         compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
         Handle the results of function calls.
 
+        Translates each result's tool_call_id from fc_id format (fc_*) to call_id format (call_*)
+        using fc_id-based lookup from the assistant message's tool_calls. This is necessary because
+        index-based mapping breaks when external_execution tools are present — tool_call_ids has
+        entries for ALL tool calls while function_call_results only has internally-executed ones.
+
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
             compress_tool_results (bool): Whether to compress tool results.
+            **kwargs: Additional keyword arguments (e.g. tool_call_ids) passed from base class.
         """
         if len(function_call_results) > 0:
-            for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+            fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
+
+            for _fc_message in function_call_results:
+                # Translate fc_id to call_id if needed
+                if _fc_message.tool_call_id and _fc_message.tool_call_id in fc_id_to_call_id:
+                    _fc_message.tool_call_id = fc_id_to_call_id[_fc_message.tool_call_id]
                 messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:

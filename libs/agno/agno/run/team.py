@@ -171,6 +171,9 @@ class TeamRunEvent(str, Enum):
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
 
+    followups_started = "TeamFollowupsStarted"
+    followups_completed = "TeamFollowupsCompleted"
+
     run_paused = "TeamRunPaused"
     run_continued = "TeamRunContinued"
 
@@ -178,6 +181,8 @@ class TeamRunEvent(str, Enum):
     task_iteration_started = "TeamTaskIterationStarted"
     task_iteration_completed = "TeamTaskIterationCompleted"
     task_state_updated = "TeamTaskStateUpdated"
+    task_created = "TeamTaskCreated"
+    task_updated = "TeamTaskUpdated"
 
     custom_event = "CustomEvent"
 
@@ -490,6 +495,17 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class FollowupsStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
+
+
+@dataclass
 class TaskIterationStartedEvent(BaseTeamRunEvent):
     """Event sent when a task iteration starts in tasks mode"""
 
@@ -509,12 +525,90 @@ class TaskIterationCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class TaskData:
+    """Structured task data for frontend rendering"""
+
+    id: str = ""
+    title: str = ""
+    description: str = ""
+    status: str = "pending"  # pending, in_progress, completed, failed, blocked
+    assignee: Optional[str] = None
+    dependencies: List[str] = field(default_factory=list)
+    result: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "status": self.status,
+            "assignee": self.assignee,
+            "dependencies": self.dependencies,
+            "result": self.result,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TaskData":
+        return cls(
+            id=data.get("id", ""),
+            title=data.get("title", ""),
+            description=data.get("description", ""),
+            status=data.get("status", "pending"),
+            assignee=data.get("assignee"),
+            dependencies=data.get("dependencies", []),
+            result=data.get("result"),
+        )
+
+
+@dataclass
 class TaskStateUpdatedEvent(BaseTeamRunEvent):
-    """Event sent when the task state is updated in tasks mode"""
+    """Event sent when the task state is updated in tasks mode.
+
+    Contains the full structured task list for frontend rendering.
+    The frontend can use the `tasks` field to render a task list UI
+    with checkboxes that update in real-time.
+    """
 
     event: str = TeamRunEvent.task_state_updated.value
     task_summary: Optional[str] = None
     goal_complete: bool = False
+    # Full structured task list for frontend rendering
+    tasks: List[TaskData] = field(default_factory=list)
+    completion_summary: Optional[str] = None
+
+
+@dataclass
+class TaskCreatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task is created in tasks mode.
+
+    This allows the frontend to show tasks as they are created,
+    before waiting for the iteration to complete.
+    """
+
+    event: str = TeamRunEvent.task_created.value
+    task_id: str = ""
+    title: str = ""
+    description: str = ""
+    assignee: Optional[str] = None
+    status: str = "pending"
+    dependencies: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TaskUpdatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task status changes in tasks mode.
+
+    This allows the frontend to update task status in real-time
+    (e.g., mark as in_progress when execution starts, completed when done).
+    """
+
+    event: str = TeamRunEvent.task_updated.value
+    task_id: str = ""
+    title: str = ""
+    status: str = ""  # pending, in_progress, completed, failed, blocked
+    previous_status: Optional[str] = None
+    result: Optional[str] = None
+    assignee: Optional[str] = None
 
 
 @dataclass
@@ -558,9 +652,13 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     TaskIterationStartedEvent,
     TaskIterationCompletedEvent,
     TaskStateUpdatedEvent,
+    TaskCreatedEvent,
+    TaskUpdatedEvent,
     CustomEvent,
 ]
 
@@ -598,9 +696,13 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.followups_started.value: FollowupsStartedEvent,
+    TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
     TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
     TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
+    TeamRunEvent.task_created.value: TaskCreatedEvent,
+    TeamRunEvent.task_updated.value: TaskUpdatedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 
@@ -652,6 +754,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
+    followups: Optional[List[str]] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
@@ -712,6 +815,7 @@ class TeamRunOutput:
                 "reasoning_messages",
                 "references",
                 "requirements",
+                "followups",
             ]
         }
         if self.events is not None:
@@ -740,6 +844,9 @@ class TeamRunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
