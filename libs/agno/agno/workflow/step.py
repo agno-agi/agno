@@ -233,19 +233,55 @@ class Step:
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
-            from agno.agent.agent import get_agent_by_id
-
             agent_id = config.get("agent_id")
-            if db is not None and agent_id is not None:
+
+            # First try registry (code-defined agents)
+            if registry and agent_id:
+                registry_agent = registry.get_agent(agent_id)
+                if registry_agent is not None:
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        agent = registry_agent.deep_copy()
+                    except Exception:
+                        log_warning(f"deep_copy() failed for registry agent '{agent_id}', using shared instance")
+                        agent = registry_agent
+
+            # Fall back to database
+            if agent is None and db is not None and agent_id is not None:
+                from agno.agent.agent import get_agent_by_id
+
                 agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
 
-        # --- Handle Team reconstruction ---
-        if "team_id" in config and config["team_id"] and registry:
-            from agno.team.team import get_team_by_id
+            if agent is None and agent_id:
+                log_warning(
+                    f"Could not resolve agent_id='{agent_id}' from registry or DB for step '{config.get('name')}'"
+                )
 
+        # --- Handle Team reconstruction ---
+        if "team_id" in config and config["team_id"]:
             team_id = config.get("team_id")
-            if db is not None and team_id is not None:
+
+            # First try registry (code-defined teams)
+            if registry and team_id:
+                registry_team = registry.get_team(team_id)
+                if registry_team is not None:
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        team = registry_team.deep_copy()
+                    except Exception:
+                        log_warning(f"deep_copy() failed for registry team '{team_id}', using shared instance")
+                        team = registry_team
+
+            # Fall back to database
+            if team is None and db is not None and team_id is not None:
+                from agno.team.team import get_team_by_id
+
                 team = get_team_by_id(db=db, id=team_id, registry=registry)
+
+            if team is None and team_id:
+                log_warning(
+                    f"Could not resolve team_id='{team_id}' from registry or DB for step '{config.get('name')}'"
+                )
 
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"] and registry:
@@ -495,6 +531,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -651,6 +689,8 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -762,6 +802,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -932,6 +974,8 @@ class Step:
                             stream_events=stream_events,
                             yield_run_output=True,
                             run_context=run_context,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -1031,6 +1075,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -1218,6 +1264,8 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -1279,6 +1327,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -1493,6 +1543,8 @@ class Step:
                             stream_events=stream_events,
                             run_context=run_context,
                             yield_run_output=True,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 

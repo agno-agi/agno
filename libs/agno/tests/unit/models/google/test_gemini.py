@@ -2,8 +2,11 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agno.media import File
 from agno.models.google.gemini import Gemini
+from agno.models.message import Message
 
 
 def test_gemini_get_client_with_credentials_vertexai():
@@ -132,3 +135,274 @@ class TestFormatFileForMessage:
             model._format_file_for_message(f)
             mock_part.from_bytes.assert_called_once_with(mime_type="application/pdf", data=b"binary data")
             Path(tmp.name).unlink()
+
+
+class TestFormatMessagesEmptyParts:
+    """Test that messages with empty parts are filtered out before sending to Gemini API."""
+
+    def _make_model(self):
+        model = Gemini(api_key="test-key")
+        return model
+
+    def test_filters_message_with_none_content(self):
+        """Messages with None content and no tool calls should be filtered out."""
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="You are helpful"),
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content=None),  # empty parts
+            Message(role="user", content="How are you?"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        # System message is extracted separately, not in formatted list.
+        # The assistant message with None content should be filtered out.
+        assert len(formatted) == 2
+        assert all(msg.parts for msg in formatted)
+
+    def test_filters_message_with_empty_list_content(self):
+        """Messages with list content but no tool calls produce empty parts and should be filtered."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content=["some list"]),  # list content, no tool calls -> empty parts
+            Message(role="user", content="Next question"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        # The assistant message with list content (no tool_calls) falls through
+        # the text content branch without adding parts, so it should be filtered.
+        assert len(formatted) == 2
+        for msg in formatted:
+            assert msg.parts is not None
+            assert len(msg.parts) > 0
+
+    def test_keeps_message_with_valid_content(self):
+        """Messages with valid string content should be kept."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content="Hi there!"),
+            Message(role="user", content="Thanks"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert len(formatted) == 3
+        for msg in formatted:
+            assert msg.parts is not None
+            assert len(msg.parts) > 0
+
+    def test_keeps_system_message_separate(self):
+        """System messages should be extracted as system_message, not in formatted list."""
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be helpful"),
+            Message(role="user", content="Hello"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert system_msg == "Be helpful"
+        assert len(formatted) == 1
+
+    def test_all_empty_parts_returns_empty_list(self):
+        """If all non-system messages have empty parts, return empty formatted list."""
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be helpful"),
+            Message(role="assistant", content=None),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert system_msg == "Be helpful"
+        assert len(formatted) == 0
+
+    def test_mixed_valid_and_empty_messages(self):
+        """Only empty-parts messages are filtered; valid ones are kept."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="First"),
+            Message(role="assistant", content=None),  # will be filtered
+            Message(role="user", content="Second"),
+            Message(role="assistant", content="Response"),
+            Message(role="assistant", content=None),  # will be filtered
+            Message(role="user", content="Third"),
+        ]
+        formatted, system_msg = model._format_messages(messages)
+        assert len(formatted) == 4
+        roles = [msg.role for msg in formatted]
+        assert roles == ["user", "user", "model", "user"]
+
+
+def test_parallel_search_requires_vertexai():
+    """Test that parallel_search raises an error when vertexai is not enabled."""
+    model = Gemini(
+        vertexai=False,
+        api_key="test-api-key",
+        parallel_search=True,
+        parallel_api_key="test-parallel-key",
+    )
+
+    with pytest.raises(ValueError, match="Parallel search grounding requires vertexai=True"):
+        model.get_request_params()
+
+
+def test_parallel_search_incompatible_with_google_search():
+    """Test that parallel_search cannot be combined with google_search."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            model.get_request_params()
+
+
+def test_parallel_search_incompatible_with_grounding():
+    """Test that parallel_search cannot be combined with grounding."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        grounding=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            model.get_request_params()
+
+
+def test_parallel_search_config_with_api_key():
+    """Test that parallel_search is correctly configured with an explicit API key."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-parallel-key",
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        request_params = model.get_request_params()
+
+    assert "config" in request_params
+    config = request_params["config"]
+    assert config.tools is not None
+    assert len(config.tools) == 1
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key == "test-parallel-key"
+
+
+def test_parallel_search_config_without_api_key():
+    """Test that parallel_search works without an API key (GCP Marketplace subscription)."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            env_backup = os.environ.pop("PARALLEL_API_KEY", None)
+            try:
+                request_params = model.get_request_params()
+            finally:
+                if env_backup is not None:
+                    os.environ["PARALLEL_API_KEY"] = env_backup
+
+    config = request_params["config"]
+    assert config.tools is not None
+    assert len(config.tools) == 1
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key is None
+
+
+def test_parallel_search_with_env_var():
+    """Test that parallel_search can use PARALLEL_API_KEY from environment."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with patch.dict("os.environ", {"PARALLEL_API_KEY": "env-parallel-key"}):
+            request_params = model.get_request_params()
+
+    config = request_params["config"]
+    assert config.tools is not None
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key == "env-parallel-key"
+
+
+def test_parallel_search_with_custom_config():
+    """Test that parallel_config is passed as custom_configs in the tool payload."""
+    custom_config = {"source_policy": {"exclude_domains": ["example.com"]}}
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        parallel_config=custom_config,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        request_params = model.get_request_params()
+
+    config = request_params["config"]
+    tool = config.tools[0]
+    assert tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search.api_key == "test-key"
+    assert tool.parallel_ai_search.custom_configs == custom_config
+
+
+def test_parallel_search_with_other_builtin_tools():
+    """Test that parallel_search can coexist with url_context."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+        url_context=True,
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        request_params = model.get_request_params()
+
+    config = request_params["config"]
+    assert config.tools is not None
+    assert len(config.tools) == 2
+    tool_types = []
+    for t in config.tools:
+        if t.url_context is not None:
+            tool_types.append("url_context")
+        if t.parallel_ai_search is not None:
+            tool_types.append("parallel_ai_search")
+    assert "url_context" in tool_types
+    assert "parallel_ai_search" in tool_types
+
+
+def test_parallel_search_with_external_tools_logs_warning():
+    """Test that parallel_search with external tools logs the builtin tools info."""
+    model = Gemini(
+        vertexai=True,
+        project_id="test-project",
+        location="test-location",
+        parallel_search=True,
+        parallel_api_key="test-key",
+    )
+
+    with patch("agno.models.google.gemini.genai.Client"):
+        with patch("agno.models.google.gemini.log_info") as mock_info:
+            model.get_request_params(tools=[{"type": "function", "function": {"name": "test_fn"}}])
+            mock_info.assert_called_once_with("Built-in tools enabled. External tools will be disabled.")

@@ -458,10 +458,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["overwrite_db_session_state"] = agent.overwrite_db_session_state
     if agent.cache_session:
         config["cache_session"] = agent.cache_session
-    if agent.search_session_history:
-        config["search_session_history"] = agent.search_session_history
-    if agent.num_history_sessions is not None:
-        config["num_history_sessions"] = agent.num_history_sessions
+    if agent.search_past_sessions:
+        config["search_past_sessions"] = agent.search_past_sessions
+    if agent.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = agent.num_past_sessions_to_search
+    if agent.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = agent.num_past_session_runs_in_search
     if agent.enable_session_summaries:
         config["enable_session_summaries"] = agent.enable_session_summaries
     if agent.add_session_summary_to_context is not None:
@@ -624,6 +626,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_location_to_context"] = agent.add_location_to_context
     if agent.timezone_identifier is not None:
         config["timezone_identifier"] = agent.timezone_identifier
+    if agent.datetime_format is not None:
+        config["datetime_format"] = agent.datetime_format
     if not agent.resolve_in_context:
         config["resolve_in_context"] = agent.resolve_in_context
 
@@ -873,8 +877,11 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_state=config.get("enable_agentic_state", False),
         overwrite_db_session_state=config.get("overwrite_db_session_state", False),
         cache_session=config.get("cache_session", False),
-        search_session_history=config.get("search_session_history", False),
-        num_history_sessions=config.get("num_history_sessions"),
+        search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
+        num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+        num_past_session_runs_in_search=config.get(
+            "num_past_session_runs_in_search", config.get("num_past_session_runs")
+        ),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),
         # session_summary_manager=config.get("session_summary_manager"),  # TODO
@@ -934,6 +941,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         add_name_to_context=config.get("add_name_to_context", False),
         add_datetime_to_context=config.get("add_datetime_to_context", False),
         add_location_to_context=config.get("add_location_to_context", False),
+        datetime_format=config.get("datetime_format"),
         timezone_identifier=config.get("timezone_identifier"),
         resolve_in_context=config.get("resolve_in_context", True),
         # --- User message settings ---

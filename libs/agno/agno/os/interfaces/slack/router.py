@@ -170,8 +170,7 @@ def attach_routes(
                 message_text = f"{notice}\n{message_text}"
 
             run_kwargs: Dict[str, Any] = {
-                # Thread-scoped (not user-scoped) so all participants share context
-                "user_id": None,
+                "user_id": ctx["user"],
                 "session_id": session_id,
                 "files": files or None,
                 "images": images or None,
@@ -276,8 +275,7 @@ def attach_routes(
                 "stream": True,
                 # Enables event-level chunks for task card and tool lifecycle rendering
                 "stream_events": True,
-                # Thread-scoped (not user-scoped) so all participants share context
-                "user_id": None,
+                "user_id": ctx["user"],
                 "session_id": session_id,
                 "files": files or None,
                 "images": images or None,
