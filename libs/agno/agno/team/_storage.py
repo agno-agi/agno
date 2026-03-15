@@ -440,6 +440,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["delegate_to_all_members"] = team.delegate_to_all_members
     if not team.determine_input_for_members:  # default is True
         config["determine_input_for_members"] = team.determine_input_for_members
+    if not team.enable_team_leader_response:  # default is True
+        config["enable_team_leader_response"] = team.enable_team_leader_response
 
     # --- User settings ---
     if team.user_id is not None:
@@ -891,6 +893,7 @@ def from_dict(
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
             determine_input_for_members=config.get("determine_input_for_members", True),
+            enable_team_leader_response=config.get("enable_team_leader_response", True),
             # --- User settings ---
             user_id=config.get("user_id"),
             # --- Session settings ---
