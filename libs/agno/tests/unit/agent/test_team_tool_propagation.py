@@ -1,8 +1,8 @@
 from typing import Any
 from unittest.mock import MagicMock
 
-from agno.agent.agent import Agent
 from agno.agent._tools import parse_tools
+from agno.agent.agent import Agent
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
