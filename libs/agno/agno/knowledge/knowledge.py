@@ -2163,24 +2163,22 @@ class Knowledge(RemoteKnowledge):
         elif content.url:
             hash_parts.append(content.url)
         elif content.file_data and content.file_data.content:
-            # For file_data, always add filename, type, size, or content for uniqueness
+            # For file_data, always include a hash of the actual content for uniqueness.
+            # A filename or type alone is not sufficient because multiple distinct text
+            # entries can share the same type (e.g. "Text") when inserted via text_content,
+            # causing them to produce identical hashes and overwrite each other in the store.
+            content_type = "str" if isinstance(content.file_data.content, str) else "bytes"
+            content_bytes = (
+                content.file_data.content.encode()
+                if isinstance(content.file_data.content, str)
+                else content.file_data.content
+            )
+            content_digest = hashlib.sha256(content_bytes).hexdigest()[:16]
             if content.file_data.filename:
                 hash_parts.append(content.file_data.filename)
-            elif content.file_data.type:
+            if content.file_data.type:
                 hash_parts.append(content.file_data.type)
-            elif content.file_data.size is not None:
-                hash_parts.append(str(content.file_data.size))
-            else:
-                # Fallback: use the content for uniqueness
-                # Include type information to distinguish str vs bytes
-                content_type = "str" if isinstance(content.file_data.content, str) else "bytes"
-                content_bytes = (
-                    content.file_data.content.encode()
-                    if isinstance(content.file_data.content, str)
-                    else content.file_data.content
-                )
-                content_hash = hashlib.sha256(content_bytes).hexdigest()[:16]  # Use first 16 chars
-                hash_parts.append(f"{content_type}:{content_hash}")
+            hash_parts.append(f"{content_type}:{content_digest}")
         elif content.topics and len(content.topics) > 0:
             topic = content.topics[0]
             reader = type(content.reader).__name__ if content.reader else "unknown"
