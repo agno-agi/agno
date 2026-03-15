@@ -189,10 +189,14 @@ class MultiMCPTools(Toolkit):
         return self._session_lock
 
     async def is_alive(self) -> bool:
+        import asyncio
+
         try:
             for session in self._sessions:
                 await session.send_ping()
             return True
+        except asyncio.CancelledError:
+            raise
         except (RuntimeError, BaseException):
             return False
 
@@ -424,6 +428,7 @@ class MultiMCPTools(Toolkit):
 
     async def connect(self, force: bool = False):
         """Initialize a MultiMCPTools instance and connect to the MCP servers"""
+        import asyncio
 
         if force:
             # Clean up the session and context so we force a new connection
@@ -437,6 +442,9 @@ class MultiMCPTools(Toolkit):
 
         try:
             await self._connect()
+        except asyncio.CancelledError:
+            log_warning("MCP connection was cancelled")
+            raise
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to connect to {str(self)}: {e}")
 
@@ -562,8 +570,12 @@ class MultiMCPTools(Toolkit):
 
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
+        import asyncio
+
         try:
             await self._connect()
+        except asyncio.CancelledError:
+            raise
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to connect to {str(self)}: {e}")
         return self
