@@ -50,6 +50,7 @@ class GithubTools(Toolkit):
             self.reopen_issue,
             self.assign_issue,
             self.label_issue,
+            self.remove_label_from_issue,
             self.list_issue_comments,
             self.edit_issue,
             self.create_pull_request,
@@ -583,6 +584,30 @@ class GithubTools(Toolkit):
             )
         except GithubException as e:
             logger.error(f"Error labeling issue: {e}")
+            return json.dumps({"error": str(e)})
+
+    def remove_label_from_issue(self, repo_name: str, issue_number: int, label: str) -> str:
+        """Remove a label from an issue or pull request.
+
+        Args:
+            repo_name (str): The full name of the repository (e.g., 'owner/repo').
+            issue_number (int): The number of the issue or pull request.
+            label (str): The name of the label to remove.
+
+        Returns:
+            A JSON-formatted string confirming the label removal.
+        """
+        log_debug(f"Removing label '{label}' from issue #{issue_number} in repository: {repo_name}")
+        try:
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(number=issue_number)
+            issue.remove_from_labels(label)
+            return json.dumps(
+                {"message": f"Label '{label}' removed from issue #{issue_number}."},
+                indent=2,
+            )
+        except GithubException as e:
+            logger.error(f"Error removing label from issue: {e}")
             return json.dumps({"error": str(e)})
 
     def list_issue_comments(self, repo_name: str, issue_number: int) -> str:
@@ -1350,8 +1375,8 @@ class GithubTools(Toolkit):
         repo_name: str,
         path: str,
         content: str,
-        message: str,
         sha: str,
+        message: Optional[str] = None,
         branch: Optional[str] = None,
     ) -> str:
         """Update an existing file in a repository.
@@ -1360,8 +1385,8 @@ class GithubTools(Toolkit):
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             path (str): The path to the file in the repository.
             content (str): The new content of the file.
-            message (str): The commit message.
             sha (str): The blob SHA of the file being replaced.
+            message (str, optional): The commit message. Defaults to 'Update {path}'.
             branch (str, optional): The branch to commit to. Defaults to repository's default branch.
 
         Returns:
@@ -1370,6 +1395,9 @@ class GithubTools(Toolkit):
         log_debug(f"Updating file {path} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
+
+            if not message:
+                message = f"Update {path}"
 
             # Convert string content to bytes
             content_bytes = content.encode("utf-8")
@@ -1390,13 +1418,15 @@ class GithubTools(Toolkit):
                 "url": result["content"].html_url,
                 "commit": {
                     "sha": result["commit"].sha,
-                    "message": result["commit"].commit.message,
+                    "message": result["commit"].commit.message
+                    if result["commit"].commit
+                    else result["commit"]._rawData["message"],
                     "url": result["commit"].html_url,
                 },
             }
 
             return json.dumps(file_info, indent=2)
-        except GithubException as e:
+        except (GithubException, AssertionError) as e:
             logger.error(f"Error updating file: {e}")
             return json.dumps({"error": str(e)})
 
