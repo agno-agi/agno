@@ -373,8 +373,8 @@ async def test_async_mongo_get_schedule_by_name_returns_doc_without_mongo_id(mon
 @pytest.mark.asyncio
 async def test_async_mongo_get_schedules_returns_paginated_items_and_total(monkeypatch: pytest.MonkeyPatch):
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
-    collection = AsyncMock()
-    collection.count_documents.return_value = 2
+    collection = MagicMock()
+    collection.count_documents = AsyncMock(return_value=2)
 
     cursor = MagicMock()
     cursor.sort.return_value = cursor
@@ -523,8 +523,8 @@ async def test_async_mongo_update_schedule_run_updates_and_returns_run(monkeypat
 @pytest.mark.asyncio
 async def test_async_mongo_get_schedule_runs_returns_paginated_items_and_total(monkeypatch: pytest.MonkeyPatch):
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
-    collection = AsyncMock()
-    collection.count_documents.return_value = 2
+    collection = MagicMock()
+    collection.count_documents = AsyncMock(return_value=2)
 
     cursor = MagicMock()
     cursor.sort.return_value = cursor
