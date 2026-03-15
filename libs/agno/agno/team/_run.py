@@ -195,6 +195,7 @@ def _run_tasks(
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
+        _stamp_child_run_ids,
         _update_run_response,
         handle_reasoning,
     )
@@ -336,6 +337,7 @@ def _run_tasks(
                 run_messages=run_messages,
                 run_context=run_context,
             )
+            _stamp_child_run_ids(run_response)
 
             # Check if delegation propagated member HITL requirements
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -966,6 +968,7 @@ def _run(
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
+        _stamp_child_run_ids,
         _update_run_response,
         handle_reasoning,
         parse_response_with_output_model,
@@ -1127,6 +1130,7 @@ def _run(
                     run_messages=run_messages,
                     run_context=run_context,
                 )
+                _stamp_child_run_ids(run_response)
 
                 # 7b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -1944,6 +1948,7 @@ async def _arun_tasks(
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
+        _stamp_child_run_ids,
         _update_run_response,
         ahandle_reasoning,
     )
@@ -2098,6 +2103,7 @@ async def _arun_tasks(
                 run_messages=run_messages,
                 run_context=run_context,
             )
+            _stamp_child_run_ids(run_response)
 
             # Check if delegation propagated member HITL requirements
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -2762,6 +2768,7 @@ async def _arun(
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
+        _stamp_child_run_ids,
         _update_run_response,
         agenerate_response_with_output_model,
         ahandle_reasoning,
@@ -2946,6 +2953,7 @@ async def _arun(
                     run_messages=run_messages,
                     run_context=run_context,
                 )
+                _stamp_child_run_ids(run_response)
 
                 # 7b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -4861,6 +4869,7 @@ def _continue_run(
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._response import (
         _convert_response_to_structured_format,
+        _stamp_child_run_ids,
         _update_run_response,
         parse_response_with_output_model,
         parse_response_with_parser_model,
@@ -4912,6 +4921,7 @@ def _continue_run(
                     run_messages=run_messages,
                     run_context=run_context,
                 )
+                _stamp_child_run_ids(run_response)
 
                 # Check for new pauses (team-level tools or member propagation)
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -5410,6 +5420,7 @@ async def _acontinue_run(
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._response import (
         _convert_response_to_structured_format,
+        _stamp_child_run_ids,
         _update_run_response,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
@@ -5566,6 +5577,7 @@ async def _acontinue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     )
+                    _stamp_child_run_ids(run_response)
 
                     # Check for new pauses
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):

@@ -54,6 +54,7 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_id,
 )
 from agno.utils.timer import Timer
 
@@ -429,12 +430,15 @@ def _get_delegate_task_function(
         # Update the top-level team run_response tool call to have the run_id of the member run.
         # Match by both tool name and member_id from tool_args to avoid a race condition
         # where concurrent child invocations overwrite each other's child_run_id.
+        # NOTE: In non-streaming mode, run_response.tools is None here because
+        # _update_run_response() hasn't been called yet. The non-streaming case is
+        # handled by _stamp_child_run_ids() which runs after _update_run_response().
         if run_response.tools is not None and member_agent_run_response is not None:
-            member_id = member_agent.id if member_agent.id else member_agent.name
+            url_safe_member_id = get_member_id(member_agent)
             for tool in run_response.tools:
                 if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                     tool_member_id = (tool.tool_args or {}).get("member_id")
-                    if tool_member_id == member_id and tool.child_run_id is None:
+                    if tool_member_id == url_safe_member_id and tool.child_run_id is None:
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
                         break
 
