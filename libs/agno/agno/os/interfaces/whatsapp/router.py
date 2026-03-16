@@ -55,7 +55,7 @@ _WA_TOOL_NAMES = frozenset(
 
 class _SessionConfig(NamedTuple):
     session_type: SessionType
-    session_cls: Type[Any]
+    session_class: Type[Any]
     id_field: str
     db: Any
     has_db: bool
@@ -70,11 +70,11 @@ _SESSION_DISPATCH = {
 
 
 def _resolve_session_config(entity: Any, entity_type: str) -> _SessionConfig:
-    session_type, session_cls, id_field = _SESSION_DISPATCH[entity_type]
+    session_type, session_class, id_field = _SESSION_DISPATCH[entity_type]
     db = getattr(entity, "db", None)
     return _SessionConfig(
         session_type=session_type,
-        session_cls=session_cls,
+        session_class=session_class,
         id_field=id_field,
         db=db,
         has_db=isinstance(db, (BaseDb, AsyncBaseDb)),
@@ -239,7 +239,7 @@ def attach_routes(
                 try:
                     new_session_id = f"wa:{entity_id}:{user_id}:{uuid4().hex[:8]}"
                     now = int(time())
-                    new_session = session_config.session_cls(
+                    new_session = session_config.session_class(
                         session_id=new_session_id,
                         user_id=user_id,
                         created_at=now,
