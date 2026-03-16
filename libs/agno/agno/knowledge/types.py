@@ -30,8 +30,9 @@ class ContentType(str, Enum):
     PPTX = ".pptx"
     POTX = ".potx"
     PPSX = ".ppsx"
-    POTM = ".pptm"
+    POTM = ".potm"
     PPSM = ".ppsm"
+    PPTM = ".pptm"
 
     HTML = ".html"
     HTM = ".htm"

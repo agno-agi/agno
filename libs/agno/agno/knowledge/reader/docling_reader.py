@@ -109,6 +109,7 @@ class DoclingReader(Reader):
             ContentType.PPSX,
             ContentType.POTM,
             ContentType.PPSM,
+            ContentType.PPTM,
             # PDF
             ContentType.PDF,
             # Markdown
