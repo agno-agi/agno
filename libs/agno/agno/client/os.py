@@ -39,6 +39,7 @@ from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
     TraceNode,
+    TraceSearchGroupBy,
     TraceSessionStats,
     TraceSummary,
 )
@@ -570,9 +571,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -630,9 +631,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -685,9 +686,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -727,9 +728,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -842,9 +843,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -902,9 +903,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -961,11 +962,14 @@ class AgentOSClient:
         data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
-    def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    def get_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -974,14 +978,19 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = self._get(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = self._get(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
-    async def aget_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    async def aget_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -990,7 +999,9 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = await self._aget(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = await self._aget(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
     async def run_workflow(
@@ -1027,9 +1038,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1087,9 +1098,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1698,6 +1709,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1727,6 +1739,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1766,6 +1779,7 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {
             "type": session_type.value,
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -2621,6 +2635,51 @@ class AgentOSClient:
 
         data = await self._aget("/trace_session_stats", params=params, headers=headers)
         return PaginatedResponse[TraceSessionStats].model_validate(data)
+
+    async def search_traces(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: TraceSearchGroupBy = TraceSearchGroupBy.RUN,
+        page: int = 1,
+        limit: int = 20,
+        db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Union[PaginatedResponse[TraceDetail], PaginatedResponse[TraceSessionStats]]:
+        """Search traces using the FilterExpr DSL for composable queries.
+
+        Supports operators: EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH,
+        AND, OR, NOT.
+
+        Args:
+            filter_expr: FilterExpr DSL as a dict (e.g., {"op": "EQ", "key": "status", "value": "OK"})
+            group_by: Grouping mode - TraceSearchGroupBy.RUN (default) returns TraceDetail,
+                TraceSearchGroupBy.SESSION returns TraceSessionStats
+            page: Page number (1-indexed)
+            limit: Number of traces per page (max 100)
+            db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[TraceDetail] if group_by=RUN, PaginatedResponse[TraceSessionStats] if group_by=SESSION
+
+        Raises:
+            HTTPStatusError: On HTTP errors (400 for invalid filter)
+        """
+        body: Dict[str, Any] = {
+            "filter": filter_expr,
+            "group_by": group_by.value,
+            "page": page,
+            "limit": limit,
+        }
+        params: Dict[str, Any] = {}
+        if db_id is not None:
+            params["db_id"] = db_id
+
+        data = await self._apost("/traces/search", data=body, params=params if params else None, headers=headers)
+
+        if group_by == TraceSearchGroupBy.SESSION:
+            return PaginatedResponse[TraceSessionStats].model_validate(data)
+        return PaginatedResponse[TraceDetail].model_validate(data)
 
     # Metrics Operations
     async def get_metrics(

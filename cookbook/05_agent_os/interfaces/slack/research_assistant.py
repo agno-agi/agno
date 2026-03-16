@@ -2,7 +2,18 @@
 Research Assistant
 ==================
 
-Demonstrates research assistant.
+An agent that combines Slack message search with web search to answer
+research questions. Searches internal Slack history first, then gathers
+external context from the web.
+
+Key concepts:
+  - ``SlackTools`` search supports Slack query syntax
+    (``from:@user``, ``in:#channel``, ``has:link``, ``before:/after:``).
+  - ``WebSearchTools`` provides external web search.
+  - The agent synthesizes internal and external findings into one summary.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             search:read, channels:history, users:read
 """
 
 from agno.agent import Agent

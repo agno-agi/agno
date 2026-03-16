@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -68,6 +68,7 @@ class AwsBedrock(Model):
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     session: Optional[Session] = None
 
     # Request parameters
@@ -88,15 +89,22 @@ class AwsBedrock(Model):
         Returns:
             AwsClient: The Bedrock client.
         """
-        if self.client is not None:
+        # When using a boto3 session, always recreate the client so
+        # session credentials can be refreshed (IAM roles, EKS, STS).
+        if not self.session and self.client is not None:
             return self.client
 
+        # Return directly (not via self.client) so concurrent callers
+        # on the same model instance each get their own client.
         if self.session:
-            self.client = self.session.client("bedrock-runtime")
-            return self.client
+            return self.session.client(
+                "bedrock-runtime",
+                region_name=self.aws_region or self.session.region_name,
+            )
 
         self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+        self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
         if self.aws_sso_auth:
@@ -112,6 +120,7 @@ class AwsBedrock(Model):
                 region_name=self.aws_region,
                 aws_access_key_id=self.aws_access_key_id,
                 aws_secret_access_key=self.aws_secret_access_key,
+                aws_session_token=self.aws_session_token,
             )
         return self.client
 
@@ -127,14 +136,35 @@ class AwsBedrock(Model):
                 "`aioboto3` not installed. Please install using `pip install aioboto3` for async support."
             )
 
+        # When using a boto3 session, create the aioboto3 session from it
+        # so that session credentials (IAM roles, EKS, STS) are respected.
+        if self.session:
+            credentials = self.session.get_credentials()
+            if credentials is None:
+                raise ValueError(
+                    "boto3 session has no credentials. Check your AWS configuration "
+                    "(environment variables, config files, IAM role, etc.)."
+                )
+            # Use local variables (not self.async_session) so concurrent
+            # callers each get their own session and client.
+            frozen = credentials.get_frozen_credentials()
+            async_session = aioboto3.Session(
+                aws_access_key_id=frozen.access_key,
+                aws_secret_access_key=frozen.secret_key,
+                aws_session_token=frozen.token,
+                region_name=self.aws_region or self.session.region_name,
+            )
+            return async_session.client("bedrock-runtime")
+
         if self.async_session is None:
             self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
             self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
             self.aws_region = self.aws_region or getenv("AWS_REGION")
 
             self.async_session = aioboto3.Session()
 
-        client_kwargs = {
+        client_kwargs: Dict[str, Any] = {
             "service_name": "bedrock-runtime",
             "region_name": self.aws_region,
         }
@@ -147,22 +177,22 @@ class AwsBedrock(Model):
 
                 env_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
                 env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+                env_session_token = os.environ.get("AWS_SESSION_TOKEN")
                 env_region = os.environ.get("AWS_REGION")
 
                 if env_access_key and env_secret_key:
                     self.aws_access_key_id = env_access_key
                     self.aws_secret_access_key = env_secret_key
+                    self.aws_session_token = env_session_token
                     if env_region:
                         self.aws_region = env_region
                         client_kwargs["region_name"] = self.aws_region
 
             if self.aws_access_key_id and self.aws_secret_access_key:
-                client_kwargs.update(
-                    {
-                        "aws_access_key_id": self.aws_access_key_id,
-                        "aws_secret_access_key": self.aws_secret_access_key,
-                    }
-                )
+                client_kwargs["aws_access_key_id"] = self.aws_access_key_id
+                client_kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+                if self.aws_session_token:
+                    client_kwargs["aws_session_token"] = self.aws_session_token
 
         return self.async_session.client(**client_kwargs)
 
@@ -264,8 +294,16 @@ class AwsBedrock(Model):
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
                 }
-                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
-                formatted_messages.append(formatted_message)
+                if (
+                    formatted_messages
+                    and formatted_messages[-1]["role"] == "user"
+                    and formatted_messages[-1]["content"]
+                    and "toolResult" in formatted_messages[-1]["content"][0]
+                ):
+                    formatted_messages[-1]["content"].append({"toolResult": tool_result})
+                else:
+                    formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                    formatted_messages.append(formatted_message)
             else:
                 formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
@@ -468,9 +506,6 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
             assistant_message.metrics.stop_timer()
@@ -515,9 +550,6 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -570,9 +602,6 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async with self.get_async_client() as client:
@@ -620,9 +649,6 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -783,20 +809,23 @@ class AwsBedrock(Model):
 
         return model_response, current_tool
 
-    def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
+    def _get_metrics(self, response_usage: Dict[str, Any]) -> MessageMetrics:
         """
-        Parse the given AWS Bedrock usage into an Agno Metrics object.
+        Parse the given AWS Bedrock usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from AWS Bedrock
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.get("inputTokens", 0) or 0
         metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        metrics.cache_read_tokens = response_usage.get("cacheReadInputTokens", 0) or 0
+        metrics.cache_write_tokens = response_usage.get("cacheWriteInputTokens", 0) or 0
 
         return metrics

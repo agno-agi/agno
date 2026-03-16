@@ -121,9 +121,11 @@ def _determine_tools_for_model(
     from agno.team._default_tools import (
         _get_chat_history_function,
         _get_delegate_task_function,
-        _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
+        _read_past_session_function,
+        _search_past_sessions_function,
         _update_session_state_tool,
+        create_knowledge_search_tool,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -183,27 +185,39 @@ def _determine_tools_for_model(
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
-    if team.search_session_history:
+    if team.search_past_sessions:
         _tools.append(
-            _get_previous_sessions_messages_function(
-                team, num_history_sessions=team.num_history_sessions, user_id=user_id, async_mode=async_mode
+            _search_past_sessions_function(
+                team,
+                num_past_sessions_to_search=team.num_past_sessions_to_search,
+                num_past_session_runs_in_search=team.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+                async_mode=async_mode,
+            )
+        )
+        _tools.append(
+            _read_past_session_function(
+                team,
+                user_id=user_id,
+                async_mode=async_mode,
             )
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and team.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-        if callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
+    # Single unified path through get_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or team.knowledge_retriever is not None) and team.search_knowledge:
+        _tools.append(
+            create_knowledge_search_tool(
+                team,
                 run_response=run_response,
                 run_context=run_context,
                 knowledge_filters=run_context.knowledge_filters,
-                async_mode=async_mode,
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
-                agent=team,
+                async_mode=async_mode,
             )
-            _tools.extend(knowledge_tools)
+        )
 
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
