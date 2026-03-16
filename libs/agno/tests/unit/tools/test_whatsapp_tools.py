@@ -94,10 +94,8 @@ def test_send_text_message_no_recipient():
 
 def test_send_text_message_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("API error")
-    result = whatsapp_tools.send_text_message(text="Hello", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
-    assert "API error" in parsed["error"]
+    with pytest.raises(Exception, match="API error"):
+        whatsapp_tools.send_text_message(text="Hello", recipient="+1234567890")
 
 
 def test_send_template_message(whatsapp_tools):
@@ -345,44 +343,38 @@ def test_send_location_without_name_and_address(whatsapp_tools):
 
 def test_send_template_message_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("template API error")
-    result = whatsapp_tools.send_template_message(template_name="hello_world", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
+    with pytest.raises(Exception, match="template API error"):
+        whatsapp_tools.send_template_message(template_name="hello_world", recipient="+1234567890")
 
 
 def test_send_list_message_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("list API error")
     sections = [ListSection(title="Sec", rows=[ListRow(id="r1", title="Row 1")])]
-    result = whatsapp_tools.send_list_message(
-        body_text="Body", button_text="View", sections=sections, recipient="+1234567890"
-    )
-    parsed = json.loads(result)
-    assert "error" in parsed
+    with pytest.raises(Exception, match="list API error"):
+        whatsapp_tools.send_list_message(
+            body_text="Body", button_text="View", sections=sections, recipient="+1234567890"
+        )
 
 
 def test_send_image_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("image API error")
-    result = whatsapp_tools.send_image(image_url="https://example.com/img.png", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
+    with pytest.raises(Exception, match="image API error"):
+        whatsapp_tools.send_image(image_url="https://example.com/img.png", recipient="+1234567890")
 
 
 def test_send_document_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("doc API error")
-    result = whatsapp_tools.send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
+    with pytest.raises(Exception, match="doc API error"):
+        whatsapp_tools.send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
 
 
 def test_send_location_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("location API error")
-    result = whatsapp_tools.send_location(latitude="0", longitude="0", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
+    with pytest.raises(Exception, match="location API error"):
+        whatsapp_tools.send_location(latitude="0", longitude="0", recipient="+1234567890")
 
 
 def test_send_reaction_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("reaction API error")
-    result = whatsapp_tools.send_reaction(message_id="wamid.abc", emoji="\U0001f44d", recipient="+1234567890")
-    parsed = json.loads(result)
-    assert "error" in parsed
+    with pytest.raises(Exception, match="reaction API error"):
+        whatsapp_tools.send_reaction(message_id="wamid.abc", emoji="\U0001f44d", recipient="+1234567890")

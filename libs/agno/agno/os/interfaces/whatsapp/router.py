@@ -346,7 +346,10 @@ def attach_routes(
                     media_sent = True
 
             response_tools = getattr(response, "tools", None)
-            tools_sent_message = response_tools and any(t.tool_name in _WA_TOOL_NAMES for t in response_tools)
+            # Only suppress text if a WA tool ran AND didn't error
+            tools_sent_message = response_tools and any(
+                t.tool_name in _WA_TOOL_NAMES and not t.tool_call_error for t in response_tools
+            )
             # Send text if no media was successfully sent and no tool already messaged the user
             if not media_sent and not tools_sent_message:
                 await send_whatsapp_message_async(phone_number, response.content or "", config)

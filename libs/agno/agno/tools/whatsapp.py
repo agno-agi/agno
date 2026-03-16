@@ -148,7 +148,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending text message: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_template_message(
         self,
@@ -188,7 +188,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending template message: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_reply_buttons(
         self,
@@ -241,7 +241,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending reply buttons: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_list_message(
         self,
@@ -316,7 +316,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending list message: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_image(
         self,
@@ -363,7 +363,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending image: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_document(
         self,
@@ -414,7 +414,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending document: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_location(
         self,
@@ -461,7 +461,7 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": message_id})
         except Exception as e:
             logger.error(f"Error sending location: {e}")
-            return json.dumps({"error": str(e)})
+            raise
 
     def send_reaction(
         self,
@@ -498,4 +498,4 @@ class WhatsAppTools(Toolkit):
             return json.dumps({"ok": True, "message_id": resp_message_id})
         except Exception as e:
             logger.error(f"Error sending reaction: {e}")
-            return json.dumps({"error": str(e)})
+            raise
