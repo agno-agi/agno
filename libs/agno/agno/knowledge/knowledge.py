@@ -82,6 +82,9 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
         auth: Optional[ContentAuth] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[List[Any]] = None,
+        video: Optional[List[Any]] = None,
     ) -> None: ...
 
     @overload
@@ -103,6 +106,9 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[List[Any]] = None,
+        video: Optional[List[Any]] = None,
     ) -> None:
         """
         Synchronously insert content into the knowledge base.
@@ -121,13 +127,33 @@ class Knowledge(RemoteKnowledge):
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: False)
+            images: Optional list of Image objects to embed as multimodal content
+            audio: Optional list of Audio objects to embed as multimodal content
+            video: Optional list of Video objects to embed as multimodal content
         """
         # Validation: At least one of the parameters must be provided
-        if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+        has_media = any(m is not None for m in [images, audio, video])
+        if all(argument is None for argument in [path, url, text_content, topics, remote_content]) and not has_media:
             log_warning(
-                "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
+                "At least one of 'path', 'url', 'text_content', 'topics', 'remote_content', "
+                "'images', 'audio', or 'video' must be provided."
             )
             return
+
+        # Handle media insertion
+        if has_media:
+            self._load_from_media(
+                images=images,
+                audio=audio,
+                video=video,
+                text_content=text_content or "",
+                metadata=metadata,
+                upsert=upsert,
+                skip_if_exists=skip_if_exists,
+            )
+            # If only media was provided, return early
+            if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+                return
 
         # Strip reserved _agno key from user-provided metadata
         safe_metadata = strip_agno_metadata(metadata)
@@ -168,6 +194,9 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
         auth: Optional[ContentAuth] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[List[Any]] = None,
+        video: Optional[List[Any]] = None,
     ) -> None: ...
 
     @overload
@@ -189,13 +218,33 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[List[Any]] = None,
+        video: Optional[List[Any]] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
-        if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+        has_media = any(m is not None for m in [images, audio, video])
+        if all(argument is None for argument in [path, url, text_content, topics, remote_content]) and not has_media:
             log_warning(
-                "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
+                "At least one of 'path', 'url', 'text_content', 'topics', 'remote_content', "
+                "'images', 'audio', or 'video' must be provided."
             )
             return
+
+        # Handle media insertion
+        if has_media:
+            await self._aload_from_media(
+                images=images,
+                audio=audio,
+                video=video,
+                text_content=text_content or "",
+                metadata=metadata,
+                upsert=upsert,
+                skip_if_exists=skip_if_exists,
+            )
+            # If only media was provided, return early
+            if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+                return
 
         # Strip reserved _agno key from user-provided metadata
         safe_metadata = strip_agno_metadata(metadata)
@@ -1085,6 +1134,181 @@ class Knowledge(RemoteKnowledge):
     # PRIVATE - CONTENT LOADING METHODS
     # ==========================================
 
+    def _get_media_source_ref(self, media_obj: Any) -> str:
+        """Get a stable source reference string from a media object for hashing."""
+        if hasattr(media_obj, "filepath") and media_obj.filepath:
+            return str(media_obj.filepath)
+        elif hasattr(media_obj, "url") and media_obj.url:
+            return media_obj.url
+        elif hasattr(media_obj, "content") and media_obj.content:
+            return hashlib.sha256(media_obj.content).hexdigest()
+        elif hasattr(media_obj, "id") and media_obj.id:
+            return media_obj.id
+        return ""
+
+    def _build_media_content_hash(self, media_obj: Any, text_content: str) -> str:
+        """Build a content hash for a media document."""
+        source_ref = self._get_media_source_ref(media_obj)
+        hash_input = f"media:{source_ref}"
+        if text_content:
+            hash_input = f"{text_content}:{hash_input}"
+        return hashlib.sha256(hash_input.encode()).hexdigest()
+
+    def _create_media_documents(
+        self,
+        images: Optional[List[Any]],
+        audio: Optional[List[Any]],
+        video: Optional[List[Any]],
+        text_content: str,
+        metadata: Optional[Dict[str, Any]],
+    ) -> List[Document]:
+        """Create Document objects from media items."""
+        documents: List[Document] = []
+        safe_metadata = strip_agno_metadata(metadata)
+
+        if images:
+            for image in images:
+                source_ref = self._get_media_source_ref(image)
+                doc_meta = dict(safe_metadata) if safe_metadata else {}
+                doc_meta["content_type"] = "image"
+                if source_ref:
+                    doc_meta["source"] = source_ref
+                doc = Document(
+                    content=text_content,
+                    name=source_ref or "image",
+                    meta_data=doc_meta,
+                    media=image,
+                )
+                documents.append(doc)
+
+        if audio:
+            for audio_item in audio:
+                source_ref = self._get_media_source_ref(audio_item)
+                doc_meta = dict(safe_metadata) if safe_metadata else {}
+                doc_meta["content_type"] = "audio"
+                if source_ref:
+                    doc_meta["source"] = source_ref
+                doc = Document(
+                    content=text_content,
+                    name=source_ref or "audio",
+                    meta_data=doc_meta,
+                    media=audio_item,
+                )
+                documents.append(doc)
+
+        if video:
+            for video_item in video:
+                source_ref = self._get_media_source_ref(video_item)
+                doc_meta = dict(safe_metadata) if safe_metadata else {}
+                doc_meta["content_type"] = "video"
+                if source_ref:
+                    doc_meta["source"] = source_ref
+                doc = Document(
+                    content=text_content,
+                    name=source_ref or "video",
+                    meta_data=doc_meta,
+                    media=video_item,
+                )
+                documents.append(doc)
+
+        return documents
+
+    def _load_from_media(
+        self,
+        images: Optional[List[Any]],
+        audio: Optional[List[Any]],
+        video: Optional[List[Any]],
+        text_content: str,
+        metadata: Optional[Dict[str, Any]],
+        upsert: bool,
+        skip_if_exists: bool,
+    ) -> None:
+        """Synchronously load media content into the knowledge base."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        all_media = (images or []) + (audio or []) + (video or [])
+        for media_obj in all_media:
+            content_hash = self._build_media_content_hash(media_obj, text_content)
+            if self._should_skip(content_hash, skip_if_exists):
+                continue
+
+        documents = self._create_media_documents(images, audio, video, text_content, metadata)
+        if not documents:
+            return
+
+        # Build a single content hash for the entire media batch
+        first_media = all_media[0] if all_media else None
+        batch_content_hash = self._build_media_content_hash(first_media, text_content) if first_media else ""
+        content_id = generate_id(batch_content_hash)
+
+        for doc in documents:
+            doc.content_id = content_id
+            doc.meta_data["linked_to"] = self.name or ""
+            # Size from media bytes if available
+            if doc.media and hasattr(doc.media, "get_content_bytes"):
+                media_bytes = doc.media.get_content_bytes()
+                if media_bytes:
+                    doc.size = len(media_bytes)
+
+        content = Content(
+            name=text_content[:50] if text_content else "media",
+            metadata=strip_agno_metadata(metadata),
+        )
+        content.content_hash = batch_content_hash
+        content.id = content_id
+
+        self._handle_vector_db_insert(content, documents, upsert)
+
+    async def _aload_from_media(
+        self,
+        images: Optional[List[Any]],
+        audio: Optional[List[Any]],
+        video: Optional[List[Any]],
+        text_content: str,
+        metadata: Optional[Dict[str, Any]],
+        upsert: bool,
+        skip_if_exists: bool,
+    ) -> None:
+        """Asynchronously load media content into the knowledge base."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        all_media = (images or []) + (audio or []) + (video or [])
+        for media_obj in all_media:
+            content_hash = self._build_media_content_hash(media_obj, text_content)
+            if self._should_skip(content_hash, skip_if_exists):
+                continue
+
+        documents = self._create_media_documents(images, audio, video, text_content, metadata)
+        if not documents:
+            return
+
+        # Build a single content hash for the entire media batch
+        first_media = all_media[0] if all_media else None
+        batch_content_hash = self._build_media_content_hash(first_media, text_content) if first_media else ""
+        content_id = generate_id(batch_content_hash)
+
+        for doc in documents:
+            doc.content_id = content_id
+            doc.meta_data["linked_to"] = self.name or ""
+            # Size from media bytes if available
+            if doc.media and hasattr(doc.media, "get_content_bytes"):
+                media_bytes = doc.media.get_content_bytes()
+                if media_bytes:
+                    doc.size = len(media_bytes)
+
+        content = Content(
+            name=text_content[:50] if text_content else "media",
+            metadata=strip_agno_metadata(metadata),
+        )
+        content.content_hash = batch_content_hash
+        content.id = content_id
+
+        await self._ahandle_vector_db_insert(content, documents, upsert)
+
     def _load_content(
         self,
         content: Content,
@@ -1302,8 +1526,13 @@ class Knowledge(RemoteKnowledge):
         """
         for document in documents:
             document.content_id = content_id
-            if calculate_sizes and document.content and not document.size:
-                document.size = len(document.content.encode("utf-8"))
+            if calculate_sizes and not document.size:
+                if document.has_media and document.media and hasattr(document.media, "get_content_bytes"):
+                    media_bytes = document.media.get_content_bytes()
+                    if media_bytes:
+                        document.size = len(media_bytes)
+                elif document.content:
+                    document.size = len(document.content.encode("utf-8"))
             if metadata:
                 document.meta_data.update(metadata)
             document.meta_data["linked_to"] = self.name or ""

@@ -127,6 +127,67 @@ def create_knowledge_search_tool(
 
             return yaml.dump(docs, default_flow_style=False)
 
+    def _build_result_with_media(
+        docs: Optional[List[Union[Dict[str, Any], str]]],
+    ) -> Any:
+        """Build a ToolResult with media if any search results contain media documents.
+
+        Reconstructs Image/Audio/Video objects from meta_data so the LLM can
+        actually see/hear the media rather than just reading a text description.
+        """
+        from agno.tools.function import ToolResult
+
+        text_content = _format_results(docs)
+        if not docs:
+            return text_content
+
+        images_list: List[Any] = []
+        videos_list: List[Any] = []
+        audios_list: List[Any] = []
+
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            meta = doc.get("meta_data")
+            if not isinstance(meta, dict):
+                continue
+            content_type = meta.get("content_type")
+            source = meta.get("source")
+            if not content_type or not source:
+                continue
+
+            from pathlib import Path as _Path
+
+            from agno.media import Audio as _Audio
+            from agno.media import Image as _Image
+            from agno.media import Video as _Video
+
+            if content_type == "image":
+                if source.startswith(("http://", "https://")):
+                    images_list.append(_Image(url=source))
+                elif _Path(source).exists():
+                    images_list.append(_Image(filepath=source))
+            elif content_type == "audio":
+                if source.startswith(("http://", "https://")):
+                    audios_list.append(_Audio(url=source))
+                elif _Path(source).exists():
+                    audios_list.append(_Audio(filepath=source))
+            elif content_type == "video":
+                if source.startswith(("http://", "https://")):
+                    videos_list.append(_Video(url=source))
+                elif _Path(source).exists():
+                    videos_list.append(_Video(filepath=source))
+
+        if not images_list and not videos_list and not audios_list:
+            return text_content
+
+        return ToolResult(
+            content=text_content,
+            images=images_list or None,
+            videos=videos_list or None,
+            audios=audios_list or None,
+        )
+
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
             references = MessageReferences(
@@ -181,7 +242,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         async def asearch_knowledge_base_with_filters(
             query: str, filters: Optional[List[KnowledgeFilter]] = None
@@ -213,7 +274,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
@@ -247,7 +308,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         async def asearch_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -275,7 +336,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
