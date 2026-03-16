@@ -317,6 +317,18 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
     return None
 
 
+def format_message(text: str) -> str:
+    import re
+
+    # ## Header → *Header* (WhatsApp has no header rendering)
+    text = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
+    # **bold** → *bold* (WhatsApp uses single asterisks)
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    # [text](url) → text (url)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+    return text
+
+
 async def send_whatsapp_message_async(
     recipient: str, message: Any, config: WhatsAppConfig, italics: bool = False
 ) -> None:
@@ -327,6 +339,8 @@ async def send_whatsapp_message_async(
         message = message.model_dump_json(indent=2) if isinstance(message, BaseModel) else str(message)
     if not message or not message.strip():
         return
+
+    message = format_message(message)
 
     def _format(text: str) -> str:
         if italics:

@@ -17,6 +17,7 @@ from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
     download_event_media_async,
     extract_message_content,
+    format_message,
     send_whatsapp_message_async,
     typing_indicator_async,
     upload_and_send_media_async,
@@ -89,13 +90,8 @@ def _format_reasoning(text: str) -> str:
             continue
         if stripped.startswith(_REASONING_SKIP_PREFIXES):
             continue
-        # Convert markdown headers to WhatsApp bold
-        header = re.match(r"^#{1,3}\s+(.+)$", stripped)
-        if header:
-            lines.append(f"*{header.group(1)}*")
-        else:
-            lines.append(stripped)
-    return "\n".join(lines)
+        lines.append(stripped)
+    return format_message("\n".join(lines))
 
 
 class WhatsAppWebhookResponse(BaseModel):
