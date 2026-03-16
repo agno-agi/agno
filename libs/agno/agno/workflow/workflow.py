@@ -260,6 +260,12 @@ class Workflow:
     # Metadata stored with this workflow
     metadata: Optional[Dict[str, Any]] = None
 
+    # Dependencies to pass to downstream agents/teams
+    dependencies: Optional[Dict[str, Any]] = None
+    # Workflow-level control flags (propagated to downstream agents/teams)
+    add_dependencies_to_context: Optional[bool] = None
+    add_session_state_to_context: Optional[bool] = None
+
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
@@ -295,6 +301,9 @@ class Workflow:
         store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         cache_session: bool = False,
         telemetry: bool = True,
         add_workflow_history_to_steps: bool = False,
@@ -318,6 +327,9 @@ class Workflow:
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
+        self.dependencies = dependencies
+        self.add_dependencies_to_context = add_dependencies_to_context
+        self.add_session_state_to_context = add_session_state_to_context
 
         # Component metadata (set by get_workflows during DB loading)
         self._version: Optional[int] = None
@@ -344,6 +356,51 @@ class Workflow:
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
+
+    def _resolve_run_params(
+        self,
+        *,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Resolve run-level params: call-site > self.<field> > None.
+
+        Returns a dict of resolved values ready to pass to RunContext().
+        """
+        from agno.utils.merge_dict import merge_dictionaries
+
+        # dependencies: merge run level with self.dependencies (run level wins on conflicts)
+        resolved_dependencies: Optional[Dict[str, Any]] = None
+        if dependencies is not None and self.dependencies is not None:
+            resolved_dependencies = self.dependencies.copy()
+            merge_dictionaries(resolved_dependencies, dependencies)
+        elif dependencies is not None:
+            resolved_dependencies = dependencies.copy()
+        elif self.dependencies is not None:
+            resolved_dependencies = self.dependencies.copy()
+
+        # metadata: merge call-site with self.metadata (self wins on conflicts)
+        resolved_metadata: Optional[Dict[str, Any]] = None
+        if metadata is not None and self.metadata is not None:
+            resolved_metadata = metadata.copy()
+            merge_dictionaries(resolved_metadata, self.metadata)
+        elif metadata is not None:
+            resolved_metadata = metadata.copy()
+        elif self.metadata is not None:
+            resolved_metadata = self.metadata.copy()
+
+        return {
+            "dependencies": resolved_dependencies,
+            "metadata": resolved_metadata,
+            "add_dependencies_to_context": add_dependencies_to_context
+            if add_dependencies_to_context is not None
+            else self.add_dependencies_to_context,
+            "add_session_state_to_context": add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context,
+        }
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
@@ -669,9 +726,15 @@ class Workflow:
             elif isinstance(self.input_schema, dict):
                 config["input_schema"] = self.input_schema
 
-        # --- Metadata ---
+        # --- Metadata and run-level params ---
         if self.metadata is not None:
             config["metadata"] = self.metadata
+        if self.dependencies is not None:
+            config["dependencies"] = self.dependencies
+        if self.add_dependencies_to_context is not None:
+            config["add_dependencies_to_context"] = self.add_dependencies_to_context
+        if self.add_session_state_to_context is not None:
+            config["add_session_state_to_context"] = self.add_session_state_to_context
 
         # --- Debug and telemetry settings ---
         config["debug_mode"] = self.debug_mode
@@ -762,8 +825,11 @@ class Workflow:
             store_executor_outputs=config.get("store_executor_outputs", True),
             # --- Schema settings ---
             input_schema=config.get("input_schema"),
-            # --- Metadata ---
+            # --- Metadata and run-level params ---
             metadata=config.get("metadata"),
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context"),
+            add_session_state_to_context=config.get("add_session_state_to_context"),
             # --- Debug and telemetry settings ---
             debug_mode=config.get("debug_mode", False),
             telemetry=config.get("telemetry", True),
@@ -1722,6 +1788,8 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
@@ -1808,6 +1876,8 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -1942,6 +2012,8 @@ class Workflow:
         run_context: RunContext,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2063,6 +2135,8 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                         ):
                             raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2418,6 +2492,8 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
@@ -2518,6 +2594,8 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -2657,6 +2735,8 @@ class Workflow:
         stream_events: bool = False,
         websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2795,6 +2875,8 @@ class Workflow:
                             else None,
                             num_history_runs=self.num_history_runs,
                             background_tasks=background_tasks,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                         ):
                             if workflow_run_response.run_id:
                                 await araise_if_cancelled(workflow_run_response.run_id)
@@ -3099,6 +3181,10 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background using asyncio.create_task()"""
@@ -3114,11 +3200,23 @@ class Workflow:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
+        # Resolve run-level params using shared helper
+        resolved = self._resolve_run_params(
+            dependencies=dependencies,
+            metadata=metadata,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+        )
+
         run_context = RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            dependencies=resolved["dependencies"],
+            metadata=resolved["metadata"],
         )
 
         self._prepare_steps()
@@ -3184,6 +3282,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         run_context=run_context,
                         session_state=session_state,
+                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                        add_session_state_to_context=resolved["add_session_state_to_context"],
                         **kwargs,
                     )
 
@@ -3218,6 +3318,10 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream_events: bool = False,
         websocket_handler: Optional["WebSocketHandler"] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background with streaming and WebSocket broadcasting"""
@@ -3233,11 +3337,23 @@ class Workflow:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
+        # Resolve run-level params using shared helper
+        resolved = self._resolve_run_params(
+            dependencies=dependencies,
+            metadata=metadata,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+        )
+
         run_context = RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            dependencies=resolved["dependencies"],
+            metadata=resolved["metadata"],
         )
 
         self._prepare_steps()
@@ -3309,6 +3425,8 @@ class Workflow:
                         stream_events=stream_events,
                         run_context=run_context,
                         websocket_handler=websocket_handler,
+                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                        add_session_state_to_context=resolved["add_session_state_to_context"],
                         **kwargs,
                     ):
                         # Events are automatically broadcast by _handle_event
@@ -6262,6 +6380,9 @@ class Workflow:
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -6282,6 +6403,9 @@ class Workflow:
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -6301,6 +6425,9 @@ class Workflow:
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -6372,6 +6499,14 @@ class Workflow:
 
         self.update_agents_and_teams_session_info()
 
+        # Resolve run-level params using shared helper (deep merge, call-site > self.<field> > None)
+        resolved = self._resolve_run_params(
+            dependencies=dependencies,
+            metadata=metadata,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+        )
+
         # Initialize run context
         run_context = RunContext(
             run_id=run_id,
@@ -6380,7 +6515,8 @@ class Workflow:
             session_state=session_state,
             workflow_id=self.id,
             workflow_name=self.name,
-            dependencies=dependencies,
+            dependencies=resolved["dependencies"],
+            metadata=resolved["metadata"],
         )
 
         # Execute workflow agent if configured
@@ -6418,6 +6554,8 @@ class Workflow:
                 stream_events=stream_events,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
         else:
@@ -6427,6 +6565,8 @@ class Workflow:
                 workflow_run_response=workflow_run_response,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
 
@@ -6449,6 +6589,9 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -6470,6 +6613,9 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -6490,6 +6636,9 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -6521,6 +6670,10 @@ class Workflow:
                     files=files,
                     stream_events=stream_events,
                     websocket_handler=websocket_handler,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                     **kwargs,
                 )
             elif stream and not websocket:
@@ -6538,6 +6691,10 @@ class Workflow:
                     images=images,
                     videos=videos,
                     files=files,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                     **kwargs,
                 )
 
@@ -6549,13 +6706,24 @@ class Workflow:
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
+        # Resolve run-level params using shared helper (deep merge, call-site > self.<field> > None)
+        resolved = self._resolve_run_params(
+            dependencies=dependencies,
+            metadata=metadata,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+        )
+
         # Initialize run context
         run_context = RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            dependencies=resolved["dependencies"],
+            metadata=resolved["metadata"],
         )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
@@ -6624,6 +6792,8 @@ class Workflow:
                 session_state=session_state,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
         else:
@@ -6637,6 +6807,8 @@ class Workflow:
                 session_state=session_state,
                 run_context=run_context,
                 background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
 
