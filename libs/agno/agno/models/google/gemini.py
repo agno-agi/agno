@@ -57,6 +57,11 @@ except ImportError:
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
     )
 
+try:
+    from google.genai.types import ToolParallelAiSearch
+except ImportError:
+    ToolParallelAiSearch = None
+
 
 @dataclass
 class Gemini(Model):
@@ -90,6 +95,15 @@ class Gemini(Model):
     url_context: bool = False
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
+
+    # Parallel web search grounding (Vertex AI only)
+    # Uses Parallel Web Systems' search API for grounding with public web data
+    parallel_search: bool = False
+    parallel_api_key: Optional[str] = None
+    # Optional custom configuration for Parallel search (e.g., domain filtering)
+    # Passed as `custom_configs` in the ToolParallelAiSearch payload.
+    # Example: {"source_policy": {"exclude_domains": ["example.com"]}}
+    parallel_config: Optional[Dict[str, Any]] = None
 
     # Gemini File Search capabilities
     file_search_store_names: Optional[List[str]] = None
@@ -326,6 +340,29 @@ class Gemini(Model):
             )
 
         self._append_file_search_tool(builtin_tools)
+
+        # Build Parallel web search grounding tool
+        if self.parallel_search:
+            log_debug("Gemini Parallel web search grounding enabled.")
+            if not self.vertexai:
+                raise ValueError("Parallel search grounding requires vertexai=True.")
+            if self.search or self.grounding:
+                raise ValueError(
+                    "Parallel search grounding cannot be combined with google_search or grounding tools. "
+                    "Disable `search` and `grounding` when using `parallel_search`."
+                )
+            if ToolParallelAiSearch is None:
+                raise ImportError(
+                    "ToolParallelAiSearch is not available in your version of `google-genai`. "
+                    "Please upgrade using `pip install -U google-genai`."
+                )
+            parallel_tool_config: Dict[str, Any] = {}
+            parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
+            if parallel_key:
+                parallel_tool_config["api_key"] = parallel_key
+            if self.parallel_config:
+                parallel_tool_config["custom_configs"] = self.parallel_config
+            builtin_tools.append(Tool(parallel_ai_search=ToolParallelAiSearch(**parallel_tool_config)))
 
         # Set tools in config
         if builtin_tools:

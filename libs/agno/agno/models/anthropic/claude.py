@@ -82,28 +82,19 @@ class Claude(Model):
         "claude-3-5-haiku-latest",
     }
 
-    # Models that DO NOT support native structured outputs
-    # All future models are assumed to support structured outputs
-    NON_STRUCTURED_OUTPUT_MODELS = {
-        # Claude 3.x family (all versions)
-        "claude-3-opus-20240229",
-        "claude-3-sonnet-20240229",
-        "claude-3-haiku-20240307",
-        "claude-3-opus",
-        "claude-3-sonnet",
-        "claude-3-haiku",
-        # Claude 3.5 family (all versions except Sonnet 4.5)
-        "claude-3-5-sonnet-20240620",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-sonnet",
-        "claude-3-5-haiku-20241022",
-        "claude-3-5-haiku-latest",
-        "claude-3-5-haiku",
-        # Claude Sonnet 4.x family (versions before 4.5)
+    # Model prefixes that do NOT support native structured outputs.
+    # This is a closed set — all new Claude models support structured outputs.
+    NON_STRUCTURED_OUTPUT_PREFIXES = (
+        "claude-3-",  # All 3.x models
+    )
+    # Exact model IDs and aliases that do NOT support native structured outputs.
+    NON_STRUCTURED_OUTPUT_ALIASES = {
         "claude-sonnet-4-20250514",
         "claude-sonnet-4",
-        # Claude Opus 4.x family (versions before 4.1 and 4.5)
-        # (Add any Opus 4.x models released before 4.1/4.5 if they exist)
+        "claude-sonnet-4-0",
+        "claude-opus-4-20250514",
+        "claude-opus-4",
+        "claude-opus-4-0",
     }
 
     id: str = "claude-sonnet-4-5-20250929"
@@ -182,20 +173,10 @@ class Claude(Model):
         Returns:
             bool: True if model supports structured outputs
         """
-        # If model is in blacklist, it doesn't support structured outputs
-        if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
+        if self.id in self.NON_STRUCTURED_OUTPUT_ALIASES:
             return False
-
-        # Check for legacy model patterns which don't support structured outputs
-        if self.id.startswith("claude-3-"):
+        if self.id.startswith(self.NON_STRUCTURED_OUTPUT_PREFIXES):
             return False
-        if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
-            return False
-        if self.id.startswith("claude-opus-4-") and not (
-            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
-        ):
-            return False
-
         return True
 
     def _using_structured_outputs(
@@ -215,7 +196,7 @@ class Claude(Model):
         """
         # Check for output_format usage
         if response_format is not None:
-            if self._supports_structured_outputs():
+            if self.supports_native_structured_outputs:
                 return True
             else:
                 log_warning(
@@ -300,7 +281,7 @@ class Claude(Model):
         if response_format is None:
             return None
 
-        if not self._supports_structured_outputs():
+        if not self.supports_native_structured_outputs:
             return None
 
         # Handle Pydantic BaseModel
@@ -345,7 +326,7 @@ class Claude(Model):
         if not self._using_structured_outputs(response_format, tools):
             return
 
-        if not self._supports_structured_outputs():
+        if not self.supports_native_structured_outputs:
             raise ValueError(f"Model '{self.id}' does not support structured outputs.\n\n")
 
     def _has_beta_features(
