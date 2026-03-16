@@ -86,6 +86,11 @@ class WhatsAppTools(Toolkit):
 
         super().__init__(name="whatsapp", tools=tools, **kwargs)
 
+        # Mask recipient phone numbers in framework log output.
+        for func in self.functions.values():
+            if "recipient" in (func.parameters or {}).get("properties", {}):
+                func.sensitive_parameters = ["recipient"]
+
     def _get_headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
 
@@ -98,6 +103,21 @@ class WhatsAppTools(Toolkit):
         if self.default_recipient:
             return self.default_recipient
         return None
+
+    @staticmethod
+    def _coerce_to_list(value: Any, label: str) -> List[Any]:
+        """Accept either a parsed list or a JSON string encoding a list."""
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"'{label}' must be a list or a JSON string encoding a list: {exc}") from exc
+            if not isinstance(parsed, list):
+                raise ValueError(f"'{label}' JSON string must encode a list, got {type(parsed).__name__}")
+            return parsed
+        raise ValueError(f"'{label}' must be a list or JSON string, got {type(value).__name__}")
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Raise on 4xx/5xx with parsed error body for better diagnostics
@@ -193,7 +213,7 @@ class WhatsAppTools(Toolkit):
     def send_reply_buttons(
         self,
         body_text: str,
-        buttons: List[ReplyButton],
+        buttons: Union[List[ReplyButton], str],
         recipient: Optional[str] = None,
         header: Optional[str] = None,
         footer: Optional[str] = None,
@@ -214,6 +234,9 @@ class WhatsAppTools(Toolkit):
             to = self._resolve_recipient(recipient)
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
+
+            raw_buttons = self._coerce_to_list(buttons, "buttons")
+            buttons = [ReplyButton.model_validate(b) if isinstance(b, dict) else b for b in raw_buttons]
 
             if len(buttons) > 3:
                 return json.dumps({"error": "WhatsApp allows a maximum of 3 reply buttons"})
@@ -247,7 +270,7 @@ class WhatsAppTools(Toolkit):
         self,
         body_text: str,
         button_text: str,
-        sections: List[ListSection],
+        sections: Union[List[ListSection], str],
         recipient: Optional[str] = None,
         header: Optional[str] = None,
         footer: Optional[str] = None,
@@ -269,6 +292,9 @@ class WhatsAppTools(Toolkit):
             to = self._resolve_recipient(recipient)
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
+
+            raw_sections = self._coerce_to_list(sections, "sections")
+            sections = [ListSection.model_validate(s) if isinstance(s, dict) else s for s in raw_sections]
 
             if len(sections) > 10:
                 return json.dumps({"error": "WhatsApp allows a maximum of 10 sections"})
