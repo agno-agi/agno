@@ -1,7 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import IO, Any, List, Optional, Union
+from typing import IO, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 import yaml
@@ -51,6 +51,8 @@ class DoclingReader(Reader):
         self,
         chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(),
         output_format: str = "markdown",
+        converter: Optional[DocumentConverter] = None,
+        format_options: Optional[Dict[Any, Any]] = None,
         **kwargs,
     ):
         """Initialize the DoclingReader.
@@ -66,6 +68,8 @@ class DoclingReader(Reader):
                 - "vtt": WebVTT subtitle format
                 - "yaml": YAML serialization
                 - "html_split_page": HTML with page splitting
+            converter: Optional pre-configured DocumentConverter instance.
+            format_options: Optional format options dictionary for DocumentConverter.
             **kwargs: Additional arguments passed to the Reader class
         """
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
@@ -76,7 +80,12 @@ class DoclingReader(Reader):
                 f"Invalid output format: '{output_format}'. Valid options: {list(OUTPUT_FORMAT_MAP.keys())}"
             )
 
-        self.converter = DocumentConverter()
+        if converter is not None:
+            self.converter = converter
+        elif format_options is not None:
+            self.converter = DocumentConverter(format_options=format_options)
+        else:
+            self.converter = DocumentConverter()
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
