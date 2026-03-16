@@ -264,7 +264,11 @@ class AsyncMongoDb(AsyncBaseDb):
         all database connections.
         """
         if self._client is not None:
-            self._client.close()
+            import inspect
+
+            close_result = self._client.close()
+            if inspect.isawaitable(close_result):
+                await close_result
             self._client = None
             self._database = None
 
