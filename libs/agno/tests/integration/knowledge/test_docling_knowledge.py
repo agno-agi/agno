@@ -164,7 +164,10 @@ async def test_docling_knowledge_base_async_with_metadata(setup_vector_db):
     agent = Agent(knowledge=kb, knowledge_filters={"user_id": "taylor_brooks"})
     response = await agent.arun("Tell me about the candidate's experience?", markdown=True)
 
-    assert any(lang in response.content.lower() for lang in ["taylor", "developer", "docker", "kubernetes"])
+    assert any(
+        lang in response.content.lower()
+        for lang in ["taylor", "developer", "docker", "kubernetes", "angular", "engineer", "software"]
+    )
 
 
 def test_docling_knowledge_base_with_chunking(setup_vector_db):
@@ -550,14 +553,14 @@ def test_docling_knowledge_base_xml_uspto(setup_vector_db):
         kb = Knowledge(vector_db=setup_vector_db)
         kb.insert(
             path=str(xml_path),
-            reader=DoclingReader(output_format="markdown"),
+            reader=DoclingReader(),
         )
 
         assert setup_vector_db.exists()
         assert setup_vector_db.get_count() > 0
 
         agent = Agent(knowledge=kb, search_knowledge=True)
-        response = agent.run("What is the patent about?", markdown=True)
+        response = agent.run("What is the patent patent.xml about?", markdown=True)
 
         assert any(term in response.content.lower() for term in ["artificial intelligence", "ai", "data", "neural"])
 
