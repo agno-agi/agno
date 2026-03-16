@@ -100,59 +100,24 @@ def get_update_cultural_knowledge_function(agent: Agent, async_mode: bool = Fals
     )
 
 
-def create_knowledge_retriever_search_tool(
+def create_knowledge_search_tool(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
     run_context: Optional[RunContext] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    enable_agentic_filters: Optional[bool] = False,
     async_mode: bool = False,
 ) -> Function:
-    """Create a search_knowledge_base tool using the custom knowledge_retriever.
+    """Create a unified search_knowledge_base tool.
 
-    This allows agents to use a custom retriever function without needing
-    a full Knowledge instance. The retriever is wrapped as a tool the agent can call.
+    Routes all knowledge searches through get_relevant_docs_from_knowledge(),
+    which checks knowledge_retriever first and falls back to knowledge.search().
+    This ensures the custom retriever is always respected when provided.
     """
 
-    def search_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-
-        try:
-            from agno.agent import _messages
-
-            docs = _messages.get_relevant_docs_from_knowledge(
-                agent,
-                query=query,
-                run_context=run_context,
-            )
-        except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
-            return f"Error searching knowledge base: {e}"
-
-        if run_response is not None and docs:
-            references = MessageReferences(
-                query=query,
-                references=docs,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
+    def _format_results(docs: Optional[List[Union[Dict[str, Any], str]]]) -> str:
         if not docs:
             return "No documents found"
-
-        # Format results for the agent
         if agent.references_format == "json":
             import json
 
@@ -162,59 +127,159 @@ def create_knowledge_retriever_search_tool(
 
             return yaml.dump(docs, default_flow_style=False)
 
-    async def asearch_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-
-        try:
-            from agno.agent import _messages
-
-            docs = await _messages.aget_relevant_docs_from_knowledge(
-                agent,
-                query=query,
-                run_context=run_context,
-            )
-        except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
-            return f"Error searching knowledge base: {e}"
-
+    def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
             references = MessageReferences(
                 query=query,
                 references=docs,
-                time=round(retrieval_timer.elapsed, 4),
+                time=round(elapsed, 4),
             )
             if run_response.references is None:
                 run_response.references = []
             run_response.references.append(references)
 
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+    def _resolve_filters(
+        agentic_filters: Optional[List[Any]] = None,
+    ) -> Optional[Union[Dict[str, Any], List[FilterExpr]]]:
+        if agentic_filters:
+            filters_dict: Dict[str, Any] = {}
+            for filt in agentic_filters:
+                if isinstance(filt, dict):
+                    filters_dict.update(filt)
+                elif hasattr(filt, "key") and hasattr(filt, "value"):
+                    filters_dict[filt.key] = filt.value
+            return get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
+        return knowledge_filters
 
-        if not docs:
-            return "No documents found"
+    if enable_agentic_filters:
 
-        # Format results for the agent
-        if agent.references_format == "json":
-            import json
+        def search_knowledge_base_with_filters(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
 
-            return json.dumps(docs, indent=2, default=str)
-        else:
-            import yaml
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
-            return yaml.dump(docs, default_flow_style=False)
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
 
-    if async_mode:
-        return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
-    return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+                docs = _messages.get_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=_resolve_filters(filters),
+                    validate_filters=True,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        async def asearch_knowledge_base_with_filters(
+            query: str, filters: Optional[List[KnowledgeFilter]] = None
+        ) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
+
+                docs = await _messages.aget_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=_resolve_filters(filters),
+                    validate_filters=True,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base_with_filters, name="search_knowledge_base")
+
+    else:
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
+
+                docs = _messages.get_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=knowledge_filters,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                from agno.agent import _messages
+
+                docs = await _messages.aget_relevant_docs_from_knowledge(
+                    agent,
+                    query=query,
+                    filters=knowledge_filters,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
 
 
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
@@ -315,183 +380,6 @@ def make_update_session_state_entrypoint(agent: Agent) -> Callable:
     return _entrypoint
 
 
-def get_search_knowledge_base_function(
-    agent: Agent,
-    run_response: RunOutput,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    async_mode: bool = False,
-    run_context: Optional[RunContext] = None,
-) -> Function:
-    """Factory function to create a search_knowledge_base function with filters."""
-
-    def search_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        # Get the relevant documents from the knowledge base, passing filters
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = _messages.get_relevant_docs_from_knowledge(
-            agent, query=query, filters=knowledge_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            # Add the references to the run_response
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    async def asearch_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await _messages.aget_relevant_docs_from_knowledge(
-            agent, query=query, filters=knowledge_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    if async_mode:
-        search_knowledge_base_function = asearch_knowledge_base
-    else:
-        search_knowledge_base_function = search_knowledge_base  # type: ignore
-
-    return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
-
-
-def search_knowledge_base_with_agentic_filters_function(
-    agent: Agent,
-    run_response: RunOutput,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    async_mode: bool = False,
-    run_context: Optional[RunContext] = None,
-) -> Function:
-    """Factory function to create a search_knowledge_base function with agentic filters."""
-
-    def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-            filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        filters_dict = {filt.key: filt.value for filt in filters} if filters else None
-        search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
-
-        # Get the relevant documents from the knowledge base, passing filters
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = _messages.get_relevant_docs_from_knowledge(
-            agent, query=query, filters=search_filters, validate_filters=True, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            # Add the references to the run_response
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-            filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        from agno.agent import _messages
-
-        filters_dict = {filt.key: filt.value for filt in filters} if filters else None
-        search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
-
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await _messages.aget_relevant_docs_from_knowledge(
-            agent, query=query, filters=search_filters, validate_filters=True, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query,
-                references=docs_from_knowledge,
-                time=round(retrieval_timer.elapsed, 4),
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _messages.convert_documents_to_string(agent, docs_from_knowledge)
-
-    if async_mode:
-        search_knowledge_base_function = asearch_knowledge_base
-    else:
-        search_knowledge_base_function = search_knowledge_base  # type: ignore
-
-    return Function.from_callable(
-        search_knowledge_base_function,
-        name="search_knowledge_base",
-    )
-
-
 def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     """Use this function to add information to the knowledge base for future use.
 
@@ -520,100 +408,120 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
-def get_previous_sessions_messages_function(
-    agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+def _get_message_text(msg: Message) -> Optional[str]:
+    """Safely extract text content from a Message."""
+    if isinstance(msg.content, str):
+        return msg.content
+    if isinstance(msg.content, list):
+        parts = []
+        for part in msg.content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and "text" in part:
+                parts.append(part["text"])
+        return " ".join(parts) if parts else None
+    return None
+
+
+def _truncate(text: str, limit: int = 200) -> str:
+    """Truncate text to *limit* characters, appending '...' if trimmed."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _extract_session_preview(session: Union[AgentSession, Any], num_runs: int = 3) -> Dict[str, Any]:
+    """Extract session_id, created_at, and per-run user/assistant previews."""
+    runs_preview: List[Dict[str, str]] = []
+    for run in (session.runs or [])[:num_runs]:
+        user_text = ""
+        assistant_text = ""
+        for msg in run.messages or []:
+            if msg.role == "user" and not user_text:
+                text = _get_message_text(msg)
+                if text:
+                    user_text = _truncate(text)
+            elif msg.role == "assistant" and not assistant_text:
+                text = _get_message_text(msg)
+                if text:
+                    assistant_text = _truncate(text)
+            if user_text and assistant_text:
+                break
+        if user_text or assistant_text:
+            runs_preview.append({"user": user_text, "assistant": assistant_text})
+    return {
+        "session_id": session.session_id,
+        "created_at": str(session.created_at) if session.created_at else None,
+        "runs": runs_preview,
+    }
+
+
+def get_search_past_sessions_function(
+    agent: Agent,
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    user_id: Optional[str] = None,
+    current_session_id: Optional[str] = None,
 ) -> Callable:
-    """Factory function to create a get_previous_session_messages function.
+    """Factory for search_past_sessions tool."""
 
-    Args:
-        agent: The Agent instance.
-        num_history_sessions: The last n sessions to be taken from db.
-        user_id: The user ID to filter sessions by.
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
+    _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
 
-    Returns:
-        Callable: A function that retrieves messages from previous sessions.
-    """
-
-    def get_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        # TODO: Review and Test this function
         import json
 
         if agent.db is None:
             return json.dumps([])
 
         agent.db = cast(BaseDb, agent.db)
-
         selected_sessions = agent.db.get_sessions(
             session_type=SessionType.AGENT,
-            limit=num_history_sessions,
+            limit=_limit,
             user_id=user_id,
             sort_by="created_at",
             sort_order="desc",
         )
 
-        all_messages: list = []
-        seen_message_pairs: set = set()
-
+        results: List[Dict[str, Any]] = []
         for session in selected_sessions:
-            if isinstance(session, AgentSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        last_user = None
-                        for msg in messages:
-                            try:
-                                if msg.role == "user":
-                                    last_user = msg
-                                elif msg.role == "assistant" and last_user is not None:
-                                    user_content = last_user.content
-                                    assistant_content = msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue
+            if not isinstance(session, AgentSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(last_user))
-                                        all_messages.append(Message.model_validate(msg))
-                                    last_user = None
-                            except Exception as e:
-                                log_warning(f"Error processing message pair: {e}")
-                                last_user = None
-                                continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else json.dumps([])
-
-    return get_previous_session_messages
+    return search_past_sessions
 
 
-async def aget_previous_sessions_messages_function(
-    agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+async def aget_search_past_sessions_function(
+    agent: Agent,
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    user_id: Optional[str] = None,
+    current_session_id: Optional[str] = None,
 ) -> Function:
-    """Factory function to create a get_previous_session_messages function (async).
-
-    Args:
-        agent: The Agent instance.
-        num_history_sessions: The last n sessions to be taken from db.
-        user_id: The user ID to filter sessions by.
-    Returns:
-        Function: An async function that retrieves messages from previous sessions.
-    """
+    """Async factory for search_past_sessions tool."""
     from agno.agent import _init
 
-    async def aget_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
+    _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
+
+    async def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        # TODO: Review and Test this function
         import json
 
         if agent.db is None:
@@ -622,7 +530,7 @@ async def aget_previous_sessions_messages_function(
         if _init.has_async_db(agent):
             selected_sessions = await agent.db.get_sessions(  # type: ignore
                 session_type=SessionType.AGENT,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
@@ -630,42 +538,131 @@ async def aget_previous_sessions_messages_function(
         else:
             selected_sessions = agent.db.get_sessions(
                 session_type=SessionType.AGENT,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
             )
 
-        all_messages: list = []
-        seen_message_pairs: set = set()
-
+        results: List[Dict[str, Any]] = []
         for session in selected_sessions:  # type: ignore
-            if isinstance(session, AgentSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        last_user = None
-                        for msg in messages:
-                            try:
-                                if msg.role == "user":
-                                    last_user = msg
-                                elif msg.role == "assistant" and last_user is not None:
-                                    user_content = last_user.content
-                                    assistant_content = msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue
+            if not isinstance(session, AgentSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(last_user))
-                                        all_messages.append(Message.model_validate(msg))
-                                    last_user = None
-                            except Exception as e:
-                                log_warning(f"Error processing message pair: {e}")
-                                last_user = None
-                                continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else json.dumps([])
+    return Function.from_callable(search_past_sessions, name="search_past_sessions")
 
-    return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
+
+def get_read_past_session_function(
+    agent: Agent,
+    user_id: Optional[str] = None,
+) -> Callable:
+    """Factory for read_past_session tool."""
+
+    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if agent.db is None:
+            return "No database configured."
+
+        agent.db = cast(BaseDb, agent.db)
+        session = agent.db.get_session(
+            session_id=session_id,
+            session_type=SessionType.AGENT,
+            user_id=user_id,
+        )
+
+        if session is None or not isinstance(session, AgentSession) or not session.runs:
+            return "Session not found."
+
+        lines: List[str] = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    return read_past_session
+
+
+async def aget_read_past_session_function(
+    agent: Agent,
+    user_id: Optional[str] = None,
+) -> Function:
+    """Async factory for read_past_session tool."""
+    from agno.agent import _init
+
+    async def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if agent.db is None:
+            return "No database configured."
+
+        if _init.has_async_db(agent):
+            session = await agent.db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.AGENT,
+                user_id=user_id,
+            )
+        else:
+            session = agent.db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.AGENT,
+                user_id=user_id,
+            )
+
+        if session is None or not isinstance(session, AgentSession) or not session.runs:
+            return "Session not found."
+
+        lines: List[str] = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    return Function.from_callable(read_past_session, name="read_past_session")

@@ -13,7 +13,9 @@ import asyncio
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=AwsBedrock(id="mistral.mistral-small-2402-v1:0"), markdown=True)
+agent = Agent(
+    model=AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0"), markdown=True
+)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

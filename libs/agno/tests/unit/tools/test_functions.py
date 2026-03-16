@@ -1,8 +1,10 @@
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Optional
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from agno.models.message import Message
+from agno.run.base import RunContext
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
 
@@ -63,7 +65,7 @@ def test_decorator_instantiation():
     assert test_func.description == "Test function with parameters."
     assert test_func.entrypoint is not None
     assert test_func.parameters["properties"]["param1"]["type"] == "string"
-    assert test_func.parameters["properties"]["param2"]["type"] == "number"
+    assert test_func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in test_func.parameters["required"]
     assert "param2" not in test_func.parameters["required"]
 
@@ -110,7 +112,7 @@ def test_function_from_callable():
     assert "param1" in func.parameters["properties"]
     assert "param2" in func.parameters["properties"]
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]  # Because it has a default value
 
@@ -167,7 +169,7 @@ def test_function_process_entrypoint():
 
     func.process_entrypoint()
     assert func.parameters["properties"]["param1"]["type"] == "string"
-    assert func.parameters["properties"]["param2"]["type"] == "number"
+    assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]
 
@@ -710,6 +712,36 @@ def test_tool_decorator_with_agent_team_params():
     assert agent_team_func.parameters["properties"]["param1"]["type"] == "string"
 
 
+def test_tool_decorator_with_agent_team_type_annotations():
+    """Test @tool decorator skips validation when parameter types are Agent/Team,
+    even when parameter names differ from 'agent'/'team' (issue #6344)."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    @tool
+    def func_with_agent_type(my_agent: Agent, query: str) -> str:
+        """Function with Agent type but non-standard parameter name."""
+        return query
+
+    assert isinstance(func_with_agent_type, Function)
+    func_with_agent_type.process_entrypoint()
+    # Should not have _wrapped_for_validation since validation was skipped
+    assert not getattr(func_with_agent_type.entrypoint, "_wrapped_for_validation", False)
+    assert "query" in func_with_agent_type.parameters["properties"]
+    assert "my_agent" not in func_with_agent_type.parameters["properties"]
+
+    @tool
+    def func_with_team_type(my_team: Team, query: str) -> str:
+        """Function with Team type but non-standard parameter name."""
+        return query
+
+    assert isinstance(func_with_team_type, Function)
+    func_with_team_type.process_entrypoint()
+    assert not getattr(func_with_team_type.entrypoint, "_wrapped_for_validation", False)
+    assert "query" in func_with_team_type.parameters["properties"]
+    assert "my_team" not in func_with_team_type.parameters["properties"]
+
+
 def test_tool_decorator_with_complex_types():
     """Test @tool decorator with complex parameter types."""
     from typing import Dict, List, Optional
@@ -726,3 +758,262 @@ def test_tool_decorator_with_complex_types():
     assert complex_types_func.parameters["properties"]["param2"]["type"] == "object"
     assert complex_types_func.parameters["properties"]["param3"]["type"] == "boolean"
     assert "param3" not in complex_types_func.parameters["required"]
+
+
+def test_function_cache_pydantic_model(tmp_path):
+    """Test caching operations with Pydantic BaseModel results."""
+    import json
+    import os
+
+    class OrderResponse(BaseModel):
+        success: bool
+        data: Optional[dict] = None
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
+
+    # Test saving a Pydantic model to cache
+    test_result = OrderResponse(success=True, data={"id": 123, "status": "delivered"})
+    cache_file = os.path.join(str(tmp_path), "test_pydantic_cache.json")
+    func._save_to_cache(cache_file, test_result)
+
+    # Verify cache file exists and contains correct data
+    assert os.path.exists(cache_file)
+    with open(cache_file, "r") as f:
+        cached_data = json.load(f)
+    assert cached_data["result"] == {"success": True, "data": {"id": 123, "status": "delivered"}}
+
+    # Test retrieving from cache returns the dict representation
+    retrieved_result = func._get_cached_result(cache_file)
+    assert retrieved_result == {"success": True, "data": {"id": 123, "status": "delivered"}}
+
+
+def test_function_cache_pydantic_model_nested(tmp_path):
+    """Test caching operations with nested Pydantic BaseModel results."""
+    import json
+    import os
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+    class User(BaseModel):
+        name: str
+        address: Address
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
+
+    test_result = User(name="John", address=Address(street="123 Main St", city="Springfield"))
+    cache_file = os.path.join(str(tmp_path), "test_nested_cache.json")
+    func._save_to_cache(cache_file, test_result)
+
+    assert os.path.exists(cache_file)
+    with open(cache_file, "r") as f:
+        cached_data = json.load(f)
+    assert cached_data["result"] == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+
+    retrieved_result = func._get_cached_result(cache_file)
+    assert retrieved_result == {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}
+
+
+def test_param_description_without_docstring_type():
+    """Test that parameter descriptions don't get a '(None)' prefix when the docstring omits type annotations."""
+
+    def my_tool(currency_code: str, amount: float) -> dict:
+        """Convert currency.
+
+        Args:
+            currency_code: The ISO currency code.
+            amount: The amount to convert.
+        """
+        return {}
+
+    func = Function.from_callable(my_tool)
+    props = func.parameters["properties"]
+
+    # Descriptions should NOT start with "(None)"
+    assert not props["currency_code"]["description"].startswith("(None)")
+    assert not props["amount"]["description"].startswith("(None)")
+    assert props["currency_code"]["description"] == "The ISO currency code."
+    assert props["amount"]["description"] == "The amount to convert."
+
+
+def test_param_description_with_docstring_type():
+    """Test that parameter descriptions preserve the type prefix when the docstring includes type annotations."""
+
+    def my_tool(currency_code: str, amount: float) -> dict:
+        """Convert currency.
+
+        Args:
+            currency_code (str): The ISO currency code.
+            amount (float): The amount to convert.
+        """
+        return {}
+
+    func = Function.from_callable(my_tool)
+    props = func.parameters["properties"]
+
+    # Descriptions should include the docstring type prefix
+    assert props["currency_code"]["description"] == "(str) The ISO currency code."
+    assert props["amount"]["description"] == "(float) The amount to convert."
+
+
+def test_pre_hook_receives_messages_via_run_context():
+    """Test that pre-hook can access current run message history via run_context.messages."""
+    captured_messages: Optional[List[Message]] = None
+
+    def pre_hook(run_context: RunContext):
+        nonlocal captured_messages
+        captured_messages = run_context.messages
+
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    # Create a run context with a message history
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content="Hello"),
+        Message(role="assistant", content="Hi there!"),
+    ]
+
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_messages is not None
+    assert len(captured_messages) == 3
+    assert captured_messages[0].role == "system"
+    assert captured_messages[1].role == "user"
+    assert captured_messages[1].content == "Hello"
+    assert captured_messages[2].role == "assistant"
+    # Verify it's a copy (not the same reference), so hook mutations don't affect the run
+    assert captured_messages is not run_context.messages
+    assert captured_messages == run_context.messages
+
+
+def test_pre_hook_messages_is_none_when_no_run_context():
+    """Test that run_context.messages is None when messages haven't been set."""
+    hook_result: Dict[str, Any] = {}
+
+    def pre_hook(run_context: RunContext):
+        hook_result["messages"] = run_context.messages
+        hook_result["called"] = True
+
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    # RunContext with no messages set (defaults to None)
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert hook_result["called"] is True
+    assert hook_result["messages"] is None
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_receives_messages_via_run_context():
+    """Test that async pre-hook can access current run message history via run_context.messages."""
+    captured_messages: Optional[List[Message]] = None
+
+    async def pre_hook(run_context: RunContext):
+        nonlocal captured_messages
+        captured_messages = run_context.messages
+
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="What is the weather?"),
+        Message(role="assistant", content="Let me check that for you."),
+    ]
+
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = await call.aexecute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_messages is not None
+    assert len(captured_messages) == 2
+    assert captured_messages[0].content == "What is the weather?"
+    # Verify it's a copy (not the same reference), so hook mutations don't affect the run
+    assert captured_messages is not run_context.messages
+    assert captured_messages == run_context.messages
+
+
+def test_post_hook_receives_messages_via_run_context():
+    """Test that post-hook can access current run message history via run_context.messages."""
+    captured_messages: Optional[List[Message]] = None
+
+    def post_hook(run_context: RunContext):
+        nonlocal captured_messages
+        captured_messages = run_context.messages
+
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="Do something"),
+    ]
+
+    func = Function(name="test_func", entrypoint=test_func, post_hook=post_hook)
+    func._run_context = run_context
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert captured_messages is not None
+    assert len(captured_messages) == 1
+    assert captured_messages[0].content == "Do something"
+    # Verify it's a copy (not the same reference), so hook mutations don't affect the run
+    assert captured_messages is not run_context.messages
+    assert captured_messages == run_context.messages
+
+
+def test_tool_hook_receives_messages_via_run_context():
+    """Test that tool hooks can access current run message history via run_context.messages."""
+    captured_messages: Optional[List[Message]] = None
+
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any], run_context: RunContext):
+        nonlocal captured_messages
+        captured_messages = run_context.messages
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook])
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="Use the tool"),
+    ]
+
+    test_func._run_context = run_context
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_messages is not None
+    assert len(captured_messages) == 1
+    assert captured_messages[0].content == "Use the tool"
+    # Verify it's a copy (not the same reference), so hook mutations don't affect the run
+    assert captured_messages is not run_context.messages
+    assert captured_messages == run_context.messages

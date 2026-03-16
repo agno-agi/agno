@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Type
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -11,11 +13,16 @@ from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.vectordb.base import VectorDb
 
+if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.team import Team
+
 
 @dataclass
 class Registry:
     """
-    Registry is used to manage non serializable objects like tools, models, databases and vector databases.
+    Registry is used to manage non serializable objects like tools, models, databases, vector databases,
+    agents, and teams.
     """
 
     name: Optional[str] = None
@@ -27,6 +34,9 @@ class Registry:
     vector_dbs: List[VectorDb] = field(default_factory=list)
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
+    # Code-defined agents and teams (for workflow rehydration)
+    agents: List[Agent] = field(default_factory=list)
+    teams: List[Team] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -70,3 +80,31 @@ class Registry:
 
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
+
+    def get_agent(self, agent_id: str) -> Optional[Agent]:
+        """Get an agent by id from the registry."""
+        if self.agents:
+            return next((a for a in self.agents if getattr(a, "id", None) == agent_id), None)
+        return None
+
+    def get_team(self, team_id: str) -> Optional[Team]:
+        """Get a team by id from the registry."""
+        if self.teams:
+            return next((t for t in self.teams if getattr(t, "id", None) == team_id), None)
+        return None
+
+    def get_agent_ids(self) -> Set[str]:
+        """Get the set of all agent IDs in this registry."""
+        if self.agents:
+            return {aid for a in self.agents if (aid := getattr(a, "id", None)) is not None}
+        return set()
+
+    def get_team_ids(self) -> Set[str]:
+        """Get the set of all team IDs in this registry."""
+        if self.teams:
+            return {tid for t in self.teams if (tid := getattr(t, "id", None)) is not None}
+        return set()
+
+    def get_all_component_ids(self) -> Set[str]:
+        """Get the set of all agent and team IDs in this registry."""
+        return self.get_agent_ids() | self.get_team_ids()
