@@ -151,8 +151,9 @@ class Knowledge(RemoteKnowledge):
                 upsert=upsert,
                 skip_if_exists=skip_if_exists,
             )
-            # If only media was provided, return early
-            if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+            # text_content is already consumed as media description, so only
+            # continue if there are other content sources (path, url, etc.)
+            if all(argument is None for argument in [path, url, topics, remote_content]):
                 return
 
         # Strip reserved _agno key from user-provided metadata
@@ -242,8 +243,9 @@ class Knowledge(RemoteKnowledge):
                 upsert=upsert,
                 skip_if_exists=skip_if_exists,
             )
-            # If only media was provided, return early
-            if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+            # text_content is already consumed as media description, so only
+            # continue if there are other content sources (path, url, etc.)
+            if all(argument is None for argument in [path, url, topics, remote_content]):
                 return
 
         # Strip reserved _agno key from user-provided metadata

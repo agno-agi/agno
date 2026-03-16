@@ -597,7 +597,7 @@ class PgVector(VectorDb):
                                 log_error(f"Error embedding document {i}: {result}")
         else:
             # Use individual embedding
-            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
 
             # Check for exceptions and handle them
