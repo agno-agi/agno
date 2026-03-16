@@ -1671,7 +1671,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:group"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123"
 
     def test_group_reply_uses_root_message_id(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -1709,7 +1709,7 @@ class TestGroupSessionId:
             )
 
         assert resp.status_code == 200
-        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123:group"
+        assert agent.arun.call_args[1]["session_id"] == "tg:test-agent:-100123"
 
 
 class TestReplyThreading:

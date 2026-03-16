@@ -29,9 +29,8 @@ except ImportError as e:
     raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
 
 # Session scope format (no-DB fallback uses these as literal session IDs):
-#   tg:{entity_id}:{chat_id}                           — DMs
-#   tg:{entity_id}:{chat_id}:thread:{root_msg_id}      — group reply threads
-#   tg:{entity_id}:{chat_id}:topic:{message_thread_id} — forum topics
+#   tg:{entity_id}:{chat_id}                           — DMs, basic groups, forum General topic
+#   tg:{entity_id}:{chat_id}:{message_thread_id}       — supergroup reply threads & forum topics
 # With DB storage, sessions are filtered client-side by scope prefix
 
 _TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
@@ -54,34 +53,13 @@ DEFAULT_NEW_MESSAGE = "New conversation started. How can I help you?"
 def _build_session_scope(
     entity_id: Optional[str],
     chat_id: int,
-    is_group: bool,
     message_thread_id: Optional[int],
-    message: dict,
 ) -> str:
+    # Supergroup replies and forum topics set message_thread_id;
+    # DMs, basic groups, and forum General topic do not
     if message_thread_id:
-        scope_suffix = f"{chat_id}:topic:{message_thread_id}"
-    elif is_group:
-        # Use the bot's reply_to_message as thread root — this is the message_id of
-        # whatever the user replied to. For the first message (no reply), we use the
-        # user's own message_id. This is still unstable if the user replies to different
-        # bot messages; fix 8 defers full stabilization to DB-based scope lookup
-        reply_msg = message.get("reply_to_message")
-        thread_root_id = (
-            reply_msg.get("message_id", message.get("message_id")) if reply_msg else message.get("message_id")
-        )
-        scope_suffix = f"{chat_id}:thread:{thread_root_id}"
-    else:
-        scope_suffix = str(chat_id)
-    return f"tg:{entity_id}:{scope_suffix}"
-
-
-def _build_stable_group_scope(
-    entity_id: Optional[str],
-    chat_id: int,
-) -> str:
-    # For groups without forum topics, use chat-level scope so all messages
-    # in the same group chat share one session (stable across reply chains)
-    return f"tg:{entity_id}:{chat_id}:group"
+        return f"tg:{entity_id}:{chat_id}:{message_thread_id}"
+    return f"tg:{entity_id}:{chat_id}"
 
 
 def attach_routes(
@@ -330,11 +308,7 @@ def attach_routes(
             incoming_message_id = message.get("message_id")
             message_thread_id = message.get("message_thread_id")
 
-            if is_group and not message_thread_id:
-                # Use stable chat-level scope so reply-chain changes don't create new sessions
-                session_scope = _build_stable_group_scope(entity_id, chat_id)
-            else:
-                session_scope = _build_session_scope(entity_id, chat_id, is_group, message_thread_id, message)
+            session_scope = _build_session_scope(entity_id, chat_id, message_thread_id)
 
             await bot_state.ensure_commands_registered(commands, register_commands)
 

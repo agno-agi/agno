@@ -120,7 +120,7 @@ class TestTelegramToolsInit:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
 
-        tools = TelegramTools(chat_id="12345", enable_all=True)
+        tools = TelegramTools(chat_id="12345", all=True)
         expected = (
             "send_message",
             "send_photo",

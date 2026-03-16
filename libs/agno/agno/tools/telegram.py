@@ -27,7 +27,7 @@ class TelegramTools(Toolkit):
         enable_send_sticker: Enable send_sticker tool. Defaults to False.
         enable_edit_message: Enable edit_message tool. Defaults to False.
         enable_delete_message: Enable delete_message tool. Defaults to False.
-        enable_all: Enable all tools. Overrides individual flags when True.
+        all: Enable all tools. Overrides individual flags when True.
     """
 
     def __init__(
@@ -43,7 +43,7 @@ class TelegramTools(Toolkit):
         enable_send_sticker: bool = False,
         enable_edit_message: bool = False,
         enable_delete_message: bool = False,
-        enable_all: bool = False,
+        all: bool = False,
         **kwargs: Any,
     ):
         self.token = token or getenv("TELEGRAM_TOKEN")
@@ -54,23 +54,23 @@ class TelegramTools(Toolkit):
         self.bot = TeleBot(self.token)
 
         tools: List[Any] = []
-        if enable_send_message or enable_all:
+        if enable_send_message or all:
             tools.append(self.send_message)
-        if enable_send_photo or enable_all:
+        if enable_send_photo or all:
             tools.append(self.send_photo)
-        if enable_send_document or enable_all:
+        if enable_send_document or all:
             tools.append(self.send_document)
-        if enable_send_video or enable_all:
+        if enable_send_video or all:
             tools.append(self.send_video)
-        if enable_send_audio or enable_all:
+        if enable_send_audio or all:
             tools.append(self.send_audio)
-        if enable_send_animation or enable_all:
+        if enable_send_animation or all:
             tools.append(self.send_animation)
-        if enable_send_sticker or enable_all:
+        if enable_send_sticker or all:
             tools.append(self.send_sticker)
-        if enable_edit_message or enable_all:
+        if enable_edit_message or all:
             tools.append(self.edit_message)
-        if enable_delete_message or enable_all:
+        if enable_delete_message or all:
             tools.append(self.delete_message)
 
         super().__init__(name="telegram", tools=tools, **kwargs)
