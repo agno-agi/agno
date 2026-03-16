@@ -1,6 +1,6 @@
 """
-Streaming Deep Research Agent
-==============================
+Deep Research Agent
+===================
 
 A multi-tool research agent that exercises many different tool types
 to demonstrate WhatsApp's interactive capabilities.
@@ -29,7 +29,7 @@ from agno.tools.whatsapp import WhatsAppTools
 from agno.tools.wikipedia import WikipediaTools
 from agno.tools.yfinance import YFinanceTools
 
-agent_db = SqliteDb(db_file="tmp/streaming_deep_research.db")
+agent_db = SqliteDb(db_file="tmp/deep_research.db")
 
 deep_research_agent = Agent(
     name="Deep Research Agent",
@@ -81,4 +81,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="streaming_deep_research:app", reload=True, port=8000)
+    agent_os.serve(app="deep_research:app", reload=True, port=8000)

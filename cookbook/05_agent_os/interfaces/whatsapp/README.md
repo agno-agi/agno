@@ -145,7 +145,7 @@ For quick local testing without a full production setup:
 ### Reasoning
 
 - `reasoning_agent.py` — Agent with step-by-step reasoning display.
-- `streaming_deep_research.py` — Deep research agent with multiple toolkits.
+- `deep_research.py` — Deep research agent with multiple toolkits.
 
 ### Teams and Workflows
 
