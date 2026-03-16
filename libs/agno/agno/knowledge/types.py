@@ -31,15 +31,15 @@ class ContentType(str, Enum):
     POTX = ".potx"
     PPSX = ".ppsx"
     POTM = ".pptm"
-    PPS = ".ppsm"
+    PPSM = ".ppsm"
 
     HTML = ".html"
     HTM = ".htm"
     XHTML = ".xhtml"
 
-    XML = ".xml"
-    NXML = ".nxml"
-    XBRL = ".xbrl"
+    XML_USPTO = ".xml"
+    XML_JATS = ".nxml"
+    XML_XBRL = ".xbrl"
 
     ADOC = ".adoc"
     ASCIIDOC = ".asciidoc"

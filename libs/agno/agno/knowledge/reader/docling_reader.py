@@ -108,7 +108,7 @@ class DoclingReader(Reader):
             ContentType.POTX,
             ContentType.PPSX,
             ContentType.POTM,
-            ContentType.PPS,
+            ContentType.PPSM,
             # PDF
             ContentType.PDF,
             # Markdown
@@ -117,10 +117,10 @@ class DoclingReader(Reader):
             ContentType.HTML,
             ContentType.HTM,
             ContentType.XHTML,
-            # XML formats (USPTO, JATS, XBRL)
-            ContentType.XML,
-            ContentType.NXML,
-            ContentType.XBRL,
+            # XML formats
+            ContentType.XML_USPTO,
+            ContentType.XML_JATS,
+            ContentType.XML_XBRL,
             # AsciiDoc formats
             ContentType.ADOC,
             ContentType.ASCIIDOC,

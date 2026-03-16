@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE us-patent-application SYSTEM "us-patent-application-v46-2022-12-01.dtd">
+<us-patent-application lang="EN" dtd-version="v4.6 2022-12-01" file="US20230001234A1-20230101.XML" status="PRODUCTION" id="us-patent-application" country="US" date-produced="20230101" date-publ="20230101">
+    <us-bibliographic-data-application lang="EN" country="US">
+        <publication-reference>
+            <document-id>
+                <country>US</country>
+                <doc-number>20230001234</doc-number>
+                <kind>A1</kind>
+                <date>20230101</date>
+            </document-id>
+        </publication-reference>
+        <application-reference appl-type="utility">
+            <document-id>
+                <country>US</country>
+                <doc-number>17123456</doc-number>
+                <date>20220701</date>
+            </document-id>
+        </application-reference>
+        <invention-title id="d2e43">Machine Learning System for Real-Time Data Processing</invention-title>
+        <parties>
+            <applicants>
+                <applicant sequence="001" app-type="applicant" designation="us-only">
+                    <addressbook>
+                        <last-name>Johnson</last-name>
+                        <first-name>Sarah</first-name>
+                        <address>
+                            <city>San Francisco</city>
+                            <state>CA</state>
+                            <country>US</country>
+                        </address>
+                    </addressbook>
+                </applicant>
+            </applicants>
+            <inventors>
+                <inventor sequence="001" designation="us-only">
+                    <addressbook>
+                        <last-name>Johnson</last-name>
+                        <first-name>Sarah</first-name>
+                        <address>
+                            <city>San Francisco</city>
+                            <state>CA</state>
+                            <country>US</country>
+                        </address>
+                    </addressbook>
+                </inventor>
+            </inventors>
+        </parties>
+    </us-bibliographic-data-application>
+    <abstract id="abstract">
+        <p id="p-0001">A machine learning system for processing and analyzing large-scale data streams in real-time. The system employs advanced neural network architectures to identify patterns and anomalies with high accuracy and low latency.</p>
+    </abstract>
+    <description id="description">
+        <heading id="h-0001" level="1">TECHNICAL FIELD</heading>
+        <p id="p-0002">The present invention relates to machine learning systems, and more particularly to systems and methods for real-time data processing and analysis using neural networks.</p>
+        <heading id="h-0002" level="1">BACKGROUND</heading>
+        <p id="p-0003">Traditional data processing systems struggle with the volume and velocity of modern data streams. There is a need for improved systems that can process data in real-time while maintaining high accuracy.</p>
+        <heading id="h-0003" level="1">SUMMARY</heading>
+        <p id="p-0004">The invention provides a machine learning system comprising a data ingestion module, a neural network processor, and an output interface. The system achieves real-time processing through optimized architectures and parallel computing.</p>
+        <heading id="h-0004" level="1">DETAILED DESCRIPTION</heading>
+        <p id="p-0005">The machine learning system includes multiple components working together. The data ingestion module receives streaming data from various sources. The neural network processor analyzes the data using convolutional and recurrent layers to identify patterns.</p>
+    </description>
+    <claims id="claims">
+        <claim id="CLM-00001" num="00001">
+            <claim-text>A machine learning system for real-time data processing, comprising:
+                <claim-text>a data ingestion module configured to receive streaming data;</claim-text>
+                <claim-text>a neural network processor configured to analyze the streaming data; and</claim-text>
+                <claim-text>an output interface configured to provide analysis results.</claim-text>
+            </claim-text>
+        </claim>
+        <claim id="CLM-00002" num="00002">
+            <claim-text>The system of claim 1, wherein the neural network processor comprises convolutional layers.</claim-text>
+        </claim>
+    </claims>
+</us-patent-application>
