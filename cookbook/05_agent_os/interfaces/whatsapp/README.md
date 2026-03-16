@@ -115,8 +115,9 @@ For quick local testing without a full production setup:
    ```
    Use the tunnel URL as your webhook Callback URL (step 7.3). The free ngrok tier
    gives you a random subdomain that changes on restart — update the webhook URL each time.
-4. **Skip signature validation:** Simply omit `WHATSAPP_APP_SECRET` — the server logs a
-   warning but processes messages without signature checks. Never do this in production.
+4. **Skip signature validation:** Set `WHATSAPP_SKIP_SIGNATURE_VALIDATION=true` in your
+   environment. Without this (or `WHATSAPP_APP_SECRET`), the server returns 500 on every
+   webhook. Never set the skip flag in production.
 5. **macOS SSL fix:** If you get certificate errors:
    ```bash
    export SSL_CERT_FILE=$(python3 -c "import certifi; print(certifi.where())")
@@ -161,11 +162,9 @@ For quick local testing without a full production setup:
 The WhatsApp interface validates all incoming webhooks:
 
 1. **Signature verification** — `X-Hub-Signature-256` header checked against `WHATSAPP_APP_SECRET`
-   using HMAC-SHA256. If the secret is not set, signature validation is disabled with a warning.
-2. **Replay protection** — Message timestamps must be within 5 minutes of server time.
-
-For local development, omit `WHATSAPP_APP_SECRET` to skip signature validation
-(never do this in production).
+   using HMAC-SHA256. If the secret is not set, the server returns **500** (fail-closed).
+2. **Dev bypass** — Set `WHATSAPP_SKIP_SIGNATURE_VALIDATION=true` to disable signature checks
+   for local development. Never set this in production.
 
 ## WhatsApp Formatting
 
@@ -190,6 +189,7 @@ limited to 1,024 characters.
 | 401 Unauthorized | Token expired | Use a System User token (never expires) or regenerate temporary token |
 | SSL certificate errors (macOS) | Missing cert bundle | `export SSL_CERT_FILE=$(python3 -c "import certifi; print(certifi.where())")` |
 | Webhook verification fails | Verify token mismatch | `WHATSAPP_VERIFY_TOKEN` must match Meta webhook config exactly |
+| 500 on every webhook | `WHATSAPP_APP_SECRET` not set | Set the secret, or set `WHATSAPP_SKIP_SIGNATURE_VALIDATION=true` for dev |
 | Signature validation fails | Wrong app secret | `WHATSAPP_APP_SECRET` must match App > Settings > Basic |
 | Messages not arriving | Not subscribed to events | Subscribe to **messages** field in webhook config |
 | Non-PDF documents fail | API limitation | Only PDF documents are currently supported for document input |
