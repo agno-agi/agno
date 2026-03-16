@@ -1,4 +1,3 @@
-import asyncio
 import io
 import mimetypes
 import os
@@ -355,17 +354,7 @@ async def upload_and_send_media_async(
 ) -> bool:
     any_sent = False
     for item in media_items:
-        # Async-safe content resolution: get_content_bytes() uses sync httpx.get for URLs
-        if item.content:
-            raw_bytes = item.content if isinstance(item.content, bytes) else None
-        elif getattr(item, "url", None):
-            async with httpx.AsyncClient() as dl_client:
-                resp = await dl_client.get(item.url)
-                raw_bytes = resp.content if resp.status_code == 200 else None
-        elif getattr(item, "filepath", None):
-            raw_bytes = await asyncio.to_thread(lambda: open(item.filepath, "rb").read())
-        else:
-            raw_bytes = None
+        raw_bytes = await item.aget_content_bytes()
         if not raw_bytes:
             log_warning(f"Could not process {media_type} content for user {recipient}. Type: {type(item.content)}")
             if send_text_fallback:
