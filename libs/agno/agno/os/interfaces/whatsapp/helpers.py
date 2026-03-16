@@ -2,7 +2,7 @@ import io
 import mimetypes
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import httpx
 
@@ -318,8 +318,13 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
 
 
 async def send_whatsapp_message_async(
-    recipient: str, message: str, config: WhatsAppConfig, italics: bool = False
+    recipient: str, message: Any, config: WhatsAppConfig, italics: bool = False
 ) -> None:
+    # output_schema responses arrive as pydantic models; coerce to string for WhatsApp
+    if message is not None and not isinstance(message, str):
+        from pydantic import BaseModel
+
+        message = message.model_dump_json(indent=2) if isinstance(message, BaseModel) else str(message)
     if not message or not message.strip():
         return
 
