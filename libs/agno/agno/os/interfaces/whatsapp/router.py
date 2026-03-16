@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from time import time
 from typing import Any, Literal, NamedTuple, Optional, Type, Union
