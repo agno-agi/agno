@@ -1148,14 +1148,6 @@ class Knowledge(RemoteKnowledge):
             return media_obj.id
         return ""
 
-    def _build_media_content_hash(self, media_obj: Any, text_content: str) -> str:
-        """Build a content hash for a media document."""
-        source_ref = self._get_media_source_ref(media_obj)
-        hash_input = f"media:{source_ref}"
-        if text_content:
-            hash_input = f"{text_content}:{hash_input}"
-        return hashlib.sha256(hash_input.encode()).hexdigest()
-
     def _build_batch_media_content_hash(self, media_items: List[Any], text_content: str) -> str:
         """Build a combined content hash from all media items in a batch."""
         refs = sorted(self._get_media_source_ref(m) for m in media_items)
