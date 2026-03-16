@@ -1168,50 +1168,28 @@ class Knowledge(RemoteKnowledge):
         documents: List[Document] = []
         safe_metadata = strip_agno_metadata(metadata)
 
-        if images:
-            for image in images:
-                source_ref = self._get_media_source_ref(image)
+        media_groups = [
+            (images, "image"),
+            (audio, "audio"),
+            (video, "video"),
+        ]
+        for items, content_type in media_groups:
+            if not items:
+                continue
+            for item in items:
+                source_ref = self._get_media_source_ref(item)
                 doc_meta = dict(safe_metadata) if safe_metadata else {}
-                doc_meta["content_type"] = "image"
+                doc_meta["content_type"] = content_type
                 if source_ref:
                     doc_meta["source"] = source_ref
-                doc = Document(
-                    content=text_content,
-                    name=source_ref or "image",
-                    meta_data=doc_meta,
-                    media=image,
+                documents.append(
+                    Document(
+                        content=text_content,
+                        name=source_ref or content_type,
+                        meta_data=doc_meta,
+                        media=item,
+                    )
                 )
-                documents.append(doc)
-
-        if audio:
-            for audio_item in audio:
-                source_ref = self._get_media_source_ref(audio_item)
-                doc_meta = dict(safe_metadata) if safe_metadata else {}
-                doc_meta["content_type"] = "audio"
-                if source_ref:
-                    doc_meta["source"] = source_ref
-                doc = Document(
-                    content=text_content,
-                    name=source_ref or "audio",
-                    meta_data=doc_meta,
-                    media=audio_item,
-                )
-                documents.append(doc)
-
-        if video:
-            for video_item in video:
-                source_ref = self._get_media_source_ref(video_item)
-                doc_meta = dict(safe_metadata) if safe_metadata else {}
-                doc_meta["content_type"] = "video"
-                if source_ref:
-                    doc_meta["source"] = source_ref
-                doc = Document(
-                    content=text_content,
-                    name=source_ref or "video",
-                    meta_data=doc_meta,
-                    media=video_item,
-                )
-                documents.append(doc)
 
         return documents
 

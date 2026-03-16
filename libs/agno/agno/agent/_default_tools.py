@@ -141,9 +141,20 @@ def create_knowledge_search_tool(
         if not docs:
             return text_content
 
-        images_list: List[Any] = []
-        videos_list: List[Any] = []
-        audios_list: List[Any] = []
+        from pathlib import Path as _Path
+
+        from agno.media import Audio as _Audio
+        from agno.media import Image as _Image
+        from agno.media import Video as _Video
+
+        # Registry: content_type string -> (ToolResult kwarg, media class)
+        _MEDIA_CONSTRUCTORS: Dict[str, tuple] = {
+            "image": ("images", _Image),
+            "audio": ("audios", _Audio),
+            "video": ("videos", _Video),
+        }
+
+        media_lists: Dict[str, List[Any]] = {key: [] for key, _ in _MEDIA_CONSTRUCTORS.values()}
 
         for doc in docs:
             if not isinstance(doc, dict):
@@ -155,37 +166,20 @@ def create_knowledge_search_tool(
             source = meta.get("source")
             if not content_type or not source:
                 continue
+            if content_type not in _MEDIA_CONSTRUCTORS:
+                continue
+            list_key, cls = _MEDIA_CONSTRUCTORS[content_type]
+            if source.startswith(("http://", "https://")):
+                media_lists[list_key].append(cls(url=source))
+            elif _Path(source).exists():
+                media_lists[list_key].append(cls(filepath=source))
 
-            from pathlib import Path as _Path
-
-            from agno.media import Audio as _Audio
-            from agno.media import Image as _Image
-            from agno.media import Video as _Video
-
-            if content_type == "image":
-                if source.startswith(("http://", "https://")):
-                    images_list.append(_Image(url=source))
-                elif _Path(source).exists():
-                    images_list.append(_Image(filepath=source))
-            elif content_type == "audio":
-                if source.startswith(("http://", "https://")):
-                    audios_list.append(_Audio(url=source))
-                elif _Path(source).exists():
-                    audios_list.append(_Audio(filepath=source))
-            elif content_type == "video":
-                if source.startswith(("http://", "https://")):
-                    videos_list.append(_Video(url=source))
-                elif _Path(source).exists():
-                    videos_list.append(_Video(filepath=source))
-
-        if not images_list and not videos_list and not audios_list:
+        if not any(media_lists.values()):
             return text_content
 
         return ToolResult(
             content=text_content,
-            images=images_list or None,
-            videos=videos_list or None,
-            audios=audios_list or None,
+            **{key: lst or None for key, lst in media_lists.items()},
         )
 
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:

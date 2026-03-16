@@ -8,6 +8,23 @@ from agno.knowledge.embedder import Embedder
 if TYPE_CHECKING:
     from agno.media import Audio, Image, Video
 
+# Registry: maps media class -> (sync_embed_method, async_embed_method)
+# Lazy-initialized on first use to avoid import cycles.
+_MEDIA_EMBEDDER_METHODS: Optional[Dict[type, tuple]] = None
+
+
+def _get_media_embedder_methods() -> Dict[type, tuple]:
+    global _MEDIA_EMBEDDER_METHODS
+    if _MEDIA_EMBEDDER_METHODS is None:
+        from agno.media import Audio, Image, Video
+
+        _MEDIA_EMBEDDER_METHODS = {
+            Image: ("get_image_embedding_and_usage", "async_get_image_embedding_and_usage"),
+            Audio: ("get_audio_embedding_and_usage", "async_get_audio_embedding_and_usage"),
+            Video: ("get_video_embedding_and_usage", "async_get_video_embedding_and_usage"),
+        }
+    return _MEDIA_EMBEDDER_METHODS
+
 
 @dataclass
 class Document:
@@ -42,16 +59,12 @@ class Document:
             raise ValueError("No embedder provided")
 
         if self.media is not None:
-            from agno.media import Audio, Image, Video
-
-            if isinstance(self.media, Image):
-                self.embedding, self.usage = _embedder.get_image_embedding_and_usage(self.media)
-            elif isinstance(self.media, Audio):
-                self.embedding, self.usage = _embedder.get_audio_embedding_and_usage(self.media)
-            elif isinstance(self.media, Video):
-                self.embedding, self.usage = _embedder.get_video_embedding_and_usage(self.media)
-            else:
-                raise TypeError(f"Unsupported media type: {type(self.media).__name__}")
+            registry = _get_media_embedder_methods()
+            media_type = type(self.media)
+            if media_type not in registry:
+                raise TypeError(f"Unsupported media type: {media_type.__name__}")
+            method_name = registry[media_type][0]  # sync method
+            self.embedding, self.usage = getattr(_embedder, method_name)(self.media)
         else:
             self.embedding, self.usage = _embedder.get_embedding_and_usage(self.content)
 
@@ -66,16 +79,12 @@ class Document:
             raise ValueError("No embedder provided")
 
         if self.media is not None:
-            from agno.media import Audio, Image, Video
-
-            if isinstance(self.media, Image):
-                self.embedding, self.usage = await _embedder.async_get_image_embedding_and_usage(self.media)
-            elif isinstance(self.media, Audio):
-                self.embedding, self.usage = await _embedder.async_get_audio_embedding_and_usage(self.media)
-            elif isinstance(self.media, Video):
-                self.embedding, self.usage = await _embedder.async_get_video_embedding_and_usage(self.media)
-            else:
-                raise TypeError(f"Unsupported media type: {type(self.media).__name__}")
+            registry = _get_media_embedder_methods()
+            media_type = type(self.media)
+            if media_type not in registry:
+                raise TypeError(f"Unsupported media type: {media_type.__name__}")
+            method_name = registry[media_type][1]  # async method
+            self.embedding, self.usage = await getattr(_embedder, method_name)(self.media)
         else:
             self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(self.content)
 
