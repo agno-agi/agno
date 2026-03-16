@@ -75,7 +75,8 @@ class Image(BaseModel):
                 resp = await client.get(self.url)
                 return resp.content
         elif self.filepath:
-            return await asyncio.to_thread(lambda: Path(self.filepath).read_bytes())
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -190,7 +191,8 @@ class Audio(BaseModel):
                 resp = await client.get(self.url)
                 return resp.content
         elif self.filepath:
-            return await asyncio.to_thread(lambda: Path(self.filepath).read_bytes())
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -321,7 +323,8 @@ class Video(BaseModel):
                 resp = await client.get(self.url)
                 return resp.content
         elif self.filepath:
-            return await asyncio.to_thread(lambda: Path(self.filepath).read_bytes())
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -508,7 +511,8 @@ class File(BaseModel):
                 resp = await client.get(self.url)
                 return resp.content
         elif self.filepath:
-            return await asyncio.to_thread(lambda: Path(self.filepath).read_bytes())
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def _normalise_content(self) -> Optional[Union[str, bytes]]:
