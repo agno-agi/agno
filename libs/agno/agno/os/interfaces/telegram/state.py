@@ -64,6 +64,7 @@ def build_session_store_config(entity: object, entity_type: str) -> _SessionStor
 async def find_latest_session_id(
     cfg: _SessionStoreConfig, user_id: Optional[str], entity_id: Optional[str], session_scope: Optional[str] = None
 ) -> Optional[str]:
+    # TODO: Implement this
     # DB API has no session_id prefix filter, so we fetch recent sessions
     # and filter client-side to match the chat/thread/topic scope
     query = dict(
