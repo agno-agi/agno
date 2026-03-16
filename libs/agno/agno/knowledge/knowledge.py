@@ -132,7 +132,7 @@ class Knowledge(RemoteKnowledge):
             video: Optional list of Video objects to embed as multimodal content
         """
         # Validation: At least one of the parameters must be provided
-        has_media = any(m is not None for m in [images, audio, video])
+        has_media = any(m for m in [images, audio, video])
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]) and not has_media:
             log_warning(
                 "At least one of 'path', 'url', 'text_content', 'topics', 'remote_content', "
@@ -223,7 +223,7 @@ class Knowledge(RemoteKnowledge):
         video: Optional[List[Any]] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
-        has_media = any(m is not None for m in [images, audio, video])
+        has_media = any(m for m in [images, audio, video])
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]) and not has_media:
             log_warning(
                 "At least one of 'path', 'url', 'text_content', 'topics', 'remote_content', "
@@ -1154,6 +1154,28 @@ class Knowledge(RemoteKnowledge):
             hash_input = f"{text_content}:{hash_input}"
         return hashlib.sha256(hash_input.encode()).hexdigest()
 
+    def _build_batch_media_content_hash(self, media_items: List[Any], text_content: str) -> str:
+        """Build a combined content hash from all media items in a batch."""
+        refs = sorted(self._get_media_source_ref(m) for m in media_items)
+        hash_input = "|".join(refs)
+        if text_content:
+            hash_input = f"{text_content}:{hash_input}"
+        return hashlib.sha256(hash_input.encode()).hexdigest()
+
+    def _filter_existing_media(
+        self, media_items: Optional[List[Any]], text_content: str, skip_if_exists: bool
+    ) -> Optional[List[Any]]:
+        """Filter out media items whose content hash already exists in the vector DB."""
+        if not media_items or not skip_if_exists:
+            return media_items
+        filtered: List[Any] = []
+        for media_obj in media_items:
+            content_hash = self._build_media_content_hash(media_obj, text_content)
+            if self._should_skip(content_hash, skip_if_exists):
+                continue
+            filtered.append(media_obj)
+        return filtered if filtered else None
+
     def _create_media_documents(
         self,
         images: Optional[List[Any]],
@@ -1228,29 +1250,32 @@ class Knowledge(RemoteKnowledge):
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        all_media = (images or []) + (audio or []) + (video or [])
-        for media_obj in all_media:
-            content_hash = self._build_media_content_hash(media_obj, text_content)
-            if self._should_skip(content_hash, skip_if_exists):
-                continue
+        # Filter out media items that already exist when skip_if_exists is True
+        filtered_images = self._filter_existing_media(images, text_content, skip_if_exists)
+        filtered_audio = self._filter_existing_media(audio, text_content, skip_if_exists)
+        filtered_video = self._filter_existing_media(video, text_content, skip_if_exists)
 
-        documents = self._create_media_documents(images, audio, video, text_content, metadata)
+        documents = self._create_media_documents(
+            filtered_images, filtered_audio, filtered_video, text_content, metadata
+        )
         if not documents:
             return
 
-        # Build a single content hash for the entire media batch
-        first_media = all_media[0] if all_media else None
-        batch_content_hash = self._build_media_content_hash(first_media, text_content) if first_media else ""
-        content_id = generate_id(batch_content_hash)
-
         for doc in documents:
-            doc.content_id = content_id
+            # Each document gets its own content hash and id
+            if doc.media:
+                doc_hash = self._build_media_content_hash(doc.media, text_content)
+                doc.content_id = generate_id(doc_hash)
             doc.meta_data["linked_to"] = self.name or ""
-            # Size from media bytes if available
             if doc.media and hasattr(doc.media, "get_content_bytes"):
                 media_bytes = doc.media.get_content_bytes()
                 if media_bytes:
                     doc.size = len(media_bytes)
+
+        # Use a combined hash for the Content row
+        all_media = (filtered_images or []) + (filtered_audio or []) + (filtered_video or [])
+        batch_content_hash = self._build_batch_media_content_hash(all_media, text_content)
+        content_id = generate_id(batch_content_hash)
 
         content = Content(
             name=text_content[:50] if text_content else "media",
@@ -1276,29 +1301,32 @@ class Knowledge(RemoteKnowledge):
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        all_media = (images or []) + (audio or []) + (video or [])
-        for media_obj in all_media:
-            content_hash = self._build_media_content_hash(media_obj, text_content)
-            if self._should_skip(content_hash, skip_if_exists):
-                continue
+        # Filter out media items that already exist when skip_if_exists is True
+        filtered_images = self._filter_existing_media(images, text_content, skip_if_exists)
+        filtered_audio = self._filter_existing_media(audio, text_content, skip_if_exists)
+        filtered_video = self._filter_existing_media(video, text_content, skip_if_exists)
 
-        documents = self._create_media_documents(images, audio, video, text_content, metadata)
+        documents = self._create_media_documents(
+            filtered_images, filtered_audio, filtered_video, text_content, metadata
+        )
         if not documents:
             return
 
-        # Build a single content hash for the entire media batch
-        first_media = all_media[0] if all_media else None
-        batch_content_hash = self._build_media_content_hash(first_media, text_content) if first_media else ""
-        content_id = generate_id(batch_content_hash)
-
         for doc in documents:
-            doc.content_id = content_id
+            # Each document gets its own content hash and id
+            if doc.media:
+                doc_hash = self._build_media_content_hash(doc.media, text_content)
+                doc.content_id = generate_id(doc_hash)
             doc.meta_data["linked_to"] = self.name or ""
-            # Size from media bytes if available
             if doc.media and hasattr(doc.media, "get_content_bytes"):
                 media_bytes = doc.media.get_content_bytes()
                 if media_bytes:
                     doc.size = len(media_bytes)
+
+        # Use a combined hash for the Content row
+        all_media = (filtered_images or []) + (filtered_audio or []) + (filtered_video or [])
+        batch_content_hash = self._build_batch_media_content_hash(all_media, text_content)
+        content_id = generate_id(batch_content_hash)
 
         content = Content(
             name=text_content[:50] if text_content else "media",

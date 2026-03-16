@@ -50,6 +50,8 @@ class Document:
                 self.embedding, self.usage = _embedder.get_audio_embedding_and_usage(self.media)
             elif isinstance(self.media, Video):
                 self.embedding, self.usage = _embedder.get_video_embedding_and_usage(self.media)
+            else:
+                raise TypeError(f"Unsupported media type: {type(self.media).__name__}")
         else:
             self.embedding, self.usage = _embedder.get_embedding_and_usage(self.content)
 
@@ -72,6 +74,8 @@ class Document:
                 self.embedding, self.usage = await _embedder.async_get_audio_embedding_and_usage(self.media)
             elif isinstance(self.media, Video):
                 self.embedding, self.usage = await _embedder.async_get_video_embedding_and_usage(self.media)
+            else:
+                raise TypeError(f"Unsupported media type: {type(self.media).__name__}")
         else:
             self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(self.content)
 
