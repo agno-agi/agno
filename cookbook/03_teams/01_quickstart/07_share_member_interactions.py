@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 
@@ -31,20 +31,20 @@ def get_user_profile() -> dict:
 user_profile_agent = Agent(
     name="User Profile Agent",
     role="You are a user profile agent that can retrieve information about the user and the user's account.",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[get_user_profile],
 )
 
 technical_support_agent = Agent(
     name="Technical Support Agent",
     role="You are a technical support agent that can answer questions about the technical support.",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
 )
 
 billing_agent = Agent(
     name="Billing Agent",
     role="You are a billing agent that can answer questions about the billing.",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
 )
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ billing_agent = Agent(
 # ---------------------------------------------------------------------------
 support_team = Team(
     name="Technical Support Team",
-    model=OpenAIChat("o3-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     members=[user_profile_agent, technical_support_agent, billing_agent],
     instructions=[
         "You are a technical support team for a Facebook account that can answer questions about the technical support and billing for Facebook.",

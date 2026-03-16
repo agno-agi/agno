@@ -146,7 +146,7 @@ self_learning_agent = Agent(
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[
-        YFinanceTools(),
+        YFinanceTools(all=True),
         save_learning,  # Our custom tool — just a Python function!
     ],
     knowledge=learnings_kb,
