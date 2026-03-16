@@ -385,7 +385,7 @@ async def upload_and_send_media_async(
                 log_warning(f"Unsupported image format '{detected}' for WhatsApp, skipping upload")
                 if send_text_fallback and response_content:
                     await _send_text(recipient=recipient, text=response_content, config=config)
-                return False
+                continue
             mime_type = f"image/{fmt}"
             filename = f"image.{fmt}"
         elif media_type == "document":

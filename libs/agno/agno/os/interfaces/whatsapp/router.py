@@ -238,10 +238,12 @@ def attach_routes(
                     return
                 try:
                     new_session_id = f"wa:{entity_id}:{user_id}:{uuid4().hex[:8]}"
+                    now = int(time())
                     new_session = session_config.session_cls(
                         session_id=new_session_id,
                         user_id=user_id,
-                        created_at=int(time()),
+                        created_at=now,
+                        updated_at=now,
                         **{session_config.id_field: entity_id},
                     )
                     if session_config.is_async_db:
