@@ -41,7 +41,7 @@ from agno.run.agent import RunEvent
 from agno.run.team import (
     TeamRunEvent,
 )
-from agno.session import SessionSummaryManager, TeamSession
+from agno.session import ContextCompactionManager, SessionSummaryManager, TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -151,6 +151,8 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
+    enable_context_compaction: bool = False,
+    context_compaction_manager: Optional[ContextCompactionManager] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning: bool = False,
     reasoning_model: Optional[Union[Model, str]] = None,
@@ -326,6 +328,8 @@ def __init__(
     team.enable_session_summaries = enable_session_summaries
     team.session_summary_manager = session_summary_manager
     team.add_session_summary_to_context = add_session_summary_to_context
+    team.enable_context_compaction = enable_context_compaction
+    team.context_compaction_manager = context_compaction_manager
 
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
@@ -569,6 +573,19 @@ def _set_session_summary_manager(team: "Team") -> None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
 
 
+def _set_context_compaction_manager(team: "Team") -> None:
+    if team.enable_context_compaction and team.context_compaction_manager is None:
+        team.context_compaction_manager = ContextCompactionManager(model=team.model)
+
+    if team.context_compaction_manager is not None and team.context_compaction_manager.model is None:
+        team.context_compaction_manager.model = team.model
+
+    if team.context_compaction_manager is not None:
+        team.enable_context_compaction = True
+        if team.add_session_summary_to_context is None:
+            team.add_session_summary_to_context = True
+
+
 def _set_compression_manager(team: "Team") -> None:
     if team.compress_tool_results and team.compression_manager is None:
         team.compression_manager = CompressionManager(
@@ -699,6 +716,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
         _set_session_summary_manager(team)
+    if team.enable_context_compaction or team.context_compaction_manager is not None:
+        _set_context_compaction_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
     if team.learning is not None and team.learning is not False:

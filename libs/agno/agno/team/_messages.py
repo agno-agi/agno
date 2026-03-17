@@ -807,6 +807,8 @@ def _get_run_messages(
     5. Add user message to run_messages (message parameter second)
 
     """
+    skip_context_compaction = kwargs.pop("_skip_context_compaction", False)
+
     # Initialize the RunMessages object
     run_messages = RunMessages()
 
@@ -864,6 +866,7 @@ def _get_run_messages(
         history = session.get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
+            after_run_id=session.get_last_compacted_run_id(),
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
         )
@@ -908,6 +911,38 @@ def _get_run_messages(
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
+    if (
+        not skip_context_compaction
+        and add_history_to_context
+        and team.context_compaction_manager is not None
+        and team.model is not None
+        and team.context_compaction_manager.should_compact(
+            run_messages.messages,
+            model=team.model,
+            tools=tools,
+            response_format=run_context.output_schema,
+        )
+        and team.context_compaction_manager.compact_session(session)
+    ):
+        return _get_run_messages(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+            input_message=input_message,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
+            _skip_context_compaction=True,
+            **kwargs,
+        )
+
     return run_messages
 
 
@@ -942,6 +977,8 @@ async def _aget_run_messages(
     5. Add user message to run_messages (message parameter second)
 
     """
+    skip_context_compaction = kwargs.pop("_skip_context_compaction", False)
+
     # Initialize the RunMessages object
     run_messages = RunMessages()
 
@@ -998,6 +1035,7 @@ async def _aget_run_messages(
         history = session.get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
+            after_run_id=session.get_last_compacted_run_id(),
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
         )
@@ -1041,6 +1079,38 @@ async def _aget_run_messages(
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
+
+    if (
+        not skip_context_compaction
+        and add_history_to_context
+        and team.context_compaction_manager is not None
+        and team.model is not None
+        and await team.context_compaction_manager.ashould_compact(
+            run_messages.messages,
+            model=team.model,
+            tools=tools,
+            response_format=run_context.output_schema,
+        )
+        and await team.context_compaction_manager.acompact_session(session)
+    ):
+        return await _aget_run_messages(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+            input_message=input_message,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
+            _skip_context_compaction=True,
+            **kwargs,
+        )
 
     return run_messages
 

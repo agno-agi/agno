@@ -214,6 +214,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "parser_model",
         "output_model",
         "session_summary_manager",
+        "context_compaction_manager",
         "compression_manager",
         "learning",
     ):

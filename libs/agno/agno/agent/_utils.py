@@ -202,6 +202,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
         "parser_model",
         "output_model",
         "session_summary_manager",
+        "context_compaction_manager",
         "culture_manager",
         "compression_manager",
         "learning",
