@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -42,9 +43,9 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -91,8 +92,9 @@ class Agent:
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
-    search_session_history: Optional[bool] = False
-    num_history_sessions: Optional[int] = None
+    search_past_sessions: Optional[bool] = False
+    num_past_sessions_to_search: Optional[int] = None
+    num_past_session_runs_in_search: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
     # If True, the agent adds session summaries to the context
@@ -243,6 +245,9 @@ class Agent:
     # If True, add the current location to the instructions to give the agent a sense of place
     # This allows for location-aware responses and local context
     add_location_to_context: bool = False
+    # Allows for custom datetime format string (e.g. "%Y-%m-%d %H:%M:%S", "%d/%m/%Y")
+    # If None, the default datetime string representation is used
+    datetime_format: Optional[str] = None
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, resolve session_state, dependencies, and metadata in the user and system messages
@@ -296,6 +301,14 @@ class Agent:
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
+
+    # --- Followups ---
+    # If True, generate followup prompts after the main response
+    followups: bool = False
+    # Number of followup prompts to generate (default 3)
+    num_followups: int = 3
+    # Optional model to use for generating followups (defaults to agent's model)
+    followup_model: Optional[Model] = None
 
     # --- Agent Streaming ---
     # Stream the response from the Agent
@@ -368,7 +381,11 @@ class Agent:
         overwrite_db_session_state: bool = False,
         enable_agentic_state: bool = False,
         cache_session: bool = False,
-        search_session_history: Optional[bool] = False,
+        search_past_sessions: Optional[bool] = False,
+        num_past_sessions_to_search: Optional[int] = None,
+        num_past_session_runs_in_search: Optional[int] = None,
+        # Deprecated params — kept for backward compatibility
+        search_session_history: Optional[bool] = None,
         num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
@@ -428,6 +445,7 @@ class Agent:
         add_name_to_context: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        datetime_format: Optional[str] = None,
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         learning: Optional[Union[bool, LearningMachine]] = None,
@@ -448,6 +466,9 @@ class Agent:
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
+        followups: bool = False,
+        num_followups: int = 3,
+        followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -476,8 +497,15 @@ class Agent:
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
-        self.search_session_history = search_session_history
-        self.num_history_sessions = num_history_sessions
+        # Deprecated param mapping
+        if search_session_history is not None and not search_past_sessions:
+            search_past_sessions = search_session_history
+        if num_history_sessions is not None and num_past_sessions_to_search is None:
+            num_past_sessions_to_search = num_history_sessions
+
+        self.search_past_sessions = search_past_sessions
+        self.num_past_sessions_to_search = num_past_sessions_to_search
+        self.num_past_session_runs_in_search = num_past_session_runs_in_search
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
@@ -579,6 +607,7 @@ class Agent:
         self.add_name_to_context = add_name_to_context
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
+        self.datetime_format = datetime_format
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
         self.learning = learning
@@ -602,6 +631,12 @@ class Agent:
 
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
+
+        self.followups = followups
+        if num_followups < 1:
+            raise ValueError("num_followups must be at least 1")
+        self.num_followups = num_followups
+        self.followup_model = followup_model  # type: ignore[assignment]
 
         self.stream = stream
         self.stream_events = stream_events
@@ -635,6 +670,7 @@ class Agent:
         self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
+        self._team: Optional[Any] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -952,10 +988,10 @@ class Agent:
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
@@ -1356,7 +1392,7 @@ class Agent:
         debug_mode: Optional[bool] = None,
         background: bool = False,
         **kwargs: Any,
-    ) -> RunOutput: ...
+    ) -> Coroutine[Any, Any, RunOutput]: ...
 
     @overload
     def arun(
@@ -1532,7 +1568,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> RunOutput: ...
+    ) -> Coroutine[Any, Any, RunOutput]: ...
 
     @overload
     def acontinue_run(
@@ -1644,6 +1680,7 @@ def get_agent_by_id(
 def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
@@ -1654,7 +1691,9 @@ def get_agents(
 
     agents: List[Agent] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        components, _ = db.list_components(
+            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
+        )
         for component in components:
             config = db.get_config(component_id=component["component_id"])
             if config is not None:

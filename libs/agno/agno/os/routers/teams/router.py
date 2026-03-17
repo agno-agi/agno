@@ -163,14 +163,20 @@ def get_team_router(
         team_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        monitor: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
-        version: Optional[int] = Form(None),
-        background: bool = Form(False),
+        message: str = Form(..., description="The input message or prompt to send to the team"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        monitor: bool = Form(True, description="Enable monitoring and logging for this run"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        files: Optional[List[UploadFile]] = File(
+            None, description="Files to upload (images, audio, video, or documents)"
+        ),
+        version: Optional[int] = Form(None, description="Team version to use for this run"),
+        background: bool = Form(
+            False, description="Run in background and return immediately with run metadata (requires database)"
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -219,7 +225,14 @@ def get_team_router(
 
         if files:
             for file in files:
-                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                if file.content_type in [
+                    "image/png",
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/webp",
+                    "image/heic",
+                    "image/heif",
+                ]:
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
@@ -476,7 +489,10 @@ def get_team_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            for db_team in get_teams(db=os.db, registry=registry):
+            # Exclude teams whose IDs are owned by the registry
+            exclude_ids = registry.get_team_ids() if registry else None
+            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            for db_team in db_teams:
                 team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                 teams.append(team_response)
 

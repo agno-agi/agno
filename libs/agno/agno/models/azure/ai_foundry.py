@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
@@ -214,9 +214,6 @@ class AzureAIFoundry(Model):
         Send a chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().complete(
                 messages=[format_message(m, compress_tool_results) for m in messages],
@@ -255,9 +252,6 @@ class AzureAIFoundry(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().complete(
                 messages=[format_message(m, compress_tool_results) for m in messages],
@@ -295,9 +289,6 @@ class AzureAIFoundry(Model):
         Send a streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().complete(
@@ -335,9 +326,6 @@ class AzureAIFoundry(Model):
         Sends an asynchronous streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().complete(
@@ -477,14 +465,19 @@ class AzureAIFoundry(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage) -> Metrics:
+    def _get_metrics(self, response_usage) -> MessageMetrics:
         """
-        Parse the given Azure AI Foundry usage into an Agno Metrics object.
+        Parse the given Azure AI Foundry usage into an Agno MessageMetrics object.
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.get("prompt_tokens", 0)
         metrics.output_tokens = response_usage.get("completion_tokens", 0)
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        if prompt_details := response_usage.get("prompt_tokens_details"):
+            metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+        if completion_details := response_usage.get("completion_tokens_details"):
+            metrics.reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
 
         return metrics

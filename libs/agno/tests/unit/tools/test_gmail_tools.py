@@ -1,7 +1,7 @@
 """Unit tests for GmailTools class."""
 
 import base64
-from datetime import datetime
+import json
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, mock_open, patch
 
@@ -9,7 +9,7 @@ import pytest
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
 
-from agno.tools.gmail import GmailTools
+from agno.tools.google.gmail import GmailTools
 
 
 @pytest.fixture
@@ -31,9 +31,27 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_tools(mock_credentials, mock_gmail_service):
     """Create GmailTools instance with mocked dependencies."""
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_build.return_value = mock_gmail_service
         tools = GmailTools(creds=mock_credentials)
+        tools.service = mock_gmail_service
+        return tools
+
+
+@pytest.fixture
+def gmail_tools_all(mock_credentials, mock_gmail_service):
+    with patch("agno.tools.google.gmail.build") as mock_build:
+        mock_build.return_value = mock_gmail_service
+        tools = GmailTools(
+            creds=mock_credentials,
+            modify_thread_labels=True,
+            trash_thread=True,
+            send_draft=True,
+            list_labels=True,
+            modify_message_labels=True,
+            trash_message=True,
+            download_attachment=True,
+        )
         tools.service = mock_gmail_service
         return tools
 
@@ -111,7 +129,7 @@ def test_authentication_decorator():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = False
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -129,17 +147,22 @@ def test_auth_with_expired_credentials():
     mock_creds.expired = True
     mock_creds.refresh_token = True
 
-    with patch("agno.tools.gmail.build") as mock_build:
-        mock_service = MagicMock()
-        mock_build.return_value = mock_service
+    # Real Credentials.refresh() sets token + expiry, making valid=True
+    def refresh_side_effect(request):
+        mock_creds.valid = True
+        mock_creds.expired = False
 
+    mock_creds.refresh = Mock(side_effect=refresh_side_effect)
+    mock_creds.to_json.return_value = '{"token": "refreshed"}'
+
+    with patch("agno.tools.google.gmail.build") as mock_build:
+        mock_build.return_value = MagicMock()
         tools = GmailTools(creds=mock_creds)
 
-        with patch.object(mock_creds, "refresh") as mock_refresh:
-            with patch("pathlib.Path.exists") as mock_exists:
-                mock_exists.return_value = False  # Force refresh path
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch("pathlib.Path.write_text"):
                 tools._auth()
-                mock_refresh.assert_called_once()
+                mock_creds.refresh.assert_called_once()
 
 
 def test_auth_with_custom_paths():
@@ -147,12 +170,18 @@ def test_auth_with_custom_paths():
     custom_creds_path = "custom_creds.json"
     custom_token_path = "custom_token.json"
 
-    with patch("pathlib.Path.exists") as mock_exists:
-        mock_exists.return_value = True
-        with patch("agno.tools.gmail.Credentials.from_authorized_user_file") as mock_from_file:
-            tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
-            tools._auth()
-            mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
+    mock_loaded_creds = MagicMock(spec=Credentials)
+    mock_loaded_creds.valid = True
+    mock_loaded_creds.to_json.return_value = '{"token": "test"}'
+
+    with patch("pathlib.Path.exists", return_value=True):
+        with patch(
+            "agno.tools.google.gmail.Credentials.from_authorized_user_file", return_value=mock_loaded_creds
+        ) as mock_from_file:
+            with patch("pathlib.Path.write_text"):
+                tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
+                tools._auth()
+                mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
 
 
 def test_get_latest_emails(gmail_tools, mock_gmail_service):
@@ -240,8 +269,7 @@ def test_get_emails_by_date(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
 
-    start_date = int(datetime(2024, 1, 1).timestamp())
-    result = gmail_tools.get_emails_by_date(start_date, range_in_days=1)
+    result = gmail_tools.get_emails_by_date("2024/01/01", range_in_days=1)
 
     assert "Date Email" in result
     assert "Date-specific content" in result
@@ -464,31 +492,19 @@ def test_invalid_email_parameters():
     """Test handling of invalid email parameters."""
     tools = GmailTools(creds=Mock(spec=Credentials, valid=True))
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
-        tools.service = mock_service  # Set service to avoid authentication
+        tools.service = mock_service
 
-        with pytest.raises(ValueError, match="Invalid recipient email format"):
-            tools.send_email(
-                to="invalid-email",  # Invalid email format
-                subject="Test",
-                body="Test body",
-            )
+        result = tools.send_email(to="invalid-email", subject="Test", body="Test body")
+        assert "Invalid recipient email format" in result
 
-        with pytest.raises(ValueError, match="Subject cannot be empty"):
-            tools.send_email(
-                to="valid@email.com",
-                subject="",  # Empty subject
-                body="Test body",
-            )
+        result = tools.send_email(to="valid@email.com", subject="", body="Test body")
+        assert "Subject cannot be empty" in result
 
-        with pytest.raises(ValueError, match="Email body cannot be None"):
-            tools.send_email(
-                to="valid@email.com",
-                subject="Test",
-                body=None,  # None body
-            )
+        result = tools.send_email(to="valid@email.com", subject="Test", body=None)
+        assert "Email body cannot be None" in result
 
 
 def test_service_initialization():
@@ -496,7 +512,7 @@ def test_service_initialization():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
 
-    with patch("agno.tools.gmail.build") as mock_build:
+    with patch("agno.tools.google.gmail.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -602,39 +618,38 @@ def test_send_email_reply_with_attachment(gmail_tools, mock_gmail_service):
 def test_send_email_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.send_email(
-                to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
-            )
+        result = gmail_tools.send_email(
+            to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
+        )
+        assert "Attachment file not found" in result
 
 
 def test_create_draft_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when draft attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.create_draft_email(
-                to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
-            )
+        result = gmail_tools.create_draft_email(
+            to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
+        )
+        assert "Attachment file not found" in result
 
 
 def test_send_reply_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when reply attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.send_email_reply(
-                thread_id="thread123",
-                message_id="msg456",
-                to="recipient@test.com",
-                subject="Test",
-                body="Test body",
-                attachments="nonexistent.pdf",
-            )
+        result = gmail_tools.send_email_reply(
+            thread_id="thread123",
+            message_id="msg456",
+            to="recipient@test.com",
+            subject="Test",
+            body="Test body",
+            attachments="nonexistent.pdf",
+        )
+        assert "Attachment file not found" in result
 
 
 def test_send_email_mixed_attachment_existence(gmail_tools, mock_gmail_service):
     """Test error handling when some attachments exist and others don't."""
 
-    # Create a mock Path class
     class MockPath:
         def __init__(self, path):
             self.path = str(path)
@@ -642,11 +657,11 @@ def test_send_email_mixed_attachment_existence(gmail_tools, mock_gmail_service):
         def exists(self):
             return self.path.endswith("exists.pdf")
 
-    with patch("agno.tools.gmail.Path", MockPath):
-        with pytest.raises(ValueError, match="Attachment file not found"):
-            gmail_tools.send_email(
-                to="recipient@test.com", subject="Test", body="Test body", attachments=["exists.pdf", "missing.pdf"]
-            )
+    with patch("agno.tools.google.gmail.Path", MockPath):
+        result = gmail_tools.send_email(
+            to="recipient@test.com", subject="Test", body="Test body", attachments=["exists.pdf", "missing.pdf"]
+        )
+        assert "Attachment file not found" in result
 
 
 def test_attachment_mime_type_guessing(gmail_tools, mock_gmail_service):
@@ -1138,3 +1153,401 @@ def test_delete_custom_label_error_handling(gmail_tools, mock_gmail_service):
 
     result = gmail_tools.delete_custom_label("TestLabel", confirm=True)
     assert "Error deleting label 'TestLabel'" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests for new tools
+# ---------------------------------------------------------------------------
+
+
+def _full_message_payload(msg_id="msg1", thread_id="thread1", subject="Test", sender="a@b.com"):
+    return {
+        "id": msg_id,
+        "threadId": thread_id,
+        "labelIds": ["INBOX"],
+        "snippet": "snippet",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "Subject", "value": subject},
+                {"name": "From", "value": sender},
+                {"name": "To", "value": "me@b.com"},
+                {"name": "Date", "value": "2024-01-01"},
+            ],
+            "body": {"data": base64.urlsafe_b64encode(b"Hello body").decode()},
+        },
+    }
+
+
+def test_get_message(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().messages().get().execute.return_value = _full_message_payload()
+
+    result = json.loads(gmail_tools.get_message("msg1"))
+
+    assert result["id"] == "msg1"
+    assert result["subject"] == "Test"
+    assert "Hello body" in result["body"]
+
+
+def test_get_message_http_error(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().messages().get().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools.get_message("bad_id"))
+    assert "error" in result
+
+
+def test_get_thread(gmail_tools, mock_gmail_service):
+    thread_data = {
+        "messages": [
+            _full_message_payload("msg1"),
+            _full_message_payload("msg2", subject="Re: Test"),
+        ]
+    }
+    mock_gmail_service.users().threads().get().execute.return_value = thread_data
+
+    result = json.loads(gmail_tools.get_thread("thread1"))
+
+    assert result["threadId"] == "thread1"
+    assert result["messageCount"] == 2
+    assert result["messages"][0]["id"] == "msg1"
+    assert result["messages"][1]["subject"] == "Re: Test"
+
+
+def test_get_thread_http_error(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().threads().get().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools.get_thread("bad_id"))
+    assert "error" in result
+
+
+def test_search_threads(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().threads().list().execute.return_value = {
+        "threads": [{"id": "t1", "snippet": "s1"}, {"id": "t2", "snippet": "s2"}],
+        "resultSizeEstimate": 2,
+    }
+
+    result = json.loads(gmail_tools.search_threads("is:unread", count=5))
+
+    assert len(result["threads"]) == 2
+    assert result["resultSizeEstimate"] == 2
+
+
+def test_search_threads_http_error(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().threads().list().execute.side_effect = HttpError(
+        resp=Mock(status=500), content=b'{"error": {"message": "Server Error"}}'
+    )
+
+    result = json.loads(gmail_tools.search_threads("query"))
+    assert "error" in result
+
+
+def test_modify_thread_labels(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().labels().list().execute.return_value = {"labels": [{"name": "Work", "id": "Label_1"}]}
+    mock_gmail_service.users().threads().modify().execute.return_value = {
+        "id": "thread1",
+        "labelIds": ["Label_1"],
+    }
+
+    result = json.loads(gmail_tools_all.modify_thread_labels("thread1", add_labels="Work"))
+
+    assert result["threadId"] == "thread1"
+    assert "Label_1" in result["labelIds"]
+
+
+def test_modify_thread_labels_no_args(gmail_tools_all, mock_gmail_service):
+    result = json.loads(gmail_tools_all.modify_thread_labels("thread1"))
+    assert "error" in result
+
+
+def test_trash_thread(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().threads().trash().execute.return_value = {}
+
+    result = json.loads(gmail_tools_all.trash_thread("thread1"))
+
+    assert result["threadId"] == "thread1"
+    assert result["action"] == "trashed"
+
+
+def test_trash_thread_http_error(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().threads().trash().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools_all.trash_thread("bad_id"))
+    assert "error" in result
+
+
+def test_get_draft(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().drafts().get().execute.return_value = {
+        "id": "draft1",
+        "message": _full_message_payload("msg1"),
+    }
+
+    result = json.loads(gmail_tools.get_draft("draft1"))
+
+    assert result["draftId"] == "draft1"
+    assert result["message"]["subject"] == "Test"
+
+
+def test_get_draft_http_error(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().drafts().get().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools.get_draft("bad_id"))
+    assert "error" in result
+
+
+def test_list_drafts(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().drafts().list().execute.return_value = {
+        "drafts": [{"id": "d1"}, {"id": "d2"}],
+        "resultSizeEstimate": 2,
+    }
+
+    result = json.loads(gmail_tools.list_drafts(count=10))
+
+    assert len(result["drafts"]) == 2
+    assert result["resultSizeEstimate"] == 2
+
+
+def test_list_drafts_http_error(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().drafts().list().execute.side_effect = HttpError(
+        resp=Mock(status=500), content=b'{"error": {"message": "Server Error"}}'
+    )
+
+    result = json.loads(gmail_tools.list_drafts())
+    assert "error" in result
+
+
+def test_send_draft(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().drafts().send().execute.return_value = {
+        "id": "msg1",
+        "threadId": "thread1",
+        "labelIds": ["SENT"],
+    }
+
+    result = json.loads(gmail_tools_all.send_draft("draft1"))
+
+    assert result["id"] == "msg1"
+    assert result["threadId"] == "thread1"
+
+
+def test_send_draft_http_error(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().drafts().send().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools_all.send_draft("bad_id"))
+    assert "error" in result
+
+
+def test_update_draft(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().drafts().update().execute.return_value = {"id": "draft1"}
+
+    result = json.loads(
+        gmail_tools.update_draft(
+            draft_id="draft1",
+            to="a@b.com",
+            subject="Updated",
+            body="New body",
+        )
+    )
+
+    assert result["draftId"] == "draft1"
+
+
+def test_update_draft_invalid_email(gmail_tools, mock_gmail_service):
+    result = json.loads(
+        gmail_tools.update_draft(
+            draft_id="draft1",
+            to="not-an-email",
+            subject="Test",
+            body="Body",
+        )
+    )
+    assert "error" in result
+
+
+def test_list_labels(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().labels().list().execute.return_value = {
+        "labels": [{"id": "INBOX", "name": "INBOX"}, {"id": "L1", "name": "Work"}]
+    }
+
+    def mock_label_get(lid):
+        data = {
+            "INBOX": {"id": "INBOX", "name": "INBOX", "type": "system", "messagesTotal": 100},
+            "L1": {"id": "L1", "name": "Work", "type": "user", "messagesTotal": 5},
+        }
+        mock_req = MagicMock()
+        mock_req.execute.return_value = data.get(lid, {})
+        return mock_req
+
+    # _batch_get uses service.new_batch_http_request — mock the batch execution
+    mock_batch = MagicMock()
+    mock_gmail_service.new_batch_http_request.return_value = mock_batch
+
+    def batch_execute():
+        callback = mock_gmail_service.new_batch_http_request.call_args[1]["callback"]
+        callback("INBOX", {"id": "INBOX", "name": "INBOX", "type": "system", "messagesTotal": 100}, None)
+        callback("L1", {"id": "L1", "name": "Work", "type": "user", "messagesTotal": 5}, None)
+
+    mock_batch.execute.side_effect = batch_execute
+
+    result = json.loads(gmail_tools_all.list_labels())
+
+    assert result["count"] == 2
+    assert any(lbl["name"] == "Work" for lbl in result["labels"])
+
+
+def test_list_labels_http_error(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().labels().list().execute.side_effect = HttpError(
+        resp=Mock(status=500), content=b'{"error": {"message": "Server Error"}}'
+    )
+
+    result = json.loads(gmail_tools_all.list_labels())
+    assert "error" in result
+
+
+def test_modify_message_labels(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().labels().list().execute.return_value = {"labels": [{"name": "STARRED", "id": "STARRED"}]}
+    mock_gmail_service.users().messages().modify().execute.return_value = {
+        "id": "msg1",
+        "labelIds": ["STARRED", "INBOX"],
+    }
+
+    result = json.loads(gmail_tools_all.modify_message_labels("msg1", add_labels="STARRED"))
+
+    assert result["id"] == "msg1"
+    assert "STARRED" in result["labelIds"]
+
+
+def test_modify_message_labels_no_args(gmail_tools_all, mock_gmail_service):
+    result = json.loads(gmail_tools_all.modify_message_labels("msg1"))
+    assert "error" in result
+
+
+def test_trash_message(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().messages().trash().execute.return_value = {}
+
+    result = json.loads(gmail_tools_all.trash_message("msg1"))
+
+    assert result["id"] == "msg1"
+    assert result["action"] == "trashed"
+
+
+def test_trash_message_undo(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().messages().untrash().execute.return_value = {}
+
+    result = json.loads(gmail_tools_all.trash_message("msg1", undo=True))
+
+    assert result["id"] == "msg1"
+    assert result["action"] == "untrashed"
+
+
+def test_trash_message_http_error(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().messages().trash().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools_all.trash_message("bad_id"))
+    assert "error" in result
+
+
+def test_download_attachment(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().messages().attachments().get().execute.return_value = {
+        "data": base64.urlsafe_b64encode(b"file content").decode()
+    }
+
+    mock_tempdir = MagicMock()
+    mock_tempdir.name = "/tmp/gmail_test"
+    with patch("tempfile.TemporaryDirectory", return_value=mock_tempdir):
+        with patch("pathlib.Path.mkdir"):
+            with patch("pathlib.Path.write_bytes") as mock_write:
+                result = json.loads(gmail_tools_all.download_attachment("msg1", "att1", "doc.pdf"))
+
+    assert result["filename"] == "doc.pdf"
+    assert result["messageId"] == "msg1"
+    assert "localPath" in result
+    mock_write.assert_called_once()
+    # Verify TemporaryDirectory is stored on instance for lifecycle management
+    assert gmail_tools_all._temp_dir is mock_tempdir
+
+
+def test_download_attachment_http_error(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().messages().attachments().get().execute.side_effect = HttpError(
+        resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
+    )
+
+    result = json.loads(gmail_tools_all.download_attachment("msg1", "att1", "doc.pdf"))
+    assert "error" in result
+
+
+def test_send_draft_default_false():
+    tools = GmailTools()
+    assert "send_draft" not in tools.functions
+
+
+def test_label_cache_invalidated_on_create(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "m1"}]}
+    mock_gmail_service.users().labels().list().execute.return_value = {"labels": []}
+    mock_gmail_service.users().labels().create().execute.return_value = {"id": "new_label"}
+    mock_gmail_service.users().messages().modify().execute.return_value = {}
+
+    gmail_tools._label_cache = {"old": "old_id"}
+
+    gmail_tools.apply_label("test query", "NewLabel", count=1)
+
+    assert gmail_tools._label_cache is None
+
+
+def test_label_cache_invalidated_on_delete(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().labels().list().execute.return_value = {
+        "labels": [{"id": "lbl_1", "name": "MyLabel", "type": "user"}]
+    }
+    mock_gmail_service.users().labels().delete().execute.return_value = None
+
+    gmail_tools._label_cache = {"mylabel": "lbl_1"}
+
+    result = gmail_tools.delete_custom_label("MyLabel", confirm=True)
+
+    assert "Successfully deleted" in result
+    assert gmail_tools._label_cache is None
+
+
+def test_label_cache_reused_across_calls(gmail_tools, mock_gmail_service):
+    mock_gmail_service.users().labels().list().execute.return_value = {
+        "labels": [
+            {"id": "lbl_1", "name": "Work"},
+            {"id": "lbl_2", "name": "Personal"},
+        ]
+    }
+
+    # First call populates cache
+    result1 = gmail_tools._resolve_label_ids(["Work"])
+    assert result1 == ["lbl_1"]
+    assert mock_gmail_service.users().labels().list().execute.call_count == 1
+
+    # Second call reuses cache — no additional API call
+    result2 = gmail_tools._resolve_label_ids(["Personal"])
+    assert result2 == ["lbl_2"]
+    assert mock_gmail_service.users().labels().list().execute.call_count == 1
+
+
+def test_temp_dir_reused_across_downloads(gmail_tools_all, mock_gmail_service):
+    mock_gmail_service.users().messages().attachments().get().execute.return_value = {
+        "data": base64.urlsafe_b64encode(b"file content").decode()
+    }
+
+    mock_tempdir = MagicMock()
+    mock_tempdir.name = "/tmp/gmail_test"
+    with patch("tempfile.TemporaryDirectory", return_value=mock_tempdir) as mock_td_cls:
+        with patch("pathlib.Path.mkdir"), patch("pathlib.Path.write_bytes"):
+            gmail_tools_all.download_attachment("msg1", "att1", "doc1.pdf")
+            gmail_tools_all.download_attachment("msg2", "att2", "doc2.pdf")
+
+    # TemporaryDirectory created only once, reused for second download
+    mock_td_cls.assert_called_once()

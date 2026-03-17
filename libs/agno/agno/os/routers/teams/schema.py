@@ -22,6 +22,7 @@ class TeamResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
+    mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -149,7 +150,11 @@ class TeamResponse(BaseModel):
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
-            "knowledge_filters": team.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in team.knowledge_filters]
+                if isinstance(team.knowledge_filters, list)
+                else team.knowledge_filters
+            ),
             "references_format": team.references_format,
         }
 
@@ -270,6 +275,7 @@ class TeamResponse(BaseModel):
             db_id=team.db.id if team.db else None,
             description=team.description,
             role=team.role,
+            mode=team.mode.value if team.mode else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),

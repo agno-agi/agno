@@ -22,9 +22,9 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import db_from_dict
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.utils import get_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
@@ -37,8 +37,10 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
+    aget_session_metrics_util,
     get_last_run_output_util,
     get_run_output_util,
+    get_session_metrics_util,
 )
 from agno.utils.log import (
     log_debug,
@@ -126,17 +128,30 @@ async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -
 # ---------------------------------------------------------------------------
 
 
-def get_session_metrics_internal(team: "Team", session: TeamSession) -> Metrics:
+def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionMetrics:
     # Get the session_metrics from the database
     if session.session_data is not None and "session_metrics" in session.session_data:
         session_metrics_from_db = session.session_data.get("session_metrics")
         if session_metrics_from_db is not None:
             if isinstance(session_metrics_from_db, dict):
-                return Metrics(**session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, Metrics):
+                return SessionMetrics.from_dict(session_metrics_from_db)
+            elif isinstance(session_metrics_from_db, SessionMetrics):
                 return session_metrics_from_db
-
-    return Metrics()
+            elif isinstance(session_metrics_from_db, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_from_db.input_tokens,
+                    output_tokens=session_metrics_from_db.output_tokens,
+                    total_tokens=session_metrics_from_db.total_tokens,
+                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    cost=session_metrics_from_db.cost,
+                )
+    return SessionMetrics()
 
 
 # ---------------------------------------------------------------------------
@@ -451,10 +466,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_team_history_runs"] = team.num_team_history_runs
     if team.share_member_interactions:
         config["share_member_interactions"] = team.share_member_interactions
-    if team.search_session_history:
-        config["search_session_history"] = team.search_session_history
-    if team.num_history_sessions is not None:
-        config["num_history_sessions"] = team.num_history_sessions
+    if team.search_past_sessions:
+        config["search_past_sessions"] = team.search_past_sessions
+    if team.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = team.num_past_sessions_to_search
+    if team.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = team.num_past_session_runs_in_search
     if team.read_chat_history:
         config["read_chat_history"] = team.read_chat_history
 
@@ -479,6 +496,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_datetime_to_context"] = team.add_datetime_to_context
     if team.add_location_to_context:
         config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
     if team.timezone_identifier is not None:
         config["timezone_identifier"] = team.timezone_identifier
     if team.add_name_to_context:
@@ -884,8 +903,11 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_session_history=config.get("search_session_history", False),
-            num_history_sessions=config.get("num_history_sessions"),
+            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+            num_past_session_runs_in_search=config.get(
+                "num_past_session_runs_in_search", config.get("num_past_session_runs")
+            ),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
@@ -897,6 +919,7 @@ def from_dict(
             markdown=config.get("markdown", False),
             add_datetime_to_context=config.get("add_datetime_to_context", False),
             add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),
@@ -1164,3 +1187,17 @@ def delete(
         raise ValueError("Cannot delete team without an id")
 
     return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+
+
+def get_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return get_session_metrics_util(team, session_id=session_id)
+
+
+async def aget_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return await aget_session_metrics_util(team, session_id=session_id)
