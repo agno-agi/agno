@@ -1228,6 +1228,10 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
+            # Ensure every tool call has an id — some providers (e.g. Ollama) omit it
+            for tc in provider_response.tool_calls:
+                if not tc.get("id"):
+                    tc["id"] = str(uuid4())
             assistant_message.tool_calls = provider_response.tool_calls
 
         # Add audio to assistant message
@@ -1864,7 +1868,12 @@ class Model(ABC):
         if stream_data.response_file:
             assistant_message.file_output = stream_data.response_file
         if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-            assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+            parsed_tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+            # Ensure every tool call has an id — some providers (e.g. Ollama) omit it
+            for tc in parsed_tool_calls:
+                if not tc.get("id"):
+                    tc["id"] = str(uuid4())
+            assistant_message.tool_calls = parsed_tool_calls
 
     def _populate_stream_data(
         self, stream_data: MessageData, model_response_delta: ModelResponse

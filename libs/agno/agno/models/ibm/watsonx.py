@@ -172,6 +172,10 @@ class WatsonX(Model):
         """
         Send a chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
 
@@ -205,6 +209,10 @@ class WatsonX(Model):
         """
         Sends an asynchronous chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -238,6 +246,10 @@ class WatsonX(Model):
         """
         Send a streaming chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -270,6 +282,10 @@ class WatsonX(Model):
         """
         Sends an asynchronous streaming chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]

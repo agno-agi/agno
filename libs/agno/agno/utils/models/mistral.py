@@ -49,6 +49,11 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
 
 
 def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
+    from agno.utils.message import normalize_tool_messages
+
+    # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+    messages = normalize_tool_messages(messages)
+
     mistral_messages: List[MistralMessage] = []
 
     for message in messages:

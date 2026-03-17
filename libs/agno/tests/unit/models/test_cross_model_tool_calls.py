@@ -445,3 +445,183 @@ class TestNormalizeToolMessages:
     def test_empty_list(self):
         """Empty message list should return empty."""
         assert normalize_tool_messages([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Parallel tool calls — provider-specific formatting
+# ---------------------------------------------------------------------------
+
+
+class TestParallelToolCallsGeminiFormat:
+    """Parallel tool results should be formatted correctly for Gemini."""
+
+    def test_parallel_tool_results_merged_for_gemini(self):
+        """Multiple consecutive tool results should merge into one Gemini user turn."""
+        from agno.models.google.gemini import Gemini
+
+        gemini = Gemini(id="gemini-2.0-flash")
+        tc1 = _make_tool_call("toolu_001", name="get_weather", arguments='{"city": "Paris"}')
+        tc2 = _make_tool_call("toolu_002", name="get_weather", arguments='{"city": "London"}')
+        tc3 = _make_tool_call("toolu_003", name="get_weather", arguments='{"city": "Tokyo"}')
+
+        msgs = [
+            Message(role="user", content="Check weather in Paris, London, and Tokyo"),
+            _assistant_msg([tc1, tc2, tc3]),
+            _tool_msg("toolu_001", tool_name="get_weather", content="Paris: Sunny"),
+            _tool_msg("toolu_002", tool_name="get_weather", content="London: Rainy"),
+            _tool_msg("toolu_003", tool_name="get_weather", content="Tokyo: Cloudy"),
+        ]
+        formatted, system = gemini._format_messages(msgs)
+
+        # Should be: user, model, user (merged tool results)
+        assert len(formatted) == 3
+        assert formatted[0].role == "user"
+        assert formatted[1].role == "model"
+        assert formatted[2].role == "user"
+
+        # Merged user message should contain all 3 function_response parts
+        fn_responses = [
+            p for p in formatted[2].parts if hasattr(p, "function_response") and p.function_response is not None
+        ]
+        assert len(fn_responses) == 3
+
+    def test_cross_provider_parallel_to_gemini(self):
+        """Claude-style tool IDs in parallel should format correctly for Gemini."""
+        from agno.models.google.gemini import Gemini
+
+        gemini = Gemini(id="gemini-2.0-flash")
+        tc1 = _make_tool_call("toolu_aaa", name="search", arguments='{"q": "a"}')
+        tc2 = _make_tool_call("toolu_bbb", name="search", arguments='{"q": "b"}')
+
+        msgs = [
+            Message(role="user", content="Search for a and b"),
+            _assistant_msg([tc1, tc2]),
+            _tool_msg("toolu_aaa", tool_name="search", content="Result A"),
+            _tool_msg("toolu_bbb", tool_name="search", content="Result B"),
+        ]
+        formatted, system = gemini._format_messages(msgs)
+
+        # Gemini accepts any ID format, so these should format fine
+        fn_responses = []
+        for msg in formatted:
+            if msg.role == "user":
+                for part in msg.parts:
+                    if hasattr(part, "function_response") and part.function_response is not None:
+                        fn_responses.append(part)
+        assert len(fn_responses) == 2
+
+
+class TestParallelToolCallsClaudeFormat:
+    """Parallel tool calls from various providers formatted for Claude."""
+
+    def test_parallel_from_openai_chat_for_claude(self):
+        """OpenAI Chat call_* IDs in parallel should format correctly for Claude."""
+        from agno.utils.models.claude import format_messages
+
+        tc1 = _make_tool_call("call_abc123", name="get_weather", arguments='{"city": "Paris"}')
+        tc2 = _make_tool_call("call_def456", name="get_weather", arguments='{"city": "London"}')
+
+        msgs = [
+            Message(role="user", content="Check weather in Paris and London"),
+            _assistant_msg([tc1, tc2]),
+            _tool_msg("call_abc123", content="Paris: Sunny"),
+            _tool_msg("call_def456", content="London: Rainy"),
+        ]
+        formatted, system = format_messages(msgs)
+
+        # Should be: user, assistant (with tool_use blocks), user (merged tool_results)
+        assert len(formatted) == 3
+        assert formatted[2]["role"] == "user"
+        content = formatted[2]["content"]
+        assert len(content) == 2
+        assert all(item["type"] == "tool_result" for item in content)
+
+    def test_parallel_from_gemini_for_claude(self):
+        """Gemini UUID-style IDs in parallel should format correctly for Claude."""
+        from agno.utils.models.claude import format_messages
+
+        tc1 = _make_tool_call("uuid-111-aaa", name="search", arguments='{"q": "a"}')
+        tc2 = _make_tool_call("uuid-222-bbb", name="search", arguments='{"q": "b"}')
+
+        msgs = [
+            Message(role="user", content="Search for a and b"),
+            _assistant_msg([tc1, tc2]),
+            _tool_msg("uuid-111-aaa", tool_name="search", content="Result A"),
+            _tool_msg("uuid-222-bbb", tool_name="search", content="Result B"),
+        ]
+        formatted, system = format_messages(msgs)
+
+        assert len(formatted) == 3
+        content = formatted[2]["content"]
+        assert len(content) == 2
+        tool_use_ids = {item["tool_use_id"] for item in content}
+        assert tool_use_ids == {"uuid-111-aaa", "uuid-222-bbb"}
+
+
+class TestParallelToolCallsReformat:
+    """Parallel tool calls remapped across all provider combinations."""
+
+    def test_claude_parallel_to_gemini_noop(self):
+        """Gemini accepts any ID — parallel Claude IDs should pass through."""
+        tcs = [
+            _make_tool_call("toolu_001", name="search"),
+            _make_tool_call("toolu_002", name="calculate"),
+        ]
+        msgs = [
+            _assistant_msg(tcs),
+            _tool_msg("toolu_001", content="r1"),
+            _tool_msg("toolu_002", content="r2"),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="gemini")
+        # Gemini has prefix=None, so no reformatting
+        assert result[0].tool_calls[0]["id"] == "toolu_001"
+        assert result[0].tool_calls[1]["id"] == "toolu_002"
+        assert result[1].tool_call_id == "toolu_001"
+        assert result[2].tool_call_id == "toolu_002"
+
+    def test_gemini_parallel_to_responses_api(self):
+        """Gemini UUID-style parallel calls should get fc_* + call_* for Responses API."""
+        tcs = [
+            _make_tool_call("uuid-aaa-111", name="search"),
+            _make_tool_call("uuid-bbb-222", name="calculate"),
+            _make_tool_call("uuid-ccc-333", name="lookup"),
+        ]
+        msgs = [
+            _assistant_msg(tcs),
+            _tool_msg("uuid-aaa-111", content="r1"),
+            _tool_msg("uuid-bbb-222", content="r2"),
+            _tool_msg("uuid-ccc-333", content="r3"),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_responses")
+
+        for tc in result[0].tool_calls:
+            assert tc["id"].startswith("fc_")
+            assert "call_id" in tc
+            assert tc["call_id"].startswith("call_")
+
+        # Tool results should match the new fc_* IDs
+        for i in range(3):
+            assert result[i + 1].tool_call_id == result[0].tool_calls[i]["id"]
+
+        # All IDs unique
+        fc_ids = [tc["id"] for tc in result[0].tool_calls]
+        assert len(set(fc_ids)) == 3
+
+    def test_responses_parallel_to_openai_chat(self):
+        """Responses API fc_* parallel calls should become call_* for Chat."""
+        tcs = [
+            _make_tool_call("fc_001", name="search", call_id="call_s1"),
+            _make_tool_call("fc_002", name="calculate", call_id="call_c1"),
+        ]
+        msgs = [
+            _assistant_msg(tcs),
+            _tool_msg("fc_001", content="r1"),
+            _tool_msg("fc_002", content="r2"),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+
+        for tc in result[0].tool_calls:
+            assert tc["id"].startswith("call_")
+
+        assert result[1].tool_call_id == result[0].tool_calls[0]["id"]
+        assert result[2].tool_call_id == result[0].tool_calls[1]["id"]
