@@ -12,9 +12,12 @@ from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.utils.agent import validate_input
 from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
+from agno.run import RunContext
+from agno.team import _messages
 
 if TYPE_CHECKING:
     from agno.os.routers.teams.schema import TeamResponse
+    from agno.os.routers.agents.schema import AgentResponse
 
 
 class RemoteTeam(BaseRemote):
@@ -157,6 +160,18 @@ class RemoteTeam(BaseRemote):
                 log_warning(f"Failed to load tools for team {self.team_id}: {e}")
                 return None
         return None
+    
+    @property
+    def members(self) -> Optional[List["AgentResponse"]]:
+        if self._team_config is not None:
+            try:
+                return self._team_config.members if self._team_config.members else None
+            except Exception as e:
+                log_warning(f"Failed to load members for team {self.id}: {e}")
+                return None
+
+    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
+        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
 
     @property
     def db(self) -> Optional[RemoteDb]:

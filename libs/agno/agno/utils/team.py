@@ -1,16 +1,10 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
-from agno.agent import Agent
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug
 from agno.utils.string import is_valid_uuid, url_safe_string
-
-if TYPE_CHECKING:
-    from agno.team.team import Team
-    from agno.agent.remote import RemoteAgent
-    from agno.team.remote import RemoteTeam
 
 
 def format_member_agent_task(
@@ -31,7 +25,7 @@ def format_member_agent_task(
     return member_task_str
 
 
-def get_member_id(member: Union[Agent, "Team", "RemoteAgent", "RemoteTeam"]) -> Optional[str]:
+def get_member_id(member: Any) -> Optional[str]:
     """
     Get the ID of a member
 
@@ -40,19 +34,12 @@ def get_member_id(member: Union[Agent, "Team", "RemoteAgent", "RemoteTeam"]) -> 
     2. If the member has a name, convert that to a URL safe string
     3. Otherwise, return None
     """
-    from agno.team.team import Team
-    from agno.agent.remote import RemoteAgent
-    from agno.team.remote import RemoteTeam
-
-    if isinstance(member, (Agent, Team, RemoteAgent, RemoteTeam)):
-        # First priority: Use the ID if explicitly provided
-        if member.id is not None:
-            url_safe_member_id = member.id if is_valid_uuid(member.id) else url_safe_string(member.id)
-        # Second priority: Use the name if available
-        elif member.name is not None:
-            url_safe_member_id = url_safe_string(member.name)
-        else:
-            url_safe_member_id = None
+    id = getattr(member, 'id', None)
+    name = getattr(member, 'name', None)
+    if id is not None:
+        url_safe_member_id = id if is_valid_uuid(id) else url_safe_string(id)
+    elif name is not None:
+        url_safe_member_id = name if is_valid_uuid(name) else url_safe_string(name)
     else:
         url_safe_member_id = None
 
