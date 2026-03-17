@@ -4535,6 +4535,7 @@ def _route_requirements_to_members(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
+    stream: Optional[bool] = None,
 ) -> List[str]:
     """Route member requirements back to the appropriate member agents (sync).
 
@@ -4582,6 +4583,7 @@ def _route_requirements_to_members(
             member_response = member.continue_run(
                 run_response=member_run_output,
                 session_id=session.session_id,
+                stream=stream,
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
@@ -4590,6 +4592,7 @@ def _route_requirements_to_members(
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
+                stream=stream,
             )
 
         # Check if member is still paused (chained HITL)
@@ -4613,6 +4616,7 @@ async def _aroute_requirements_to_members(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
+    stream: Optional[bool] = None,
 ) -> List[str]:
     """Route member requirements back to the appropriate member agents (async).
 
@@ -4654,6 +4658,7 @@ async def _aroute_requirements_to_members(
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_response=member_run_output,
                 session_id=session.session_id,
+                stream=stream,
             )
         else:
             member_run_id = reqs[0].member_run_id if reqs else None
@@ -4661,6 +4666,7 @@ async def _aroute_requirements_to_members(
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
+                stream=stream,
             )
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -4831,7 +4837,7 @@ def continue_run_dispatch(
         original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
         member_results = _route_requirements_to_members(
-            team, run_response=run_response, session=team_session, run_context=run_context
+            team, run_response=run_response, session=team_session, run_context=run_context, stream=opts.stream
         )
         # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
         newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
@@ -5632,7 +5638,8 @@ async def _acontinue_run(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context
+                        team, run_response=run_response, session=team_session, run_context=run_context,
+                        stream=opts.stream,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -5928,7 +5935,8 @@ async def _acontinue_run_stream(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context
+                        team, run_response=run_response, session=team_session, run_context=run_context,
+                        stream=opts.stream,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
