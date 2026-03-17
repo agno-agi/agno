@@ -243,18 +243,10 @@ class GoogleSlidesTools(Toolkit):
             if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
                 self.creds.refresh(Request())
             else:
-                client_id = getenv("GOOGLE_CLIENT_ID")
-                client_secret = getenv("GOOGLE_CLIENT_SECRET")
-                if not client_id or not client_secret:
-                    raise EnvironmentError(
-                        "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set when not using "
-                        "a credentials file or service account."
-                    )
-
                 client_config = {
                     "installed": {
-                        "client_id": client_id,
-                        "client_secret": client_secret,
+                        "client_id": getenv("GOOGLE_CLIENT_ID"),
+                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
                         "project_id": getenv("GOOGLE_PROJECT_ID"),
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
@@ -262,6 +254,7 @@ class GoogleSlidesTools(Toolkit):
                         "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                     }
                 }
+                # File based authentication
                 if creds_file.exists():
                     flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
                 else:
@@ -872,7 +865,7 @@ class GoogleSlidesTools(Toolkit):
         slide_id: str,
         rows: int,
         columns: int,
-        content: Optional[list[list[str]]] = None,
+        content: Optional[List[List[str]]] = None,
     ) -> str:
         """
         Creates a table on a slide, optionally pre-populated with content.

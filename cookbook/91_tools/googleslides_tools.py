@@ -37,7 +37,7 @@ from agno.tools.google.slides import GoogleSlidesTools
 """
 agent = Agent(
     name="Slides Assistant",
-    model=Gemini(id="gemini-2.0-flash-lite"),
+    model=Gemini(id="gemini-2.0-flash"),
     tools=[
         GoogleSlidesTools(
             # enable_delete_presentation = True,  # -> Destructive tool, enable if required
