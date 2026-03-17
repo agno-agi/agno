@@ -103,51 +103,6 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
 
-def sync_tool_call_ids(messages: List[Message]) -> List[Message]:
-    """
-    Ensure tool result tool_call_id values match the corresponding assistant tool_calls[].id.
-
-    The OpenAI Responses API stores two IDs per tool call: "id" (fc_*) and "call_id" (call_*).
-    Its format_function_call_results translates tool_call_id to the call_id value. This creates
-    a mismatch: assistant has id=fc_*, tool result has tool_call_id=call_*.
-
-    This function builds a reverse map from call_id -> id and fixes tool results that reference
-    a call_id instead of the canonical id. This is needed so that providers like Claude can match
-    ToolUseBlock.id with tool_result.tool_use_id correctly.
-    """
-    # Build call_id -> id mapping from assistant tool_calls
-    call_id_to_id: Dict[str, str] = {}
-    known_ids: set = set()
-    for msg in messages:
-        if msg.role == "assistant" and msg.tool_calls:
-            for tc in msg.tool_calls:
-                tc_id = tc.get("id")
-                if tc_id:
-                    known_ids.add(tc_id)
-                    call_id = tc.get("call_id")
-                    if call_id and call_id != tc_id:
-                        call_id_to_id[call_id] = tc_id
-
-    if not call_id_to_id:
-        return messages
-
-    # Fix tool results that reference call_id instead of id
-    result: List[Message] = []
-    for msg in messages:
-        if (
-            msg.role == "tool"
-            and msg.tool_call_id
-            and msg.tool_call_id not in known_ids
-            and msg.tool_call_id in call_id_to_id
-        ):
-            msg_copy = msg.model_copy(deep=True)
-            msg_copy.tool_call_id = call_id_to_id[msg.tool_call_id]
-            result.append(msg_copy)
-        else:
-            result.append(msg)
-    return result
-
-
 def reformat_tool_call_ids(messages: List[Message], prefix: str) -> List[Message]:
     """
     Remap tool call IDs across messages to use a target prefix.

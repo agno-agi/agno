@@ -1,12 +1,12 @@
-"""Tests for cross-model tool call ID remapping and reconciliation.
+"""Tests for cross-model tool call ID reformatting and normalization.
 
-Covers reformat_tool_call_ids, sync_tool_call_ids, and parallel tool calls
+Covers reformat_tool_call_ids, normalize_tool_messages, and parallel tool calls
 across OpenAI Chat (call_*), OpenAI Responses (fc_*/call_*), Claude (toolu_*),
 and Gemini (UUID-style) ID formats.
 """
 
 from agno.models.message import Message
-from agno.utils.message import normalize_tool_messages, sync_tool_call_ids, reformat_tool_call_ids
+from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -219,62 +219,6 @@ class TestReformatResponsesApiDualId:
 
 
 # ---------------------------------------------------------------------------
-# sync_tool_call_ids
-# ---------------------------------------------------------------------------
-
-
-class TestSyncToolCallIds:
-    def test_fixes_call_id_to_fc_id(self):
-        """Tool results referencing call_* should be reconciled to fc_* when assistant has both."""
-        tc = _make_tool_call("fc_abc123", call_id="call_xyz789")
-        msgs = [
-            _assistant_msg([tc]),
-            _tool_msg("call_xyz789"),  # References call_id, not id
-        ]
-        result = sync_tool_call_ids(msgs)
-        assert result[1].tool_call_id == "fc_abc123"
-
-    def test_noop_when_ids_match(self):
-        """No changes needed when tool results already reference the correct id."""
-        tc = _make_tool_call("fc_abc123", call_id="call_xyz789")
-        msgs = [_assistant_msg([tc]), _tool_msg("fc_abc123")]
-        result = sync_tool_call_ids(msgs)
-        assert result[1].tool_call_id == "fc_abc123"
-
-    def test_noop_without_dual_ids(self):
-        """Non-Responses API messages (no call_id) should pass through unchanged."""
-        tc = _make_tool_call("call_abc123")
-        msgs = [_assistant_msg([tc]), _tool_msg("call_abc123")]
-        result = sync_tool_call_ids(msgs)
-        assert result[1].tool_call_id == "call_abc123"
-
-    def test_parallel_reconciliation(self):
-        """Multiple parallel tool calls with dual IDs should all be reconciled."""
-        tcs = [
-            _make_tool_call("fc_001", call_id="call_aaa"),
-            _make_tool_call("fc_002", call_id="call_bbb"),
-            _make_tool_call("fc_003", call_id="call_ccc"),
-        ]
-        msgs = [
-            _assistant_msg(tcs),
-            _tool_msg("call_aaa", content="result1"),
-            _tool_msg("call_bbb", content="result2"),
-            _tool_msg("call_ccc", content="result3"),
-        ]
-        result = sync_tool_call_ids(msgs)
-        assert result[1].tool_call_id == "fc_001"
-        assert result[2].tool_call_id == "fc_002"
-        assert result[3].tool_call_id == "fc_003"
-
-    def test_does_not_mutate_original(self):
-        """Reconciliation should not modify the original messages."""
-        tc = _make_tool_call("fc_abc", call_id="call_xyz")
-        msgs = [_assistant_msg([tc]), _tool_msg("call_xyz")]
-        sync_tool_call_ids(msgs)
-        assert msgs[1].tool_call_id == "call_xyz"
-
-
-# ---------------------------------------------------------------------------
 # Claude format_messages — tool result merging
 # ---------------------------------------------------------------------------
 
@@ -309,20 +253,20 @@ class TestClaudeFormatMessages:
         tool_use_ids = {item["tool_use_id"] for item in content}
         assert tool_use_ids == {"toolu_001", "toolu_002"}
 
-    def test_cross_provider_ids_remapped_for_claude(self):
-        """Claude should handle tool calls from OpenAI Chat (call_* IDs) via reconciliation."""
+    def test_cross_provider_ids_passed_through_for_claude(self):
+        """Claude should handle tool calls from Responses API (fc_* IDs) directly."""
         from agno.utils.models.claude import format_messages
 
         tc = _make_tool_call("fc_abc", call_id="call_xyz")
         msgs = [
             Message(role="user", content="Hello"),
             _assistant_msg([tc]),
-            # Responses API stores tool_call_id as call_*
-            _tool_msg("call_xyz", content="Result"),
+            # Tool results now store fc_* (matching assistant id), no translation at storage time
+            _tool_msg("fc_abc", content="Result"),
         ]
         formatted, system = format_messages(msgs)
 
-        # Tool result should have been reconciled to fc_abc
+        # Tool result should match assistant's id directly
         tool_result = formatted[2]["content"][0]
         assert tool_result["tool_use_id"] == "fc_abc"
 
