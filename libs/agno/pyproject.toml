@@ -180,6 +180,7 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+docling = ["docling"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
@@ -316,6 +317,7 @@ knowledge = [
   "agno[csv]",
   "agno[excel]",
   "agno[markdown]",
+  "agno[docling]",
   "agno[chonkie]"
 ]
 
@@ -453,6 +455,7 @@ module = [
   "daytona_api_client.*",
   "discord.*",
   "docker.*",
+  "docling.*",
   "docx.*",
   "duckdb.*",
   "ddgs.*",

@@ -215,14 +215,40 @@ jobs:
               });
             }
 
+            // --- Determine if PR should be auto-closed ---
+            const shouldClose = labels.includes('issue-assigned-to-other') || labels.includes('possible-duplicate');
+
             // --- Post a single consolidated comment ---
             if (findings.length > 0) {
               const header = findings.length === 1
                 ? '### PR Triage\n\n'
                 : '### PR Triage\n\nA few things to address before this PR can be reviewed:\n\n';
 
-              const comment = header + findings.join('\n\n---\n\n');
+              let comment = header + findings.join('\n\n---\n\n');
+
+              if (shouldClose) {
+                comment += '\n\n---\n\n';
+                comment += '**This PR has been automatically closed.** ';
+                if (labels.includes('issue-assigned-to-other') && labels.includes('possible-duplicate')) {
+                  comment += 'The linked issue is already assigned to someone else and there is an existing PR for it. ';
+                } else if (labels.includes('issue-assigned-to-other')) {
+                  comment += 'The linked issue is already assigned to someone else. ';
+                } else {
+                  comment += 'There is already an open PR addressing this issue. ';
+                }
+                comment += 'If you believe your contribution is valuable, please comment on the original issue explaining your approach and why it might be preferred. ';
+                comment += 'A maintainer can reopen this PR if appropriate.';
+              }
+
               await github.rest.issues.createComment({
                 owner, repo, issue_number: prNumber, body: comment,
               });
+            }
+
+            // --- Auto-close PR if it conflicts with existing work ---
+            if (shouldClose) {
+              await github.rest.pulls.update({
+                owner, repo, pull_number: prNumber, state: 'closed',
+              });
+              console.log(`PR #${prNumber} auto-closed due to: ${labels.filter(l => l === 'issue-assigned-to-other' || l === 'possible-duplicate').join(', ')}`);
             }
