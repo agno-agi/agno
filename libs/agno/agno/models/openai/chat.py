@@ -387,7 +387,7 @@ class OpenAIChat(Model):
 
         # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
         messages = normalize_tool_messages(messages)
-        normalized = reformat_tool_call_ids(messages, prefix="call_")
+        normalized = reformat_tool_call_ids(messages, provider="openai_chat")
         return [self._format_message(m, compress_tool_results) for m in normalized]
 
     def invoke(

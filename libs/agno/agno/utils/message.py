@@ -103,30 +103,64 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
 
-def reformat_tool_call_ids(messages: List[Message], prefix: str) -> List[Message]:
+# ---------------------------------------------------------------------------
+# Provider tool call ID configuration
+# ---------------------------------------------------------------------------
+
+# Each provider has different requirements for tool call IDs.
+# Add new providers here as needed.
+PROVIDER_TOOL_ID_CONFIG: Dict[str, Dict[str, Union[str, int, None]]] = {
+    "openai_chat": {
+        "prefix": "call_",
+        "max_length": 40,
+        "call_id_prefix": None,  # No separate call_id needed
+    },
+    "openai_responses": {
+        "prefix": "fc_",
+        "max_length": None,
+        "call_id_prefix": "call_",  # Responses API requires a separate call_id with call_* prefix
+    },
+    "claude": {
+        "prefix": "toolu_",
+        "max_length": None,
+        "call_id_prefix": None,
+    },
+    "gemini": {
+        "prefix": None,  # Accepts any format — no reformatting needed
+        "max_length": None,
+        "call_id_prefix": None,
+    },
+}
+
+
+def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Message]:
     """
-    Remap tool call IDs across messages to use a target prefix.
+    Reformat tool call IDs to match a provider's requirements.
 
-    Different model providers use different ID prefixes:
-    - OpenAI Chat Completions: "call_" (max 40 chars)
-    - OpenAI Responses API: "fc_" (id) + "call_" (call_id)
-    - Claude: "toolu_"
-    - Gemini: varies
-
-    This function builds a mapping from old IDs to new IDs with the target prefix,
+    Each provider has different ID prefix and length constraints (see PROVIDER_TOOL_ID_CONFIG).
+    This function builds a mapping from foreign IDs to new IDs with the target prefix,
     then updates both assistant tool_calls[].id and tool result message tool_call_id
-    consistently. For the Responses API (prefix="fc_"), also generates a matching
-    "call_" prefixed call_id.
+    consistently.
 
-    The Responses API stores tool_calls with both "id" (fc_*) and "call_id" (call_*),
-    and its format_function_call_results translates tool result tool_call_id to the
-    call_id value. So tool results may reference either the "id" or the "call_id" —
-    both are mapped to the new ID.
+    For providers with a call_id_prefix (e.g. OpenAI Responses), also generates a matching
+    call_id on each tool call.
 
     Args:
         messages: List of messages to process (returns new list, does not modify in-place).
-        prefix: Target prefix for tool call IDs (e.g. "fc_", "call_").
+        provider: Provider key from PROVIDER_TOOL_ID_CONFIG (e.g. "openai_chat", "openai_responses").
     """
+    config = PROVIDER_TOOL_ID_CONFIG.get(provider)
+    if config is None:
+        return messages
+
+    prefix = config.get("prefix")
+    if prefix is None:
+        # Provider accepts any ID format — no reformatting needed
+        return messages
+
+    max_length = config.get("max_length")
+    call_id_prefix = config.get("call_id_prefix")
+
     # Build old -> new ID mapping from assistant tool_calls.
     # Map both tc["id"] and tc["call_id"] to the same new ID so tool results
     # referencing either value get remapped correctly.
@@ -137,26 +171,35 @@ def reformat_tool_call_ids(messages: List[Message], prefix: str) -> List[Message
         if msg.role == "assistant" and msg.tool_calls:
             for tc in msg.tool_calls:
                 old_id = tc.get("id")
-                if old_id and isinstance(old_id, str) and not old_id.startswith(prefix):
-                    if old_id not in id_map:
-                        new_id = f"{prefix}{counter:08x}"
-                        id_map[old_id] = new_id
+                if not (old_id and isinstance(old_id, str)):
+                    continue
 
-                        # Also map call_id -> new_id so tool results using call_id are found
-                        existing_call_id = tc.get("call_id")
-                        if existing_call_id and isinstance(existing_call_id, str) and existing_call_id != old_id:
-                            id_map[existing_call_id] = new_id
+                # Reformat if wrong prefix or exceeds max length
+                needs_reformat = not old_id.startswith(prefix)
+                if not needs_reformat and max_length and len(old_id) > max_length:
+                    needs_reformat = True
 
-                        # Generate a valid call_id for Responses API
+                if needs_reformat and old_id not in id_map:
+                    new_id = f"{prefix}{counter:08x}"
+                    id_map[old_id] = new_id
+
+                    # Also map call_id -> new_id so tool results using call_id are found
+                    existing_call_id = tc.get("call_id")
+                    if existing_call_id and isinstance(existing_call_id, str) and existing_call_id != old_id:
+                        id_map[existing_call_id] = new_id
+
+                    # Generate a matching call_id if the provider requires one
+                    if call_id_prefix:
                         if (
                             existing_call_id
                             and isinstance(existing_call_id, str)
-                            and existing_call_id.startswith("call_")
+                            and existing_call_id.startswith(call_id_prefix)
                         ):
                             call_id_map[old_id] = existing_call_id
                         else:
-                            call_id_map[old_id] = f"call_{counter:08x}"
-                        counter += 1
+                            call_id_map[old_id] = f"{call_id_prefix}{counter:08x}"
+
+                    counter += 1
 
     # No remapping needed
     if not id_map:
@@ -172,7 +215,8 @@ def reformat_tool_call_ids(messages: List[Message], prefix: str) -> List[Message
                     old_id = tc.get("id")
                     if old_id and old_id in id_map:
                         tc["id"] = id_map[old_id]
-                        tc["call_id"] = call_id_map.get(old_id, id_map[old_id])
+                        if call_id_prefix:
+                            tc["call_id"] = call_id_map.get(old_id, id_map[old_id])
             result.append(msg_copy)
         elif msg.role == "tool" and msg.tool_call_id and msg.tool_call_id in id_map:
             msg_copy = msg.model_copy(deep=True)

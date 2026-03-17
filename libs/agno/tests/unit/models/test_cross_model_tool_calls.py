@@ -45,7 +45,7 @@ class TestReformatToolCallIds:
         """IDs already matching target prefix should not be remapped."""
         tc = _make_tool_call("call_abc123")
         msgs = [_assistant_msg([tc]), _tool_msg("call_abc123")]
-        result = reformat_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
         assert result[0].tool_calls[0]["id"] == "call_abc123"
         assert result[1].tool_call_id == "call_abc123"
 
@@ -53,7 +53,7 @@ class TestReformatToolCallIds:
         """Claude toolu_* IDs should be remapped to call_* for OpenAI Chat."""
         tc = _make_tool_call("toolu_01ABC")
         msgs = [_assistant_msg([tc]), _tool_msg("toolu_01ABC")]
-        result = reformat_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
         assert result[0].tool_calls[0]["id"].startswith("call_")
         assert result[1].tool_call_id == result[0].tool_calls[0]["id"]
 
@@ -61,7 +61,7 @@ class TestReformatToolCallIds:
         """OpenAI Chat call_* IDs should be remapped to fc_* for Responses API."""
         tc = _make_tool_call("call_xyz789")
         msgs = [_assistant_msg([tc]), _tool_msg("call_xyz789")]
-        result = reformat_tool_call_ids(msgs, prefix="fc_")
+        result = reformat_tool_call_ids(msgs, provider="openai_responses")
         assert result[0].tool_calls[0]["id"].startswith("fc_")
         # Responses API also needs call_id
         assert result[0].tool_calls[0]["call_id"].startswith("call_")
@@ -71,18 +71,33 @@ class TestReformatToolCallIds:
         """Gemini UUID-style IDs should be remapped to toolu_* for Claude."""
         tc = _make_tool_call("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         msgs = [_assistant_msg([tc]), _tool_msg("a1b2c3d4-e5f6-7890-abcd-ef1234567890")]
-        result = reformat_tool_call_ids(msgs, prefix="toolu_")
+        result = reformat_tool_call_ids(msgs, provider="claude")
         assert result[0].tool_calls[0]["id"].startswith("toolu_")
         assert result[1].tool_call_id == result[0].tool_calls[0]["id"]
 
+    def test_gemini_provider_is_noop(self):
+        """Gemini accepts any ID format, so no reformatting should happen."""
+        tc = _make_tool_call("call_abc123")
+        msgs = [_assistant_msg([tc]), _tool_msg("call_abc123")]
+        result = reformat_tool_call_ids(msgs, provider="gemini")
+        assert result[0].tool_calls[0]["id"] == "call_abc123"
+        assert result is msgs  # Should return the same list object
+
+    def test_unknown_provider_is_noop(self):
+        """Unknown provider should pass through unchanged."""
+        tc = _make_tool_call("call_abc123")
+        msgs = [_assistant_msg([tc]), _tool_msg("call_abc123")]
+        result = reformat_tool_call_ids(msgs, provider="unknown_provider")
+        assert result is msgs
+
     def test_empty_messages(self):
         """Empty message list should return empty."""
-        assert reformat_tool_call_ids([], prefix="call_") == []
+        assert reformat_tool_call_ids([], provider="openai_chat") == []
 
     def test_no_tool_calls(self):
         """Messages without tool calls should pass through unchanged."""
         msgs = [Message(role="user", content="Hello"), Message(role="assistant", content="Hi")]
-        result = reformat_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
         assert len(result) == 2
         assert result[0].content == "Hello"
 
@@ -90,9 +105,21 @@ class TestReformatToolCallIds:
         """Remapping should not modify the original messages."""
         tc = _make_tool_call("toolu_01ABC")
         msgs = [_assistant_msg([tc]), _tool_msg("toolu_01ABC")]
-        reformat_tool_call_ids(msgs, prefix="call_")
+        reformat_tool_call_ids(msgs, provider="openai_chat")
         assert msgs[0].tool_calls[0]["id"] == "toolu_01ABC"
         assert msgs[1].tool_call_id == "toolu_01ABC"
+
+    def test_max_length_triggers_reformat(self):
+        """IDs that match the prefix but exceed max_length should be reformatted."""
+        # OpenAI Chat has max_length=40. Create a call_* ID that's too long.
+        long_id = "call_" + "a" * 40  # 45 chars, exceeds 40
+        tc = _make_tool_call(long_id)
+        msgs = [_assistant_msg([tc]), _tool_msg(long_id)]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+        new_id = result[0].tool_calls[0]["id"]
+        assert new_id.startswith("call_")
+        assert len(new_id) <= 40
+        assert result[1].tool_call_id == new_id
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +141,7 @@ class TestReformatParallelToolCalls:
             _tool_msg("toolu_002", content="London: Rainy"),
             _tool_msg("toolu_003", content="Tokyo: Cloudy"),
         ]
-        result = reformat_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
 
         # All 3 assistant tool_calls should have new call_* IDs
         new_ids = [tc["id"] for tc in result[0].tool_calls]
@@ -137,7 +164,7 @@ class TestReformatParallelToolCalls:
             _tool_msg("call_aaa", tool_name="search", content="result1"),
             _tool_msg("call_bbb", tool_name="calculate", content="result2"),
         ]
-        result = reformat_tool_call_ids(msgs, prefix="fc_")
+        result = reformat_tool_call_ids(msgs, provider="openai_responses")
 
         for tc in result[0].tool_calls:
             assert tc["id"].startswith("fc_")
@@ -165,9 +192,9 @@ class TestReformatParallelToolCalls:
         ]
 
         # Remap all to call_* (for OpenAI Chat)
-        result = reformat_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
 
-        # call_111 should stay (already has prefix)
+        # call_111 should stay (already has prefix and under max_length)
         assert result[0].tool_calls[0]["id"] == "call_111"
         assert result[1].tool_call_id == "call_111"
 
@@ -197,7 +224,7 @@ class TestReformatResponsesApiDualId:
         msgs = [_assistant_msg([tc]), _tool_msg("call_original456")]
 
         # Remap to call_* for OpenAI Chat
-        result = reformat_tool_call_ids(msgs, prefix="call_")
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
         new_id = result[0].tool_calls[0]["id"]
         assert new_id.startswith("call_")
         # Tool result referenced call_id, should now match new_id
@@ -208,10 +235,9 @@ class TestReformatResponsesApiDualId:
         tc = _make_tool_call("fc_abc", call_id="call_def")
         msgs = [
             _assistant_msg([tc]),
-            # Tool result stored with call_* (as Responses API does)
             _tool_msg("call_def"),
         ]
-        result = reformat_tool_call_ids(msgs, prefix="toolu_")
+        result = reformat_tool_call_ids(msgs, provider="claude")
         new_id = result[0].tool_calls[0]["id"]
         assert new_id.startswith("toolu_")
         # Tool result should match even though it referenced call_id
