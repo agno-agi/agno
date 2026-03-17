@@ -1,6 +1,8 @@
 import asyncio
 import hashlib
 import io
+import json
+import math
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -16,6 +18,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
+from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
@@ -53,15 +56,268 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    # Semantic cache for query-level retrieval caching.
+    # Cache hits are based on embedding similarity and matching retrieval context.
+    enable_semantic_cache: bool = False
+    semantic_cache_similarity_threshold: float = 0.92
+    semantic_cache_ttl: Optional[int] = 300
+    semantic_cache_max_entries: int = 256
+    semantic_cache_embedder: Optional[Embedder] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
+        if not (0.0 <= self.semantic_cache_similarity_threshold <= 1.0):
+            raise ValueError("semantic_cache_similarity_threshold must be between 0.0 and 1.0")
+        if self.semantic_cache_max_entries < 0:
+            raise ValueError("semantic_cache_max_entries must be >= 0")
+        if self.semantic_cache_ttl is not None and self.semantic_cache_ttl < 0:
+            raise ValueError("semantic_cache_ttl must be >= 0 or None")
+
+        self._semantic_cache_entries: List[Dict[str, Any]] = []
+
         if self.vector_db and not self.vector_db.exists():
             self.vector_db.create()
 
         self.construct_readers()
+
+    # ==========================================
+    # PUBLIC API - SEMANTIC CACHE METHODS
+    # ==========================================
+
+    def clear_semantic_cache(self) -> None:
+        """Clear all semantic cache entries."""
+        self._semantic_cache_entries.clear()
+
+    async def aclear_semantic_cache(self) -> None:
+        """Async version of clear_semantic_cache."""
+        self.clear_semantic_cache()
+
+    # ==========================================
+    # INTERNAL - SEMANTIC CACHE HELPERS
+    # ==========================================
+
+    def _get_semantic_cache_embedder(self) -> Optional[Embedder]:
+        if self.semantic_cache_embedder is not None:
+            return self.semantic_cache_embedder
+
+        vector_db_embedder = getattr(self.vector_db, "embedder", None) if self.vector_db is not None else None
+        if isinstance(vector_db_embedder, Embedder):
+            return vector_db_embedder
+        return None
+
+    def _serialize_semantic_cache_value(self, value: Any) -> Any:
+        if isinstance(value, FilterExpr):
+            return value.to_dict()
+        if isinstance(value, dict):
+            return {k: self._serialize_semantic_cache_value(v) for k, v in sorted(value.items())}
+        if isinstance(value, list):
+            return [self._serialize_semantic_cache_value(v) for v in value]
+        return value
+
+    def _build_semantic_cache_context_key(
+        self,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        search_type: Optional[str],
+        max_results: int,
+    ) -> str:
+        context_payload = {
+            "knowledge_name": self.name,
+            "vector_db_id": getattr(self.vector_db, "id", None) if self.vector_db is not None else None,
+            "vector_db_class": self.vector_db.__class__.__name__ if self.vector_db is not None else None,
+            "filters": self._serialize_semantic_cache_value(filters),
+            "search_type": search_type,
+            "max_results": max_results,
+        }
+        context_str = json.dumps(context_payload, sort_keys=True, default=str)
+        return hashlib.md5(context_str.encode()).hexdigest()
+
+    def _get_effective_search_type(self) -> Optional[str]:
+        if self.vector_db is None or not hasattr(self.vector_db, "search_type"):
+            return None
+        vector_db_search_type = getattr(self.vector_db, "search_type")
+        if vector_db_search_type is None:
+            return None
+        if hasattr(vector_db_search_type, "value"):
+            return str(vector_db_search_type.value)
+        return str(vector_db_search_type)
+
+    def _calculate_cosine_similarity(self, vector_a: List[float], vector_b: List[float]) -> Optional[float]:
+        if len(vector_a) == 0 or len(vector_b) == 0 or len(vector_a) != len(vector_b):
+            return None
+        dot_product = sum(a * b for a, b in zip(vector_a, vector_b))
+        norm_a = math.sqrt(sum(a * a for a in vector_a))
+        norm_b = math.sqrt(sum(b * b for b in vector_b))
+        if norm_a == 0.0 or norm_b == 0.0:
+            return None
+        return dot_product / (norm_a * norm_b)
+
+    def _prune_semantic_cache(self) -> None:
+        if not self._semantic_cache_entries:
+            return
+
+        now = time.time()
+        if self.semantic_cache_ttl is not None:
+            self._semantic_cache_entries = [
+                entry
+                for entry in self._semantic_cache_entries
+                if (now - cast(float, entry["timestamp"])) <= self.semantic_cache_ttl
+            ]
+
+        if self.semantic_cache_max_entries == 0:
+            self._semantic_cache_entries.clear()
+            return
+
+        while len(self._semantic_cache_entries) > self.semantic_cache_max_entries:
+            self._semantic_cache_entries.pop(0)
+
+    def _get_semantic_query_embedding(self, query: str) -> Optional[List[float]]:
+        embedder = self._get_semantic_cache_embedder()
+        if embedder is None:
+            return None
+
+        try:
+            embedding = embedder.get_embedding(query)
+            return embedding if embedding else None
+        except Exception as e:
+            log_warning(f"Semantic cache embedding failed: {e}")
+            return None
+
+    async def _aget_semantic_query_embedding(self, query: str) -> Optional[List[float]]:
+        embedder = self._get_semantic_cache_embedder()
+        if embedder is None:
+            return None
+
+        try:
+            if hasattr(embedder, "async_get_embedding"):
+                try:
+                    embedding = await embedder.async_get_embedding(query)
+                except NotImplementedError:
+                    embedding = embedder.get_embedding(query)
+            else:
+                embedding = embedder.get_embedding(query)
+            return embedding if embedding else None
+        except Exception as e:
+            log_warning(f"Semantic cache async embedding failed: {e}")
+            return None
+
+    def _semantic_cache_lookup(
+        self,
+        query_embedding: List[float],
+        context_key: str,
+    ) -> Optional[List[Document]]:
+        self._prune_semantic_cache()
+
+        best_similarity = -1.0
+        best_entry_docs: Optional[List[Dict[str, Any]]] = None
+
+        for entry in reversed(self._semantic_cache_entries):
+            if entry["context_key"] != context_key:
+                continue
+            similarity = self._calculate_cosine_similarity(
+                query_embedding, cast(List[float], entry["query_embedding"])
+            )
+            if similarity is None:
+                continue
+            if similarity >= self.semantic_cache_similarity_threshold and similarity > best_similarity:
+                best_similarity = similarity
+                best_entry_docs = cast(List[Dict[str, Any]], entry["docs_snapshot"])
+
+        if best_entry_docs is not None:
+            return [self._deserialize_document_from_semantic_cache(doc_data) for doc_data in best_entry_docs]
+        return None
+
+    def _semantic_cache_store(
+        self,
+        query_embedding: List[float],
+        context_key: str,
+        docs: List[Document],
+    ) -> None:
+        if not docs:
+            return
+
+        self._prune_semantic_cache()
+        self._semantic_cache_entries.append(
+            {
+                "query_embedding": query_embedding,
+                "docs_snapshot": [self._serialize_document_for_semantic_cache(doc) for doc in docs],
+                "context_key": context_key,
+                "timestamp": time.time(),
+            }
+        )
+        self._prune_semantic_cache()
+
+    def _safe_clone_for_semantic_cache(self, value: Any) -> Any:
+        """Clone cache values safely, falling back for non-serializable objects."""
+        if value is None:
+            return None
+        try:
+            return json.loads(json.dumps(value))
+        except Exception:
+            pass
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return str(value)
+
+    def _serialize_document_for_semantic_cache(self, doc: Document) -> Dict[str, Any]:
+        """Serialize only stable, retrieval-relevant fields for semantic cache storage."""
+        meta_data = self._safe_clone_for_semantic_cache(doc.meta_data)
+        if not isinstance(meta_data, dict):
+            meta_data = {"raw": str(meta_data)}
+
+        usage = self._safe_clone_for_semantic_cache(doc.usage)
+        if usage is not None and not isinstance(usage, dict):
+            usage = {"raw": str(usage)}
+
+        embedding = self._safe_clone_for_semantic_cache(doc.embedding)
+        if embedding is not None and not isinstance(embedding, (list, dict)):
+            embedding = None
+
+        return {
+            "id": doc.id,
+            "name": doc.name,
+            "content": doc.content,
+            "meta_data": meta_data,
+            "usage": usage,
+            "embedding": embedding,
+            "reranking_score": doc.reranking_score,
+            "content_id": doc.content_id,
+            "content_origin": doc.content_origin,
+            "size": doc.size,
+        }
+
+    def _deserialize_document_from_semantic_cache(self, doc_data: Dict[str, Any]) -> Document:
+        """Rebuild a Document from semantic cache snapshot without non-serializable fields."""
+        meta_data = self._safe_clone_for_semantic_cache(doc_data.get("meta_data", {}))
+        if not isinstance(meta_data, dict):
+            meta_data = {}
+
+        usage = self._safe_clone_for_semantic_cache(doc_data.get("usage"))
+        if usage is not None and not isinstance(usage, dict):
+            usage = None
+
+        embedding = self._safe_clone_for_semantic_cache(doc_data.get("embedding"))
+        if embedding is not None and not isinstance(embedding, (list, dict)):
+            embedding = None
+
+        vector_db_embedder = getattr(self.vector_db, "embedder", None) if self.vector_db is not None else None
+        embedder = vector_db_embedder if isinstance(vector_db_embedder, Embedder) else None
+
+        return Document(
+            content=cast(str, doc_data["content"]),
+            id=cast(Optional[str], doc_data.get("id")),
+            name=cast(Optional[str], doc_data.get("name")),
+            meta_data=cast(Dict[str, Any], meta_data),
+            embedder=embedder,
+            embedding=cast(Optional[List[float]], embedding),
+            usage=cast(Optional[Dict[str, Any]], usage),
+            reranking_score=cast(Optional[float], doc_data.get("reranking_score")),
+            content_id=cast(Optional[str], doc_data.get("content_id")),
+            content_origin=cast(Optional[str], doc_data.get("content_origin")),
+            size=cast(Optional[int], doc_data.get("size")),
+        )
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -539,8 +795,47 @@ class Knowledge(RemoteKnowledge):
                     search_filters = [EQ("linked_to", self.name), *search_filters]
 
             _max_results = max_results or self.max_results
+            effective_search_type = self._get_effective_search_type()
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+
+            query_embedding: Optional[List[float]] = None
+            context_key: Optional[str] = None
+
+            if self.enable_semantic_cache:
+                try:
+                    query_embedding = self._get_semantic_query_embedding(query)
+                    if query_embedding is not None:
+                        context_key = self._build_semantic_cache_context_key(
+                            filters=search_filters,
+                            search_type=effective_search_type,
+                            max_results=_max_results,
+                        )
+                        cached_docs = self._semantic_cache_lookup(query_embedding=query_embedding, context_key=context_key)
+                        if cached_docs is not None:
+                            log_debug("Semantic cache hit for knowledge search")
+                            return cached_docs
+                        log_debug("Semantic cache miss for knowledge search")
+                except Exception as e:
+                    log_warning(f"Semantic cache lookup failed. Continuing with vector search: {e}")
+
+            docs = self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+
+            if self.enable_semantic_cache and docs:
+                try:
+                    if query_embedding is None:
+                        query_embedding = self._get_semantic_query_embedding(query)
+                    if query_embedding is not None:
+                        if context_key is None:
+                            context_key = self._build_semantic_cache_context_key(
+                                filters=search_filters,
+                                search_type=effective_search_type,
+                                max_results=_max_results,
+                            )
+                        self._semantic_cache_store(query_embedding=query_embedding, context_key=context_key, docs=docs)
+                except Exception as e:
+                    log_warning(f"Semantic cache store failed. Returning fresh search results: {e}")
+
+            return docs
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -579,12 +874,51 @@ class Knowledge(RemoteKnowledge):
                     search_filters = [EQ("linked_to", self.name), *search_filters]
 
             _max_results = max_results or self.max_results
+            effective_search_type = self._get_effective_search_type()
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+
+            query_embedding: Optional[List[float]] = None
+            context_key: Optional[str] = None
+
+            if self.enable_semantic_cache:
+                try:
+                    query_embedding = await self._aget_semantic_query_embedding(query)
+                    if query_embedding is not None:
+                        context_key = self._build_semantic_cache_context_key(
+                            filters=search_filters,
+                            search_type=effective_search_type,
+                            max_results=_max_results,
+                        )
+                        cached_docs = self._semantic_cache_lookup(query_embedding=query_embedding, context_key=context_key)
+                        if cached_docs is not None:
+                            log_debug("Semantic cache hit for async knowledge search")
+                            return cached_docs
+                        log_debug("Semantic cache miss for async knowledge search")
+                except Exception as e:
+                    log_warning(f"Semantic cache lookup failed. Continuing with vector search: {e}")
+
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
+                docs = await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+                docs = self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+
+            if self.enable_semantic_cache and docs:
+                try:
+                    if query_embedding is None:
+                        query_embedding = await self._aget_semantic_query_embedding(query)
+                    if query_embedding is not None:
+                        if context_key is None:
+                            context_key = self._build_semantic_cache_context_key(
+                                filters=search_filters,
+                                search_type=effective_search_type,
+                                max_results=_max_results,
+                            )
+                        self._semantic_cache_store(query_embedding=query_embedding, context_key=context_key, docs=docs)
+                except Exception as e:
+                    log_warning(f"Semantic cache store failed. Returning fresh search results: {e}")
+
+            return docs
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
