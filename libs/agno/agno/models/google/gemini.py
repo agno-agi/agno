@@ -112,6 +112,9 @@ class Gemini(Model):
     thinking_level: Optional[str] = None  # "low", "high"
     request_params: Optional[Dict[str, Any]] = None
 
+    # Timeout in seconds
+    timeout: Optional[float] = None
+
     # Client parameters
     credentials: Optional[Credentials] = None
     api_key: Optional[str] = None
@@ -166,6 +169,12 @@ class Gemini(Model):
                 client_params["credentials"] = self.credentials
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
+
+        if self.timeout is not None:
+            http_options = client_params.get("http_options", {})
+            if isinstance(http_options, dict):
+                http_options["timeout"] = int(self.timeout * 1000)
+                client_params["http_options"] = http_options
 
         if self.client_params:
             client_params.update(self.client_params)
