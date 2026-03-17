@@ -13,7 +13,7 @@ from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent, ClaudeAgent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -399,7 +399,11 @@ class AgentOS:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
         # Registry router
         if self.registry is not None:
@@ -495,7 +499,7 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
-            if isinstance(agent, RemoteAgent):
+            if isinstance(agent, (RemoteAgent, ClaudeAgent)):
                 continue
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -587,7 +591,11 @@ class AgentOS:
             existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
             for agent in self.agents:
                 agent_id = getattr(agent, "id", None)
-                if not isinstance(agent, RemoteAgent) and agent_id is not None and agent_id not in existing_agent_ids:
+                if (
+                    not isinstance(agent, (RemoteAgent, ClaudeAgent))
+                    and agent_id is not None
+                    and agent_id not in existing_agent_ids
+                ):
                     self.registry.agents.append(agent)
                     existing_agent_ids.add(agent_id)
 
@@ -738,8 +746,14 @@ class AgentOS:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            log_debug("Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS")
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            log_debug(
+                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
+            )
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 routers.append(_get_disabled_feature_router(prefix, tag, "db"))
 
         # Registry router

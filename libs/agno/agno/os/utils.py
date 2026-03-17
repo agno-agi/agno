@@ -7,7 +7,7 @@ from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent, ClaudeAgent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
@@ -505,12 +505,12 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
 def get_agent_by_id(
     agent_id: str,
-    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    agents: Optional[List[Union[Agent, RemoteAgent, ClaudeAgent]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
     create_fresh: bool = False,
-) -> Optional[Union[Agent, RemoteAgent]]:
+) -> Optional[Union[Agent, RemoteAgent, ClaudeAgent]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new agent instance using deep_copy() to prevent

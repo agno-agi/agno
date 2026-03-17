@@ -16,6 +16,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.agent.claude import ClaudeAgent
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
@@ -359,7 +360,7 @@ def get_agent_router(
 
         # Background execution: return 202 immediately with run metadata
         if background:
-            if isinstance(agent, RemoteAgent):
+            if isinstance(agent, (RemoteAgent, ClaudeAgent)):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
             if not agent.db:
                 raise HTTPException(
@@ -532,7 +533,7 @@ def get_agent_router(
 
         # Fetch existing run once for validation and potential approval resolution
         existing_run = None
-        if session_id and not isinstance(agent, RemoteAgent):
+        if session_id and not isinstance(agent, (RemoteAgent, ClaudeAgent)):
             existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
 
         # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
@@ -665,6 +666,19 @@ def get_agent_router(
             for agent in accessible_agents:
                 if isinstance(agent, RemoteAgent):
                     agents.append(await agent.get_agent_config())
+                elif isinstance(agent, ClaudeAgent):
+                    agents.append(
+                        AgentResponse(
+                            id=agent.agent_id,
+                            name=agent.name,
+                            description=agent.description,
+                            model={
+                                "name": "ClaudeAgentSDK",
+                                "model": agent.model or "claude-sonnet-4-5",
+                                "provider": "Anthropic",
+                            },
+                        )
+                    )
                 else:
                     agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
                     agents.append(agent_response)
@@ -728,6 +742,13 @@ def get_agent_router(
 
         if isinstance(agent, RemoteAgent):
             return await agent.get_agent_config()
+        elif isinstance(agent, ClaudeAgent):
+            return AgentResponse(
+                id=agent.agent_id,
+                name=agent.name,
+                description=agent.description,
+                model={"name": "ClaudeAgentSDK", "model": agent.model or "claude-sonnet-4-5", "provider": "Anthropic"},
+            )
         else:
             return await AgentResponse.from_agent(agent=agent)
 
@@ -754,7 +775,7 @@ def get_agent_router(
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
+        if isinstance(agent, (RemoteAgent, ClaudeAgent)):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
@@ -788,7 +809,7 @@ def get_agent_router(
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
+        if isinstance(agent, (RemoteAgent, ClaudeAgent)):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 
         # Load the session to get its runs
