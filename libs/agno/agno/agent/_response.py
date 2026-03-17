@@ -26,11 +26,10 @@ if TYPE_CHECKING:
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
@@ -39,6 +38,8 @@ from agno.tools.function import Function
 from agno.utils.events import (
     create_compression_completed_event,
     create_compression_started_event,
+    create_followups_completed_event,
+    create_followups_started_event,
     create_model_request_completed_event,
     create_model_request_started_event,
     create_parser_model_response_completed_event,
@@ -62,27 +63,6 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
-
-
-def calculate_run_metrics(
-    agent: Agent, messages: List[Message], current_run_metrics: Optional[Metrics] = None
-) -> Metrics:
-    """Sum the metrics of the given messages into a Metrics object"""
-    metrics = current_run_metrics or Metrics()
-
-    assistant_message_role = agent.model.assistant_message_role if agent.model is not None else "assistant"
-    for m in messages:
-        if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-            metrics += m.metrics
-
-    # If the run metrics were already initialized, keep the time related metrics
-    if current_run_metrics is not None:
-        metrics.timer = current_run_metrics.timer
-        metrics.duration = current_run_metrics.duration
-        metrics.time_to_first_token = current_run_metrics.time_to_first_token
-
-    return metrics
-
 
 ###########################################################################
 # Reasoning
@@ -302,6 +282,7 @@ def reason(
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -348,6 +329,7 @@ async def areason(
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
     )
 
@@ -382,7 +364,11 @@ def process_parser_response(
 
 
 def parse_response_with_parser_model(
-    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    agent: Agent,
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.agent._messages import get_messages_for_parser_model
@@ -402,6 +388,18 @@ def parse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(
+                parser_model_response,
+                agent.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics if run_response is not None else None,
+            )
+
         process_parser_response(
             agent=agent,
             model_response=model_response,
@@ -414,7 +412,11 @@ def parse_response_with_parser_model(
 
 
 async def aparse_response_with_parser_model(
-    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    agent: Agent,
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.agent._messages import get_messages_for_parser_model
@@ -434,6 +436,18 @@ async def aparse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(
+                parser_model_response,
+                agent.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics if run_response is not None else None,
+            )
+
         process_parser_response(
             agent=agent,
             model_response=model_response,
@@ -477,6 +491,7 @@ def parse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             ):
                 yield from handle_model_response_chunk(
                     agent,
@@ -544,6 +559,7 @@ async def aparse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             )
             async for model_response_event in model_response_stream:  # type: ignore
                 for event in handle_model_response_chunk(
@@ -580,7 +596,9 @@ async def aparse_response_with_parser_model_stream(
             log_warning("A response model is required to parse the response with a parser model")
 
 
-def generate_response_with_output_model(agent: Agent, model_response: ModelResponse, run_messages: RunMessages) -> None:
+def generate_response_with_output_model(
+    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_response: Optional[RunOutput] = None
+) -> None:
     """Parse the model response using the output model."""
     from agno.agent._messages import get_messages_for_output_model
 
@@ -589,6 +607,18 @@ def generate_response_with_output_model(agent: Agent, model_response: ModelRespo
 
     messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
     output_model_response: ModelResponse = agent.output_model.response(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(
+            output_model_response,
+            agent.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics if run_response is not None else None,
+        )
+
     model_response.content = output_model_response.content
 
 
@@ -621,7 +651,9 @@ def generate_response_with_output_model_stream(
 
     model_response = ModelResponse(content="")
 
-    for model_response_event in agent.output_model.response_stream(messages=messages_for_output_model):
+    for model_response_event in agent.output_model.response_stream(
+        messages=messages_for_output_model, run_response=run_response
+    ):
         yield from handle_model_response_chunk(
             agent,
             session=session,
@@ -643,12 +675,10 @@ def generate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
 async def agenerate_response_with_output_model(
-    agent: Agent, model_response: ModelResponse, run_messages: RunMessages
+    agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_response: Optional[RunOutput] = None
 ) -> None:
     """Parse the model response using the output model."""
     from agno.agent._messages import get_messages_for_output_model
@@ -658,6 +688,18 @@ async def agenerate_response_with_output_model(
 
     messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
     output_model_response: ModelResponse = await agent.output_model.aresponse(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(
+            output_model_response,
+            agent.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics if run_response is not None else None,
+        )
+
     model_response.content = output_model_response.content
 
 
@@ -690,7 +732,9 @@ async def agenerate_response_with_output_model_stream(
 
     model_response = ModelResponse(content="")
 
-    model_response_stream = agent.output_model.aresponse_stream(messages=messages_for_output_model)
+    model_response_stream = agent.output_model.aresponse_stream(
+        messages=messages_for_output_model, run_response=run_response
+    )
 
     async for model_response_event in model_response_stream:
         for event in handle_model_response_chunk(
@@ -715,8 +759,6 @@ async def agenerate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-    # Update the RunResponse metrics
-    run_response.metrics = calculate_run_metrics(agent, messages_for_run_response)
 
 
 # ---------------------------------------------------------------------------
@@ -985,10 +1027,6 @@ def update_run_response(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1117,10 +1155,6 @@ def handle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
     # Determine reasoning completed
     if stream_events and reasoning_state["reasoning_started"]:
@@ -1273,10 +1307,6 @@ async def ahandle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
-    # Update the RunOutput metrics
-    run_response.metrics = calculate_run_metrics(
-        agent, messages=messages_for_run_response, current_run_metrics=run_response.metrics
-    )
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
@@ -1489,12 +1519,12 @@ def handle_model_response_chunk(
                 if model_response.images is None:
                     model_response.images = []
                 model_response.images.extend(model_response_event.images)
-                # Store media in run_response if store_media is enabled
-                if agent.store_media:
-                    for image in model_response_event.images:
-                        if run_response.images is None:
-                            run_response.images = []
-                        run_response.images.append(image)
+                # Always store media in run_response for the caller;
+                # store_media only controls DB persistence (handled by cleanup_and_store)
+                for image in model_response_event.images:
+                    if run_response.images is None:
+                        run_response.images = []
+                    run_response.images.append(image)
 
         # Handle tool interruption events (HITL flow)
         elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
@@ -1652,3 +1682,238 @@ def handle_model_response_chunk(
                         events_to_skip=agent.events_to_skip,  # type: ignore
                         store_events=agent.store_events,
                     )
+
+
+# ---------------------------------------------------------------------------
+# Follow-Up Suggestions
+# ---------------------------------------------------------------------------
+
+
+def _get_followups_response_format(model: Model) -> Optional[Union[Dict, Type[BaseModel]]]:
+    """Get the response format for Followups based on model capabilities."""
+    if model.supports_native_structured_outputs:
+        return Followups
+    elif model.supports_json_schema_outputs:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "Followups",
+                "schema": Followups.model_json_schema(),
+            },
+        }
+    else:
+        return {"type": "json_object"}
+
+
+def _build_followup_messages(
+    response_content: Any, num_suggestions: int, user_message: Optional[str] = None
+) -> List[Message]:
+    """Build the messages for the followups model call."""
+    import json
+
+    system_prompt = (
+        "Based on the user's message and the assistant's response below, generate follow-up suggestions. "
+        "Each suggestion should be a short action-oriented prompt (5-10 words). "
+        "Cover different angles: dig deeper, practical next step, or alternative perspective."
+    )
+
+    # Stringify content if needed
+    if isinstance(response_content, str):
+        content_str = response_content
+    elif isinstance(response_content, BaseModel):
+        content_str = response_content.model_dump_json()
+    elif isinstance(response_content, dict):
+        content_str = json.dumps(response_content)
+    else:
+        content_str = str(response_content)
+
+    parts = []
+    if user_message:
+        parts.append(f"User message:\n{user_message}")
+    parts.append(f"Assistant response:\n{content_str}")
+    parts.append(f"\nGenerate exactly {num_suggestions} follow-up suggestions.")
+
+    return [
+        Message(role="system", content=system_prompt),
+        Message(role="user", content="\n\n".join(parts)),
+    ]
+
+
+def _parse_followups_response(model_response: ModelResponse) -> Optional[List[str]]:
+    """Parse the model response into a flat list of followup strings."""
+    import json
+
+    followups_obj: Optional[Followups] = None
+
+    if model_response.parsed is not None:
+        if isinstance(model_response.parsed, Followups):
+            followups_obj = model_response.parsed
+        elif isinstance(model_response.parsed, dict):
+            try:
+                followups_obj = Followups.model_validate(model_response.parsed)
+            except Exception:
+                pass
+
+    # Fall back to parsing content as JSON
+    if followups_obj is None and model_response.content:
+        try:
+            data = json.loads(model_response.content)
+            followups_obj = Followups.model_validate(data)
+        except Exception:
+            log_warning("Failed to parse followups from model response")
+
+    return followups_obj.suggestions if followups_obj is not None else None
+
+
+def _accumulate_followups_metrics(model_response: ModelResponse, model: Model, run_response: RunOutput) -> None:
+    """Accumulate metrics from the followups model call into the run response."""
+    from agno.metrics import ModelType, accumulate_model_metrics
+
+    accumulate_model_metrics(
+        model_response,
+        model,
+        ModelType.FOLLOWUP_MODEL,
+        run_response.metrics if run_response is not None else None,
+    )
+
+
+def generate_followups(
+    agent: Agent,
+    run_response: RunOutput,
+) -> None:
+    """Generate followups after the main response (sync, non-streaming)."""
+    if not agent.followups or run_response.content is None:
+        return
+
+    model = agent.followup_model or agent.model
+    if model is None:
+        return
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = model.response(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+
+async def agenerate_followups(
+    agent: Agent,
+    run_response: RunOutput,
+) -> None:
+    """Generate followups after the main response (async, non-streaming)."""
+    if not agent.followups or run_response.content is None:
+        return
+
+    model = agent.followup_model or agent.model
+    if model is None:
+        return
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = await model.aresponse(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+
+def generate_followups_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    stream_events: bool = True,
+) -> Iterator[RunOutputEvent]:
+    """Generate followups after the main response (sync, streaming)."""
+    if not agent.followups or run_response.content is None:
+        return
+
+    model = agent.followup_model or agent.model
+    if model is None:
+        return
+
+    if stream_events:
+        yield handle_event(
+            create_followups_started_event(run_response),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = model.response(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+    if stream_events:
+        yield handle_event(
+            create_followups_completed_event(run_response, followups=run_response.followups),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
+
+async def agenerate_followups_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    stream_events: bool = True,
+) -> AsyncIterator[RunOutputEvent]:
+    """Generate followups after the main response (async, streaming)."""
+    if not agent.followups or run_response.content is None:
+        return
+
+    model = agent.followup_model or agent.model
+    if model is None:
+        return
+
+    if stream_events:
+        yield handle_event(
+            create_followups_started_event(run_response),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = await model.aresponse(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        _accumulate_followups_metrics(model_response, model, run_response)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+    if stream_events:
+        yield handle_event(
+            create_followups_completed_event(run_response, followups=run_response.followups),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )

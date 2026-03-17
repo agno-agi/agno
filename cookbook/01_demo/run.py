@@ -2,7 +2,7 @@
 Agno Demo - AgentOS Entrypoint
 ================================
 
-Serves all demo agents, teams, and workflows via AgentOS.
+Serves demo agents, teams, and workflows via AgentOS.
 """
 
 from pathlib import Path
