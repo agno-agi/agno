@@ -4,7 +4,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, Dict, List, Optional, Union
 from uuid import uuid4
-import yaml
 
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -204,7 +203,7 @@ class DoclingReader(Reader):
                     stream_name = f"{doc_name}"
                 source = DocumentStream(name=stream_name, stream=file)
             else:
-                raise ValueError(f"Unsupported file type.")
+                raise ValueError("Unsupported file type.")
 
             result = self.converter.convert(source)
 
@@ -213,6 +212,8 @@ class DoclingReader(Reader):
             elif self.output_format == OutputFormat.JSON:
                 doc_content = json.dumps(result.document.export_to_dict())
             elif self.output_format == OutputFormat.YAML:
+                import yaml
+
                 doc_content = yaml.safe_dump(result.document.export_to_dict())
             elif self.output_format == OutputFormat.HTML:
                 doc_content = result.document.export_to_html()
