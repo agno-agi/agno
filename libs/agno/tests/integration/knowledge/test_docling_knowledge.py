@@ -23,8 +23,14 @@ def setup_vector_db():
 
 
 def get_test_data_dir():
-    """Get the path to the test data directory."""
+    """Get the path to the test data directory"""
     return Path(__file__).parent / "data"
+
+
+def get_cookbook_data_dir():
+    """Get the path to the cookbook test data directory"""
+    repo_root = Path(__file__).parent.parent.parent.parent.parent.parent
+    return repo_root / "cookbook" / "07_knowledge" / "testing_resources"
 
 
 def get_filtered_data_dir():
@@ -204,7 +210,7 @@ def test_docling_knowledge_base_json_output(setup_vector_db):
 
     kb.insert(
         path=get_filtered_data_dir() / "cv_1.pdf",
-        reader=DoclingReader(output_format="json"),
+        reader=DoclingReader(output_format="json", chunk=False),
     )
 
     assert setup_vector_db.exists()
@@ -214,9 +220,9 @@ def test_docling_knowledge_base_json_output(setup_vector_db):
     result = collection.get()
 
     documents = result.get("documents", [])
-    combined_doc = "".join(documents)
+    assert len(documents) == 1
 
-    parsed = json.loads(combined_doc)
+    parsed = json.loads(documents[0])
     assert isinstance(parsed, dict)
 
     agent = Agent(knowledge=kb, search_knowledge=True)
@@ -311,7 +317,7 @@ def test_docling_invalid_output_format(setup_vector_db):
 
 def test_docling_knowledge_base_pptx(setup_vector_db):
     """Test loading a PPTX file with DoclingReader."""
-    pptx_file = get_test_data_dir() / "ai_presentation.pptx"
+    pptx_file = get_cookbook_data_dir() / "ai_presentation.pptx"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(
@@ -330,7 +336,7 @@ def test_docling_knowledge_base_pptx(setup_vector_db):
 
 def test_docling_knowledge_base_dotx(setup_vector_db):
     """Test loading a DOTX template file with DoclingReader."""
-    dotx_file = get_test_data_dir() / "meeting_notes_template.dotx"
+    dotx_file = get_cookbook_data_dir() / "meeting_notes_template.dotx"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(
@@ -349,7 +355,7 @@ def test_docling_knowledge_base_dotx(setup_vector_db):
 
 def test_docling_knowledge_base_jpeg(setup_vector_db):
     """Test loading a JPEG invoice image with DoclingReader."""
-    jpeg_file = get_test_data_dir() / "restaurant_invoice.jpeg"
+    jpeg_file = get_cookbook_data_dir() / "restaurant_invoice.jpeg"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(
@@ -368,7 +374,7 @@ def test_docling_knowledge_base_jpeg(setup_vector_db):
 
 def test_docling_knowledge_base_png(setup_vector_db):
     """Test loading a PNG order summary image with DoclingReader."""
-    png_file = get_test_data_dir() / "restaurant_invoice.png"
+    png_file = get_cookbook_data_dir() / "restaurant_invoice.png"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(
@@ -387,7 +393,7 @@ def test_docling_knowledge_base_png(setup_vector_db):
 
 def test_docling_knowledge_base_wav(setup_vector_db):
     """Test loading a WAV audio file with DoclingReader."""
-    wav_file = get_test_data_dir() / "agno_description.wav"
+    wav_file = get_cookbook_data_dir() / "agno_description.wav"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(
@@ -406,7 +412,7 @@ def test_docling_knowledge_base_wav(setup_vector_db):
 
 def test_docling_knowledge_base_mp3(setup_vector_db):
     """Test loading an MP3 audio file with DoclingReader."""
-    mp3_file = get_test_data_dir() / "agno_description.mp3"
+    mp3_file = get_cookbook_data_dir() / "agno_description.mp3"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(
@@ -425,7 +431,7 @@ def test_docling_knowledge_base_mp3(setup_vector_db):
 
 def test_docling_knowledge_base_mp4(setup_vector_db):
     """Test loading an MP4 audio file with DoclingReader using VTT output."""
-    mp4_file = get_test_data_dir() / "agno_description.mp4"
+    mp4_file = get_cookbook_data_dir() / "agno_description.mp4"
 
     kb = Knowledge(vector_db=setup_vector_db)
     kb.insert(

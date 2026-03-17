@@ -38,7 +38,7 @@ class ContentType(str, Enum):
     HTM = ".htm"
     XHTML = ".xhtml"
 
-    XML_USPTO = ".xml"
+    XML = ".xml"
     XML_JATS = ".nxml"
     XML_XBRL = ".xbrl"
 
@@ -46,7 +46,7 @@ class ContentType(str, Enum):
     ASCIIDOC = ".asciidoc"
     ASC = ".asc"
 
-    METS_GBS = "tar.gz"
+    METS_GBS = ".tar.gz"
 
     LATEX = ".tex"
     LATEX_ALT = ".latex"
@@ -73,9 +73,9 @@ class ContentType(str, Enum):
     AUDIO_AAC = ".aac"
     AUDIO_OGG = ".ogg"
     AUDIO_FLAC = ".flac"
-    AUDIO_MP4 = ".mp4"
-    AUDIO_AVI = ".avi"
-    AUDIO_MOV = ".mov"
+    VIDEO_MP4 = ".mp4"
+    VIDEO_AVI = ".avi"
+    VIDEO_MOV = ".mov"
 
 
 def get_content_type_enum(content_type_str: str) -> ContentType:

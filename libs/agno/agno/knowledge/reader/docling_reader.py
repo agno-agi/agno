@@ -127,7 +127,7 @@ class DoclingReader(Reader):
             ContentType.HTM,
             ContentType.XHTML,
             # XML formats
-            ContentType.XML_USPTO,
+            ContentType.XML,
             ContentType.XML_JATS,
             ContentType.XML_XBRL,
             # AsciiDoc formats
@@ -159,9 +159,9 @@ class DoclingReader(Reader):
             ContentType.AUDIO_AAC,
             ContentType.AUDIO_OGG,
             ContentType.AUDIO_FLAC,
-            ContentType.AUDIO_MP4,
-            ContentType.AUDIO_AVI,
-            ContentType.AUDIO_MOV,
+            ContentType.VIDEO_MP4,
+            ContentType.VIDEO_AVI,
+            ContentType.VIDEO_MOV,
         ]
 
     def read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -241,8 +241,11 @@ class DoclingReader(Reader):
                 return chunked_documents
             return documents
 
+        except (FileNotFoundError, ValueError):
+            raise
+
         except Exception as e:
-            log_error(f"Error reading: {file}: {e}")
+            log_error(f"Error converting document: {file}: {e}")
             return []
 
     async def async_read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
