@@ -5639,7 +5639,7 @@ async def _acontinue_run(
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
                         team, run_response=run_response, session=team_session, run_context=run_context,
-                        stream=opts.stream,
+                        stream=False,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -5936,7 +5936,7 @@ async def _acontinue_run_stream(
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
                         team, run_response=run_response, session=team_session, run_context=run_context,
-                        stream=opts.stream,
+                        stream=True,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
