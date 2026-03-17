@@ -1,9 +1,9 @@
 import asyncio
 import json
+from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, Dict, List, Optional, Union
 from uuid import uuid4
-
 import yaml
 
 from agno.knowledge.chunking.document import DocumentChunking
@@ -14,8 +14,8 @@ from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
 
 try:
-    from docling.datamodel.base_models import DocumentStream, OutputFormat  # type: ignore
-    from docling.document_converter import DocumentConverter  # type: ignore
+    from docling.datamodel.base_models import DocumentStream, OutputFormat
+    from docling.document_converter import DocumentConverter
 except ImportError:
     raise ImportError("The `docling` package is not installed. Please install it via `pip install docling`.")
 
@@ -193,15 +193,18 @@ class DoclingReader(Reader):
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
                 source = file
-            else:
+            elif isinstance(file, BytesIO):
+                # Handle BytesIO objects
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 if name and "." in name:
                     doc_name = Path(name).stem
                     stream_name = name
                 else:
                     doc_name = name or getattr(file, "name", "docling_file").split(".")[0]
-                    stream_name = f"{doc_name}.pdf"
-                source = DocumentStream(name=stream_name, stream=file)  # type: ignore[arg-type]
+                    stream_name = f"{doc_name}"
+                source = DocumentStream(name=stream_name, stream=file)
+            else:
+                raise ValueError(f"Unsupported file type.")
 
             result = self.converter.convert(source)
 
