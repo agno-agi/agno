@@ -185,8 +185,8 @@ def test_invalid_file():
     """Test reading a non-existent file"""
     with patch("pathlib.Path.exists", return_value=False):
         reader = DoclingReader()
-        documents = reader.read(Path("nonexistent.pdf"))
-        assert len(documents) == 0
+        with pytest.raises(FileNotFoundError, match="Could not find file: nonexistent.pdf"):
+            reader.read(Path("nonexistent.pdf"))
 
 
 def test_conversion_error(mock_converter):
