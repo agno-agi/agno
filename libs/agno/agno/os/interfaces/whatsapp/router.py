@@ -16,7 +16,6 @@ from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
     download_event_media_async,
     extract_message_content,
-    format_message,
     send_whatsapp_message_async,
     typing_indicator_async,
     upload_and_send_media_async,
@@ -90,7 +89,7 @@ def _format_reasoning(text: str) -> str:
         if stripped.startswith(_REASONING_SKIP_PREFIXES):
             continue
         lines.append(stripped)
-    return format_message("\n".join(lines))
+    return "\n".join(lines)
 
 
 class WhatsAppWebhookResponse(BaseModel):
@@ -194,11 +193,11 @@ def attach_routes(
         payload = await request.body()
         signature = request.headers.get("X-Hub-Signature-256")
 
-        body = await request.json()
-
         if not validate_webhook_signature(payload, signature):
             log_warning("Invalid webhook signature")
             raise HTTPException(status_code=403, detail="Invalid signature")
+
+        body = await request.json()
 
         if body.get("object") != "whatsapp_business_account":
             log_warning(f"Received non-WhatsApp webhook object: {body.get('object')}")
@@ -226,6 +225,10 @@ def attach_routes(
 
             parsed = extract_message_content(message)
             if parsed is None:
+                msg_type = message.get("type", "unknown")
+                # "unsupported" is WhatsApp's label for stickers and other rich types
+                label = "this message type" if msg_type == "unsupported" else msg_type.title()
+                await send_whatsapp_message_async(phone_number, f"Sorry, {label} is not supported yet.", config)
                 return
 
             # /new starts a fresh session — old session data is preserved
@@ -326,8 +329,6 @@ def attach_routes(
                 if reasoning:
                     await send_whatsapp_message_async(phone_number, reasoning, config, italics=True)
 
-            # Upload media with caption; track whether any actually sent
-            media_sent = False
             for attr, media_type in (
                 ("images", "image"),
                 ("videos", "video"),
@@ -336,15 +337,11 @@ def attach_routes(
             ):
                 items = getattr(response, attr, None)
                 if items:
-                    sent = await upload_and_send_media_async(items, media_type, phone_number, config)
-                    if sent:
-                        media_sent = True
+                    await upload_and_send_media_async(items, media_type, phone_number, config)
             if response.response_audio:
-                sent = await upload_and_send_media_async(
+                await upload_and_send_media_async(
                     [response.response_audio], "audio", phone_number, config, send_text_fallback=False
                 )
-                if sent:
-                    media_sent = True
 
             response_tools = getattr(response, "tools", None)
             # Only suppress text if a WA tool ran AND didn't error

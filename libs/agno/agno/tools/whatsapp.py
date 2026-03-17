@@ -215,8 +215,8 @@ class WhatsAppTools(Toolkit):
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
 
-            if len(buttons) > 3:
-                return json.dumps({"error": "WhatsApp allows a maximum of 3 reply buttons"})
+            if not buttons or len(buttons) > 3:
+                return json.dumps({"error": "WhatsApp requires 1-3 reply buttons"})
 
             action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title[:20]}} for btn in buttons]
 
@@ -270,8 +270,8 @@ class WhatsAppTools(Toolkit):
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
 
-            if len(sections) > 10:
-                return json.dumps({"error": "WhatsApp allows a maximum of 10 sections"})
+            if not sections or len(sections) > 10:
+                return json.dumps({"error": "WhatsApp requires 1-10 sections"})
 
             total_rows = sum(len(s.rows) for s in sections)
             if total_rows > 10:
