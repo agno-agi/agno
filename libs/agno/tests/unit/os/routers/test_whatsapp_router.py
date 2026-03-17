@@ -711,8 +711,8 @@ async def test_image_response_short_caption_no_extra_text():
         await _wait_for_mock_call(mock_upload)
 
         mock_upload.assert_called_once()
-        # Short content — no separate text message
-        mock_send_text.assert_not_called()
+        # Text always sent as separate message (matching Telegram pattern)
+        mock_send_text.assert_called_once()
 
 
 @pytest.mark.asyncio
