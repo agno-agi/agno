@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -130,6 +130,11 @@ PROVIDER_TOOL_ID_CONFIG: Dict[str, Dict[str, Union[str, int, None]]] = {
         "max_length": None,
         "call_id_prefix": None,
     },
+    "mistral": {
+        "prefix": "",  # Alphanumeric only, length 9 — reformat all foreign IDs
+        "max_length": 9,
+        "call_id_prefix": None,
+    },
 }
 
 
@@ -158,8 +163,8 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
         # Provider accepts any ID format — no reformatting needed
         return messages
 
-    max_length = config.get("max_length")
-    call_id_prefix = config.get("call_id_prefix")
+    max_length: Optional[int] = config.get("max_length")  # type: ignore[assignment]
+    call_id_prefix: Optional[str] = config.get("call_id_prefix")  # type: ignore[assignment]
 
     # Build old -> new ID mapping from assistant tool_calls.
     # Map both tc["id"] and tc["call_id"] to the same new ID so tool results
@@ -174,13 +179,19 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
                 if not (old_id and isinstance(old_id, str)):
                     continue
 
-                # Reformat if wrong prefix or exceeds max length
+                # Reformat if wrong prefix, exceeds max length, or has invalid chars
                 needs_reformat = not old_id.startswith(prefix)
                 if not needs_reformat and max_length and len(old_id) > max_length:
                     needs_reformat = True
+                # When prefix is "" (e.g. Mistral), also reformat if ID contains non-alphanumeric chars
+                if not needs_reformat and prefix == "" and not old_id.isalnum():
+                    needs_reformat = True
 
                 if needs_reformat and old_id not in id_map:
-                    new_id = f"{prefix}{counter:08x}"
+                    # Generate ID with enough hex digits to fill max_length (or 8 by default)
+                    prefix_len = len(prefix) if isinstance(prefix, str) else 0
+                    id_digits = (max_length - prefix_len) if max_length else 8
+                    new_id = f"{prefix}{counter:0{id_digits}x}"
                     id_map[old_id] = new_id
 
                     # Also map call_id -> new_id so tool results using call_id are found

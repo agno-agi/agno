@@ -625,3 +625,85 @@ class TestParallelToolCallsReformat:
 
         assert result[1].tool_call_id == result[0].tool_calls[0]["id"]
         assert result[2].tool_call_id == result[0].tool_calls[1]["id"]
+
+
+# ---------------------------------------------------------------------------
+# reformat_tool_call_ids — Mistral (alphanumeric, length 9)
+# ---------------------------------------------------------------------------
+
+
+class TestMistralReformat:
+    """Mistral requires alphanumeric-only IDs with exactly 9 characters."""
+
+    def test_claude_to_mistral(self):
+        """Claude toolu_* IDs should become 9-char alphanumeric."""
+        tc = _make_tool_call("toolu_abc123def456")
+        msgs = [_assistant_msg([tc]), _tool_msg("toolu_abc123def456")]
+        result = reformat_tool_call_ids(msgs, provider="mistral")
+        new_id = result[0].tool_calls[0]["id"]
+        assert len(new_id) == 9
+        assert new_id.isalnum()
+        assert result[1].tool_call_id == new_id
+
+    def test_openai_chat_to_mistral(self):
+        """OpenAI Chat call_* IDs should become 9-char alphanumeric."""
+        tc = _make_tool_call("call_abc123456789")
+        msgs = [_assistant_msg([tc]), _tool_msg("call_abc123456789")]
+        result = reformat_tool_call_ids(msgs, provider="mistral")
+        new_id = result[0].tool_calls[0]["id"]
+        assert len(new_id) == 9
+        assert new_id.isalnum()
+        assert result[1].tool_call_id == new_id
+
+    def test_responses_to_mistral(self):
+        """Responses API fc_* IDs should become 9-char alphanumeric."""
+        tc = _make_tool_call("fc_abc123456789", call_id="call_xyz")
+        msgs = [_assistant_msg([tc]), _tool_msg("fc_abc123456789")]
+        result = reformat_tool_call_ids(msgs, provider="mistral")
+        new_id = result[0].tool_calls[0]["id"]
+        assert len(new_id) == 9
+        assert new_id.isalnum()
+        assert result[1].tool_call_id == new_id
+
+    def test_gemini_uuid_to_mistral(self):
+        """Gemini UUID-style IDs (with hyphens) should be reformatted."""
+        tc = _make_tool_call("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        msgs = [_assistant_msg([tc]), _tool_msg("a1b2c3d4-e5f6-7890-abcd-ef1234567890")]
+        result = reformat_tool_call_ids(msgs, provider="mistral")
+        new_id = result[0].tool_calls[0]["id"]
+        assert len(new_id) == 9
+        assert new_id.isalnum()
+        assert result[1].tool_call_id == new_id
+
+    def test_native_mistral_noop(self):
+        """Native 9-char alphanumeric IDs should pass through unchanged."""
+        tc = _make_tool_call("abc123def")
+        msgs = [_assistant_msg([tc]), _tool_msg("abc123def")]
+        result = reformat_tool_call_ids(msgs, provider="mistral")
+        assert result[0].tool_calls[0]["id"] == "abc123def"
+        assert result[1].tool_call_id == "abc123def"
+
+    def test_parallel_to_mistral(self):
+        """Parallel tool calls from Claude should all get unique 9-char IDs."""
+        tcs = [
+            _make_tool_call("toolu_aaa111", name="get_weather", arguments='{"city":"NYC"}'),
+            _make_tool_call("toolu_bbb222", name="get_weather", arguments='{"city":"LA"}'),
+            _make_tool_call("toolu_ccc333", name="get_weather", arguments='{"city":"SF"}'),
+        ]
+        msgs = [
+            _assistant_msg(tcs),
+            _tool_msg("toolu_aaa111", content="cold"),
+            _tool_msg("toolu_bbb222", content="warm"),
+            _tool_msg("toolu_ccc333", content="foggy"),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="mistral")
+
+        ids = [tc["id"] for tc in result[0].tool_calls]
+        assert len(set(ids)) == 3, "all IDs should be unique"
+        for new_id in ids:
+            assert len(new_id) == 9
+            assert new_id.isalnum()
+
+        # Tool results match
+        for i in range(3):
+            assert result[i + 1].tool_call_id == result[0].tool_calls[i]["id"]
