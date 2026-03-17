@@ -127,13 +127,13 @@ CometAPI provides access to multiple LLM providers through a unified interface. 
 #### Claude Series
 - `claude-opus-4-1-20250805`
 - `claude-sonnet-4-20250514`
-- `claude-3-7-sonnet-latest`
-- `claude-3-5-haiku-latest`
+- `claude-sonnet-4-6`
+- `claude-haiku-4-5-latest`
 
 #### Gemini Series
 - `gemini-2.5-pro`
 - `gemini-2.5-flash`
-- `gemini-2.0-flash`
+- `gemini-flash-latest`
 
 #### Grok Series
 - `grok-4-0709`

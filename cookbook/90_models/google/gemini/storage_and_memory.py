@@ -20,7 +20,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-001"),
+    model=Gemini(id="gemini-flash-latest"),
     tools=[WebSearchTools()],
     knowledge=knowledge_base,
     # Store the memories and summary in a database

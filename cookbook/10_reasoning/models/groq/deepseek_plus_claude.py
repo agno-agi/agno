@@ -15,7 +15,7 @@ from agno.models.groq import Groq
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     deepseek_plus_claude = Agent(
-        model=Claude(id="claude-3-7-sonnet-20250219"),
+        model=Claude(id="claude-sonnet-4-6"),
         reasoning_model=Groq(
             id="qwen/qwen3-32b",
             temperature=0.6,

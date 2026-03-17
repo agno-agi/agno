@@ -121,7 +121,7 @@ EXPECTED_OUTPUT_TEMPLATE = dedent("""\
 sage = Agent(
     name="Sage",
     id="sage",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=PostgresDb(db_url=db_url, session_table="sage_sessions"),
     tools=[
         ExaTools(
@@ -161,7 +161,7 @@ knowledge = Knowledge(
 
 agno_assist = Agent(
     name="Agno Assist",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     description="You help answer questions about the Agno framework.",
     instructions="Search your knowledge before answering the question.",
     knowledge=knowledge,

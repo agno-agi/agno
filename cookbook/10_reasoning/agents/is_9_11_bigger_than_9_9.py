@@ -26,10 +26,10 @@ cot_agent_openai = Agent(
     markdown=True,
 )
 
-regular_agent_claude = Agent(model=Claude("claude-3-5-sonnet-20241022"), markdown=True)
+regular_agent_claude = Agent(model=Claude("claude-sonnet-4-6"), markdown=True)
 
 deepseek_agent_claude = Agent(
-    model=Claude("claude-3-5-sonnet-20241022"),
+    model=Claude("claude-sonnet-4-6"),
     reasoning_model=DeepSeek(id="deepseek-reasoner"),
     markdown=True,
 )

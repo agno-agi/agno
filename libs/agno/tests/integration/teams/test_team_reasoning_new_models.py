@@ -289,7 +289,7 @@ def test_team_openai_reasoning_non_streaming():
     # Create a Team with OpenAI reasoning model
     team = Team(
         model=OpenAIChat(id="gpt-4o"),
-        reasoning_model=OpenAIChat(id="o1-mini"),
+        reasoning_model=OpenAIChat(id="o4-mini"),
         members=[],
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
@@ -320,7 +320,7 @@ def test_team_openai_reasoning_streaming(shared_db):
     # Create a Team with OpenAI reasoning model
     team = Team(
         model=OpenAIChat(id="gpt-4o"),
-        reasoning_model=OpenAIChat(id="o1-mini"),
+        reasoning_model=OpenAIChat(id="o4-mini"),
         db=shared_db,
         members=[],
         instructions=dedent("""\
@@ -589,7 +589,7 @@ def test_team_azure_ai_foundry_reasoning_non_streaming():
     # Create a Team with Azure AI Foundry reasoning model
     team = Team(
         model=AzureAIFoundry(id="gpt-4o"),
-        reasoning_model=AzureAIFoundry(id="o1-mini"),
+        reasoning_model=AzureAIFoundry(id="o4-mini"),
         members=[],
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
@@ -620,7 +620,7 @@ def test_team_azure_ai_foundry_reasoning_streaming(shared_db):
     # Create a Team with Azure AI Foundry reasoning model
     team = Team(
         model=AzureAIFoundry(id="gpt-4o"),
-        reasoning_model=AzureAIFoundry(id="o1-mini"),
+        reasoning_model=AzureAIFoundry(id="o4-mini"),
         db=shared_db,
         members=[],
         instructions=dedent("""\
@@ -711,11 +711,11 @@ def test_team_accepts_openai_reasoning_model():
     try:
         team = Team(
             model=OpenAIChat(id="gpt-4o"),
-            reasoning_model=OpenAIChat(id="o1-mini"),
+            reasoning_model=OpenAIChat(id="o4-mini"),
             members=[],
         )
         assert team.reasoning_model is not None
-        assert team.reasoning_model.id == "o1-mini"
+        assert team.reasoning_model.id == "o4-mini"
     except Exception as e:
         pytest.fail(f"Failed to create Team with OpenAI reasoning model: {e}")
 
@@ -767,10 +767,10 @@ def test_team_accepts_azure_ai_foundry_reasoning_model():
     try:
         team = Team(
             model=AzureAIFoundry(id="gpt-4o"),
-            reasoning_model=AzureAIFoundry(id="o1-mini"),
+            reasoning_model=AzureAIFoundry(id="o4-mini"),
             members=[],
         )
         assert team.reasoning_model is not None
-        assert team.reasoning_model.id == "o1-mini"
+        assert team.reasoning_model.id == "o4-mini"
     except Exception as e:
         pytest.fail(f"Failed to create Team with Azure AI Foundry reasoning model: {e}")

@@ -4,7 +4,7 @@ from agno.models.aws.claude import Claude
 
 
 def test_image_input():
-    agent = Agent(model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"), markdown=True, telemetry=False)
+    agent = Agent(model=Claude(id="anthropic.claude-sonnet-4-5-20250929-v1:0"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image.",

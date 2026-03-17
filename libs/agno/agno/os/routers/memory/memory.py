@@ -631,7 +631,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "This operation combines all memories into a single comprehensive summary, "
             "achieving maximum token reduction while preserving all key information. "
             "To use a custom model, specify the model parameter in 'provider:model_id' format "
-            "(e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022'). "
+            "(e.g., 'openai:gpt-4o-mini', 'anthropic:claude-sonnet-4-6'). "
             "If not specified, uses MemoryManager's default model (gpt-4o). "
             "Set apply=false to preview optimization results without saving to database."
         ),

@@ -27,7 +27,7 @@ file_agent = Agent(
     name="File Upload Agent",
     id="file-upload-agent",
     role="Answer questions about the uploaded files",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     update_memory_on_run=True,
     instructions=[

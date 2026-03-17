@@ -22,7 +22,7 @@ def _assert_metrics(response: RunOutput):
 
 def test_basic():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -40,7 +40,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-2.0-flash"), exponential_backoff=True, markdown=True, telemetry=False)
+    agent = Agent(model=Gemini(id="gemini-flash-latest"), exponential_backoff=True, markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -56,7 +56,7 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -74,7 +74,7 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -87,7 +87,7 @@ async def test_async_basic_stream():
 
 def test_exception_handling():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-made-up-id"),
+        model=Gemini(id="gemini-flash-latest-made-up-id"),
         markdown=True,
         telemetry=False,
     )
@@ -96,13 +96,13 @@ def test_exception_handling():
     response = agent.run("Share a 2 sentence horror story")
     assert response.status == RunStatus.error
     assert response.content is not None
-    assert "gemini-2.0-flash-made-up-id" in response.content
+    assert "gemini-flash-latest-made-up-id" in response.content
 
 
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         add_history_to_context=True,
@@ -135,7 +135,7 @@ def test_structured_output():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         output_schema=MovieScript,
@@ -158,7 +158,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         output_schema=MovieScript,
@@ -177,7 +177,7 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         exponential_backoff=True,
         delay_between_retries=5,
         db=SqliteDb(db_file="tmp/google/test_basic.db"),
@@ -234,7 +234,7 @@ def test_custom_client_params():
     # Simple agent
     agent = Agent(
         model=Gemini(
-            id="gemini-2.0-flash",
+            id="gemini-flash-latest",
             vertexai=True,
             generation_config=generation_config,
             safety_settings=safety_settings,
@@ -249,7 +249,7 @@ def test_custom_client_params():
 def test_count_tokens():
     from agno.models.message import Message
 
-    model = Gemini(id="gemini-2.0-flash")
+    model = Gemini(id="gemini-flash-latest")
     messages = [
         Message(role="user", content="Hello world, this is a test message for token counting"),
     ]
@@ -265,7 +265,7 @@ def test_count_tokens_with_tools():
     from agno.models.message import Message
     from agno.tools.calculator import CalculatorTools
 
-    model = Gemini(id="gemini-2.0-flash")
+    model = Gemini(id="gemini-flash-latest")
     messages = [
         Message(role="user", content="What is 2 + 2?"),
     ]
@@ -284,7 +284,7 @@ async def test_acount_tokens():
     """Test async token counting."""
     from agno.models.message import Message
 
-    model = Gemini(id="gemini-2.0-flash")
+    model = Gemini(id="gemini-flash-latest")
     messages = [
         Message(role="user", content="Hello world, this is a test message for token counting"),
     ]
@@ -303,7 +303,7 @@ async def test_acount_tokens_with_tools():
     from agno.models.message import Message
     from agno.tools.calculator import CalculatorTools
 
-    model = Gemini(id="gemini-2.0-flash")
+    model = Gemini(id="gemini-flash-latest")
     messages = [
         Message(role="user", content="What is 2 + 2?"),
     ]
@@ -325,7 +325,7 @@ async def test_acount_tokens_vertexai():
     """Test async token counting with VertexAI."""
     from agno.models.message import Message
 
-    model = Gemini(id="gemini-2.0-flash", vertexai=True)
+    model = Gemini(id="gemini-flash-latest", vertexai=True)
     messages = [
         Message(role="user", content="Hello world, this is a test message for token counting"),
     ]

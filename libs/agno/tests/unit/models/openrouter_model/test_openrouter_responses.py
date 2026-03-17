@@ -49,7 +49,7 @@ def test_openrouter_responses_fallback_models():
     """Test OpenRouterResponses with fallback models configuration."""
     model = OpenRouterResponses(
         api_key="test-key",
-        models=["anthropic/claude-sonnet-4", "google/gemini-2.0-flash"],
+        models=["anthropic/claude-sonnet-4", "google/gemini-flash-latest"],
     )
 
     request_params = model.get_request_params()
@@ -57,7 +57,7 @@ def test_openrouter_responses_fallback_models():
     assert "extra_body" in request_params
     assert request_params["extra_body"]["models"] == [
         "anthropic/claude-sonnet-4",
-        "google/gemini-2.0-flash",
+        "google/gemini-flash-latest",
     ]
 
 

@@ -21,7 +21,7 @@ async def run_agent(message: str) -> None:
         transport="streamable-http", url="https://docs.agno.com/mcp"
     ) as agno_mcp_server:
         agent = Agent(
-            model=Claude(id="claude-sonnet-4-0"),
+            model=Claude(id="claude-sonnet-4-6"),
             tools=[agno_mcp_server],
             markdown=True,
         )

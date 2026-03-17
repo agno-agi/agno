@@ -39,7 +39,7 @@ knowledge = Knowledge(
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
     knowledge=knowledge,
     # search_knowledge=True gives the Agent the ability to search on demand

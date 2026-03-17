@@ -19,7 +19,7 @@ def _assert_metrics(response: RunOutput):
 
 
 def test_basic():
-    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
     response: RunOutput = agent.run("Share a 2 sentence horror story")
@@ -33,7 +33,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"), markdown=True, telemetry=False)
 
     for chunk in agent.run("Share a 2 sentence horror story", stream=True):
         assert chunk.content is not None
@@ -42,7 +42,7 @@ def test_basic_stream():
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         add_history_to_context=True,
         telemetry=False,
         markdown=True,
@@ -73,7 +73,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         output_schema=MovieScript,
         markdown=True,
         telemetry=False,
@@ -95,7 +95,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -112,7 +112,7 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         db=SqliteDb(db_file="tmp/aws-bedrock/test_basic.db"),
         add_history_to_context=True,
         store_history_messages=True,
@@ -138,7 +138,7 @@ def test_history():
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test basic async agent functionality."""
-    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"), markdown=True, telemetry=False)
 
     response: RunOutput = await agent.arun("Share a 2 sentence horror story")
 
@@ -153,7 +153,7 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test basic async streaming functionality."""
-    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
@@ -163,7 +163,7 @@ async def test_async_basic_stream():
 async def test_async_with_memory():
     """Test async agent with memory functionality."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         db=SqliteDb(db_file="tmp/aws-bedrock/test_with_memory.db"),
         add_history_to_context=True,
         telemetry=False,
@@ -194,7 +194,7 @@ async def test_async_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         output_schema=MovieScript,
         markdown=True,
         telemetry=False,
@@ -218,7 +218,7 @@ async def test_async_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -236,7 +236,7 @@ async def test_async_json_response_mode():
 async def test_async_history():
     """Test async agent with persistent history."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0"),
         db=SqliteDb(db_file="tmp/aws-bedrock/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
@@ -262,7 +262,7 @@ async def test_async_history():
 def test_count_tokens():
     from agno.models.message import Message
 
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
     messages = [
         Message(role="user", content="Hello world, this is a test message for token counting"),
     ]
@@ -278,7 +278,7 @@ def test_count_tokens_with_tools():
     from agno.models.message import Message
     from agno.tools.calculator import CalculatorTools
 
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
     messages = [
         Message(role="user", content="What is 2 + 2?"),
     ]
@@ -297,7 +297,7 @@ async def test_acount_tokens():
     """Test async token counting uses the async client."""
     from agno.models.message import Message
 
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
     messages = [
         Message(role="user", content="Hello world, this is a test message for token counting"),
     ]
@@ -316,7 +316,7 @@ async def test_acount_tokens_with_tools():
     from agno.models.message import Message
     from agno.tools.calculator import CalculatorTools
 
-    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    model = AwsBedrock(id="anthropic.claude-sonnet-4-5-20250929-v1:0")
     messages = [
         Message(role="user", content="What is 2 + 2?"),
     ]

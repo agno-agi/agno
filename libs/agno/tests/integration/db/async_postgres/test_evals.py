@@ -59,7 +59,7 @@ def sample_eval_runs() -> List[EvalRunRecord]:
                 agent_id=f"test_agent_{i}" if i % 2 == 0 else None,
                 team_id=f"test_team_{i}" if i % 2 == 1 else None,
                 workflow_id=None,
-                model_id="gpt-4" if i % 3 == 0 else "gpt-3.5-turbo",
+                model_id="gpt-4" if i % 3 == 0 else "gpt-4o-mini",
                 model_provider="openai",
                 evaluated_component_name=f"Test Component {i}",
                 created_at=int(time.time()) + i,
