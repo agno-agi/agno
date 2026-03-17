@@ -41,11 +41,26 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
 
-            // Skip this check for org members and collaborators
+            // Skip this check for org members, collaborators, admins, and maintainers
             const association = pr.author_association;
             if (['MEMBER', 'OWNER', 'COLLABORATOR'].includes(association)) {
               console.log(`Skipping missing-issue-link check for ${association} (${pr.user.login}).`);
               return;
+            }
+
+            // Also check the user's repository permission level
+            try {
+              const { data: permLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: pr.user.login,
+              });
+              if (['admin', 'maintain', 'write'].includes(permLevel.permission)) {
+                console.log(`Skipping missing-issue-link check for ${permLevel.permission} permission (${pr.user.login}).`);
+                return;
+              }
+            } catch (err) {
+              console.log(`Could not check permissions for ${pr.user.login}: ${err.message}`);
             }
 
             const body = (pr.body || '').toLowerCase();
