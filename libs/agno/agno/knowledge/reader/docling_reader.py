@@ -223,6 +223,8 @@ class DoclingReader(Reader):
                 doc_content = result.document.export_to_doctags()
             elif self.output_format == OutputFormat.VTT:
                 doc_content = result.document.export_to_vtt()
+                if doc_content.strip() == "WEBVTT":
+                    log_debug(f"VTT export contains only headers for: {doc_name}")
             else:
                 doc_content = result.document.export_to_markdown()
 
