@@ -254,6 +254,8 @@ class DoclingReader(Reader):
         """Asynchronously read a docling file and return a list of documents."""
         try:
             return await asyncio.to_thread(self.read, file, name)
+        except (FileNotFoundError, ValueError):
+            raise
         except Exception as e:
             log_error(f"Error reading file asynchronously: {e}")
             return []
