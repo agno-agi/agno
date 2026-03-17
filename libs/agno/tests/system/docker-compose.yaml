@@ -116,6 +116,8 @@ services:
       ENABLE_AUTHORIZATION: ${ENABLE_AUTHORIZATION:-true}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-test-signing-secret}
       SLACK_TOKEN: ${SLACK_TOKEN:-test-token}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-test-telegram-token}
+      TELEGRAM_WEBHOOK_SECRET_TOKEN: ${TELEGRAM_WEBHOOK_SECRET_TOKEN:-test-webhook-secret}
     ports:
       - "7001:7001"
     volumes:
