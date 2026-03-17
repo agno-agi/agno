@@ -144,7 +144,7 @@ def test_send_reply_buttons_max_3(whatsapp_tools):
     result = whatsapp_tools.send_reply_buttons(body_text="Too many", buttons=buttons, recipient="+1234567890")
     parsed = json.loads(result)
     assert "error" in parsed
-    assert "maximum of 3" in parsed["error"]
+    assert "1-3" in parsed["error"]
 
 
 def test_send_reply_buttons_with_header_footer(whatsapp_tools):
@@ -275,7 +275,8 @@ def test_send_reaction(whatsapp_tools):
 def test_send_reply_buttons_empty_list(whatsapp_tools):
     result = whatsapp_tools.send_reply_buttons(body_text="Choose", buttons=[], recipient="+1234567890")
     parsed = json.loads(result)
-    assert parsed["ok"] is True or "error" in parsed
+    assert "error" in parsed
+    assert "1-3" in parsed["error"]
 
 
 def test_send_list_message_exceeds_sections(whatsapp_tools):
