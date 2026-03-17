@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -9,6 +10,17 @@ from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.docling_reader import DoclingReader
 from agno.vectordb.chroma import ChromaDb
+
+# Audio/video tests require openai-whisper (pip install openai-whisper) and system ffmpeg
+try:
+    import whisper  # noqa: F401
+
+    _has_whisper = True
+except ImportError:
+    _has_whisper = False
+
+_has_ffmpeg = shutil.which("ffmpeg") is not None
+_has_audio_deps = _has_whisper and _has_ffmpeg
 
 
 @pytest.fixture
@@ -391,6 +403,7 @@ def test_docling_knowledge_base_png(setup_vector_db):
     assert any(term in response.content.lower() for term in ["pizza", "burger", "coke"])
 
 
+@pytest.mark.skipif(not _has_audio_deps, reason="openai-whisper or ffmpeg not installed")
 def test_docling_knowledge_base_wav(setup_vector_db):
     """Test loading a WAV audio file with DoclingReader."""
     wav_file = get_cookbook_data_dir() / "agno_description.wav"
@@ -410,6 +423,7 @@ def test_docling_knowledge_base_wav(setup_vector_db):
     assert any(term in response.content.lower() for term in ["agno", "framework", "python", "agent"])
 
 
+@pytest.mark.skipif(not _has_audio_deps, reason="openai-whisper or ffmpeg not installed")
 def test_docling_knowledge_base_mp3(setup_vector_db):
     """Test loading an MP3 audio file with DoclingReader."""
     mp3_file = get_cookbook_data_dir() / "agno_description.mp3"
@@ -429,6 +443,7 @@ def test_docling_knowledge_base_mp3(setup_vector_db):
     assert any(term in response.content.lower() for term in ["agno", "framework", "python", "agent"])
 
 
+@pytest.mark.skipif(not _has_audio_deps, reason="openai-whisper or ffmpeg not installed")
 def test_docling_knowledge_base_mp4(setup_vector_db):
     """Test loading an MP4 audio file with DoclingReader using VTT output."""
     mp4_file = get_cookbook_data_dir() / "agno_description.mp4"
