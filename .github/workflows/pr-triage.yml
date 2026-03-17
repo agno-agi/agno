@@ -49,13 +49,19 @@ jobs:
 
             const skipChecks = isOrgMember() || await hasWriteAccess();
 
-            // --- 1. First-time contributor label ---
-            const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
-              q: `repo:${owner}/${repo} type:pr author:${author}`,
-              per_page: 1,
-            });
-            if (searchResult.total_count <= 1) {
-              labels.push('first-time-contributor');
+            // --- 1. First-time contributor label (applied immediately) ---
+            try {
+              const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${owner}/${repo} type:pr author:${author}`,
+                per_page: 1,
+              });
+              if (searchResult.total_count <= 1) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: prNumber, labels: ['first-time-contributor'],
+                });
+              }
+            } catch (err) {
+              console.log(`Could not check/label first-time contributor: ${err.message}`);
             }
 
             // --- All remaining checks are skipped for org members / collaborators ---
@@ -76,27 +82,31 @@ jobs:
               }
 
               // --- 3. Missing tests ---
-              const files = await github.paginate(github.rest.pulls.listFiles, {
-                owner, repo, pull_number: prNumber, per_page: 100,
-              });
+              try {
+                const files = await github.paginate(github.rest.pulls.listFiles, {
+                  owner, repo, pull_number: prNumber, per_page: 100,
+                });
 
-              const changedFiles = files.map(f => f.filename);
-              const touchesSource = changedFiles.some(f =>
-                f.startsWith('libs/agno/agno/') && f.endsWith('.py')
-              );
-              const touchesTests = changedFiles.some(f =>
-                f.includes('/tests/') && f.endsWith('.py')
-              );
-
-              if (touchesSource && !touchesTests) {
-                labels.push('missing-tests');
-                findings.push(
-                  '**Missing tests:** This PR modifies source code but does not include any test changes. '
-                  + 'Please add or update tests to cover your changes.'
+                const changedFiles = files.map(f => f.filename);
+                const touchesSource = changedFiles.some(f =>
+                  f.startsWith('libs/agno/agno/') && f.endsWith('.py')
                 );
+                const touchesTests = changedFiles.some(f =>
+                  f.includes('/tests/') && f.endsWith('.py')
+                );
+
+                if (touchesSource && !touchesTests) {
+                  labels.push('missing-tests');
+                  findings.push(
+                    '**Missing tests:** This PR modifies source code but does not include any test changes. '
+                    + 'Please add or update tests to cover your changes.'
+                  );
+                }
+              } catch (err) {
+                console.log(`Could not check for missing tests: ${err.message}`);
               }
 
-              // --- 4. Duplicate PRs for the same issue ---
+              // --- 4. Duplicate PRs and issue assignment checks ---
               const issueRefs = new Set();
               const closingPatterns = [
                 /(?:fixes|closes|resolves|fix|close|resolve)\s+#(\d+)/gi,
@@ -111,61 +121,70 @@ jobs:
               }
 
               if (issueRefs.size > 0) {
-                const duplicates = [];
-                for (const issueNumber of issueRefs) {
-                  const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
-                    q: `repo:${owner}/${repo} is:pr is:open ${issueNumber} in:body`,
-                    per_page: 10,
-                  });
-                  for (const item of searchResult.items) {
-                    if (item.number !== prNumber && item.pull_request) {
-                      duplicates.push({ issue: issueNumber, pr: item.number });
-                    }
-                  }
-                }
-
-                if (duplicates.length > 0) {
-                  labels.push('possible-duplicate');
-                  const prLinks = duplicates.map(d => `- #${d.pr} (also references issue #${d.issue})`).join('\n');
-                  findings.push(
-                    '**Possible duplicate:** The following open PRs also reference the same issue(s):\n\n'
-                    + prLinks + '\n\n'
-                    + 'If this is intentional, please explain in your PR description why this approach is preferred. '
-                    + 'Otherwise, consider collaborating on the existing PR instead.'
-                  );
-                }
-
-                // --- 5. Linked issue assigned to someone else ---
-                const conflicts = [];
-                for (const issueNumber of issueRefs) {
-                  try {
-                    const { data: issue } = await github.rest.issues.get({
-                      owner, repo, issue_number: issueNumber,
+                // --- 4a. Duplicate detection ---
+                try {
+                  const duplicates = [];
+                  for (const issueNumber of issueRefs) {
+                    const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+                      q: `repo:${owner}/${repo} is:pr is:open ${issueNumber} in:body`,
+                      per_page: 10,
                     });
-                    if (issue.assignees && issue.assignees.length > 0) {
-                      const assignedToAuthor = issue.assignees.some(a => a.login === author);
-                      if (!assignedToAuthor) {
-                        const assignees = issue.assignees.map(a => `@${a.login}`).join(', ');
-                        conflicts.push({ issue: issueNumber, assignees });
+                    for (const item of searchResult.items) {
+                      if (item.number !== prNumber && item.pull_request) {
+                        duplicates.push({ issue: issueNumber, pr: item.number });
                       }
                     }
-                  } catch (err) {
-                    console.log(`Could not fetch issue #${issueNumber}: ${err.message}`);
                   }
+
+                  if (duplicates.length > 0) {
+                    labels.push('possible-duplicate');
+                    const prLinks = duplicates.map(d => `- #${d.pr} (also references issue #${d.issue})`).join('\n');
+                    findings.push(
+                      '**Possible duplicate:** The following open PRs also reference the same issue(s):\n\n'
+                      + prLinks + '\n\n'
+                      + 'If this is intentional, please explain in your PR description why this approach is preferred. '
+                      + 'Otherwise, consider collaborating on the existing PR instead.'
+                    );
+                  }
+                } catch (err) {
+                  console.log(`Could not check for duplicates: ${err.message}`);
                 }
 
-                if (conflicts.length > 0) {
-                  labels.push('issue-assigned-to-other');
-                  const details = conflicts.map(c => `- Issue #${c.issue} is assigned to ${c.assignees}`).join('\n');
-                  findings.push(
-                    '**Issue assigned to someone else:** This PR references an issue that is already assigned:\n\n'
-                    + details + '\n\n'
-                    + 'Please confirm with the assignee or a maintainer in the issue comments before proceeding.'
-                  );
+                // --- 4b. Linked issue assigned to someone else ---
+                try {
+                  const conflicts = [];
+                  for (const issueNumber of issueRefs) {
+                    try {
+                      const { data: issue } = await github.rest.issues.get({
+                        owner, repo, issue_number: issueNumber,
+                      });
+                      if (issue.assignees && issue.assignees.length > 0) {
+                        const assignedToAuthor = issue.assignees.some(a => a.login === author);
+                        if (!assignedToAuthor) {
+                          const assignees = issue.assignees.map(a => `@${a.login}`).join(', ');
+                          conflicts.push({ issue: issueNumber, assignees });
+                        }
+                      }
+                    } catch (err) {
+                      console.log(`Could not fetch issue #${issueNumber}: ${err.message}`);
+                    }
+                  }
+
+                  if (conflicts.length > 0) {
+                    labels.push('issue-assigned-to-other');
+                    const details = conflicts.map(c => `- Issue #${c.issue} is assigned to ${c.assignees}`).join('\n');
+                    findings.push(
+                      '**Issue assigned to someone else:** This PR references an issue that is already assigned:\n\n'
+                      + details + '\n\n'
+                      + 'Please confirm with the assignee or a maintainer in the issue comments before proceeding.'
+                    );
+                  }
+                } catch (err) {
+                  console.log(`Could not check issue assignments: ${err.message}`);
                 }
               }
 
-              // --- 6. Low-context PR ---
+              // --- 5. Low-context PR ---
               const strippedBody = body
                 .replace(/## Summary/g, '')
                 .replace(/## Type of change/g, '')
