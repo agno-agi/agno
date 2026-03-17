@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -62,6 +63,20 @@ class Image(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            return self.content
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -164,6 +179,20 @@ class Audio(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            return self.content
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -282,6 +311,20 @@ class Video(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            return self.content
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -452,6 +495,24 @@ class File(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            if isinstance(self.content, bytes):
+                return self.content
+            elif isinstance(self.content, str):
+                return self.content.encode("utf-8")
+            return None
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def _normalise_content(self) -> Optional[Union[str, bytes]]:

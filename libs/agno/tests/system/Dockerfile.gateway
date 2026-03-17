@@ -38,7 +38,8 @@ RUN pip install --no-cache-dir \
     agui \
     ag-ui-protocol \
     slack-sdk \
-    aiohttp
+    aiohttp \
+    pyTelegramBotAPI
 
 # Copy the gateway server script
 WORKDIR /app
