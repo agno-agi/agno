@@ -1,8 +1,25 @@
 import base64
+import io
 import os
 import wave
+from typing import Optional
 
 from agno.utils.log import log_info
+
+
+def pcm_to_wav_bytes(
+    pcm_data: bytes,
+    channels: Optional[int] = None,
+    rate: Optional[int] = None,
+    sample_width: Optional[int] = None,
+) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels or 1)
+        wf.setsampwidth(sample_width or 2)
+        wf.setframerate(rate or 24000)
+        wf.writeframes(pcm_data)
+    return buf.getvalue()
 
 
 def write_audio_to_file(audio, filename: str):
