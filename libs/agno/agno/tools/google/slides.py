@@ -253,6 +253,8 @@ class GoogleSlidesTools(Toolkit):
             delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
             if delegated_user:
                 sa_creds = sa_creds.with_subject(delegated_user)
+            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
+            sa_creds.refresh(Request())
             self.creds = sa_creds
             return
 
