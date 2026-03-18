@@ -102,20 +102,42 @@ class GoogleSlidesTools(Toolkit):
     _VALID_BATCH_REQUEST_TYPES: frozenset = frozenset(
         {
             "createSlide",
-            "deleteObject",
-            "duplicateObject",
-            "updateSlidesPosition",
             "createShape",
             "createTable",
             "createVideo",
-            "insertText",
-            "updatePageProperties",
-            "updateShapeProperties",
-            "updateTableCellProperties",
+            "createImage",
+            "createLine",
+            "createSheetsChart",
+            "deleteObject",
+            "deleteText",
             "deleteTableRow",
             "deleteTableColumn",
+            "duplicateObject",
+            "groupObjects",
+            "ungroupObjects",
+            "insertText",
+            "insertTableRows",
+            "insertTableColumns",
             "mergeCells",
             "unmergeCells",
+            "replaceAllText",
+            "replaceAllShapesWithImage",
+            "replaceAllShapesWithSheetsChart",
+            "updateSlidesPosition",
+            "updatePageProperties",
+            "updatePageElementTransform",
+            "updateShapeProperties",
+            "updateImageProperties",
+            "updateVideoProperties",
+            "updateLineProperties",
+            "updateTableCellProperties",
+            "updateTableBorderProperties",
+            "updateTableRowProperties",
+            "updateTableColumnProperties",
+            "updateTextStyle",
+            "updateParagraphStyle",
+            "refreshSheetsChart",
+            "rerouteLine",
         }
     )
 
@@ -123,12 +145,13 @@ class GoogleSlidesTools(Toolkit):
         self,
         scopes: Optional[List[str]] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
-        creds_path: Optional[str] = None,
+        credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
+        delegated_user: Optional[str] = None,
         oauth_port: int = 0,
-        # ── Per-tool boolean flags ──────────────────────────
-        # Safe / read-only tools → default True
+        login_hint: Optional[str] = None,
+        # Safe / read-only tools
         enable_create_presentation: bool = True,
         enable_get_presentation: bool = True,
         enable_list_presentations: bool = True,
@@ -146,20 +169,19 @@ class GoogleSlidesTools(Toolkit):
         enable_insert_youtube_video: bool = True,
         enable_insert_drive_video: bool = True,
         enable_batch_update_presentation: bool = True,
-        # Destructive tools → default False
+        # Destructive tools
         enable_delete_presentation: bool = False,
         enable_delete_slide: bool = False,
-        # Master override
         all: bool = False,
-        include_tools: Optional[List[str]] = None,
-        exclude_tools: Optional[List[str]] = None,
         **kwargs,
     ):
         self.creds = creds
-        self.credentials_path = creds_path
+        self.credentials_path = credentials_path
         self.token_path = token_path
         self.service_account_path = service_account_path
+        self.delegated_user = delegated_user
         self.oauth_port = oauth_port
+        self.login_hint = login_hint
         self.scopes = scopes or self.DEFAULT_SCOPES
 
         self.slides_service: Any = None
@@ -217,8 +239,6 @@ class GoogleSlidesTools(Toolkit):
                 "Always use the presentation_id and slide_id (objectId) from these tools."
             ),
             add_instructions=True,
-            include_tools=include_tools,
-            exclude_tools=exclude_tools,
             **kwargs,
         )
 
@@ -229,8 +249,11 @@ class GoogleSlidesTools(Toolkit):
 
         service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         if service_account_path:
-            self.creds = ServiceAccountCredentials.from_service_account_file(service_account_path, scopes=self.scopes)
-            # Freshly loaded service account credentials don't need manual refresh check
+            sa_creds = ServiceAccountCredentials.from_service_account_file(service_account_path, scopes=self.scopes)
+            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
+            if delegated_user:
+                sa_creds = sa_creds.with_subject(delegated_user)
+            self.creds = sa_creds
             return
 
         token_file = Path(self.token_path or "token.json")
@@ -267,7 +290,12 @@ class GoogleSlidesTools(Toolkit):
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
 
-                self.creds = flow.run_local_server(port=self.oauth_port)
+                # prompt=consent forces Google to return a refresh_token every time
+                oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+                if self.login_hint:
+                    oauth_kwargs["login_hint"] = self.login_hint
+                oauth_kwargs["port"] = self.oauth_port
+                self.creds = flow.run_local_server(**oauth_kwargs)
             if self.creds:
                 try:
                     with tempfile.NamedTemporaryFile(mode="w", dir=token_file.parent, delete=False) as f:
@@ -544,8 +572,6 @@ class GoogleSlidesTools(Toolkit):
         except Exception as e:
             return self._err(str(e))
 
-    # -- Slide tools -----------------------------------------------------------
-
     @authenticate
     def add_slide(
         self,
@@ -598,7 +624,7 @@ class GoogleSlidesTools(Toolkit):
                 "TITLE_AND_TWO_COLUMNS",
             }
             if layout not in valid_layouts:
-                return self._err(f"Invalid layout '{layout}'. Must be one of: {', '.join(valid_layouts)}")
+                return self._err(f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}")
 
             slide_id = self._make_object_id("slide")
 
@@ -618,7 +644,7 @@ class GoogleSlidesTools(Toolkit):
             # If text is provided, fetch presentation to find actual placeholder IDs
             # This is more robust than synthetic IDs as layout structures can vary
             insert_errors: List[str] = []
-            if any([title, subtitle, body, body_2]):
+            if any((title, subtitle, body, body_2)):
                 try:
                     page_data = (
                         self.slides_service.presentations()
@@ -1002,9 +1028,13 @@ class GoogleSlidesTools(Toolkit):
                 return err
 
             log_debug(f"Reading all text from presentation {presentation_id}")
-            # Corrected field masking to include text sub-elements
             fields = (
-                "slides(objectId,pageElements(shape(text),table(tableRows(tableCells(text))),elementGroup,wordArt))"
+                "slides(objectId,pageElements("
+                "shape(text),"
+                "table(tableRows(tableCells(text))),"
+                "elementGroup(children(shape(text),table(tableRows(tableCells(text))),wordArt)),"
+                "wordArt"
+                "))"
             )
             pres = self.slides_service.presentations().get(presentationId=presentation_id, fields=fields).execute()
             result: Dict[str, List[str]] = {}

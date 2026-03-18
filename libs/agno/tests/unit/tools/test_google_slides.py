@@ -1,5 +1,5 @@
 """
-Comprehensive unit tests for GoogleSlidesTools.
+Unit tests for GoogleSlidesTools.
 
 Coverage:
 - All 19 public tool methods
