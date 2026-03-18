@@ -1,26 +1,12 @@
-"""
-Unit tests for GoogleSlidesTools.
-
-Coverage:
-- All 19 public tool methods
-- Success paths
-- Validation errors (empty/whitespace IDs, invalid layouts, bad dimensions, etc.)
-- API errors
-- Tool filtering (include_tools / exclude_tools)
-"""
+"""Unit tests for GoogleSlidesTools."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from google.oauth2.credentials import Credentials
 
-Credentials = pytest.importorskip("google.oauth2.credentials").Credentials
-
-from agno.tools.google.slides import GoogleSlidesTools  # noqa: E402
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+from agno.tools.google.slides import GoogleSlidesTools
 
 
 @pytest.fixture
@@ -115,28 +101,25 @@ def mock_drive_service():
 
 
 @pytest.fixture
-def mock_creds():
-    creds = MagicMock(spec=Credentials)
-    creds.valid = True
-    creds.expired = False
-    return creds
+def mock_credentials():
+    mock_creds = Mock(spec=Credentials)
+    mock_creds.valid = True
+    mock_creds.expired = False
+    return mock_creds
 
 
 @pytest.fixture
-def tools(mock_creds, mock_slides_service, mock_drive_service):
+def tools(mock_credentials, mock_slides_service, mock_drive_service):
     with (
         patch("agno.tools.google.slides.build"),
-        patch.object(GoogleSlidesTools, "_auth", return_value=None),
+        patch("agno.tools.google.slides.authenticate", lambda func: func),
     ):
-        toolkit = GoogleSlidesTools(creds=mock_creds)
+        toolkit = GoogleSlidesTools(creds=mock_credentials)
         toolkit.slides_service = mock_slides_service
         toolkit.drive_service = mock_drive_service
         return toolkit
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def ok(response: str) -> dict:
@@ -153,21 +136,18 @@ def err(response: str) -> str:
     return data["error"]
 
 
-# ===========================================================================
-# initialization
-# ===========================================================================
 
 
 class TestInitialization:
     def test_default_scopes(self):
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools()
             assert "https://www.googleapis.com/auth/drive.file" in toolkit.scopes
             assert "https://www.googleapis.com/auth/presentations" in toolkit.scopes
             assert "https://www.googleapis.com/auth/drive" not in toolkit.scopes
 
     def test_to_emu_helper(self):
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools()
             assert toolkit._to_emu(1, "inch") == 914400
             assert toolkit._to_emu(72, "point") == 914400
@@ -175,16 +155,13 @@ class TestInitialization:
 
     def test_to_emu_zero(self):
         """_to_emu(0, ...) must always return 0 regardless of unit."""
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools()
             assert toolkit._to_emu(0, "inch") == 0
             assert toolkit._to_emu(0, "point") == 0
             assert toolkit._to_emu(0, "raw") == 0
 
 
-# ===========================================================================
-# create_presentation
-# ===========================================================================
 
 
 class TestCreatePresentation:
@@ -207,9 +184,6 @@ class TestCreatePresentation:
         assert "quota exceeded" in err(tools.create_presentation("Valid Title"))
 
 
-# ===========================================================================
-# get_presentation
-# ===========================================================================
 
 
 class TestGetPresentation:
@@ -240,9 +214,6 @@ class TestGetPresentation:
         assert "not found" in err(tools.get_presentation("bad-id"))
 
 
-# ===========================================================================
-# list_presentations
-# ===========================================================================
 
 
 class TestListPresentations:
@@ -273,9 +244,6 @@ class TestListPresentations:
         assert call_kwargs.kwargs["pageToken"] == "test-token"
 
 
-# ===========================================================================
-# delete_presentation
-# ===========================================================================
 
 
 class TestDeletePresentation:
@@ -294,9 +262,6 @@ class TestDeletePresentation:
         assert "forbidden" in err(tools.delete_presentation("pres-id"))
 
 
-# ===========================================================================
-# add_slide
-# ===========================================================================
 
 
 class TestAddSlide:
@@ -393,9 +358,6 @@ class TestAddSlide:
         assert data["body"] == "Body"
 
 
-# ===========================================================================
-# delete_slide
-# ===========================================================================
 
 
 class TestDeleteSlide:
@@ -419,9 +381,6 @@ class TestDeleteSlide:
         assert "not found" in err(tools.delete_slide("pres-id", "slide-1"))
 
 
-# ===========================================================================
-# duplicate_slide
-# ===========================================================================
 
 
 class TestDuplicateSlide:
@@ -442,9 +401,6 @@ class TestDuplicateSlide:
         assert "dup error" in err(tools.duplicate_slide("pres-id", "slide-1"))
 
 
-# ===========================================================================
-# move_slides
-# ===========================================================================
 
 
 class TestMoveSlides:
@@ -469,9 +425,6 @@ class TestMoveSlides:
         assert "move error" in err(tools.move_slides("pres-id", ["slide-1"], insertion_index=0))
 
 
-# ===========================================================================
-# add_text_box
-# ===========================================================================
 
 
 class TestAddTextBox:
@@ -517,9 +470,6 @@ class TestAddTextBox:
         assert "textbox error" in err(tools.add_text_box("pres-id", "slide-1", "Hi"))
 
 
-# ===========================================================================
-# add_table
-# ===========================================================================
 
 
 class TestAddTable:
@@ -580,9 +530,6 @@ class TestAddTable:
         assert "table error" in err(tools.add_table("pres-id", "slide-1", rows=2, columns=2))
 
 
-# ===========================================================================
-# set_background_image
-# ===========================================================================
 
 
 class TestSetBackgroundImage:
@@ -622,9 +569,6 @@ class TestSetBackgroundImage:
         assert "bg error" in err(tools.set_background_image("pres-id", "slide-1", "https://x.com/img.png"))
 
 
-# ===========================================================================
-# read_all_text
-# ===========================================================================
 
 
 class TestReadAllText:
@@ -703,9 +647,6 @@ class TestReadAllText:
         assert "Slide 1 of 5" in data["slide_auto"]
 
 
-# ===========================================================================
-# get_thumbnail_url
-# ===========================================================================
 
 
 class TestGetThumbnailUrl:
@@ -730,9 +671,6 @@ class TestGetThumbnailUrl:
         assert "thumb error" in err(tools.get_thumbnail_url("pres-id", "slide-1"))
 
 
-# ===========================================================================
-# get_presentation_metadata
-# ===========================================================================
 
 
 class TestGetPresentationMetadata:
@@ -765,9 +703,6 @@ class TestGetPresentationMetadata:
         assert "meta error" in err(tools.get_presentation_metadata("pres-id"))
 
 
-# ===========================================================================
-# get_page
-# ===========================================================================
 
 
 class TestGetPage:
@@ -791,9 +726,6 @@ class TestGetPage:
         assert "page error" in err(tools.get_page("pres-id", "slide-1"))
 
 
-# ===========================================================================
-# get_slide_text
-# ===========================================================================
 
 
 class TestGetSlideText:
@@ -840,9 +772,6 @@ class TestGetSlideText:
         assert data["text"] == []
 
 
-# ===========================================================================
-# batch_update_presentation
-# ===========================================================================
 
 
 class TestBatchUpdatePresentation:
@@ -874,9 +803,6 @@ class TestBatchUpdatePresentation:
         )
 
 
-# ===========================================================================
-# insert_youtube_video
-# ===========================================================================
 
 
 class TestInsertYoutubeVideo:
@@ -916,9 +842,6 @@ class TestInsertYoutubeVideo:
         assert "yt error" in err(tools.insert_youtube_video("pres-id", "slide-1", "abc"))
 
 
-# ===========================================================================
-# insert_drive_video
-# ===========================================================================
 
 
 class TestInsertDriveVideo:
@@ -958,9 +881,6 @@ class TestInsertDriveVideo:
         assert "drive video error" in err(tools.insert_drive_video("pres-id", "slide-1", "file-id"))
 
 
-# ===========================================================================
-# HttpError parsing
-# ===========================================================================
 
 
 class TestHttpErrorParsing:
@@ -1000,9 +920,6 @@ class TestHttpErrorParsing:
         assert "Quota exceeded" in msg
 
 
-# ===========================================================================
-# ID uniqueness
-# ===========================================================================
 
 
 class TestIdUniqueness:
@@ -1029,14 +946,11 @@ class TestIdUniqueness:
         assert len(ids) == 10
 
 
-# ===========================================================================
-# Tool filtering
-# ===========================================================================
 
 
 class TestToolFiltering:
     def test_include_tools(self):
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools(include_tools=["create_presentation", "get_presentation"])
         assert len(toolkit.functions) == 2
         assert "create_presentation" in toolkit.functions
@@ -1044,7 +958,7 @@ class TestToolFiltering:
         assert "delete_presentation" not in toolkit.functions
 
     def test_exclude_tools(self):
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools(
                 enable_delete_presentation=True, exclude_tools=["delete_presentation", "add_slide"]
             )
@@ -1053,7 +967,7 @@ class TestToolFiltering:
         assert "create_presentation" in toolkit.functions
 
     def test_all_tools_registered_by_default(self):
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools()
         expected = {
             "create_presentation",
@@ -1084,7 +998,7 @@ class TestToolFiltering:
           2. exclude_tools then strips from that narrowed set (skip if in exclude list).
         So include=[A,B,C] + exclude=[C]  →  {A, B} are registered.
         This is verified directly against Agno's Toolkit source code."""
-        with patch.object(GoogleSlidesTools, "_auth", return_value=None):
+        with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools(
                 enable_delete_presentation=True,
                 include_tools=["create_presentation", "get_presentation", "delete_presentation"],
