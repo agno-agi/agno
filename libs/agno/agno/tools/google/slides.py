@@ -72,12 +72,16 @@ def authenticate(func):
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        if not self.creds or not self.creds.valid:
-            self._auth()
-        if not self.slides_service:
-            self.slides_service = build("slides", "v1", credentials=self.creds)
-        if not self.drive_service:
-            self.drive_service = build("drive", "v3", credentials=self.creds)
+        try:
+            if not self.creds or not self.creds.valid:
+                self._auth()
+            if not self.slides_service:
+                self.slides_service = build("slides", "v1", credentials=self.creds)
+            if not self.drive_service:
+                self.drive_service = build("drive", "v3", credentials=self.creds)
+        except Exception as e:
+            log_error(f"Google Slides authentication failed: {e}")
+            return json.dumps({"error": f"Google Slides authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
     return wrapper
