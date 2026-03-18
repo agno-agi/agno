@@ -59,8 +59,13 @@ def _get_tool_names(member: Any) -> List[str]:
         return tool_names
     for _tool in member.tools:
         if isinstance(_tool, Toolkit):
+            seen_names: set = set()
             for _func in _tool.functions.values():
                 if _func.entrypoint:
+                    tool_names.append(_func.name)
+                    seen_names.add(_func.name)
+            for _func in _tool.async_functions.values():
+                if _func.entrypoint and _func.name not in seen_names:
                     tool_names.append(_func.name)
         elif isinstance(_tool, Function) and _tool.entrypoint:
             tool_names.append(_tool.name)
