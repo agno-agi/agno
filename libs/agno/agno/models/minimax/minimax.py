@@ -15,14 +15,14 @@ class MiniMax(OpenAILike):
     For more information, see: https://platform.minimax.io/docs/api-reference/text-openai-api
 
     Attributes:
-        id (str): The model id. Defaults to "MiniMax-M2.5".
+        id (str): The model id. Defaults to "MiniMax-M2.7".
         name (str): The model name. Defaults to "MiniMax".
         provider (str): The provider name. Defaults to "MiniMax".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.minimax.io/v1".
     """
 
-    id: str = "MiniMax-M2.5"
+    id: str = "MiniMax-M2.7"
     name: str = "MiniMax"
     provider: str = "MiniMax"
 

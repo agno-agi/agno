@@ -12,7 +12,7 @@ from agno.models.minimax import MiniMax
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=MiniMax(id="MiniMax-M2.5"), markdown=True)
+agent = Agent(model=MiniMax(id="MiniMax-M2.7"), markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent
