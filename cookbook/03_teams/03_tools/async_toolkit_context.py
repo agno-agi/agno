@@ -53,11 +53,14 @@ team = Team(
 # Verify
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    content = team.get_members_system_message_content()
-    print("Team system message content:")
+    # async_mode=True shows async tools (used by aget_system_message / team.arun)
+    content = team.get_members_system_message_content(async_mode=True)
+    print("Team system message content (async mode):")
     print(content)
 
-    # Verify async tool names are present
-    assert "async_search" in content, "async_search should appear in team context"
-    assert "async_summarize" in content, "async_summarize should appear in team context"
+    # Verify async tool names are present in async mode
+    assert "async_search" in content, "async_search should appear in async team context"
+    assert "async_summarize" in content, (
+        "async_summarize should appear in async team context"
+    )
     print("PASS: Async toolkit functions are visible in the team system message.")
