@@ -4785,6 +4785,7 @@ async def _ahandle_model_response_for_continue(
         aparse_response_with_parser_model,
     )
 
+    team.model = cast(Model, team.model)
     model_response: ModelResponse = await team.model.aresponse(
         messages=run_messages.messages,
         response_format=response_format,
@@ -5072,7 +5073,7 @@ def continue_run_dispatch(
         team.model = cast(Model, team.model)
 
         # Prepare tools for the continuation
-        team_run_context: Dict[str, Any] = {}
+        team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
         _tools = _determine_tools_for_model(
             team,
             model=team.model,
@@ -5712,12 +5713,6 @@ async def _acontinue_run(
     """Continue a paused team run (async, non-streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
-    from agno.team._response import (
-        _convert_response_to_structured_format,
-        _update_run_response,
-        agenerate_response_with_output_model,
-        aparse_response_with_parser_model,
-    )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
 
@@ -5870,7 +5865,7 @@ async def _acontinue_run(
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
-                    team_run_context: Dict[str, Any] = {}
+                    team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -6248,7 +6243,7 @@ async def _acontinue_run_stream(
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
-                    team_run_context: Dict[str, Any] = {}
+                    team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
