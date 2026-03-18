@@ -43,6 +43,7 @@ import json
 import os
 import stat
 import tempfile
+import textwrap
 import uuid
 from functools import wraps
 from os import getenv
@@ -66,12 +67,19 @@ except ImportError:
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
-SLIDES_INSTRUCTIONS = (
-    "Use these tools to create and manage Google Slides presentations. "
-    "When starting: call create_presentation or list_presentations. "
-    "Before modifying: call get_presentation_metadata to get slide IDs. "
-    "Always use the presentation_id and slide_id (objectId) from these tools."
-)
+SLIDES_INSTRUCTIONS = textwrap.dedent("""\
+    You have access to Google Slides tools for creating and managing presentations.
+
+    ## Key Workflow
+    - Call create_presentation to start a new deck, or list_presentations to find existing ones
+    - Always call get_presentation_metadata before modifying slides to get current slide IDs
+    - Never guess slide IDs or object IDs — use the values returned by the API
+
+    ## Tips
+    - Use add_slide with layouts: TITLE, TITLE_AND_BODY, TITLE_AND_TWO_COLUMNS, SECTION_HEADER, BLANK
+    - Use add_text_box for custom positioned text, add_table for structured data
+    - Use get_slide_text or read_all_text to extract content from presentations
+    - Destructive tools (delete_presentation, delete_slide) are disabled by default""")
 
 
 def authenticate(func):
