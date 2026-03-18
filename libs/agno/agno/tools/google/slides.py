@@ -141,7 +141,6 @@ class GoogleSlidesTools(Toolkit):
         self.slides_service: Any = None
         self.drive_service: Any = None
 
-        # ── Build tool list based on flags ──────────────
         tools = []
         if all or enable_create_presentation:
             tools.append(self.create_presentation)
