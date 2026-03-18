@@ -1,6 +1,6 @@
 import json
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+
+
+class SystemPromptBlock(BaseModel):
+    """A block of system prompt content with cache control metadata."""
+
+    text: str
+    cache: bool = True
+    ttl: Optional[Literal["5m", "1h"]] = None
 
 
 class MessageReferences(BaseModel):
@@ -93,6 +101,9 @@ class Message(BaseModel):
 
     # Citations received from the model
     citations: Optional[Citations] = None
+
+    # Per-block system prompt metadata for multi-block caching
+    system_prompt_blocks: Optional[List[SystemPromptBlock]] = None
 
     # --- Data not sent to the Model API ---
     # The reasoning content from the model
