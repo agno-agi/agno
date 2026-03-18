@@ -177,6 +177,8 @@ class GoogleSlidesTools(Toolkit):
         enable_delete_presentation: bool = False,
         enable_delete_slide: bool = False,
         all: bool = False,
+        instructions: Optional[str] = None,
+        add_instructions: bool = True,
         **kwargs,
     ):
         self.creds = creds
@@ -233,16 +235,18 @@ class GoogleSlidesTools(Toolkit):
         if all or enable_delete_slide:
             tools.append(self.delete_slide)
 
+        default_instructions = (
+            "Use these tools to create and manage Google Slides presentations. "
+            "When starting: call create_presentation or list_presentations. "
+            "Before modifying: call get_presentation_metadata to get slide IDs. "
+            "Always use the presentation_id and slide_id (objectId) from these tools."
+        )
+
         super().__init__(
             name="google_slides_tools",
             tools=tools,
-            instructions=(
-                "Use these tools to create and manage Google Slides presentations. "
-                "When starting: call create_presentation or list_presentations. "
-                "Before modifying: call get_presentation_metadata to get slide IDs. "
-                "Always use the presentation_id and slide_id (objectId) from these tools."
-            ),
-            add_instructions=True,
+            instructions=instructions or default_instructions,
+            add_instructions=add_instructions,
             **kwargs,
         )
 
@@ -266,42 +270,42 @@ class GoogleSlidesTools(Toolkit):
         creds_file = Path(self.credentials_path or "credentials.json")
 
         if token_file.exists():
-            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            try:
+                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            except ValueError:
+                # Token file missing refresh_token — fall through to re-auth
+                self.creds = None
+
+        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
+            try:
+                self.creds.refresh(Request())
+            except Exception:
+                # Refresh token revoked or expired — fall through to re-auth
+                self.creds = None
 
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
-                self.creds.refresh(Request())
-            else:
-                client_id = getenv("GOOGLE_CLIENT_ID")
-                client_secret = getenv("GOOGLE_CLIENT_SECRET")
-                if not client_id or not client_secret:
-                    raise EnvironmentError(
-                        "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set when not using "
-                        "a credentials file or service account."
-                    )
-
-                client_config = {
-                    "installed": {
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                        "project_id": getenv("GOOGLE_PROJECT_ID"),
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                    }
+            client_config = {
+                "installed": {
+                    "client_id": getenv("GOOGLE_CLIENT_ID"),
+                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                    "project_id": getenv("GOOGLE_PROJECT_ID"),
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                 }
-                if creds_file.exists():
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-                else:
-                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+            }
+            if creds_file.exists():
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+            else:
+                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
 
-                # prompt=consent forces Google to return a refresh_token every time
-                oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-                if self.login_hint:
-                    oauth_kwargs["login_hint"] = self.login_hint
-                oauth_kwargs["port"] = self.oauth_port
-                self.creds = flow.run_local_server(**oauth_kwargs)
+            # prompt=consent forces Google to return a refresh_token every time
+            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+            if self.login_hint:
+                oauth_kwargs["login_hint"] = self.login_hint
+            oauth_kwargs["port"] = self.oauth_port
+            self.creds = flow.run_local_server(**oauth_kwargs)
             if self.creds:
                 try:
                     with tempfile.NamedTemporaryFile(mode="w", dir=token_file.parent, delete=False) as f:
