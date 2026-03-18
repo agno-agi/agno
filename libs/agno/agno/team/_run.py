@@ -4727,6 +4727,102 @@ def _build_continuation_message(member_results: List[str]) -> str:
     return "\n".join(parts)
 
 
+def _prepare_member_hitl_continuation(
+    run_response: TeamRunOutput,
+    run_messages: RunMessages,
+    member_results: List[str],
+) -> None:
+    """Prepare run_response and run_messages for member HITL continuation.
+
+    Updates the delegate_task_to_member tool result and appends a tool result message
+    to the run messages. Also resets run state for continuation.
+
+    This is called after the member agent's HITL has been resolved and we need to
+    continue the team run with the member's results.
+    """
+    from agno.models.message import Message
+
+    continuation_message = _build_continuation_message(member_results)
+
+    # Update tool results with member response - replace the "requires human input" placeholder
+    for tool in run_response.tools or []:
+        if tool.tool_name == "delegate_task_to_member" and tool.result is not None:
+            if "requires human input" in (tool.result or ""):
+                tool.result = continuation_message
+
+    # Add tool result message to run_messages
+    tool_result_msg = Message(role="tool", content=continuation_message)
+    for tool in run_response.tools or []:
+        if tool.tool_name == "delegate_task_to_member":
+            tool_result_msg.tool_call_id = tool.tool_call_id
+            tool_result_msg.tool_name = tool.tool_name
+            break
+    run_messages.messages.append(tool_result_msg)
+
+    # Reset run state for continuation
+    run_response.status = RunStatus.running
+    run_response.content = None
+
+
+async def _ahandle_model_response_for_continue(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_messages: RunMessages,
+    run_context: RunContext,
+    tools: List[Any],
+    team_session: "TeamSession",
+    response_format: Optional[Any] = None,
+) -> Optional[TeamRunOutput]:
+    """Handle async model response for team continue_run (non-streaming).
+
+    Shared logic for both team-level and member HITL continuation.
+    Returns the run_response if paused (needs to return early), otherwise None.
+    """
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _update_run_response,
+        agenerate_response_with_output_model,
+        aparse_response_with_parser_model,
+    )
+
+    model_response: ModelResponse = await team.model.aresponse(
+        messages=run_messages.messages,
+        response_format=response_format,
+        tools=tools,
+        tool_choice=team.tool_choice,
+        tool_call_limit=team.tool_call_limit,
+        run_response=run_response,
+        send_media_to_model=team.send_media_to_model,
+        compression_manager=team.compression_manager if team.compress_tool_results else None,
+    )
+
+    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+    await agenerate_response_with_output_model(team, model_response, run_messages)
+    await aparse_response_with_parser_model(team, model_response, run_messages, run_context=run_context)
+
+    _update_run_response(
+        team,
+        model_response=model_response,
+        run_response=run_response,
+        run_messages=run_messages,
+        run_context=run_context,
+    )
+
+    # Check for new pauses
+    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+        from agno.team import _hooks
+
+        return await _hooks.ahandle_team_run_paused(
+            team, run_response=run_response, session=team_session, run_context=run_context
+        )
+
+    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+    store_media_util(run_response, model_response)
+
+    return None  # Continue with post-hooks
+
+
 def continue_run_dispatch(
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -4970,37 +5066,69 @@ def continue_run_dispatch(
                 **kwargs,
             )
 
-    # Member-only case: re-run team model with member results
+    # Member-only case: continue the same run with member results
     if member_results and not has_team_level:
-        continuation_message = _build_continuation_message(member_results)
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
 
-        # Mark original paused run as completed before starting a fresh run
-        run_response.status = RunStatus.completed
-        _cleanup_and_store(team, run_response=run_response, session=team_session)
+        # Prepare tools for the continuation
+        team_run_context: Dict[str, Any] = {}
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=opts.stream or False,
+            stream_events=opts.stream_events or False,
+        )
+
+        # Get existing messages
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        # Prepare for member HITL continuation
+        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+        log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
         if opts.stream:
-            return team.run(  # type: ignore
-                input=continuation_message,
-                stream=True,
-                stream_events=opts.stream_events,
-                session_id=session_id,
+            return _continue_run_stream(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools,
+                session=team_session,
                 user_id=user_id,
-                knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
-                metadata=metadata,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
-            return team.run(
-                input=continuation_message,
-                stream=False,
-                session_id=session_id,
+            return _continue_run(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools,
+                session=team_session,
                 user_id=user_id,
-                knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
-                metadata=metadata,
+                response_format=response_format,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -5724,64 +5852,62 @@ async def _acontinue_run(
                     run_response.status = RunStatus.running
                     run_response.content = None
 
-                    # Get model response
-                    model_response: ModelResponse = await team.model.aresponse(
-                        messages=run_messages.messages,
-                        response_format=response_format,
-                        tools=_tools,
-                        tool_choice=team.tool_choice,
-                        tool_call_limit=team.tool_call_limit,
-                        run_response=run_response,
-                        send_media_to_model=team.send_media_to_model,
-                        compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    )
-
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                    await agenerate_response_with_output_model(team, model_response, run_messages)
-                    await aparse_response_with_parser_model(team, model_response, run_messages, run_context=run_context)
-
-                    _update_run_response(
+                    # Handle model response using shared helper
+                    paused_result = await _ahandle_model_response_for_continue(
                         team,
-                        model_response=model_response,
                         run_response=run_response,
                         run_messages=run_messages,
                         run_context=run_context,
+                        tools=_tools,
+                        team_session=team_session,
+                        response_format=response_format,
                     )
-
-                    # Check for new pauses
-                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                        from agno.team import _hooks
-
-                        return await _hooks.ahandle_team_run_paused(
-                            team, run_response=run_response, session=team_session, run_context=run_context
-                        )
-
-                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
-
-                    store_media_util(run_response, model_response)
+                    if paused_result is not None:
+                        return paused_result
 
                 elif member_results:
-                    # Member-only: re-run team with results
-                    continuation_message = _build_continuation_message(member_results)
+                    # Member-only: continue the same run with results
+                    team.model = cast(Model, team.model)
+                    await _check_and_refresh_mcp_tools(team)
 
-                    # Mark original paused run as completed before starting a fresh run
-                    run_response.status = RunStatus.completed
-                    if team_session is not None:
-                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
-
-                    result = await team.arun(  # type: ignore[misc]
-                        input=continuation_message,
-                        stream=False,
-                        session_id=session_id,
+                    team_run_context: Dict[str, Any] = {}
+                    _tools = _determine_tools_for_model(
+                        team,
+                        model=team.model,
+                        run_response=run_response,
+                        run_context=run_context,
+                        team_run_context=team_run_context,
+                        session=team_session,
                         user_id=user_id,
-                        knowledge_filters=run_context.knowledge_filters,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
-                        debug_mode=debug_mode,
-                        **kwargs,
+                        async_mode=True,
                     )
-                    return result  # type: ignore
+
+                    input_messages = run_response.messages or []
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
+
+                    # Prepare for member HITL continuation
+                    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+                    log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
+
+                    # Handle model response using shared helper
+                    paused_result = await _ahandle_model_response_for_continue(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools,
+                        team_session=team_session,
+                        response_format=response_format,
+                    )
+                    if paused_result is not None:
+                        return paused_result
 
                 # Post-hooks
                 if team.post_hooks is not None:
@@ -6118,25 +6244,117 @@ async def _acontinue_run_stream(
                         yield event
 
                 elif member_results:
-                    # Member-only: mark original run as completed, then re-run team
-                    continuation_message = _build_continuation_message(member_results)
-                    run_response.status = RunStatus.completed
-                    if team_session is not None:
-                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
-                    async for item in team.arun(  # type: ignore
-                        input=continuation_message,
+                    # Member-only: continue the same run with member results
+                    team.model = cast(Model, team.model)
+                    await _check_and_refresh_mcp_tools(team)
+
+                    team_run_context: Dict[str, Any] = {}
+                    _tools = _determine_tools_for_model(
+                        team,
+                        model=team.model,
+                        run_response=run_response,
+                        run_context=run_context,
+                        team_run_context=team_run_context,
+                        session=team_session,
+                        user_id=user_id,
+                        async_mode=True,
                         stream=True,
                         stream_events=stream_events,
-                        session_id=session_id,
-                        user_id=user_id,
-                        knowledge_filters=run_context.knowledge_filters,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
-                        debug_mode=debug_mode,
-                        **kwargs,
+                    )
+
+                    input_messages = run_response.messages or []
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
+
+                    # Prepare for member HITL continuation
+                    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+                    log_debug(f"Team Continue Run Stream (Member HITL): {run_response.run_id}", center=True)
+
+                    # Yield RunContinued event
+                    if stream_events:
+                        yield handle_event(
+                            create_team_run_continued_event(run_response),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+
+                    # Stream model response
+                    if team.output_model is None:
+                        async for event in _ahandle_model_response_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                        async for event in _ahandle_model_response_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        async for event in agenerate_response_with_output_model_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+
+                    # Check for new pauses
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        async for item in _hooks.ahandle_team_run_paused_stream(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        ):
+                            yield item
+                        if yield_run_output:
+                            yield run_response
+                        return
+
+                    # Parse response with parser model
+                    async for event in aparse_response_with_parser_model_stream(
+                        team,
+                        session=team_session,
+                        run_response=run_response,
+                        stream_events=stream_events,
+                        run_context=run_context,
                     ):
-                        yield item
-                    return
+                        yield event
 
                 # Content completed
                 if stream_events:
