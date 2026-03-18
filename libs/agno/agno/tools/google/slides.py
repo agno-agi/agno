@@ -40,9 +40,6 @@ Alternatively, for Server-to-Server use cases you can use a Service Account:
 """
 
 import json
-import os
-import stat
-import tempfile
 import textwrap
 import uuid
 from functools import wraps
@@ -259,23 +256,10 @@ class GoogleSlidesTools(Toolkit):
                 oauth_kwargs["login_hint"] = self.login_hint
             oauth_kwargs["port"] = self.oauth_port
             self.creds = flow.run_local_server(**oauth_kwargs)
-            if self.creds:
-                try:
-                    with tempfile.NamedTemporaryFile(mode="w", dir=token_file.parent, delete=False) as f:
-                        if hasattr(self.creds, "to_json"):
-                            f.write(self.creds.to_json())  # type: ignore
-                        tmp_path = Path(f.name)
-                    os.chmod(str(tmp_path), stat.S_IRUSR | stat.S_IWUSR)
-                    tmp_path.rename(token_file)
-                except Exception as e:
-                    # Fallback if atomic move fails
-                    if hasattr(self.creds, "to_json"):
-                        token_file.write_text(self.creds.to_json())  # type: ignore
-                    os.chmod(str(token_file), stat.S_IRUSR | stat.S_IWUSR)
-                    log_warning(f"Atomic token write failed, using fallback: {e}")
-
-                log_debug("Successfully authenticated with Google Slides API.")
-                log_debug(f"Token file path: {token_file}")
+        # Save the credentials for future use
+        if self.creds and self.creds.valid:
+            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+            log_debug("Google Slides credentials saved")
 
     def _validate_ids(self, presentation_id: Optional[str] = None, object_id: Optional[str] = None) -> Optional[str]:
         if presentation_id is not None and not presentation_id.strip():
