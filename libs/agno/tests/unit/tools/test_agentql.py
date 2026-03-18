@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.tools.agentql import AgentQLTools
+AgentQLTools = pytest.importorskip("agno.tools.agentql", reason="agentql not available").AgentQLTools
 
 
 @pytest.fixture
