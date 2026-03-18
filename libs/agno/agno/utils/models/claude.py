@@ -373,8 +373,11 @@ def format_messages(
     merged_messages: List[Dict[str, Union[str, list]]] = []
     for msg in chat_messages:
         if merged_messages and merged_messages[-1]["role"] == msg["role"]:
+            # Same role as previous → merge contents
             prev_content = merged_messages[-1]["content"]
             curr_content = msg["content"]
+
+            # Handle different content type combinations
             if isinstance(prev_content, list) and isinstance(curr_content, list):
                 prev_content.extend(curr_content)
             elif isinstance(prev_content, list):
@@ -383,6 +386,7 @@ def format_messages(
                 curr_content.insert(0, {"type": "text", "text": str(prev_content)})
                 merged_messages[-1]["content"] = curr_content
             else:
+                # Both strings → convert in list
                 merged_messages[-1]["content"] = [
                     {"type": "text", "text": str(prev_content)},
                     {"type": "text", "text": str(curr_content)},
