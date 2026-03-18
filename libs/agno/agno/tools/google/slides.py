@@ -103,47 +103,6 @@ class GoogleSlidesTools(Toolkit):
         "https://www.googleapis.com/auth/drive.file",
     ]
 
-    _VALID_BATCH_REQUEST_TYPES: frozenset = frozenset(
-        {
-            "createSlide",
-            "createShape",
-            "createTable",
-            "createVideo",
-            "createImage",
-            "createLine",
-            "createSheetsChart",
-            "deleteObject",
-            "deleteText",
-            "deleteTableRow",
-            "deleteTableColumn",
-            "duplicateObject",
-            "groupObjects",
-            "ungroupObjects",
-            "insertText",
-            "insertTableRows",
-            "insertTableColumns",
-            "mergeCells",
-            "unmergeCells",
-            "replaceAllText",
-            "replaceAllShapesWithImage",
-            "replaceAllShapesWithSheetsChart",
-            "updateSlidesPosition",
-            "updatePageProperties",
-            "updatePageElementTransform",
-            "updateShapeProperties",
-            "updateImageProperties",
-            "updateVideoProperties",
-            "updateLineProperties",
-            "updateTableCellProperties",
-            "updateTableBorderProperties",
-            "updateTableRowProperties",
-            "updateTableColumnProperties",
-            "updateTextStyle",
-            "updateParagraphStyle",
-            "refreshSheetsChart",
-            "rerouteLine",
-        }
-    )
 
     def __init__(
         self,
@@ -172,7 +131,6 @@ class GoogleSlidesTools(Toolkit):
         enable_move_slides: bool = True,
         enable_insert_youtube_video: bool = True,
         enable_insert_drive_video: bool = True,
-        enable_batch_update_presentation: bool = True,
         # Destructive tools
         enable_delete_presentation: bool = False,
         enable_delete_slide: bool = False,
@@ -227,8 +185,6 @@ class GoogleSlidesTools(Toolkit):
             tools.append(self.insert_youtube_video)
         if all or enable_insert_drive_video:
             tools.append(self.insert_drive_video)
-        if all or enable_batch_update_presentation:
-            tools.append(self.batch_update_presentation)
         # Destructive — only if explicitly enabled or `all=True`
         if all or enable_delete_presentation:
             tools.append(self.delete_presentation)
@@ -1202,45 +1158,6 @@ class GoogleSlidesTools(Toolkit):
         except Exception as e:
             return self._err(str(e))
 
-    @authenticate
-    def batch_update_presentation(self, presentation_id: str, requests: List[Dict[str, Any]]) -> str:
-        """
-        Applies raw batch update requests to a presentation.
-        Use this for advanced operations not covered by other tools.
-
-        Args:
-            presentation_id (str): The presentation ID.
-            requests (list[dict]): List of Google Slides API request objects.
-                See: https://developers.google.com/slides/api/reference/rest/v1/presentations/batchUpdate
-
-        Returns:
-            JSON batchUpdate response from the API.
-        """
-        try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
-
-            if not requests:
-                return self._err("requests list cannot be empty.")
-
-            for i, req in enumerate(requests):
-                if not isinstance(req, dict):
-                    return self._err(f"Request {i} is not a dict: {type(req)}")
-                if not any(key in req for key in self._VALID_BATCH_REQUEST_TYPES):
-                    return self._err(
-                        f"Request {i} has no valid request type. Must contain one of: {', '.join(sorted(self._VALID_BATCH_REQUEST_TYPES))}"
-                    )
-
-            log_debug(f"Batch updating {presentation_id} with {len(requests)} requests")
-            result = self._batch_update(presentation_id, requests)
-            log_info(f"Successfully applied {len(requests)} batch updates to {presentation_id}")
-            return self._ok(result)
-        except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return self._err(f"Google Slides API error: {error_msg}")
-        except Exception as e:
-            return self._err(str(e))
 
     @authenticate
     def insert_youtube_video(

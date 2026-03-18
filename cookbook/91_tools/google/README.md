@@ -101,7 +101,7 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 
 | File | Description |
 |------|-------------|
-| `slides_tools.py` | Core examples: create presentation, add slides, read content, list, delete |
+| `slide_tools.py` | Core examples: create presentation, add slides, read content, list, delete |
 | `slides_presentation_builder.py` | Multi-slide deck builder with tables, layouts, and text annotations |
 | `slides_content_reader.py` | Read and summarize existing presentations with structured output |
 | `slides_media_slides.py` | Background images, YouTube embeds, and Drive video integration |

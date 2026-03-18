@@ -774,34 +774,6 @@ class TestGetSlideText:
 
 
 
-class TestBatchUpdatePresentation:
-    def test_success(self, tools):
-        requests = [{"deleteObject": {"objectId": "obj-1"}}]
-        data = ok(tools.batch_update_presentation("pres-id", requests))
-        assert "presentationId" in data
-
-    def test_empty_requests_list(self, tools):
-        assert "empty" in err(tools.batch_update_presentation("pres-id", []))
-
-    def test_empty_presentation_id(self, tools):
-        assert "empty" in err(tools.batch_update_presentation("", [{"foo": "bar"}]))
-
-    def test_invalid_request_type(self, tools):
-        """Requests whose key is not in _VALID_BATCH_REQUEST_TYPES must be rejected."""
-        assert "no valid request type" in err(tools.batch_update_presentation("pres-id", [{"invalidOp": {}}]))
-
-    def test_non_dict_request(self, tools):
-        """Non-dict items in the requests list must be rejected."""
-        assert "not a dict" in err(tools.batch_update_presentation("pres-id", ["not a dict"]))
-
-    def test_api_error(self, tools):
-        tools.slides_service.presentations.return_value.batchUpdate.return_value.execute.side_effect = Exception(
-            "batch error"
-        )
-        assert "batch error" in err(
-            tools.batch_update_presentation("pres-id", [{"deleteObject": {"objectId": "obj-1"}}])
-        )
-
 
 
 
@@ -986,7 +958,6 @@ class TestToolFiltering:
             "get_presentation_metadata",
             "get_page",
             "get_slide_text",
-            "batch_update_presentation",
             "insert_youtube_video",
             "insert_drive_video",
         }
