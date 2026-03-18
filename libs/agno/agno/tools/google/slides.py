@@ -88,16 +88,6 @@ def authenticate(func):
 
 
 class GoogleSlidesTools(Toolkit):
-    """
-    Agno-compatible Google Slides toolkit.
-
-    Auth follows the same pattern as Agno's built-in GoogleSheetsTools.
-    Credentials are resolved in this priority order:
-        1. Service Account JSON file path
-        2. Saved token file at token_path
-        3. OAuth flow via client_secret file or ENV vars
-    """
-
     DEFAULT_SCOPES = [
         "https://www.googleapis.com/auth/presentations",
         "https://www.googleapis.com/auth/drive.file",
