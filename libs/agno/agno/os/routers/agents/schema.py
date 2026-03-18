@@ -64,7 +64,7 @@ class AgentResponse(BaseModel):
             "add_history_to_context": False,
             "num_history_runs": 3,
             "enable_session_summaries": False,
-            "search_session_history": False,
+            "search_past_sessions": False,
             "cache_session": False,
             # Knowledge defaults
             "add_references": False,
@@ -153,8 +153,9 @@ class AgentResponse(BaseModel):
             "add_history_to_context": agent.add_history_to_context,
             "enable_session_summaries": agent.enable_session_summaries,
             "num_history_runs": agent.num_history_runs,
-            "search_session_history": agent.search_session_history,
-            "num_history_sessions": agent.num_history_sessions,
+            "search_past_sessions": agent.search_past_sessions,
+            "num_past_sessions_to_search": agent.num_past_sessions_to_search,
+            "num_past_session_runs_in_search": agent.num_past_session_runs_in_search,
             "cache_session": agent.cache_session,
         }
 

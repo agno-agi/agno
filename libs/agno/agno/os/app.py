@@ -111,6 +111,11 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Start and stop the scheduler poller."""
     from agno.scheduler import ScheduleExecutor, SchedulePoller
 
+    if agent_os._scheduler_base_url is None:
+        log_info(
+            "scheduler_base_url not set, using default http://127.0.0.1:7777. "
+            "If your server is running on a different port, set scheduler_base_url to match."
+        )
     base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
     internal_token = agent_os._internal_service_token
     if internal_token is None:
@@ -157,6 +162,29 @@ def _combine_app_lifespans(lifespans: list) -> Any:
             yield
 
     return combined_lifespan
+
+
+def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRouter:
+    """Return a stub router that returns 503 for a feature that requires a missing dependency."""
+    detail = f"{tag} not available: pass a `{requires}` to AgentOS to enable this feature."
+    router = APIRouter(tags=[tag])
+    feature = prefix.strip("/").replace("/", "_")
+
+    # Register each method separately with a unique operation_id to avoid duplicates
+    for method in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
+
+        @router.api_route(prefix, methods=[method], operation_id=f"disabled_{feature}_{method.lower()}")
+        async def _disabled() -> None:
+            raise HTTPException(status_code=503, detail=detail)
+
+    # Catch-all sub-path route — hidden from schema
+    @router.api_route(
+        f"{prefix}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
+    )
+    async def _disabled_subpath() -> None:
+        raise HTTPException(status_code=503, detail=detail)
+
+    return router
 
 
 class AgentOS:
@@ -372,16 +400,26 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
-        # Add component and registry routers only if a sync db (BaseDb) is available
-        # Component routes require sync database operations
-        if self.db is not None and isinstance(self.db, BaseDb):
-            updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
-        if self.registry is not None:
-            updated_routers.append(get_registry_router(registry=self.registry))
-        # Add schedule and approval routers if a db is available
+        # Routes that require a database
         if self.db is not None:
+            if isinstance(self.db, BaseDb):
+                updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
+            else:
+                updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+        else:
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
+                updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
+        # Registry router
+        if self.registry is not None:
+            updated_routers.append(get_registry_router(registry=self.registry))
+        else:
+            updated_routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
         # Clear all previously existing routes
         app.router.routes = [
@@ -705,16 +743,31 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
-        # Add component and registry routers only if a sync db (BaseDb) is available
-        # Component routes require sync database operations
-        if self.db is not None and isinstance(self.db, BaseDb):
-            routers.append(get_components_router(os_db=self.db, registry=self.registry))
-        if self.registry is not None:
-            routers.append(get_registry_router(registry=self.registry))
-        # Add schedule and approval routers if a db is available
+        # Routes that require a database
         if self.db is not None:
+            if isinstance(self.db, BaseDb):
+                routers.append(get_components_router(os_db=self.db, registry=self.registry))
+            else:
+                routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+        else:
+            log_debug(
+                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
+            )
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
+                routers.append(_get_disabled_feature_router(prefix, tag, "db"))
+
+        # Registry router
+        if self.registry is not None:
+            routers.append(get_registry_router(registry=self.registry))
+        else:
+            log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
+            routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
         for router in routers:
             self._add_router(fastapi_app, router)
@@ -1325,6 +1378,11 @@ class AgentOS:
         **kwargs,
     ):
         import uvicorn
+
+        host = getenv("AGENT_OS_HOST", host)
+        env_port = getenv("AGENT_OS_PORT")
+        if env_port is not None:
+            port = int(env_port)
 
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"

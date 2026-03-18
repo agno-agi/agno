@@ -187,89 +187,65 @@ def _update_session_state_tool(team: "Team", run_context: RunContext, session_st
     return f"Updated session state: {session_state}"
 
 
-def _get_previous_sessions_messages_function(
-    team: "Team", num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, async_mode: bool = False
-):
-    """Factory function to create a get_previous_session_messages function.
+def _search_past_sessions_function(
+    team: "Team",
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    user_id: Optional[str] = None,
+    current_session_id: Optional[str] = None,
+    async_mode: bool = False,
+) -> Function:
+    """Factory for search_past_sessions tool for Team."""
 
-    Args:
-        num_history_sessions: The last n sessions to be taken from db
-        user_id: The user ID to filter sessions by
-
-    Returns:
-        Callable: A function that retrieves messages from previous sessions
-    """
-
+    from agno.agent._default_tools import _extract_session_preview
     from agno.team._init import _has_async_db
 
-    def get_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
+    _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
+
+    def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        import json
-
         if team.db is None:
-            return "Previous session messages not available"
+            return json.dumps([])
 
         team.db = cast(BaseDb, team.db)
         selected_sessions = team.db.get_sessions(
             session_type=SessionType.TEAM,
-            limit=num_history_sessions,
+            limit=_limit,
             user_id=user_id,
             sort_by="created_at",
             sort_order="desc",
         )
 
-        all_messages = []
-        seen_message_pairs = set()
-
+        results: list = []
         for session in selected_sessions:
-            if isinstance(session, TeamSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        for i in range(0, len(messages) - 1, 2):
-                            if i + 1 < len(messages):
-                                try:
-                                    user_msg = messages[i]
-                                    assistant_msg = messages[i + 1]
-                                    user_content = user_msg.content
-                                    assistant_content = assistant_msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue  # Skip this pair if either message has no content
+            if not isinstance(session, TeamSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(user_msg))
-                                        all_messages.append(Message.model_validate(assistant_msg))
-                                except Exception as e:
-                                    log_warning(f"Error processing message pair: {e}")
-                                    continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
-
-    async def aget_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    async def asearch_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        import json
-
-        from agno.team._init import _has_async_db
-
         if team.db is None:
-            return "Previous session messages not available"
+            return json.dumps([])
 
         if _has_async_db(team):
             selected_sessions = await cast(AsyncBaseDb, team.db).get_sessions(  # type: ignore
                 session_type=SessionType.TEAM,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
@@ -277,45 +253,132 @@ def _get_previous_sessions_messages_function(
         else:
             selected_sessions = team.db.get_sessions(  # type: ignore
                 session_type=SessionType.TEAM,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
             )
 
-        all_messages = []
-        seen_message_pairs = set()
-
+        results: list = []
         for session in selected_sessions:
-            if isinstance(session, TeamSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        for i in range(0, len(messages) - 1, 2):
-                            if i + 1 < len(messages):
-                                try:
-                                    user_msg = messages[i]
-                                    assistant_msg = messages[i + 1]
-                                    user_content = user_msg.content
-                                    assistant_content = assistant_msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue  # Skip this pair if either message has no content
+            if not isinstance(session, TeamSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(user_msg))
-                                        all_messages.append(Message.model_validate(assistant_msg))
-                                except Exception as e:
-                                    log_warning(f"Error processing message pair: {e}")
-                                    continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+    if async_mode and _has_async_db(team):
+        return Function.from_callable(asearch_past_sessions, name="search_past_sessions")
+    return Function.from_callable(search_past_sessions, name="search_past_sessions")
 
-    if _has_async_db(team):
-        return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
-    else:
-        return Function.from_callable(get_previous_session_messages, name="get_previous_session_messages")
+
+def _read_past_session_function(
+    team: "Team",
+    user_id: Optional[str] = None,
+    async_mode: bool = False,
+) -> Function:
+    """Factory for read_past_session tool for Team."""
+
+    from agno.agent._default_tools import _get_message_text
+    from agno.team._init import _has_async_db
+
+    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if team.db is None:
+            return "No database configured."
+
+        team.db = cast(BaseDb, team.db)
+        session = team.db.get_session(
+            session_id=session_id,
+            session_type=SessionType.TEAM,
+            user_id=user_id,
+        )
+
+        if session is None or not isinstance(session, TeamSession) or not session.runs:
+            return "Session not found."
+
+        lines: list = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    async def aread_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if team.db is None:
+            return "No database configured."
+
+        if _has_async_db(team):
+            session = await cast(AsyncBaseDb, team.db).get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.TEAM,
+                user_id=user_id,
+            )
+        else:
+            session = team.db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.TEAM,
+                user_id=user_id,
+            )
+
+        if session is None or not isinstance(session, TeamSession) or not session.runs:
+            return "Session not found."
+
+        lines: list = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    if async_mode and _has_async_db(team):
+        return Function.from_callable(aread_past_session, name="read_past_session")
+    return Function.from_callable(read_past_session, name="read_past_session")
 
 
 def _get_delegate_task_function(
