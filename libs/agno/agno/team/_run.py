@@ -4584,6 +4584,7 @@ def _route_requirements_to_members(
                 run_response=member_run_output,
                 session_id=session.session_id,
                 stream=stream,
+                yield_run_output=bool(stream),
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
@@ -4593,7 +4594,18 @@ def _route_requirements_to_members(
                 requirements=reqs,
                 session_id=session.session_id,
                 stream=stream,
+                yield_run_output=bool(stream),
             )
+
+        # When stream=True, continue_run returns an Iterator instead of RunOutput.
+        # Consume the iterator to get the final RunOutput.
+        if stream and hasattr(member_response, "__iter__") and not isinstance(member_response, RunOutput):
+            final_output = None
+            for event in member_response:
+                if isinstance(event, RunOutput):
+                    final_output = event
+            if final_output is not None:
+                member_response = final_output
 
         # Check if member is still paused (chained HITL)
         if getattr(member_response, "is_paused", False):
@@ -4659,6 +4671,7 @@ async def _aroute_requirements_to_members(
                 run_response=member_run_output,
                 session_id=session.session_id,
                 stream=stream,
+                yield_run_output=bool(stream),
             )
         else:
             member_run_id = reqs[0].member_run_id if reqs else None
@@ -4667,7 +4680,18 @@ async def _aroute_requirements_to_members(
                 requirements=reqs,
                 session_id=session.session_id,
                 stream=stream,
+                yield_run_output=bool(stream),
             )
+
+        # When stream=True, acontinue_run returns an AsyncIterator instead of RunOutput.
+        # Consume the iterator to get the final RunOutput.
+        if stream and hasattr(member_response, "__aiter__"):
+            final_output = None
+            async for event in member_response:
+                if isinstance(event, RunOutput):
+                    final_output = event
+            if final_output is not None:
+                member_response = final_output
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -5638,7 +5662,10 @@ async def _acontinue_run(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context,
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        run_context=run_context,
                         stream=False,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
@@ -5935,7 +5962,10 @@ async def _acontinue_run_stream(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context,
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        run_context=run_context,
                         stream=True,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
