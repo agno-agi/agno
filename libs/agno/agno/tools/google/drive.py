@@ -49,17 +49,33 @@ except ImportError:
     )
 
 
-DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent("""\
+class WorkspaceType:
+    """Google Workspace MIME type constants."""
+
+    DOCUMENT = "application/vnd.google-apps.document"
+    SPREADSHEET = "application/vnd.google-apps.spreadsheet"
+    PRESENTATION = "application/vnd.google-apps.presentation"
+    DRAWING = "application/vnd.google-apps.drawing"
+    SCRIPT = "application/vnd.google-apps.script"
+    VID = "application/vnd.google-apps.vid"
+    FOLDER = "application/vnd.google-apps.folder"
+
+    @classmethod
+    def is_workspace(cls, mime_type: str) -> bool:
+        return mime_type.startswith("application/vnd.google-apps.")
+
+
+DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
     You have access to Google Drive tools for searching, reading, uploading, and downloading files.
 
     ## Drive Query Syntax
     Use these operators in search and list query parameters:
     - `name contains 'report'` — files with "report" in the name
     - `name = 'Budget 2025.xlsx'` — exact name match
-    - `mimeType = 'application/vnd.google-apps.document'` — Google Docs only
-    - `mimeType = 'application/vnd.google-apps.spreadsheet'` — Google Sheets only
+    - `mimeType = '{WorkspaceType.DOCUMENT}'` — Google Docs only
+    - `mimeType = '{WorkspaceType.SPREADSHEET}'` — Google Sheets only
     - `mimeType = 'application/pdf'` — PDF files only
-    - `mimeType = 'application/vnd.google-apps.folder'` — folders only
+    - `mimeType = '{WorkspaceType.FOLDER}'` — folders only
     - `modifiedTime > '2025-01-01T00:00:00'` — modified after date
     - `'<folder_id>' in parents` — files inside a specific folder
     - `sharedWithMe` — files shared with the user
@@ -109,11 +125,31 @@ class GoogleDriveTools(Toolkit):
         "full": "https://www.googleapis.com/auth/drive",
     }
 
-    # Workspace types exportable to text; others return an error
-    EXPORT_MIME_TYPES = {
-        "application/vnd.google-apps.document": "text/plain",
-        "application/vnd.google-apps.spreadsheet": "text/csv",
-        "application/vnd.google-apps.presentation": "text/plain",
+    # read_file: export Workspace files to text formats the LLM can consume
+    TEXT_EXPORT_TYPES = {
+        WorkspaceType.DOCUMENT: "text/plain",
+        WorkspaceType.SPREADSHEET: "text/csv",
+        WorkspaceType.PRESENTATION: "text/plain",
+        WorkspaceType.SCRIPT: "application/json",
+    }
+
+    # download_file: export Workspace files to best native format
+    DOWNLOAD_EXPORT_TYPES = {
+        WorkspaceType.DOCUMENT: (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".docx",
+        ),
+        WorkspaceType.SPREADSHEET: (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xlsx",
+        ),
+        WorkspaceType.PRESENTATION: (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".pptx",
+        ),
+        WorkspaceType.DRAWING: ("image/png", ".png"),
+        WorkspaceType.SCRIPT: ("application/vnd.google-apps.script+json", ".json"),
+        WorkspaceType.VID: ("video/mp4", ".mp4"),
     }
 
     METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,owners,shared,webViewLink"
@@ -313,14 +349,6 @@ class GoogleDriveTools(Toolkit):
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
 
-    def _normalize_query(self, query: Optional[str]) -> str:
-        """Auto-append trashed=false unless the caller already filters on trashed."""
-        if not query:
-            return "trashed=false"
-        if "trashed" in query.lower():
-            return query
-        return f"({query}) and trashed=false"
-
     def _get_file_metadata_internal(self, file_id: str, fields: str) -> dict:
         """Shared metadata fetch used by get_file_metadata and read_file."""
         service = cast(Resource, self.service)
@@ -343,12 +371,6 @@ class GoogleDriveTools(Toolkit):
             except UnicodeDecodeError:
                 continue
         return content_bytes.decode("utf-8", errors="replace")
-
-    def _truncate_content(self, content: str) -> Tuple[str, bool]:
-        """Truncate to max_content_length if configured."""
-        if self.max_content_length is None or len(content) <= self.max_content_length:
-            return content, False
-        return content[: self.max_content_length], True
 
     async def _run_in_executor(self, func: Any, *args: Any, **kwargs: Any) -> str:
         """Run a synchronous tool method in the default executor for async support."""
@@ -401,7 +423,13 @@ class GoogleDriveTools(Toolkit):
 
         try:
             service = cast(Resource, self.service)
-            effective_query = self._normalize_query(query)
+            # Auto-append trashed=false unless caller already filters on trashed
+            if not query:
+                effective_query = "trashed=false"
+            elif "trashed" in query.lower():
+                effective_query = query
+            else:
+                effective_query = f"({query}) and trashed=false"
             results = (
                 service.files()
                 .list(
@@ -484,8 +512,10 @@ class GoogleDriveTools(Toolkit):
         - Docs -> plain text
         - Sheets -> CSV (first sheet only, Google API limitation)
         - Slides -> plain text
+        - Apps Script -> JSON
 
-        Other files are downloaded directly and decoded as text.
+        Other Workspace types (Drawings, Vids) cannot be read as text —
+        use download_file instead. Regular files are downloaded and decoded.
         Content is truncated to max_content_length (default 10000 chars).
 
         Args:
@@ -502,9 +532,8 @@ class GoogleDriveTools(Toolkit):
             export_mime_type = None
             read_method = "download"
 
-            if mime_type in self.EXPORT_MIME_TYPES:
-                export_mime_type = self.EXPORT_MIME_TYPES[mime_type]
-                # export_media() supports chunked download via MediaIoBaseDownload
+            if mime_type in self.TEXT_EXPORT_TYPES:
+                export_mime_type = self.TEXT_EXPORT_TYPES[mime_type]
                 request = service.files().export_media(fileId=file_id, mimeType=export_mime_type)
                 content_bytes = self._download_bytes(request)
                 read_method = "export"
@@ -516,10 +545,10 @@ class GoogleDriveTools(Toolkit):
                             "exportMimeType": export_mime_type,
                         }
                     )
-            elif mime_type.startswith("application/vnd.google-apps."):
+            elif WorkspaceType.is_workspace(mime_type):
                 return json.dumps(
                     {
-                        "error": f"Unsupported Google Workspace file type for read_file: {mime_type}",
+                        "error": f"Cannot read {mime_type} as text. Use download_file instead.",
                         "file": metadata,
                     }
                 )
@@ -528,7 +557,12 @@ class GoogleDriveTools(Toolkit):
                 content_bytes = self._download_bytes(request)
 
             decoded_content = self._decode_file_content(content_bytes)
-            truncated_content, truncated = self._truncate_content(decoded_content)
+            if self.max_content_length is not None and len(decoded_content) > self.max_content_length:
+                truncated_content = decoded_content[: self.max_content_length]
+                truncated = True
+            else:
+                truncated_content = decoded_content
+                truncated = False
             return json.dumps(
                 {
                     "file": metadata,
@@ -625,21 +659,71 @@ class GoogleDriveTools(Toolkit):
         return await self._run_in_executor(self.upload_file, file_path, mime_type=mime_type)
 
     @authenticate
-    def download_file(self, file_id: str, dest_path: Union[str, Path]) -> str:
+    def download_file(self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None) -> str:
         """Download a file from Google Drive to a local path.
+
+        Regular files are downloaded directly. Google Workspace files (Docs,
+        Sheets, Slides, Drawings, Apps Script, Vids) are automatically exported
+        to the best native format (docx, xlsx, pptx, png, json, mp4).
 
         Args:
             file_id: The Drive file ID.
             dest_path: Local destination path for the downloaded file.
+            export_format: Optional MIME type override for Workspace file export
+                (e.g. 'application/pdf' to download a Google Doc as PDF).
 
         Returns:
-            str: JSON string confirming the download with fileId, path, and status.
+            str: JSON string with fileId, path, status ("downloaded" or "exported"),
+                and exportMimeType/originalMimeType for exported files.
         """
-        path = Path(dest_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
         try:
             service = cast(Resource, self.service)
+            path = Path(dest_path)
+            metadata = self._get_file_metadata_internal(file_id, "id,name,mimeType")
+            mime_type = metadata.get("mimeType", "")
+
+            if export_format:
+                # User override — export to specified format
+                ext = mimetypes.guess_extension(export_format) or ""
+                if not path.suffix:
+                    path = path.with_suffix(ext)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                request = service.files().export_media(fileId=file_id, mimeType=export_format)
+                path.write_bytes(self._download_bytes(request))
+                return json.dumps(
+                    {
+                        "fileId": file_id,
+                        "path": str(path),
+                        "status": "exported",
+                        "exportMimeType": export_format,
+                        "originalMimeType": mime_type,
+                    }
+                )
+
+            if mime_type in self.DOWNLOAD_EXPORT_TYPES:
+                # Known Workspace type — auto-export to best format
+                target_mime, ext = self.DOWNLOAD_EXPORT_TYPES[mime_type]
+                if not path.suffix:
+                    path = path.with_suffix(ext)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                request = service.files().export_media(fileId=file_id, mimeType=target_mime)
+                path.write_bytes(self._download_bytes(request))
+                return json.dumps(
+                    {
+                        "fileId": file_id,
+                        "path": str(path),
+                        "status": "exported",
+                        "exportMimeType": target_mime,
+                        "originalMimeType": mime_type,
+                    }
+                )
+
+            if WorkspaceType.is_workspace(mime_type):
+                # Unknown Workspace type — no known export format
+                return json.dumps({"error": f"Unsupported Workspace file type for download: {mime_type}"})
+
+            # Regular file — direct download
+            path.parent.mkdir(parents=True, exist_ok=True)
             request = service.files().get_media(fileId=file_id)
             with path.open("wb") as file_handle:
                 downloader = MediaIoBaseDownload(file_handle, request)
@@ -653,14 +737,20 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not download file '{file_id}': {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(self, file_id: str, dest_path: Union[str, Path]) -> str:
+    async def adownload_file(
+        self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None
+    ) -> str:
         """Download a file from Google Drive to a local path (async).
+
+        Regular files are downloaded directly. Google Workspace files are
+        automatically exported to the best native format.
 
         Args:
             file_id: The Drive file ID.
             dest_path: Local destination path for the downloaded file.
+            export_format: Optional MIME type override for Workspace file export.
 
         Returns:
-            str: JSON string confirming the download.
+            str: JSON string with download/export details.
         """
-        return await self._run_in_executor(self.download_file, file_id, dest_path)
+        return await self._run_in_executor(self.download_file, file_id, dest_path, export_format=export_format)

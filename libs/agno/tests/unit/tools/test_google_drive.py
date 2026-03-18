@@ -198,7 +198,7 @@ def test_read_file_unsupported_workspace(drive_tools):
     }
     result = json.loads(drive_tools.read_file("d1"))
     assert "error" in result
-    assert "Unsupported" in result["error"]
+    assert "Cannot read" in result["error"]
 
 
 def test_read_file_export_too_large(drive_tools):
@@ -253,6 +253,11 @@ def test_upload_file_missing(drive_tools):
 
 def test_download_file_success(tmp_path, drive_tools):
     dest_path = tmp_path / "downloaded.txt"
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "abc123",
+        "name": "file.txt",
+        "mimeType": "text/plain",
+    }
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.side_effect = [
         (MagicMock(progress=lambda: 0.5), False),
@@ -266,6 +271,11 @@ def test_download_file_success(tmp_path, drive_tools):
 
 def test_download_file_error(tmp_path, drive_tools):
     dest_path = tmp_path / "downloaded.txt"
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "abc123",
+        "name": "file.txt",
+        "mimeType": "text/plain",
+    }
     drive_tools.service.files.return_value.get_media.side_effect = Exception("Download error")
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=MagicMock()):
         result = json.loads(drive_tools.download_file("abc123", dest_path))
@@ -315,23 +325,6 @@ def test_service_account_auth():
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_query_none(drive_tools):
-    assert drive_tools._normalize_query(None) == "trashed=false"
-
-
-def test_normalize_query_empty(drive_tools):
-    assert drive_tools._normalize_query("") == "trashed=false"
-
-
-def test_normalize_query_mixed_case(drive_tools):
-    assert drive_tools._normalize_query("TrAsHeD=true") == "TrAsHeD=true"
-
-
-def test_normalize_query_compound_with_trashed(drive_tools):
-    q = "name='x' and trashed=false"
-    assert drive_tools._normalize_query(q) == q
-
-
 # ---------------------------------------------------------------------------
 # Helper: _decode_file_content
 # ---------------------------------------------------------------------------
@@ -352,40 +345,6 @@ def test_decode_utf16(drive_tools):
 def test_decode_invalid_bytes(drive_tools):
     result = drive_tools._decode_file_content(b"\xff\xfe\x00\x80\x80")
     assert isinstance(result, str)
-
-
-# ---------------------------------------------------------------------------
-# Helper: _truncate_content
-# ---------------------------------------------------------------------------
-
-
-def test_truncate_under_limit(drive_tools):
-    text, truncated = drive_tools._truncate_content("short")
-    assert text == "short"
-    assert truncated is False
-
-
-def test_truncate_at_limit(mock_creds, mock_service):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-    ):
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050, max_content_length=5)
-    text, truncated = tools._truncate_content("12345")
-    assert text == "12345"
-    assert truncated is False
-
-
-def test_truncate_none_unlimited(mock_creds, mock_service):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-    ):
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050, max_content_length=None)
-    big = "x" * 100000
-    text, truncated = tools._truncate_content(big)
-    assert text == big
-    assert truncated is False
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +465,11 @@ def test_upload_file_http_error(tmp_path, drive_tools):
 
 
 def test_download_file_http_error(tmp_path, drive_tools):
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "bad",
+        "name": "file.txt",
+        "mimeType": "text/plain",
+    }
     drive_tools.service.files.return_value.get_media.side_effect = _make_http_error(404)
     result = json.loads(drive_tools.download_file("bad", tmp_path / "out.txt"))
     assert "Google Drive API error" in result["error"]
@@ -614,6 +578,11 @@ def test_upload_file_directory_rejected(tmp_path, drive_tools):
 
 def test_download_file_creates_parent_dirs(tmp_path, drive_tools):
     dest_path = tmp_path / "sub" / "deep" / "downloaded.txt"
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "abc123",
+        "name": "file.txt",
+        "mimeType": "text/plain",
+    }
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
@@ -685,6 +654,11 @@ async def test_async_upload_file(tmp_path, drive_tools):
 @pytest.mark.asyncio
 async def test_async_download_file(tmp_path, drive_tools):
     dest_path = tmp_path / "async_dl.txt"
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "abc",
+        "name": "file.txt",
+        "mimeType": "text/plain",
+    }
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
