@@ -4,7 +4,6 @@ Async Toolkit Context
 
 Demonstrates that async-only toolkit functions are correctly included
 in the team system message when add_member_tools_to_context=True.
-
 """
 
 from agno.agent import Agent
