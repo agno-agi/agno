@@ -2,7 +2,7 @@
 Unit tests for _get_tool_names in agno/team/_messages.py.
 
 Verifies that async toolkit functions are included in the team system message
-when add_member_tools_to_context=True.
+when add_member_tools_to_context=True and async_mode=True.
 
 Regression test for: https://github.com/agno-agi/agno/issues/7039
 """
@@ -53,58 +53,35 @@ class MixedToolkit(Toolkit):
         return "async result"
 
 
-class DuplicateNameToolkit(Toolkit):
-    """Toolkit where a sync and async function share the same name via aliasing."""
-
-    def __init__(self):
-        super().__init__(name="dup_tools", auto_register=False)
-        self.register(self._sync_impl, name="shared_tool")
-        self.register(self._async_impl, name="shared_tool")
-
-    def _sync_impl(self, query: str) -> str:
-        """Sync implementation."""
-        return "sync"
-
-    async def _async_impl(self, query: str) -> str:
-        """Async implementation."""
-        return "async"
-
-
 def _make_member(tools: list) -> SimpleNamespace:
     """Create a minimal member-like object with a tools list."""
     return SimpleNamespace(tools=tools)
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — sync mode (async_mode=False, the default)
 # ---------------------------------------------------------------------------
 
 
-class TestGetToolNames:
+class TestGetToolNamesSyncMode:
     def test_sync_only_toolkit(self):
-        """Sync-only toolkit functions appear in tool names."""
+        """Sync-only toolkit functions appear in sync mode."""
         member = _make_member([SyncOnlyToolkit()])
         names = _get_tool_names(member)
         assert "sync_tool" in names
 
-    def test_async_only_toolkit(self):
-        """Async-only toolkit functions appear in tool names (regression #7039)."""
+    def test_async_only_toolkit_not_shown(self):
+        """Async-only toolkit functions do NOT appear in sync mode."""
         member = _make_member([AsyncOnlyToolkit()])
         names = _get_tool_names(member)
-        assert "async_tool" in names
+        assert names == []
 
-    def test_mixed_toolkit(self):
-        """Both sync and async functions appear in tool names."""
+    def test_mixed_toolkit_sync_only(self):
+        """Only sync functions appear in sync mode for a mixed toolkit."""
         member = _make_member([MixedToolkit()])
         names = _get_tool_names(member)
         assert "sync_tool" in names
-        assert "async_tool" in names
-
-    def test_no_duplicate_names(self):
-        """When a tool name exists in both sync and async dicts, it appears only once."""
-        member = _make_member([DuplicateNameToolkit()])
-        names = _get_tool_names(member)
-        assert names.count("shared_tool") == 1
+        assert "async_tool" not in names
 
     def test_empty_tools_list(self):
         """Empty tools list returns empty names."""
@@ -139,9 +116,35 @@ class TestGetToolNames:
         names = _get_tool_names(member)
         assert "my_function" in names
 
+
+# ---------------------------------------------------------------------------
+# Tests — async mode (async_mode=True)
+# ---------------------------------------------------------------------------
+
+
+class TestGetToolNamesAsyncMode:
+    def test_async_only_toolkit(self):
+        """Async-only toolkit functions appear in async mode (regression #7039)."""
+        member = _make_member([AsyncOnlyToolkit()])
+        names = _get_tool_names(member, async_mode=True)
+        assert "async_tool" in names
+
+    def test_sync_only_toolkit(self):
+        """Sync-only toolkit functions also appear in async mode (fallback)."""
+        member = _make_member([SyncOnlyToolkit()])
+        names = _get_tool_names(member, async_mode=True)
+        assert "sync_tool" in names
+
+    def test_mixed_toolkit(self):
+        """Both sync and async functions appear in async mode."""
+        member = _make_member([MixedToolkit()])
+        names = _get_tool_names(member, async_mode=True)
+        assert "sync_tool" in names
+        assert "async_tool" in names
+
     def test_multiple_toolkits(self):
-        """Multiple toolkits with async-only tools all get included."""
+        """Multiple toolkits with async-only tools all get included in async mode."""
         member = _make_member([SyncOnlyToolkit(), AsyncOnlyToolkit()])
-        names = _get_tool_names(member)
+        names = _get_tool_names(member, async_mode=True)
         assert "sync_tool" in names
         assert "async_tool" in names
