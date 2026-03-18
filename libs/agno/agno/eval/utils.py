@@ -9,6 +9,7 @@ from agno.utils.log import log_debug, logger
 if TYPE_CHECKING:
     from agno.eval.accuracy import AccuracyResult
     from agno.eval.agent_as_judge import AgentAsJudgeResult
+    from agno.eval.context import ContextResult
     from agno.eval.performance import PerformanceResult
     from agno.eval.reliability import ReliabilityResult
 
@@ -104,7 +105,7 @@ async def async_log_eval(
 
 def store_result_in_file(
     file_path: str,
-    result: Union["AccuracyResult", "AgentAsJudgeResult", "PerformanceResult", "ReliabilityResult"],
+    result: Union["AccuracyResult", "AgentAsJudgeResult", "ContextResult", "PerformanceResult", "ReliabilityResult"],
     eval_id: Optional[str] = None,
     name: Optional[str] = None,
 ):
