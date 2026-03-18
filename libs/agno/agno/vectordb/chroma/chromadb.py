@@ -25,6 +25,9 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
 
+_CHROMA_MAX_BATCH_SIZE = 500
+
+
 def reciprocal_rank_fusion(
     ranked_lists: List[List[Tuple[str, float]]],
     k: int = 60,
@@ -291,7 +294,13 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(ids), _CHROMA_MAX_BATCH_SIZE):
+                    self._collection.add(
+                        ids=ids[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        embeddings=docs_embeddings[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        documents=docs[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        metadatas=docs_metadata[i : i + _CHROMA_MAX_BATCH_SIZE],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     async def async_insert(
@@ -390,7 +399,13 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(ids), _CHROMA_MAX_BATCH_SIZE):
+                    self._collection.add(
+                        ids=ids[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        embeddings=docs_embeddings[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        documents=docs[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        metadatas=docs_metadata[i : i + _CHROMA_MAX_BATCH_SIZE],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
@@ -470,7 +485,13 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(ids), _CHROMA_MAX_BATCH_SIZE):
+                    self._collection.upsert(
+                        ids=ids[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        embeddings=docs_embeddings[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        documents=docs[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        metadatas=docs_metadata[i : i + _CHROMA_MAX_BATCH_SIZE],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     async def _async_upsert(
@@ -571,7 +592,13 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(ids), _CHROMA_MAX_BATCH_SIZE):
+                    self._collection.upsert(
+                        ids=ids[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        embeddings=docs_embeddings[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        documents=docs[i : i + _CHROMA_MAX_BATCH_SIZE],
+                        metadatas=docs_metadata[i : i + _CHROMA_MAX_BATCH_SIZE],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     async def async_upsert(
