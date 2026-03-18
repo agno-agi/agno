@@ -25,6 +25,7 @@ import asyncio
 import io
 import json
 import mimetypes
+import textwrap
 from functools import partial, wraps
 from os import getenv
 from pathlib import Path
@@ -46,6 +47,25 @@ except ImportError:
         "Google client library for Python not found, install it using "
         "`pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
+
+
+DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent("""\
+    You have access to Google Drive tools for searching, reading, uploading, and downloading files.
+
+    ## Drive Query Syntax
+    Use these operators in search and list query parameters:
+    - `name contains 'report'` — files with "report" in the name
+    - `name = 'Budget 2025.xlsx'` — exact name match
+    - `mimeType = 'application/vnd.google-apps.document'` — Google Docs only
+    - `mimeType = 'application/vnd.google-apps.spreadsheet'` — Google Sheets only
+    - `mimeType = 'application/pdf'` — PDF files only
+    - `mimeType = 'application/vnd.google-apps.folder'` — folders only
+    - `modifiedTime > '2025-01-01T00:00:00'` — modified after date
+    - `'<folder_id>' in parents` — files inside a specific folder
+    - `sharedWithMe` — files shared with the user
+    - `starred` — starred files
+    - Combine with `and` / `or`: `name contains 'report' and mimeType = 'application/pdf'`
+    - `trashed=false` is added automatically unless you include a trashed clause.""")
 
 
 def authenticate(func):
@@ -106,6 +126,7 @@ class GoogleDriveTools(Toolkit):
     def __init__(
         self,
         auth_port: Optional[int] = 5050,
+        login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
         creds_path: Optional[str] = None,
@@ -121,12 +142,15 @@ class GoogleDriveTools(Toolkit):
         read_file: bool = True,
         upload_file: bool = False,
         download_file: bool = False,
+        instructions: Optional[str] = None,
+        add_instructions: bool = True,
         **kwargs,
     ):
         """Initialize GoogleDriveTools.
 
         Args:
             auth_port: Port for the OAuth local server redirect. Defaults to 5050.
+            login_hint: Email to pre-select in the OAuth consent screen.
             creds: Pre-fetched credentials. Defaults to None.
             scopes: Custom OAuth scopes. If None, inferred from enabled tools.
             creds_path: Path to OAuth client credentials JSON file.
@@ -142,13 +166,21 @@ class GoogleDriveTools(Toolkit):
             read_file: Enable the read_file tool.
             upload_file: Enable the upload_file tool. Disabled by default.
             download_file: Enable the download_file tool. Disabled by default.
+            instructions: Custom instructions for the toolkit. If None, uses DRIVE_QUERY_INSTRUCTIONS.
+            add_instructions: Whether to inject toolkit instructions into the agent system prompt.
         """
+        if instructions is None:
+            self.instructions = DRIVE_QUERY_INSTRUCTIONS
+        else:
+            self.instructions = instructions
+
         self.creds = creds
         self.service = None
         self.credentials_path = creds_path
         self.token_path = token_path
         self.service_account_path = service_account_path or service_account_file
         self.delegated_user = delegated_user
+        self.login_hint = login_hint
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
         self.max_content_length = max_content_length
 
@@ -216,6 +248,8 @@ class GoogleDriveTools(Toolkit):
             name="google_drive_tools",
             tools=tools,
             async_tools=async_tools,
+            instructions=self.instructions,
+            add_instructions=add_instructions,
             **kwargs,
         )
 
@@ -271,7 +305,10 @@ class GoogleDriveTools(Toolkit):
                 flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
             else:
                 flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            self.creds = flow.run_local_server(port=self.auth_port, prompt="consent")
+            run_kwargs: dict = {"port": self.auth_port, "prompt": "consent"}
+            if self.login_hint:
+                run_kwargs["login_hint"] = self.login_hint
+            self.creds = flow.run_local_server(**run_kwargs)
 
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
