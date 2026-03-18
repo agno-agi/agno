@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.9"
+version = "2.5.10"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -64,6 +64,7 @@ dev = [
 ]
 
 os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "croniter>=1.3", "pytz>=2023.3"]
+whatsapp-crypto = ["cryptography>=41.0"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -142,6 +143,7 @@ daytona = ["daytona"]
 oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
+telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -179,6 +181,7 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+docling = ["docling"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
@@ -315,6 +318,7 @@ knowledge = [
   "agno[csv]",
   "agno[excel]",
   "agno[markdown]",
+  "agno[docling]",
   "agno[chonkie]"
 ]
 
@@ -452,6 +456,7 @@ module = [
   "daytona_api_client.*",
   "discord.*",
   "docker.*",
+  "docling.*",
   "docx.*",
   "duckdb.*",
   "ddgs.*",
@@ -536,6 +541,7 @@ module = [
   "streamlit.*",
   "tantivy.*",
   "tavily.*",
+  "telebot.*",
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
