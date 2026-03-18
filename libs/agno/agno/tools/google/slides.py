@@ -460,7 +460,7 @@ class GoogleSlidesTools(Toolkit):
             title (str): Title of the new presentation.
 
         Returns:
-            JSON with presentationId and URL.
+            JSON with presentation_id, url, and title.
         """
         try:
             if not title.strip():
@@ -729,7 +729,7 @@ class GoogleSlidesTools(Toolkit):
             slide_id (str): Object ID of the slide. Obtain from get_presentation.
 
         Returns:
-            JSON confirmation with deleted slideId.
+            JSON confirmation with deleted_slide ID.
         """
         try:
             err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
@@ -913,7 +913,7 @@ class GoogleSlidesTools(Toolkit):
             content (list[list[str]], optional): 2D list e.g. [["H1","H2"],["R1C1","R1C2"]].
 
         Returns:
-            JSON with tableId, rows, columns.
+            JSON with table_id, rows, columns.
         """
         try:
             err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
@@ -1022,7 +1022,7 @@ class GoogleSlidesTools(Toolkit):
             presentation_id (str): The presentation ID.
 
         Returns:
-            JSON dict mapping slideId -> list of text strings found on that slide.
+            JSON dict mapping slide objectId -> list of text strings found on that slide.
         """
         try:
             err = self._validate_ids(presentation_id=presentation_id)
@@ -1064,7 +1064,7 @@ class GoogleSlidesTools(Toolkit):
             slide_id (str): The slide object ID.
 
         Returns:
-            JSON with thumbnailUrl string.
+            JSON with thumbnail_url string.
         """
         try:
             err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
@@ -1098,7 +1098,7 @@ class GoogleSlidesTools(Toolkit):
             presentation_id (str): The presentation ID.
 
         Returns:
-            JSON with title, slideCount, and list of slideIds.
+            JSON with title, slide_count, and list of slide_ids.
         """
         try:
             err = self._validate_ids(presentation_id=presentation_id)
@@ -1170,7 +1170,7 @@ class GoogleSlidesTools(Toolkit):
             page_object_id (str): The object ID of the slide.
 
         Returns:
-            JSON with slideId and list of text strings found on that slide.
+            JSON with slide_id and list of text strings found on that slide.
         """
         try:
             err = self._validate_ids(presentation_id=presentation_id, object_id=page_object_id)
