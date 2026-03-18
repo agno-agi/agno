@@ -26,7 +26,7 @@ import io
 import json
 import mimetypes
 import textwrap
-from functools import partial, wraps
+from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
@@ -85,8 +85,6 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
 
 
 def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
-
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         try:
@@ -94,6 +92,7 @@ def authenticate(func):
                 self._auth()
             if not self.service:
                 creds_to_use = self.creds
+                # Set quota project on credentials if available
                 if self.quota_project_id and hasattr(creds_to_use, "with_quota_project"):
                     creds_to_use = cast(Any, creds_to_use).with_quota_project(self.quota_project_id)
                 self.service = build("drive", "v3", credentials=creds_to_use)
@@ -106,18 +105,6 @@ def authenticate(func):
 
 
 class GoogleDriveTools(Toolkit):
-    """Google Drive toolkit for searching, reading, uploading, and downloading files.
-
-    Provides tools for agents to interact with Google Drive:
-    - search_files: Search files using Drive query syntax
-    - read_file: Read Google Docs/Sheets/Slides as text, or download regular files
-    - get_file_metadata: Get metadata for a file
-    - list_files: Backward-compatible wrapper around search_files
-    - upload_file: Upload a local file to Drive
-    - download_file: Download a Drive file locally
-    """
-
-    # Keyed by access level; auto-inferred from enabled tools when scopes=None
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
@@ -155,8 +142,6 @@ class GoogleDriveTools(Toolkit):
     METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,owners,shared,webViewLink"
     SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
-    # Google Drive API hard limit on Workspace file exports
-    EXPORT_LIMIT_BYTES = 10 * 1024 * 1024
 
     service: Optional[Resource]
 
@@ -167,12 +152,11 @@ class GoogleDriveTools(Toolkit):
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
-        creds_path: Optional[str] = None,
-        token_path: Optional[str] = None,
+        creds_path: Optional[str] = None,  # OAuth client credentials JSON file path
+        token_path: Optional[str] = None,  # OAuth token file path
         # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
         service_account_file: Optional[str] = None,
-        # Optional for Drive (unlike Gmail which requires it for mailbox access)
         delegated_user: Optional[str] = None,
         # Bills API usage to a different GCP project than the credential owner
         quota_project_id: Optional[str] = None,
@@ -205,9 +189,7 @@ class GoogleDriveTools(Toolkit):
         self.login_hint = login_hint
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
-        # Env vars override constructor arg; supports legacy GOOGLE_AUTHENTICATION_PORT
-        auth_port_value = getenv("GOOGLE_AUTH_PORT", getenv("GOOGLE_AUTHENTICATION_PORT", str(auth_port or 0)))
-        self.auth_port = int(auth_port_value)
+        self.auth_port = auth_port
 
         read_tools_enabled = any([list_files, search_files, get_file_metadata, read_file, download_file])
 
@@ -224,25 +206,14 @@ class GoogleDriveTools(Toolkit):
         else:
             self.scopes = scopes
 
-        # Any of these scopes grant read access; drive.file only covers app-created files
-        read_scope_candidates = {
-            self.DEFAULT_SCOPES["read"],
-            self.DEFAULT_SCOPES["write"],
-            self.DEFAULT_SCOPES["full"],
-        }
-        write_scope_candidates = {
-            self.DEFAULT_SCOPES["write"],
-            self.DEFAULT_SCOPES["full"],
-        }
+        # drive.file only covers app-created files — not sufficient for browsing all files
+        read_scopes = {self.DEFAULT_SCOPES["read"], self.DEFAULT_SCOPES["full"]}
+        write_scopes = {self.DEFAULT_SCOPES["write"], self.DEFAULT_SCOPES["full"]}
 
-        # Validate custom scopes match enabled tools
-        if read_tools_enabled and not any(scope in self.scopes for scope in read_scope_candidates):
-            raise ValueError(
-                "A Google Drive read scope is required for list_files, search_files, "
-                "get_file_metadata, read_file, or download_file"
-            )
-        if upload_file and not any(scope in self.scopes for scope in write_scope_candidates):
-            raise ValueError("A Google Drive write scope is required for upload_file")
+        if read_tools_enabled and not any(s in self.scopes for s in read_scopes):
+            raise ValueError("A Google Drive read scope is required for enabled tools")
+        if upload_file and not any(s in self.scopes for s in write_scopes):
+            raise ValueError("A Google Drive write scope is required for enabled tools")
 
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
@@ -289,7 +260,6 @@ class GoogleDriveTools(Toolkit):
                 service_account_path,
                 scopes=self.scopes,
             )
-            # Drive doesn't require delegated_user (unlike Gmail)
             delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
             if delegated_user:
                 service_account_creds = service_account_creds.with_subject(delegated_user)
@@ -337,8 +307,7 @@ class GoogleDriveTools(Toolkit):
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
 
-    def _get_file_metadata_internal(self, file_id: str, fields: str) -> dict:
-        """Shared metadata fetch used by get_file_metadata and read_file."""
+    def _get_file_metadata(self, file_id: str, fields: str) -> dict:
         service = cast(Resource, self.service)
         return service.files().get(fileId=file_id, fields=fields).execute()
 
@@ -351,70 +320,55 @@ class GoogleDriveTools(Toolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
-    def _decode_file_content(self, content_bytes: bytes) -> str:
-        """Multi-encoding decode chain for raw file bytes."""
-        for encoding in ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
-            try:
-                return content_bytes.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        return content_bytes.decode("utf-8", errors="replace")
-
-    async def _run_in_executor(self, func: Any, *args: Any, **kwargs: Any) -> str:
-        """Run a synchronous tool method in the default executor for async support."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
-
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> str:
-        """List files in Google Drive. Delegates to search_files.
+        """
+        Browse Google Drive files and folders. Returns metadata only, not file contents.
+        Use for broad listing, recent files, or folder contents.
 
         Args:
-            query (str): Optional Google Drive query string to filter files.
-            page_size (int): Maximum number of files to return.
+            query (str): Optional Drive query string to filter results
+            page_size (int): Maximum number of files to return
 
         Returns:
-            str: JSON string containing matching files and the effective query.
+            str: JSON string with file metadata (name, type, modified date)
         """
         return self.search_files(query=query, max_results=page_size)
 
     async def alist_files(self, query: Optional[str] = None, page_size: int = 10) -> str:
-        """List files in Google Drive (async). Delegates to search_files.
+        """
+        Browse Google Drive files and folders (async). Returns metadata only, not file contents.
 
         Args:
-            query (str): Optional Google Drive query string to filter files.
-            page_size (int): Maximum number of files to return.
+            query (str): Optional Drive query string to filter results
+            page_size (int): Maximum number of files to return
 
         Returns:
-            str: JSON string containing matching files and the effective query.
+            str: JSON string with file metadata (name, type, modified date)
         """
-        return await self._run_in_executor(self.list_files, query=query, page_size=page_size)
+        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size)
 
     @authenticate
     def search_files(self, query: Optional[str] = None, max_results: int = 10) -> str:
-        """Search Google Drive files using Drive query syntax.
+        """
+        Search Google Drive using a Drive query expression. Use for precise filtering
+        such as ``name contains 'budget'`` or ``mimeType = 'application/pdf'``.
 
         Args:
-            query (str): Drive query expression for files().list(). Examples:
-                - ``name contains 'report'``
-                - ``mimeType='application/vnd.google-apps.document'``
-                - ``modifiedTime > '2025-01-01T00:00:00'``
-                - ``'<folder_id>' in parents``
-                Combine clauses with ``and`` / ``or``. ``trashed=false`` is added
-                automatically unless you include a trashed clause.
-            max_results (int): Maximum number of files to return.
+            query (str): Drive query expression (see instructions for syntax)
+            max_results (int): Maximum number of files to return
 
         Returns:
-            str: JSON string with keys: query, files, count, nextPageToken.
+            str: JSON string with matching files and metadata
         """
         if max_results < 1:
             return json.dumps({"error": "max_results must be greater than 0"})
 
         try:
             service = cast(Resource, self.service)
-            # Auto-append trashed=false unless caller already filters on trashed
+            # Drive API includes trashed files by default — exclude them unless caller handles it
             if not query:
                 effective_query = "trashed=false"
-            elif "trashed" in query.lower():
+            elif "trashed=" in query.lower() or "trashed =" in query.lower():
                 effective_query = query
             else:
                 effective_query = f"({query}) and trashed=false"
@@ -444,36 +398,31 @@ class GoogleDriveTools(Toolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def asearch_files(self, query: Optional[str] = None, max_results: int = 10) -> str:
-        """Search Google Drive files using Drive query syntax (async).
+        """
+        Search Google Drive using a Drive query expression (async).
 
         Args:
-            query (str): Drive query expression for files().list(). Examples:
-                - ``name contains 'report'``
-                - ``mimeType='application/vnd.google-apps.document'``
-                - ``modifiedTime > '2025-01-01T00:00:00'``
-                - ``'<folder_id>' in parents``
-                Combine clauses with ``and`` / ``or``. ``trashed=false`` is added
-                automatically unless you include a trashed clause.
-            max_results (int): Maximum number of files to return.
+            query (str): Drive query expression (see instructions for syntax)
+            max_results (int): Maximum number of files to return
 
         Returns:
-            str: JSON string with keys: query, files, count, nextPageToken.
+            str: JSON string with matching files and metadata
         """
-        return await self._run_in_executor(self.search_files, query=query, max_results=max_results)
+        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results)
 
     @authenticate
     def get_file_metadata(self, file_id: str) -> str:
-        """Get metadata for a Google Drive file.
+        """
+        Get detailed metadata for a Drive file by ID without reading or downloading its contents.
 
         Args:
-            file_id (str): The Drive file ID.
+            file_id (str): The Drive file ID
 
         Returns:
-            str: JSON string containing file metadata (id, name, mimeType, modifiedTime,
-                size, owners, shared, webViewLink).
+            str: JSON string with name, mimeType, size, owners, shared status, webViewLink
         """
         try:
-            metadata = self._get_file_metadata_internal(file_id, self.METADATA_FIELDS)
+            metadata = self._get_file_metadata(file_id, self.METADATA_FIELDS)
             return json.dumps(metadata)
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
@@ -482,119 +431,95 @@ class GoogleDriveTools(Toolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def aget_file_metadata(self, file_id: str) -> str:
-        """Get metadata for a Google Drive file (async).
+        """
+        Get detailed metadata for a Drive file by ID (async).
 
         Args:
-            file_id (str): The Drive file ID.
+            file_id (str): The Drive file ID
 
         Returns:
-            str: JSON string containing file metadata.
+            str: JSON string with name, mimeType, size, owners, shared status, webViewLink
         """
-        return await self._run_in_executor(self.get_file_metadata, file_id)
+        return await asyncio.to_thread(self.get_file_metadata, file_id)
 
     @authenticate
     def read_file(self, file_id: str) -> str:
-        """Read a Google Drive file as text.
+        """
+        Read a Drive file and return its text content in JSON for analysis or summarization.
+        Docs and Slides are exported as plain text, Sheets as CSV, Scripts as JSON.
+        For binary files (images, videos), use download_file instead.
 
-        Google Workspace files are exported to text formats:
-        - Docs -> plain text
-        - Sheets -> CSV (first sheet only, Google API limitation)
-        - Slides -> plain text
-        - Apps Script -> JSON
-
-        Other Workspace types (Drawings, Vids) cannot be read as text —
-        use download_file instead. Regular files are downloaded and decoded.
         Args:
-            file_id (str): The Drive file ID.
+            file_id (str): The Drive file ID
 
         Returns:
-            str: JSON string with keys: file (metadata), content,
-                contentLength, readMethod, exportMimeType.
+            str: JSON string with file metadata and text content
         """
         try:
             service = cast(Resource, self.service)
-            metadata = self._get_file_metadata_internal(file_id, self.READ_METADATA_FIELDS)
+            metadata = self._get_file_metadata(file_id, self.READ_METADATA_FIELDS)
             mime_type = metadata.get("mimeType", "")
-            export_mime_type = None
-            read_method = "download"
 
+            # Resolve text export format — known Workspace > unsupported Workspace > regular file
             if mime_type in self.TEXT_EXPORT_TYPES:
-                export_mime_type = self.TEXT_EXPORT_TYPES[mime_type]
-                request = service.files().export_media(fileId=file_id, mimeType=export_mime_type)
-                content_bytes = self._download_bytes(request)
-                read_method = "export"
-                if len(content_bytes) > self.EXPORT_LIMIT_BYTES:
-                    return json.dumps(
-                        {
-                            "error": "Exported Google Workspace content exceeds the 10 MB Drive export limit.",
-                            "file": metadata,
-                            "exportMimeType": export_mime_type,
-                        }
-                    )
+                export_mime = self.TEXT_EXPORT_TYPES[mime_type]
             elif WorkspaceType.is_workspace(mime_type):
+                # Drawings, Vids, etc. have no text export — get_media() would crash
                 return json.dumps(
-                    {
-                        "error": f"Cannot read {mime_type} as text. Use download_file instead.",
-                        "file": metadata,
-                    }
+                    {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
                 )
+            else:
+                export_mime = None
+
+            if export_mime:
+                request = service.files().export_media(fileId=file_id, mimeType=export_mime)
+                content_bytes = self._download_bytes(request)
+                # Google Drive API hard limit on Workspace file exports
+                if len(content_bytes) > 10 * 1024 * 1024:
+                    return json.dumps({"error": "Export exceeds the 10 MB Drive limit.", "file": metadata})
             else:
                 request = service.files().get_media(fileId=file_id)
                 content_bytes = self._download_bytes(request)
 
-            content = self._decode_file_content(content_bytes)
+            content = content_bytes.decode("utf-8", errors="replace")
             return json.dumps(
                 {
                     "file": metadata,
                     "content": content,
                     "contentLength": len(content),
-                    "readMethod": read_method,
-                    "exportMimeType": export_mime_type,
+                    "exportMimeType": export_mime,
                 }
             )
         except HttpError as e:
-            error_text = str(e).lower()
-            if "cannotexportfile" in error_text or "exportsizelimitexceeded" in error_text:
-                return json.dumps(
-                    {
-                        "error": (
-                            "Google Drive could not export this file. Google Workspace exports are limited to 10 MB."
-                        )
-                    }
-                )
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
             log_error(f"Could not read Google Drive file {file_id}: {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def aread_file(self, file_id: str) -> str:
-        """Read a Google Drive file as text (async).
-
-        Google Workspace files are exported to text formats:
-        - Docs -> plain text
-        - Sheets -> CSV (first sheet only, Google API limitation)
-        - Slides -> plain text
-
-        Other files are downloaded directly and decoded as text.
+        """
+        Read a Drive file and return its text content in JSON (async).
+        For binary files (images, videos), use download_file instead.
 
         Args:
-            file_id (str): The Drive file ID.
+            file_id (str): The Drive file ID
 
         Returns:
-            str: JSON string with file metadata and content.
+            str: JSON string with file metadata and text content
         """
-        return await self._run_in_executor(self.read_file, file_id)
+        return await asyncio.to_thread(self.read_file, file_id)
 
     @authenticate
     def upload_file(self, file_path: Union[str, Path], mime_type: Optional[str] = None) -> str:
-        """Upload a local file to Google Drive.
+        """
+        Upload a local file from disk to Google Drive as a new file.
 
         Args:
-            file_path (str): Local path to the file to upload.
-            mime_type (str): MIME type override. If omitted, inferred from the file name.
+            file_path (str): Local filesystem path to the file to upload
+            mime_type (str): MIME type override, inferred from file name if omitted
 
         Returns:
-            str: JSON string containing metadata for the uploaded file.
+            str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
         path = Path(file_path)
         if not path.exists() or not path.is_file():
@@ -625,65 +550,58 @@ class GoogleDriveTools(Toolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def aupload_file(self, file_path: Union[str, Path], mime_type: Optional[str] = None) -> str:
-        """Upload a local file to Google Drive (async).
+        """
+        Upload a local file from disk to Google Drive (async).
 
         Args:
-            file_path (str): Local path to the file to upload.
-            mime_type (str): MIME type override. If omitted, inferred from the file name.
+            file_path (str): Local filesystem path to the file to upload
+            mime_type (str): MIME type override, inferred from file name if omitted
 
         Returns:
-            str: JSON string containing metadata for the uploaded file.
+            str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await self._run_in_executor(self.upload_file, file_path, mime_type=mime_type)
+        return await asyncio.to_thread(self.upload_file, file_path, mime_type=mime_type)
 
     @authenticate
     def download_file(self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None) -> str:
-        """Download a file from Google Drive to a local path.
-
-        Regular files are downloaded directly. Google Workspace files (Docs,
-        Sheets, Slides, Drawings, Apps Script, Vids) are automatically exported
-        to the best native format (docx, xlsx, pptx, png, json, mp4).
+        """
+        Download a Drive file and save it to a local path on disk.
+        Use when the user wants a local copy or a binary file (image, video, PDF).
+        Workspace files are auto-exported to native formats (docx, xlsx, pptx, png).
 
         Args:
-            file_id (str): The Drive file ID.
-            dest_path (str): Local destination path for the downloaded file.
-            export_format (str): Optional MIME type override for Workspace file export
-                (e.g. 'application/pdf' to download a Google Doc as PDF).
+            file_id (str): The Drive file ID
+            dest_path (str): Local destination path to save the file
+            export_format (str): Optional MIME type to override the default export format
 
         Returns:
-            str: JSON string with fileId, path, status ("downloaded" or "exported"),
-                and exportMimeType/originalMimeType for exported files.
+            str: JSON string with saved file path and download status
         """
         try:
             service = cast(Resource, self.service)
             path = Path(dest_path)
-            metadata = self._get_file_metadata_internal(file_id, "id,name,mimeType")
+            metadata = self._get_file_metadata(file_id, "id,name,mimeType")
             mime_type = metadata.get("mimeType", "")
 
+            # Resolve export target — user override > auto-detect > None for regular files
             if export_format:
-                # User override — export to specified format
+                target_mime = export_format
                 ext = mimetypes.guess_extension(export_format) or ""
-                if not path.suffix:
-                    path = path.with_suffix(ext)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                request = service.files().export_media(fileId=file_id, mimeType=export_format)
-                path.write_bytes(self._download_bytes(request))
-                return json.dumps(
-                    {
-                        "fileId": file_id,
-                        "path": str(path),
-                        "status": "exported",
-                        "exportMimeType": export_format,
-                        "originalMimeType": mime_type,
-                    }
-                )
-
-            if mime_type in self.DOWNLOAD_EXPORT_TYPES:
-                # Known Workspace type — auto-export to best format
+            elif mime_type in self.DOWNLOAD_EXPORT_TYPES:
                 target_mime, ext = self.DOWNLOAD_EXPORT_TYPES[mime_type]
-                if not path.suffix:
-                    path = path.with_suffix(ext)
-                path.parent.mkdir(parents=True, exist_ok=True)
+            elif WorkspaceType.is_workspace(mime_type):
+                # Future-proofing: catch new Workspace types Google may add
+                return json.dumps({"error": f"Unsupported Workspace file type for download: {mime_type}"})
+            else:
+                target_mime = None
+                ext = ""
+
+            if not path.suffix and ext:
+                path = path.with_suffix(ext)
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            if target_mime:
+                # Workspace file — export to target format
                 request = service.files().export_media(fileId=file_id, mimeType=target_mime)
                 path.write_bytes(self._download_bytes(request))
                 return json.dumps(
@@ -696,12 +614,7 @@ class GoogleDriveTools(Toolkit):
                     }
                 )
 
-            if WorkspaceType.is_workspace(mime_type):
-                # Unknown Workspace type — no known export format
-                return json.dumps({"error": f"Unsupported Workspace file type for download: {mime_type}"})
-
             # Regular file — direct download
-            path.parent.mkdir(parents=True, exist_ok=True)
             request = service.files().get_media(fileId=file_id)
             with path.open("wb") as file_handle:
                 downloader = MediaIoBaseDownload(file_handle, request)
@@ -718,17 +631,16 @@ class GoogleDriveTools(Toolkit):
     async def adownload_file(
         self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None
     ) -> str:
-        """Download a file from Google Drive to a local path (async).
-
-        Regular files are downloaded directly. Google Workspace files are
-        automatically exported to the best native format.
+        """
+        Download a Drive file and save it to a local path on disk (async).
+        Workspace files are auto-exported to native formats.
 
         Args:
-            file_id (str): The Drive file ID.
-            dest_path (str): Local destination path for the downloaded file.
-            export_format (str): Optional MIME type override for Workspace file export.
+            file_id (str): The Drive file ID
+            dest_path (str): Local destination path to save the file
+            export_format (str): Optional MIME type to override the default export format
 
         Returns:
-            str: JSON string with download/export details.
+            str: JSON string with saved file path and download status
         """
-        return await self._run_in_executor(self.download_file, file_id, dest_path, export_format=export_format)
+        return await asyncio.to_thread(self.download_file, file_id, dest_path, export_format=export_format)

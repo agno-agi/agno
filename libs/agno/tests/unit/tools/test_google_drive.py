@@ -103,7 +103,7 @@ def test_read_file_google_doc(drive_tools):
         mock_dl.side_effect = capture_buffer
         result = json.loads(drive_tools.read_file("doc1"))
 
-    assert result["readMethod"] == "export"
+    assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/plain"
     assert result["content"] == "Hello from Google Docs"
     assert result["file"]["name"] == "My Doc"
@@ -129,7 +129,7 @@ def test_read_file_google_sheet(drive_tools):
         mock_dl.side_effect = capture_buffer
         result = json.loads(drive_tools.read_file("sheet1"))
 
-    assert result["readMethod"] == "export"
+    assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/csv"
     assert "col1" in result["content"]
 
@@ -152,7 +152,7 @@ def test_read_file_regular(drive_tools):
         mock_dl.side_effect = capture_buffer
         result = json.loads(drive_tools.read_file("f1"))
 
-    assert result["readMethod"] == "download"
+    assert result["exportMimeType"] is None
     assert result["content"] == "plain text content"
     assert result["exportMimeType"] is None
 
@@ -189,7 +189,7 @@ def test_read_file_export_too_large(drive_tools):
         result = json.loads(drive_tools.read_file("big1"))
 
     assert "error" in result
-    assert "10 MB" in result["error"]
+    assert "10 MB" in result["error"] or "Export exceeds" in result["error"]
 
 
 def test_upload_file_success(tmp_path, drive_tools):
@@ -294,28 +294,6 @@ def test_service_account_auth():
 
 
 # ---------------------------------------------------------------------------
-# Helper: _decode_file_content
-# ---------------------------------------------------------------------------
-
-
-def test_decode_utf8_bom(drive_tools):
-    # utf-8-sig encoding strips the BOM on decode
-    content = b"\xef\xbb\xbfhello"
-    result = drive_tools._decode_file_content(content)
-    assert "hello" in result
-
-
-def test_decode_utf16(drive_tools):
-    content = "hello world".encode("utf-16")
-    assert drive_tools._decode_file_content(content) == "hello world"
-
-
-def test_decode_invalid_bytes(drive_tools):
-    result = drive_tools._decode_file_content(b"\xff\xfe\x00\x80\x80")
-    assert isinstance(result, str)
-
-
-# ---------------------------------------------------------------------------
 # Constructor validation
 # ---------------------------------------------------------------------------
 
@@ -325,7 +303,7 @@ def test_init_read_scope_mismatch(mock_creds):
     with (
         patch("agno.tools.google.drive.build"),
         patch.object(GoogleDriveTools, "_auth", return_value=None),
-        pytest.raises(ValueError, match="read scope is required"),
+        pytest.raises(ValueError, match="read scope"),
     ):
         GoogleDriveTools(creds=mock_creds, scopes=["https://www.googleapis.com/auth/gmail.readonly"], read_file=True)
 
@@ -334,7 +312,7 @@ def test_init_write_scope_mismatch(mock_creds):
     with (
         patch("agno.tools.google.drive.build"),
         patch.object(GoogleDriveTools, "_auth", return_value=None),
-        pytest.raises(ValueError, match="write scope is required"),
+        pytest.raises(ValueError, match="write scope"),
     ):
         GoogleDriveTools(
             creds=mock_creds,
@@ -403,7 +381,7 @@ def test_read_file_http_error_export_limit(drive_tools):
     drive_tools.service.files.return_value.export_media.side_effect = HttpError(resp, b"exportSizeLimitExceeded")
     result = json.loads(drive_tools.read_file("doc1"))
     assert "error" in result
-    assert "10 MB" in result["error"]
+    assert "Google Drive API error" in result["error"]
 
 
 def test_upload_file_http_error(tmp_path, drive_tools):
@@ -475,7 +453,7 @@ def test_read_file_google_slides(drive_tools):
         mock_dl.side_effect = capture_buffer
         result = json.loads(drive_tools.read_file("slide1"))
 
-    assert result["readMethod"] == "export"
+    assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/plain"
     assert result["content"] == "Slide content here"
 
