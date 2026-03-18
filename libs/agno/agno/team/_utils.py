@@ -64,7 +64,7 @@ def _convert_documents_to_string(team: Team, docs: List[Union[Dict[str, Any], st
 
         return yaml.dump(docs)
 
-    return json.dumps(docs, indent=2)
+    return json.dumps(docs, indent=2, ensure_ascii=False)
 
 
 def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
@@ -81,7 +81,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
         return ""
 
     try:
-        return json.dumps(context, indent=2, default=str)
+        return json.dumps(context, indent=2, default=str, ensure_ascii=False)
     except (TypeError, ValueError, OverflowError) as e:
         log_warning(f"Failed to convert context to JSON: {e}")
         # Attempt a fallback conversion for non-serializable objects
@@ -89,7 +89,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
         for key, value in context.items():
             try:
                 # Try to serialize each value individually
-                json.dumps({key: value}, default=str)
+                json.dumps({key: value}, default=str, ensure_ascii=False)
                 sanitized_context[key] = value
             except Exception as e:
                 log_error(f"Failed to serialize to JSON: {e}")
@@ -97,7 +97,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
                 sanitized_context[key] = str(value)
 
         try:
-            return json.dumps(sanitized_context, indent=2)
+            return json.dumps(sanitized_context, indent=2, ensure_ascii=False)
         except Exception as e:
             log_error(f"Failed to convert sanitized context to JSON: {e}")
             return str(context)

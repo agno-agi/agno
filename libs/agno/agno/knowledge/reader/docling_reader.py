@@ -210,7 +210,7 @@ class DoclingReader(Reader):
             if self.output_format == OutputFormat.TEXT:
                 doc_content = result.document.export_to_text()
             elif self.output_format == OutputFormat.JSON:
-                doc_content = json.dumps(result.document.export_to_dict())
+                doc_content = json.dumps(result.document.export_to_dict(), ensure_ascii=False)
             elif self.output_format == OutputFormat.YAML:
                 import yaml
 

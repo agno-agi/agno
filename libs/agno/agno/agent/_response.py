@@ -1723,7 +1723,7 @@ def _build_followup_messages(
     elif isinstance(response_content, BaseModel):
         content_str = response_content.model_dump_json()
     elif isinstance(response_content, dict):
-        content_str = json.dumps(response_content)
+        content_str = json.dumps(response_content, ensure_ascii=False)
     else:
         content_str = str(response_content)
 
