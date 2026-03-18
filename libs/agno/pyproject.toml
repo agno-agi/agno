@@ -127,6 +127,7 @@ mem0 = ["mem0ai"]
 memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
+olostep = ["olostep>=0.1.0"]
 opencv = ["opencv-python"]
 parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
@@ -241,6 +242,7 @@ tools = [
   "agno[ddg]",
   "agno[duckdb]",
   "agno[newspaper]",
+  "agno[olostep]",
   "agno[youtube]",
   "agno[firecrawl]",
   "agno[tavily]",
@@ -506,6 +508,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "olostep.*",
   "openpyxl.*",
   "openai.*",
   "cv2.*",
