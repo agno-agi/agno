@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Union
+from typing import Any, Union
 
 from agno.run.agent import RunInput, RunOutput
+from agno.run.messages import RunMessages
 from agno.run.team import TeamRunInput, TeamRunOutput
 
 
@@ -26,4 +27,12 @@ class BaseEval(ABC):
     @abstractmethod
     async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
         """Perform async post-evals."""
+        pass
+
+    def model_check(self, run_messages: RunMessages, **kwargs: Any) -> Any:
+        """Perform sync model-hook evals. Override in subclass."""
+        pass
+
+    async def async_model_check(self, run_messages: RunMessages, **kwargs: Any) -> Any:
+        """Perform async model-hook evals. Override in subclass."""
         pass
