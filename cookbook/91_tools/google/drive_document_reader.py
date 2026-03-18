@@ -7,7 +7,6 @@ Uses a higher max_content_length to handle big files and returns
 structured summaries with key sections.
 
 Key concepts:
-- max_content_length: Controls how much text is read from each file (default 10k chars)
 - read_file: Exports Google Docs as text, Sheets as CSV, Slides as text
 - add_datetime_to_context: Agent knows today's date for time-relative queries
 
@@ -25,7 +24,7 @@ from agno.tools.google.drive import GoogleDriveTools
 agent = Agent(
     name="Document Reader",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleDriveTools(max_content_length=50000)],
+    tools=[GoogleDriveTools()],
     instructions=[
         "When reading documents, provide a structured summary with sections and key points.",
         "For spreadsheets (returned as CSV), describe the columns and highlight notable data.",

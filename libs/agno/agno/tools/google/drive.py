@@ -94,8 +94,6 @@ def authenticate(func):
                 self._auth()
             if not self.service:
                 creds_to_use = self.creds
-                if creds_to_use is None:
-                    raise ValueError("Google Drive credentials are not available.")
                 if self.quota_project_id and hasattr(creds_to_use, "with_quota_project"):
                     creds_to_use = cast(Any, creds_to_use).with_quota_project(self.quota_project_id)
                 self.service = build("drive", "v3", credentials=creds_to_use)
@@ -119,13 +117,14 @@ class GoogleDriveTools(Toolkit):
     - download_file: Download a Drive file locally
     """
 
+    # Keyed by access level; auto-inferred from enabled tools when scopes=None
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
         "full": "https://www.googleapis.com/auth/drive",
     }
 
-    # read_file: export Workspace files to text formats the LLM can consume
+    # Used by read_file — export Workspace files to text formats the LLM can consume
     TEXT_EXPORT_TYPES = {
         WorkspaceType.DOCUMENT: "text/plain",
         WorkspaceType.SPREADSHEET: "text/csv",
@@ -133,7 +132,7 @@ class GoogleDriveTools(Toolkit):
         WorkspaceType.SCRIPT: "application/json",
     }
 
-    # download_file: export Workspace files to best native format
+    # Used by download_file — export Workspace files to best native format + extension
     DOWNLOAD_EXPORT_TYPES = {
         WorkspaceType.DOCUMENT: (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -152,82 +151,67 @@ class GoogleDriveTools(Toolkit):
         WorkspaceType.VID: ("video/mp4", ".mp4"),
     }
 
+    # Partial response fields — only fetch what each tool needs
     METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,owners,shared,webViewLink"
     SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
+    # Google Drive API hard limit on Workspace file exports
     EXPORT_LIMIT_BYTES = 10 * 1024 * 1024
 
     service: Optional[Resource]
 
     def __init__(
         self,
+        # Authentication
         auth_port: Optional[int] = 5050,
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
         creds_path: Optional[str] = None,
         token_path: Optional[str] = None,
+        # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
         service_account_file: Optional[str] = None,
+        # Optional for Drive (unlike Gmail which requires it for mailbox access)
         delegated_user: Optional[str] = None,
+        # Bills API usage to a different GCP project than the credential owner
         quota_project_id: Optional[str] = None,
-        max_content_length: Optional[int] = 10000,
+        # Reading tools — enabled by default
         list_files: bool = True,
         search_files: bool = True,
         get_file_metadata: bool = True,
         read_file: bool = True,
+        # Writing tools — disabled by default for safety
         upload_file: bool = False,
         download_file: bool = False,
+        # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
     ):
-        """Initialize GoogleDriveTools.
-
-        Args:
-            auth_port: Port for the OAuth local server redirect. Defaults to 5050.
-            login_hint: Email to pre-select in the OAuth consent screen.
-            creds: Pre-fetched credentials. Defaults to None.
-            scopes: Custom OAuth scopes. If None, inferred from enabled tools.
-            creds_path: Path to OAuth client credentials JSON file.
-            token_path: Path to the cached OAuth token file.
-            service_account_path: Path to a Google service account JSON key file.
-            service_account_file: Alias for service_account_path.
-            delegated_user: User email to impersonate via domain-wide delegation (optional for Drive).
-            quota_project_id: Google Cloud quota project ID. Falls back to GOOGLE_CLOUD_QUOTA_PROJECT_ID env var.
-            max_content_length: Max characters returned by read_file. None for unlimited. Defaults to 10000.
-            list_files: Enable the list_files tool.
-            search_files: Enable the search_files tool.
-            get_file_metadata: Enable the get_file_metadata tool.
-            read_file: Enable the read_file tool.
-            upload_file: Enable the upload_file tool. Disabled by default.
-            download_file: Enable the download_file tool. Disabled by default.
-            instructions: Custom instructions for the toolkit. If None, uses DRIVE_QUERY_INSTRUCTIONS.
-            add_instructions: Whether to inject toolkit instructions into the agent system prompt.
-        """
         if instructions is None:
             self.instructions = DRIVE_QUERY_INSTRUCTIONS
         else:
             self.instructions = instructions
 
+        # Pre-built credentials skip the OAuth/service account flow entirely
         self.creds = creds
         self.service = None
         self.credentials_path = creds_path
         self.token_path = token_path
         self.service_account_path = service_account_path or service_account_file
         self.delegated_user = delegated_user
+        # Pre-selects this email in the OAuth consent screen
         self.login_hint = login_hint
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
-        self.max_content_length = max_content_length
 
-        if self.max_content_length is not None and self.max_content_length < 1:
-            raise ValueError("max_content_length must be greater than 0 when provided")
-
+        # Env vars override constructor arg; supports legacy GOOGLE_AUTHENTICATION_PORT
         auth_port_value = getenv("GOOGLE_AUTH_PORT", getenv("GOOGLE_AUTHENTICATION_PORT", str(auth_port or 0)))
         self.auth_port = int(auth_port_value)
 
         read_tools_enabled = any([list_files, search_files, get_file_metadata, read_file, download_file])
 
+        # Auto-infer minimal scopes from enabled tools
         if scopes is None:
             resolved_scopes: List[str] = []
             if read_tools_enabled:
@@ -240,6 +224,7 @@ class GoogleDriveTools(Toolkit):
         else:
             self.scopes = scopes
 
+        # Any of these scopes grant read access; drive.file only covers app-created files
         read_scope_candidates = {
             self.DEFAULT_SCOPES["read"],
             self.DEFAULT_SCOPES["write"],
@@ -250,6 +235,7 @@ class GoogleDriveTools(Toolkit):
             self.DEFAULT_SCOPES["full"],
         }
 
+        # Validate custom scopes match enabled tools
         if read_tools_enabled and not any(scope in self.scopes for scope in read_scope_candidates):
             raise ValueError(
                 "A Google Drive read scope is required for list_files, search_files, "
@@ -261,6 +247,7 @@ class GoogleDriveTools(Toolkit):
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
 
+        # Reading
         if list_files:
             tools.append(self.list_files)
             async_tools.append((self.alist_files, "list_files"))
@@ -273,6 +260,7 @@ class GoogleDriveTools(Toolkit):
         if read_file:
             tools.append(self.read_file)
             async_tools.append((self.aread_file, "read_file"))
+        # Writing
         if upload_file:
             tools.append(self.upload_file)
             async_tools.append((self.aupload_file, "upload_file"))
@@ -381,8 +369,8 @@ class GoogleDriveTools(Toolkit):
         """List files in Google Drive. Delegates to search_files.
 
         Args:
-            query: Optional Google Drive query string to filter files.
-            page_size: Maximum number of files to return.
+            query (str): Optional Google Drive query string to filter files.
+            page_size (int): Maximum number of files to return.
 
         Returns:
             str: JSON string containing matching files and the effective query.
@@ -393,8 +381,8 @@ class GoogleDriveTools(Toolkit):
         """List files in Google Drive (async). Delegates to search_files.
 
         Args:
-            query: Optional Google Drive query string to filter files.
-            page_size: Maximum number of files to return.
+            query (str): Optional Google Drive query string to filter files.
+            page_size (int): Maximum number of files to return.
 
         Returns:
             str: JSON string containing matching files and the effective query.
@@ -406,14 +394,14 @@ class GoogleDriveTools(Toolkit):
         """Search Google Drive files using Drive query syntax.
 
         Args:
-            query: Drive query expression for files().list(). Examples:
+            query (str): Drive query expression for files().list(). Examples:
                 - ``name contains 'report'``
                 - ``mimeType='application/vnd.google-apps.document'``
                 - ``modifiedTime > '2025-01-01T00:00:00'``
                 - ``'<folder_id>' in parents``
                 Combine clauses with ``and`` / ``or``. ``trashed=false`` is added
                 automatically unless you include a trashed clause.
-            max_results: Maximum number of files to return.
+            max_results (int): Maximum number of files to return.
 
         Returns:
             str: JSON string with keys: query, files, count, nextPageToken.
@@ -459,14 +447,14 @@ class GoogleDriveTools(Toolkit):
         """Search Google Drive files using Drive query syntax (async).
 
         Args:
-            query: Drive query expression for files().list(). Examples:
+            query (str): Drive query expression for files().list(). Examples:
                 - ``name contains 'report'``
                 - ``mimeType='application/vnd.google-apps.document'``
                 - ``modifiedTime > '2025-01-01T00:00:00'``
                 - ``'<folder_id>' in parents``
                 Combine clauses with ``and`` / ``or``. ``trashed=false`` is added
                 automatically unless you include a trashed clause.
-            max_results: Maximum number of files to return.
+            max_results (int): Maximum number of files to return.
 
         Returns:
             str: JSON string with keys: query, files, count, nextPageToken.
@@ -478,7 +466,7 @@ class GoogleDriveTools(Toolkit):
         """Get metadata for a Google Drive file.
 
         Args:
-            file_id: The Drive file ID.
+            file_id (str): The Drive file ID.
 
         Returns:
             str: JSON string containing file metadata (id, name, mimeType, modifiedTime,
@@ -497,7 +485,7 @@ class GoogleDriveTools(Toolkit):
         """Get metadata for a Google Drive file (async).
 
         Args:
-            file_id: The Drive file ID.
+            file_id (str): The Drive file ID.
 
         Returns:
             str: JSON string containing file metadata.
@@ -516,14 +504,12 @@ class GoogleDriveTools(Toolkit):
 
         Other Workspace types (Drawings, Vids) cannot be read as text —
         use download_file instead. Regular files are downloaded and decoded.
-        Content is truncated to max_content_length (default 10000 chars).
-
         Args:
-            file_id: The Drive file ID.
+            file_id (str): The Drive file ID.
 
         Returns:
-            str: JSON string with keys: file (metadata), content, truncated,
-                contentLength, returnedContentLength, readMethod, exportMimeType.
+            str: JSON string with keys: file (metadata), content,
+                contentLength, readMethod, exportMimeType.
         """
         try:
             service = cast(Resource, self.service)
@@ -556,20 +542,12 @@ class GoogleDriveTools(Toolkit):
                 request = service.files().get_media(fileId=file_id)
                 content_bytes = self._download_bytes(request)
 
-            decoded_content = self._decode_file_content(content_bytes)
-            if self.max_content_length is not None and len(decoded_content) > self.max_content_length:
-                truncated_content = decoded_content[: self.max_content_length]
-                truncated = True
-            else:
-                truncated_content = decoded_content
-                truncated = False
+            content = self._decode_file_content(content_bytes)
             return json.dumps(
                 {
                     "file": metadata,
-                    "content": truncated_content,
-                    "truncated": truncated,
-                    "contentLength": len(decoded_content),
-                    "returnedContentLength": len(truncated_content),
+                    "content": content,
+                    "contentLength": len(content),
                     "readMethod": read_method,
                     "exportMimeType": export_mime_type,
                 }
@@ -600,10 +578,10 @@ class GoogleDriveTools(Toolkit):
         Other files are downloaded directly and decoded as text.
 
         Args:
-            file_id: The Drive file ID.
+            file_id (str): The Drive file ID.
 
         Returns:
-            str: JSON string with file metadata, content, and truncation details.
+            str: JSON string with file metadata and content.
         """
         return await self._run_in_executor(self.read_file, file_id)
 
@@ -612,8 +590,8 @@ class GoogleDriveTools(Toolkit):
         """Upload a local file to Google Drive.
 
         Args:
-            file_path: Local path to the file to upload.
-            mime_type: MIME type override. If omitted, inferred from the file name.
+            file_path (str): Local path to the file to upload.
+            mime_type (str): MIME type override. If omitted, inferred from the file name.
 
         Returns:
             str: JSON string containing metadata for the uploaded file.
@@ -650,8 +628,8 @@ class GoogleDriveTools(Toolkit):
         """Upload a local file to Google Drive (async).
 
         Args:
-            file_path: Local path to the file to upload.
-            mime_type: MIME type override. If omitted, inferred from the file name.
+            file_path (str): Local path to the file to upload.
+            mime_type (str): MIME type override. If omitted, inferred from the file name.
 
         Returns:
             str: JSON string containing metadata for the uploaded file.
@@ -667,9 +645,9 @@ class GoogleDriveTools(Toolkit):
         to the best native format (docx, xlsx, pptx, png, json, mp4).
 
         Args:
-            file_id: The Drive file ID.
-            dest_path: Local destination path for the downloaded file.
-            export_format: Optional MIME type override for Workspace file export
+            file_id (str): The Drive file ID.
+            dest_path (str): Local destination path for the downloaded file.
+            export_format (str): Optional MIME type override for Workspace file export
                 (e.g. 'application/pdf' to download a Google Doc as PDF).
 
         Returns:
@@ -746,9 +724,9 @@ class GoogleDriveTools(Toolkit):
         automatically exported to the best native format.
 
         Args:
-            file_id: The Drive file ID.
-            dest_path: Local destination path for the downloaded file.
-            export_format: Optional MIME type override for Workspace file export.
+            file_id (str): The Drive file ID.
+            dest_path (str): Local destination path for the downloaded file.
+            export_format (str): Optional MIME type override for Workspace file export.
 
         Returns:
             str: JSON string with download/export details.

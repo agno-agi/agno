@@ -157,38 +157,6 @@ def test_read_file_regular(drive_tools):
     assert result["exportMimeType"] is None
 
 
-def test_read_file_truncation(mock_creds, mock_service):
-    with (
-        patch("agno.tools.google.drive.build") as mock_build,
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-    ):
-        mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050, max_content_length=5)
-        tools.service = mock_service
-
-    mock_service.files.return_value.get.return_value.execute.return_value = {
-        "id": "f1",
-        "name": "big.txt",
-        "mimeType": "text/plain",
-        "modifiedTime": "2025-01-01T00:00:00Z",
-    }
-    mock_downloader = MagicMock()
-    mock_downloader.next_chunk.return_value = (MagicMock(), True)
-    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
-
-        def capture_buffer(buf, req):
-            buf.write(b"abcdefghij")
-            return mock_downloader
-
-        mock_dl.side_effect = capture_buffer
-        result = json.loads(tools.read_file("f1"))
-
-    assert result["truncated"] is True
-    assert result["returnedContentLength"] == 5
-    assert result["contentLength"] == 10
-    assert result["content"] == "abcde"
-
-
 def test_read_file_unsupported_workspace(drive_tools):
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "d1",
@@ -352,24 +320,6 @@ def test_decode_invalid_bytes(drive_tools):
 # ---------------------------------------------------------------------------
 
 
-def test_init_max_content_length_zero(mock_creds):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-        pytest.raises(ValueError, match="max_content_length must be greater than 0"),
-    ):
-        GoogleDriveTools(creds=mock_creds, max_content_length=0)
-
-
-def test_init_max_content_length_negative(mock_creds):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-        pytest.raises(ValueError, match="max_content_length must be greater than 0"),
-    ):
-        GoogleDriveTools(creds=mock_creds, max_content_length=-1)
-
-
 def test_init_read_scope_mismatch(mock_creds):
     # A scope that's not in any of read/write/full candidates
     with (
@@ -528,36 +478,6 @@ def test_read_file_google_slides(drive_tools):
     assert result["readMethod"] == "export"
     assert result["exportMimeType"] == "text/plain"
     assert result["content"] == "Slide content here"
-
-
-def test_read_file_no_truncation(mock_creds, mock_service):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-    ):
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050, max_content_length=None)
-        tools.service = mock_service
-
-    mock_service.files.return_value.get.return_value.execute.return_value = {
-        "id": "f1",
-        "name": "big.txt",
-        "mimeType": "text/plain",
-    }
-    big_content = b"x" * 50000
-    mock_downloader = MagicMock()
-    mock_downloader.next_chunk.return_value = (MagicMock(), True)
-    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
-
-        def capture_buffer(buf, req):
-            buf.write(big_content)
-            return mock_downloader
-
-        mock_dl.side_effect = capture_buffer
-        result = json.loads(tools.read_file("f1"))
-
-    assert result["truncated"] is False
-    assert result["contentLength"] == 50000
-    assert result["returnedContentLength"] == 50000
 
 
 # ---------------------------------------------------------------------------
