@@ -1,6 +1,6 @@
 # Google Tools Cookbooks
 
-Agents for Gmail and Google Calendar using OAuth or service account authentication.
+Agents for Gmail, Google Calendar, and Google Slides using OAuth or service account authentication.
 
 ## Quick Start
 
@@ -35,6 +35,7 @@ Go to **APIs & Services > Enable APIs and Services** and enable:
 |---------|--------------|
 | `GoogleCalendarTools` | Google Calendar API |
 | `GmailTools` | Gmail API |
+| `GoogleSlidesTools` | Google Slides API + Google Drive API |
 
 ### 3. Create OAuth Credentials
 
@@ -72,7 +73,7 @@ For server/bot deployments with no browser:
 
 ```bash
 export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
-export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional for Calendar
+export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional for Calendar/Slides
 ```
 
 ## Cookbooks
@@ -95,6 +96,15 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | `calendar_event_creator.py` | Event creation with attendees, Google Meet, and timezone handling |
 | `calendar_daily_briefing.py` | Structured daily briefing with conflict detection and prep notes |
 | `calendar_meeting_scheduler.py` | Multi-person scheduling with availability checking |
+
+### Slides
+
+| File | Description |
+|------|-------------|
+| `slides_tools.py` | Core examples: create presentation, add slides, read content, list, delete |
+| `slides_presentation_builder.py` | Multi-slide deck builder with tables, layouts, and text annotations |
+| `slides_content_reader.py` | Read and summarize existing presentations with structured output |
+| `slides_media_slides.py` | Background images, YouTube embeds, and Drive video integration |
 
 ### Combined
 
