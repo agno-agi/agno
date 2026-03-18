@@ -261,13 +261,6 @@ class GoogleSlidesTools(Toolkit):
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
             log_debug("Google Slides credentials saved")
 
-    def _validate_ids(self, presentation_id: Optional[str] = None, object_id: Optional[str] = None) -> Optional[str]:
-        if presentation_id is not None and not presentation_id.strip():
-            return json.dumps({"error": "presentation_id cannot be empty."})
-        if object_id is not None and not object_id.strip():
-            return json.dumps({"error": "object_id cannot be empty."})
-        return None
-
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:
         log_debug(f"Applying batchUpdate to {presentation_id} with {len(requests)} requests")
         return (
@@ -276,22 +269,10 @@ class GoogleSlidesTools(Toolkit):
             .execute()
         )
 
-    def _parse_http_error(self, e: HttpError) -> str:
-        """Safely extract a human-readable message from a Google API HttpError."""
-        try:
-            body = json.loads(e.content.decode("utf-8", errors="replace"))
-            return body.get("error", {}).get("message") or str(e)
-        except (json.JSONDecodeError, AttributeError):
-            try:
-                return f"HTTP {e.resp.status}: {str(e)}"
-            except AttributeError:
-                return str(e)
-
     def _make_object_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
     def _to_emu(self, value: Union[int, float], unit: str = "inch") -> int:
-        """Helper to convert inches/points to EMU (English Metric Units)."""
         if unit == "inch":
             return int(value * 914400)
         if unit == "point":
@@ -299,7 +280,6 @@ class GoogleSlidesTools(Toolkit):
         return int(value)
 
     def _extract_text_recursive(self, element: Dict[str, Any]) -> List[str]:
-        """Deeply extract text from Shapes, Tables, and Groups."""
         lines = []
 
         def extract_from_text_elements(text_elements: List[Dict]) -> List[str]:
@@ -348,20 +328,6 @@ class GoogleSlidesTools(Toolkit):
         height: Union[int, float] = 3086100,
         id_alias: str = "video",
     ) -> str:
-        """
-        Helper to insert YouTube or Google Drive videos.
-
-        Args:
-            presentation_id (str): The presentation ID.
-            slide_id (str): The slide object ID.
-            video_id (str): The video ID.
-            source (str): "YOUTUBE" or "DRIVE".
-            x (int): X position in EMU.
-            y (int): Y position in EMU.
-            width (int): Width in EMU.
-            height (int): Height in EMU.
-            id_alias (str): Prefix for the object ID.
-        """
         obj_id = self._make_object_id(id_alias)
         requests: List[Dict[str, Any]] = [
             {
@@ -415,11 +381,8 @@ class GoogleSlidesTools(Toolkit):
                 }
             )
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            log_error(f"API error creating presentation: {error_msg}")
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
-            log_error(f"Unexpected error creating presentation: {str(e)}")
             return json.dumps({"error": str(e)})
 
     @authenticate
@@ -435,9 +398,8 @@ class GoogleSlidesTools(Toolkit):
             JSON representation of the presentation object.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
 
             log_debug(f"Fetching presentation: {presentation_id}")
             kwargs: dict = {"presentationId": presentation_id}
@@ -446,8 +408,7 @@ class GoogleSlidesTools(Toolkit):
             result = self.slides_service.presentations().get(**kwargs).execute()
             return json.dumps(result)
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -482,8 +443,7 @@ class GoogleSlidesTools(Toolkit):
             log_info(f"Found {len(files)} presentations")
             return json.dumps({"presentations": files, "next_page_token": next_token})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Drive API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -499,16 +459,14 @@ class GoogleSlidesTools(Toolkit):
             JSON confirmation with deleted presentation ID.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
 
             log_info(f"Deleting presentation: {presentation_id}")
             self.drive_service.files().delete(fileId=presentation_id).execute()
             return json.dumps({"deleted": presentation_id})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Drive API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -543,9 +501,8 @@ class GoogleSlidesTools(Toolkit):
             insertion partially failed (slide was still created).
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
 
             if insertion_index is not None and insertion_index < 0:
                 return json.dumps({"error": "insertion_index must be >= 0."})
@@ -652,8 +609,7 @@ class GoogleSlidesTools(Toolkit):
                 }
             )
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -670,16 +626,16 @@ class GoogleSlidesTools(Toolkit):
             JSON confirmation with deleted_slide ID.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             log_info(f"Deleting slide {slide_id} from {presentation_id}")
             self._batch_update(presentation_id, [{"deleteObject": {"objectId": slide_id}}])
             return json.dumps({"deleted_slide": slide_id})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -696,16 +652,16 @@ class GoogleSlidesTools(Toolkit):
             JSON batchUpdate response.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             log_debug(f"Duplicating slide {slide_id}")
             result = self._batch_update(presentation_id, [{"duplicateObject": {"objectId": slide_id}}])
             return json.dumps(result)
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -728,9 +684,8 @@ class GoogleSlidesTools(Toolkit):
             JSON confirmation with moved IDs and target index.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
 
             if not slide_ids:
                 return json.dumps({"error": "slide_ids list cannot be empty."})
@@ -751,8 +706,7 @@ class GoogleSlidesTools(Toolkit):
             )
             return json.dumps({"moved": slide_ids, "to_index": insertion_index})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -783,9 +737,10 @@ class GoogleSlidesTools(Toolkit):
             JSON with text_box_id and slide_id.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             if not text or not text.strip():
                 return json.dumps({"error": "text cannot be empty."})
@@ -826,8 +781,7 @@ class GoogleSlidesTools(Toolkit):
             self._batch_update(presentation_id, requests)
             return json.dumps({"text_box_id": box_id, "slide_id": slide_id})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -854,9 +808,10 @@ class GoogleSlidesTools(Toolkit):
             JSON with table_id, rows, columns.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             if rows <= 0 or columns <= 0:
                 return json.dumps({"error": "Rows and columns must be positive integers."})
@@ -893,8 +848,7 @@ class GoogleSlidesTools(Toolkit):
             self._batch_update(presentation_id, requests)
             return json.dumps({"table_id": table_id, "rows": rows, "columns": columns})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -917,9 +871,10 @@ class GoogleSlidesTools(Toolkit):
             JSON confirmation with slide_id.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             if not image_url or not image_url.strip():
                 return json.dumps({"error": "image_url cannot be empty."})
@@ -946,8 +901,7 @@ class GoogleSlidesTools(Toolkit):
             )
             return json.dumps({"background_set": True, "slide_id": slide_id})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -963,9 +917,8 @@ class GoogleSlidesTools(Toolkit):
             JSON dict mapping slide objectId -> list of text strings found on that slide.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
 
             log_debug(f"Reading all text from presentation {presentation_id}")
             fields = (
@@ -987,8 +940,7 @@ class GoogleSlidesTools(Toolkit):
             log_info(f"Extracted text from {len(result)} slides")
             return json.dumps(result)
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -1005,9 +957,10 @@ class GoogleSlidesTools(Toolkit):
             JSON with thumbnail_url string.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             log_debug(f"Getting thumbnail for slide {slide_id}")
             response = (
@@ -1021,8 +974,7 @@ class GoogleSlidesTools(Toolkit):
                 return json.dumps({"error": f"No thumbnail URL found for slide {slide_id}"})
             return json.dumps({"thumbnail_url": url})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -1039,9 +991,8 @@ class GoogleSlidesTools(Toolkit):
             JSON with title, slide_count, and list of slide_ids.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
 
             log_debug(f"Getting metadata for presentation {presentation_id}")
             result = (
@@ -1062,8 +1013,7 @@ class GoogleSlidesTools(Toolkit):
                 }
             )
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -1080,9 +1030,10 @@ class GoogleSlidesTools(Toolkit):
             JSON representation of the page object.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=page_object_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not page_object_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             log_debug(f"Fetching page {page_object_id}")
             result = (
@@ -1093,8 +1044,7 @@ class GoogleSlidesTools(Toolkit):
             )
             return json.dumps(result)
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -1111,9 +1061,10 @@ class GoogleSlidesTools(Toolkit):
             JSON with slide_id and list of text strings found on that slide.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=page_object_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not page_object_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             log_debug(f"Extracting text from slide {page_object_id}")
             page = (
@@ -1127,8 +1078,7 @@ class GoogleSlidesTools(Toolkit):
                 lines.extend(self._extract_text_recursive(el))
             return json.dumps({"slide_id": page_object_id, "text": lines})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -1161,9 +1111,10 @@ class GoogleSlidesTools(Toolkit):
             JSON with the new video object ID and slide_id.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             if not video_id or not video_id.strip():
                 return json.dumps({"error": "video_id cannot be empty."})
@@ -1189,8 +1140,7 @@ class GoogleSlidesTools(Toolkit):
             )
             return json.dumps({"video_object_id": video_obj_id, "slide_id": slide_id, "youtube_video_id": video_id})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -1221,9 +1171,10 @@ class GoogleSlidesTools(Toolkit):
             JSON with the new video object ID and slide_id.
         """
         try:
-            err = self._validate_ids(presentation_id=presentation_id, object_id=slide_id)
-            if err:
-                return err
+            if not presentation_id.strip():
+                return json.dumps({"error": "presentation_id cannot be empty."})
+            if not slide_id.strip():
+                return json.dumps({"error": "object_id cannot be empty."})
 
             if not file_id or not file_id.strip():
                 return json.dumps({"error": "file_id cannot be empty."})
@@ -1249,7 +1200,6 @@ class GoogleSlidesTools(Toolkit):
             )
             return json.dumps({"video_object_id": video_obj_id, "slide_id": slide_id, "drive_file_id": file_id})
         except HttpError as e:
-            error_msg = self._parse_http_error(e)
-            return json.dumps({"error": f"Google Slides API error: {error_msg}"})
+            return json.dumps({"error": str(e)})
         except Exception as e:
             return json.dumps({"error": str(e)})

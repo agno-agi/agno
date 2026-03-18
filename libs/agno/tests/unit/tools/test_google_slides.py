@@ -855,42 +855,6 @@ class TestInsertDriveVideo:
 
 
 
-class TestHttpErrorParsing:
-    """Verify that _parse_http_error correctly extracts the human-readable
-    message from the JSON body of a Google API HttpError."""
-
-    def _make_http_error(self, status: int, body: bytes):
-        """Build a real googleapiclient.errors.HttpError instance."""
-        import httplib2
-        from googleapiclient.errors import HttpError
-
-        resp = httplib2.Response({"status": status})
-        return HttpError(resp, body)
-
-    def test_http_error_message_extracted(self, tools):
-        """JSON body message is surfaced in the error response."""
-        error = self._make_http_error(404, b'{"error": {"message": "Presentation not found"}}')
-        tools.slides_service.presentations.return_value.get.return_value.execute.side_effect = error
-        msg = err(tools.get_presentation("bad-id"))
-        assert "Presentation not found" in msg
-
-    def test_http_error_fallback_on_bad_json(self, tools):
-        """When the body is not valid JSON, _parse_http_error falls back to
-        the 'HTTP {status}: …' branch (toolkit.py _parse_http_error).
-        The error response must be non-empty and include the numeric status."""
-        error = self._make_http_error(500, b"not json")
-        tools.slides_service.presentations.return_value.get.return_value.execute.side_effect = error
-        msg = err(tools.get_presentation("bad-id"))
-        assert len(msg) > 0  # non-empty is the hard requirement
-        assert "500" in msg  # fallback branch includes 'HTTP 500: …'
-
-    def test_http_error_batch_update(self, tools):
-        """HttpError during batchUpdate is also handled gracefully."""
-        error = self._make_http_error(403, b'{"error": {"message": "Quota exceeded"}}')
-        tools.slides_service.presentations.return_value.batchUpdate.return_value.execute.side_effect = error
-        msg = err(tools.delete_slide("pres-id", "slide-1"))
-        assert "Quota exceeded" in msg
-
 
 
 
