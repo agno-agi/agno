@@ -1346,8 +1346,12 @@ class Team:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
-        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
+    def get_members_system_message_content(
+        self, indent: int = 0, run_context: Optional[RunContext] = None, async_mode: bool = False
+    ) -> str:
+        return _messages.get_members_system_message_content(
+            self, indent=indent, run_context=run_context, async_mode=async_mode
+        )
 
     def get_system_message(
         self,
