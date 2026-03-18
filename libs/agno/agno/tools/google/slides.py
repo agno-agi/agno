@@ -66,6 +66,13 @@ except ImportError:
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
+SLIDES_INSTRUCTIONS = (
+    "Use these tools to create and manage Google Slides presentations. "
+    "When starting: call create_presentation or list_presentations. "
+    "Before modifying: call get_presentation_metadata to get slide IDs. "
+    "Always use the presentation_id and slide_id (objectId) from these tools."
+)
+
 
 def authenticate(func):
     """Decorator to ensure authentication before executing a function."""
@@ -93,7 +100,6 @@ class GoogleSlidesTools(Toolkit):
         "https://www.googleapis.com/auth/drive.file",
     ]
 
-
     def __init__(
         self,
         scopes: Optional[List[str]] = None,
@@ -104,26 +110,24 @@ class GoogleSlidesTools(Toolkit):
         delegated_user: Optional[str] = None,
         oauth_port: int = 0,
         login_hint: Optional[str] = None,
-        # Safe / read-only tools
-        enable_create_presentation: bool = True,
-        enable_get_presentation: bool = True,
-        enable_list_presentations: bool = True,
-        enable_get_presentation_metadata: bool = True,
-        enable_get_page: bool = True,
-        enable_get_slide_text: bool = True,
-        enable_read_all_text: bool = True,
-        enable_get_thumbnail_url: bool = True,
-        enable_add_slide: bool = True,
-        enable_add_text_box: bool = True,
-        enable_add_table: bool = True,
-        enable_set_background_image: bool = True,
-        enable_duplicate_slide: bool = True,
-        enable_move_slides: bool = True,
-        enable_insert_youtube_video: bool = True,
-        enable_insert_drive_video: bool = True,
-        # Destructive tools
-        enable_delete_presentation: bool = False,
-        enable_delete_slide: bool = False,
+        create_presentation: bool = True,
+        get_presentation: bool = True,
+        list_presentations: bool = True,
+        get_presentation_metadata: bool = True,
+        get_page: bool = True,
+        get_slide_text: bool = True,
+        read_all_text: bool = True,
+        get_thumbnail_url: bool = True,
+        add_slide: bool = True,
+        add_text_box: bool = True,
+        add_table: bool = True,
+        set_background_image: bool = True,
+        duplicate_slide: bool = True,
+        move_slides: bool = True,
+        insert_youtube_video: bool = True,
+        insert_drive_video: bool = True,
+        delete_presentation: bool = False,
+        delete_slide: bool = False,
         all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -142,55 +146,51 @@ class GoogleSlidesTools(Toolkit):
         self.drive_service: Any = None
 
         tools = []
-        if all or enable_create_presentation:
+        if all or create_presentation:
             tools.append(self.create_presentation)
-        if all or enable_get_presentation:
+        if all or get_presentation:
             tools.append(self.get_presentation)
-        if all or enable_list_presentations:
+        if all or list_presentations:
             tools.append(self.list_presentations)
-        if all or enable_get_presentation_metadata:
+        if all or get_presentation_metadata:
             tools.append(self.get_presentation_metadata)
-        if all or enable_get_page:
+        if all or get_page:
             tools.append(self.get_page)
-        if all or enable_get_slide_text:
+        if all or get_slide_text:
             tools.append(self.get_slide_text)
-        if all or enable_read_all_text:
+        if all or read_all_text:
             tools.append(self.read_all_text)
-        if all or enable_get_thumbnail_url:
+        if all or get_thumbnail_url:
             tools.append(self.get_thumbnail_url)
-        if all or enable_add_slide:
+        if all or add_slide:
             tools.append(self.add_slide)
-        if all or enable_add_text_box:
+        if all or add_text_box:
             tools.append(self.add_text_box)
-        if all or enable_add_table:
+        if all or add_table:
             tools.append(self.add_table)
-        if all or enable_set_background_image:
+        if all or set_background_image:
             tools.append(self.set_background_image)
-        if all or enable_duplicate_slide:
+        if all or duplicate_slide:
             tools.append(self.duplicate_slide)
-        if all or enable_move_slides:
+        if all or move_slides:
             tools.append(self.move_slides)
-        if all or enable_insert_youtube_video:
+        if all or insert_youtube_video:
             tools.append(self.insert_youtube_video)
-        if all or enable_insert_drive_video:
+        if all or insert_drive_video:
             tools.append(self.insert_drive_video)
-        # Destructive — only if explicitly enabled or `all=True`
-        if all or enable_delete_presentation:
+        if all or delete_presentation:
             tools.append(self.delete_presentation)
-        if all or enable_delete_slide:
+        if all or delete_slide:
             tools.append(self.delete_slide)
 
-        default_instructions = (
-            "Use these tools to create and manage Google Slides presentations. "
-            "When starting: call create_presentation or list_presentations. "
-            "Before modifying: call get_presentation_metadata to get slide IDs. "
-            "Always use the presentation_id and slide_id (objectId) from these tools."
-        )
+        if instructions is None:
+            self.instructions = SLIDES_INSTRUCTIONS
+        else:
+            self.instructions = instructions
 
         super().__init__(
             name="google_slides_tools",
             tools=tools,
-            instructions=instructions or default_instructions,
             add_instructions=add_instructions,
             **kwargs,
         )

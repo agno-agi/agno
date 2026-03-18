@@ -29,8 +29,8 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         GoogleSlidesTools(
-            # enable_delete_presentation=True,  # Destructive, enable if needed
-            # enable_delete_slide=True,          # Destructive, enable if needed
+            # delete_presentation=True,  # Destructive, enable if needed
+            # delete_slide=True,          # Destructive, enable if needed
         )
     ],
     instructions=[

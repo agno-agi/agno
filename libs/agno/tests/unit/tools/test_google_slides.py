@@ -932,7 +932,7 @@ class TestToolFiltering:
     def test_exclude_tools(self):
         with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools(
-                enable_delete_presentation=True, exclude_tools=["delete_presentation", "add_slide"]
+                delete_presentation=True, exclude_tools=["delete_presentation", "add_slide"]
             )
         assert "delete_presentation" not in toolkit.functions
         assert "add_slide" not in toolkit.functions
@@ -971,7 +971,7 @@ class TestToolFiltering:
         This is verified directly against Agno's Toolkit source code."""
         with patch("agno.tools.google.slides.authenticate", lambda func: func):
             toolkit = GoogleSlidesTools(
-                enable_delete_presentation=True,
+                delete_presentation=True,
                 include_tools=["create_presentation", "get_presentation", "delete_presentation"],
                 exclude_tools=["delete_presentation"],
             )
