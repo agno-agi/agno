@@ -1,0 +1,39 @@
+chat:
+  quick_prompts:
+    # ----- Agents -----
+    dash:
+      - "Who won the most F1 races in 2019?"
+      - "Show the points gap between Hamilton and Verstappen by season"
+      - "Which circuits had the most DNFs in 2020?"
+
+    gcode:
+      - "Build a command-line todo app: add, list, done, delete. Persist to JSON. Write pytest tests and run them."
+      - "Create a Python library that parses and evaluates math expressions like '2 + 3 * (4 - 1)', with tests."
+      - "Build a URL shortener with an in-memory store: shorten, resolve, list stats. Include a demo script that exercises all features."
+
+    pal:
+      - "Save a note: quarterly planning meeting moved to Friday 3pm"
+      - "What notes have I saved recently?"
+      - "Save a bookmark: https://docs.agno.com -- Agno documentation"
+
+    scout:
+      - "What is our PTO policy?"
+      - "Find the incident response runbook"
+      - "How do I request a new laptop?"
+
+    seek:
+      - "Research Anthropic -- products, funding, and recent developments"
+      - "Compare the top 3 AI agent frameworks"
+      - "What are the latest developments in agentic AI?"
+
+    # ----- Teams -----
+    research-team:
+      - "Research Anthropic comprehensively -- products, people, and market position"
+      - "What do our internal docs say about AI strategy vs industry trends?"
+      - "Research OpenAI -- enterprise products and recent developments"
+
+    # ----- Workflows -----
+    daily-brief:
+      - "Generate my morning briefing"
+      - "What's on my calendar today and any important emails?"
+      - "Brief me on today's priorities"

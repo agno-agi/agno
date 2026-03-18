@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from upstash_vector import Index, Vector
@@ -9,10 +9,11 @@ except ImportError:
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -324,7 +325,7 @@ class UpstashVectorDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents in the index.
@@ -337,7 +338,9 @@ class UpstashVectorDb(VectorDb):
             List[Document]: List of matching documents.
         """
         _namespace = self.namespace if namespace is None else namespace
-
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
+            filters = None
         filter_str = "" if filters is None else str(filters)
 
         if not self.use_upstash_embeddings and self.embedder is not None:
@@ -623,7 +626,7 @@ class UpstashVectorDb(VectorDb):
         self.index.upsert(vectors, namespace=_namespace)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 

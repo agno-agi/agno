@@ -19,6 +19,7 @@ class Api:
             base_url=agno_api_settings.api_url,
             headers=self.headers,
             timeout=60,
+            http2=True,
         )
 
     def AsyncClient(self) -> HttpxAsyncClient:
@@ -26,6 +27,7 @@ class Api:
             base_url=agno_api_settings.api_url,
             headers=self.headers,
             timeout=60,
+            http2=True,
         )
 
 

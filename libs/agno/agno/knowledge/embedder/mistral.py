@@ -3,14 +3,9 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, log_info, log_warning
-
-try:
-    from mistralai import Mistral  # type: ignore
-    from mistralai.models.embeddingresponse import EmbeddingResponse  # type: ignore
-except ImportError:
-    log_error("`mistralai` not installed")
-    raise
+from agno.utils.log import log_info, log_warning
+from agno.utils.models._mistral_compat import EmbeddingResponse
+from agno.utils.models._mistral_compat import MistralClient as Mistral
 
 
 @dataclass
@@ -37,7 +32,7 @@ class MistralEmbedder(Embedder):
             "api_key": self.api_key,
             "endpoint": self.endpoint,
             "max_retries": self.max_retries,
-            "timeout": self.timeout,
+            "timeout_ms": self.timeout * 1000 if self.timeout else None,
         }
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
 

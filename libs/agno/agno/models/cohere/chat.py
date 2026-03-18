@@ -2,15 +2,17 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.log import log_debug, log_error
+from agno.utils.http import get_default_async_client, get_default_sync_client
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.cohere import format_messages
 
 try:
@@ -50,6 +52,7 @@ class Cohere(Model):
     # -*- Client parameters
     api_key: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     # -*- Provide the Cohere client manually
     client: Optional[CohereClient] = None
     async_client: Optional[CohereAsyncClient] = None
@@ -66,6 +69,17 @@ class Cohere(Model):
 
         _client_params["api_key"] = self.api_key
 
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["httpx_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["httpx_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["httpx_client"] = get_default_sync_client()
+
         self.client = CohereClient(**_client_params)
         return self.client  # type: ignore
 
@@ -78,12 +92,53 @@ class Cohere(Model):
         self.api_key = self.api_key or getenv("CO_API_KEY")
 
         if not self.api_key:
-            log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
+            raise ModelProviderError(
+                message="CO_API_KEY not set. Please set the CO_API_KEY environment variable.",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         _client_params["api_key"] = self.api_key
 
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["httpx_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["httpx_client"] = get_default_async_client()
+        else:
+            # Use global async client when no custom http_client is provided
+            _client_params["httpx_client"] = get_default_async_client()
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "top_k": self.top_k,
+                "top_p": self.top_p,
+                "seed": self.seed,
+                "frequency_penalty": self.frequency_penalty,
+                "presence_penalty": self.presence_penalty,
+                "logprobs": self.logprobs,
+                "strict_tools": self.strict_tools,
+                "add_chat_history": self.add_chat_history,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
 
     def get_request_params(
         self,
@@ -155,6 +210,7 @@ class Cohere(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invoke a non-streamed chat response from the Cohere API.
@@ -162,13 +218,10 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             )  # type: ignore
             assistant_message.metrics.stop_timer()
@@ -189,6 +242,7 @@ class Cohere(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invoke a streamed chat response from the Cohere API.
@@ -196,16 +250,13 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
 
             for response in self.get_client().chat_stream(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             ):
                 model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
@@ -225,6 +276,7 @@ class Cohere(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
@@ -232,13 +284,10 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             )
             assistant_message.metrics.stop_timer()
@@ -259,6 +308,7 @@ class Cohere(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
@@ -266,16 +316,13 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
 
             async for response in self.get_async_client().chat_stream(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             ):
                 model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
@@ -370,17 +417,17 @@ class Cohere(Model):
 
         return model_response, tool_use
 
-    def _get_metrics(self, response_usage) -> Metrics:
+    def _get_metrics(self, response_usage) -> MessageMetrics:
         """
-        Parse the given Cohere usage into an Agno Metrics object.
+        Parse the given Cohere usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Cohere
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.tokens.input_tokens or 0
         metrics.output_tokens = response_usage.tokens.output_tokens or 0

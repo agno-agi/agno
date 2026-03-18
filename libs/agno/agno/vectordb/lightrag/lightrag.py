@@ -1,8 +1,9 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
@@ -92,19 +93,23 @@ class LightRag(VectorDb):
         """Async upsert documents into the vector database"""
         pass
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
         return result if result is not None else []
 
     async def async_search(
-        self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: Optional[int] = None, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
+        if filters is not None:
+            log_warning("Filters are not supported in LightRAG. No filters will be applied.")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -317,7 +322,7 @@ class LightRag(VectorDb):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -344,10 +349,11 @@ class LightRag(VectorDb):
         # LightRAG server returns a dict with 'response' key, but we expect a list of documents
         # Convert the response to the expected format
         if isinstance(result, dict) and "response" in result:
-            # Wrap the response in a Document object
-            return [
-                Document(content=result["response"], meta_data={"source": "lightrag", "query": query, "mode": mode})
-            ]
+            meta_data = {"source": "lightrag", "query": query, "mode": mode}
+            # Preserve references from LightRAG response for document citations
+            if "references" in result:
+                meta_data["references"] = result["references"]
+            return [Document(content=result["response"], meta_data=meta_data)]
         elif isinstance(result, list):
             # Convert list items to Document objects
             documents = []

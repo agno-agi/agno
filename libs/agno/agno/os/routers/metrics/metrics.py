@@ -1,12 +1,12 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import List, Optional, Union, cast
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -16,13 +16,14 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.os.utils import get_db, to_utc_datetime
+from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
 
 
 def get_metrics_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create metrics router with comprehensive OpenAPI documentation for system metrics and analytics endpoints."""
     router = APIRouter(
@@ -39,7 +40,7 @@ def get_metrics_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/metrics",
         response_model=MetricsResponse,
@@ -78,9 +79,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                         "reasoning_tokens": 0,
                                     },
                                     "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 5}],
-                                    "date": "2025-07-31T00:00:00",
-                                    "created_at": 1753993132,
-                                    "updated_at": 1753993741,
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "created_at": "2025-07-31T12:38:52Z",
+                                    "updated_at": "2025-07-31T12:49:01Z",
                                 }
                             ]
                         }
@@ -92,6 +93,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_metrics(
+        request: Request,
         starting_date: Optional[date] = Query(
             default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
         ),
@@ -103,6 +105,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> MetricsResponse:
         try:
             db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.get_metrics(
+                    starting_date=starting_date, ending_date=ending_date, db_id=db_id, table=table, headers=headers
+                )
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
@@ -111,9 +121,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
-                updated_at=datetime.fromtimestamp(latest_updated_at, tz=timezone.utc)
-                if latest_updated_at is not None
-                else None,
+                updated_at=to_utc_datetime(latest_updated_at),
             )
 
         except Exception as e:
@@ -157,9 +165,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "reasoning_tokens": 0,
                                 },
                                 "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 2}],
-                                "date": "2025-08-12T00:00:00",
-                                "created_at": 1755016907,
-                                "updated_at": 1755016907,
+                                "date": "2025-08-12T00:00:00Z",
+                                "created_at": "2025-08-12T08:01:47Z",
+                                "updated_at": "2025-08-12T08:01:47Z",
                             }
                         ]
                     }
@@ -169,11 +177,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def calculate_metrics(
+        request: Request,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for metrics calculation"),
         table: Optional[str] = Query(default=None, description="Table to use for metrics calculation"),
     ) -> List[DayAggregatedMetrics]:
         try:
             db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.refresh_metrics(db_id=db_id, table=table, headers=headers)
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 result = await db.calculate_metrics()

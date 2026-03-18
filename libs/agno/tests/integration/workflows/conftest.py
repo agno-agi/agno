@@ -1,16 +1,39 @@
 import asyncio
+import uuid
 from typing import List
 
 import pytest
+import pytest_asyncio
 
 from agno.agent.agent import Agent
 from agno.db.json import JsonDb
+from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.workflow import Condition, Loop, Parallel, Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Skip tests that hit rate limits (429) instead of failing.
+
+    Checks both the exception message and the full test report (which includes
+    captured stdout/stderr with agent error logs) for rate limit indicators.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        if call.excinfo is not None:
+            error_msg = str(call.excinfo.value)
+            full_repr = str(report.longrepr) if report.longrepr else ""
+            sections_text = " ".join(content for _, content in report.sections)
+            combined = (error_msg + full_repr + sections_text).lower()
+            if any(p in combined for p in ["429", "rate limit", "rate_limit", "quota", "resource_exhausted"]):
+                report.outcome = "skipped"
+                report.longrepr = ("", -1, "Skipped: rate limit (429)")
 
 
 @pytest.fixture
@@ -36,6 +59,35 @@ def mock_agent():
 
 
 @pytest.fixture
+def mock_team(mock_agent):
+    """Create a mock agent for testing"""
+    return Team(
+        name="Test Team",
+        members=[mock_agent],
+    )
+
+
+@pytest.fixture
+def agent_with_db(tmp_path):
+    """Create a simple Agent with a db for testing"""
+    db = JsonDb(session_table="workflow_session", db_path=str(tmp_path / "workflow_bg_test"))
+    return Agent(name="Test Agent with DB", instructions="Test agent for testing.", db=db)
+
+
+@pytest_asyncio.fixture
+async def async_shared_db(temp_storage_db_file):
+    """Create an async SQLite storage for sessions."""
+    # Use a unique table name for each test run
+    table_name = f"sessions_{uuid.uuid4().hex[:8]}"
+    db = AsyncSqliteDb(session_table=table_name, db_file=temp_storage_db_file)
+
+    # Initialize tables before using
+    await db._create_all_tables()
+
+    return db
+
+
+@pytest.fixture
 def simple_workflow(mock_agent, tmp_path):
     """Create a simple workflow for testing"""
     db = JsonDb(session_table="workflow_session", db_path=str(tmp_path / "workflow_bg_test"))
@@ -43,6 +95,24 @@ def simple_workflow(mock_agent, tmp_path):
     return Workflow(
         name="Test Background Workflow",
         description="Simple workflow for background execution testing",
+        db=db,
+        steps=[
+            Step(name="Test Step", agent=mock_agent),
+        ],
+    )
+
+
+@pytest_asyncio.fixture
+async def simple_workflow_with_async_db(mock_agent, tmp_path):
+    """Create a simple workflow for testing with async database"""
+    db = AsyncSqliteDb(session_table="workflow_session", db_file=str(tmp_path / "workflow_bg_test.db"))
+
+    # Initialize tables before using
+    await db._create_all_tables()
+
+    return Workflow(
+        name="Test Background Workflow with Async DB",
+        description="Simple workflow for background execution testing with async database",
         db=db,
         steps=[
             Step(name="Test Step", agent=mock_agent),

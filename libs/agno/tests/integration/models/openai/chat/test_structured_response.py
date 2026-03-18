@@ -65,3 +65,14 @@ def test_structured_response_with_enum_fields():
     assert response.content is not None
     assert isinstance(response.content.rating, Grade)
     assert isinstance(response.content.recipe_name, str)
+
+
+def test_structured_response_strict_output_false():
+    """Test structured response with strict_output=False (guided mode)"""
+    guided_output_agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini", strict_output=False),
+        description="You write movie scripts.",
+        output_schema=MovieScript,
+    )
+    response = guided_output_agent.run("Create a short action movie")
+    assert response.content is not None

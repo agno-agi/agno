@@ -71,13 +71,13 @@ def test_vector_search(lance_db, sample_documents):
     """Test vector search"""
     lance_db.insert(documents=sample_documents, content_hash="test_hash")
     results = lance_db.vector_search("coconut dishes", limit=2)
+    assert results is not None
     assert len(results) == 2
-    # results is a DataFrame, so check the 'payload' column for content
-    # Each payload is a JSON string, so parse it and check for 'coconut'
+    # results is a list of dicts (LanceDB .to_list()), check payload for content
     import json
 
     found = False
-    for _, row in results.iterrows():
+    for row in results:
         payload = json.loads(row["payload"])
         if "coconut" in payload["content"].lower():
             found = True
@@ -128,13 +128,15 @@ def test_name_exists(lance_db, sample_documents):
 
 def test_id_exists(lance_db, sample_documents):
     """Test ID existence check"""
-    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
+    content_hash = "test_hash"
+    lance_db.insert(documents=[sample_documents[0]], content_hash=content_hash)
 
-    # Get the actual ID that was generated (MD5 hash of content)
+    # Get the actual ID that was generated (MD5 hash of base_id_content_hash)
     from hashlib import md5
 
     cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
-    expected_id = md5(cleaned_content.encode()).hexdigest()
+    base_id = sample_documents[0].id or md5(cleaned_content.encode()).hexdigest()
+    expected_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
     assert lance_db.id_exists(expected_id) is True
     assert lance_db.id_exists("nonexistent_id") is False
@@ -142,14 +144,16 @@ def test_id_exists(lance_db, sample_documents):
 
 def test_delete_by_id(lance_db, sample_documents):
     """Test deleting documents by ID"""
-    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    content_hash = "test_hash"
+    lance_db.insert(documents=sample_documents, content_hash=content_hash)
     assert lance_db.get_count() == 3
 
     # Get the actual ID that was generated for the first document
     from hashlib import md5
 
     cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
-    doc_id = md5(cleaned_content.encode()).hexdigest()
+    base_id = sample_documents[0].id or md5(cleaned_content.encode()).hexdigest()
+    doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
     # Delete by ID
     result = lance_db.delete_by_id(doc_id)
@@ -452,3 +456,74 @@ def test_content_hash_exists(lance_db, sample_documents):
 
     # Should still return False for non-existent hash
     assert lance_db.content_hash_exists("nonexistent_hash") is False
+
+
+def test_update_metadata_preserves_vector(lance_db, sample_documents):
+    """Test that update_metadata preserves the vector embedding"""
+
+    sample_documents[0].content_id = "test_doc"
+    lance_db.insert(documents=sample_documents[:1], content_hash="test_hash")
+
+    # Get vector before update
+    total_count = lance_db.table.count_rows()
+    result_before = lance_db.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
+    vector_before = result_before.iloc[0]["vector"]
+    assert vector_before is not None
+    assert len(vector_before) == 1024
+
+    # Update metadata
+    lance_db.update_metadata("test_doc", {"new_field": "new_value"})
+
+    # Get vector after update
+    result_after = lance_db.table.search().select(["id", "payload", "vector"]).limit(total_count).to_pandas()
+    vector_after = result_after.iloc[0]["vector"]
+
+    assert vector_after is not None
+    assert len(vector_after) == 1024
+    assert list(vector_before) == list(vector_after)
+
+
+def test_insert_reembeds_empty_embedding(lance_db):
+    """Test that insert re-embeds documents with empty embedding list"""
+    doc = Document(
+        content="Test document",
+        meta_data={"test": "value"},
+        name="test_doc",
+    )
+    doc.embedding = []  # Simulate failed async embedding
+
+    lance_db.insert(documents=[doc], content_hash="test_hash")
+
+    total_count = lance_db.table.count_rows()
+    result = lance_db.table.search().select(["vector"]).limit(total_count).to_pandas()
+
+    assert len(result) == 1
+    vector = result.iloc[0]["vector"]
+    assert vector is not None
+    assert len(vector) == 1024
+
+
+def test_get_table_names_new(lance_db):
+    """Test _get_table_names uses list_tables()"""
+    from unittest.mock import MagicMock
+
+    mock_conn = MagicMock()
+    mock_conn.list_tables.return_value = MagicMock(tables=["table1", "table2"])
+
+    result = lance_db._get_table_names(mock_conn)
+
+    mock_conn.list_tables.assert_called_once()
+    assert result == ["table1", "table2"]
+
+
+def test_get_table_names_old(lance_db):
+    """Test _get_table_names falls back to table_names() for old LanceDB versions"""
+    from unittest.mock import MagicMock
+
+    mock_conn = MagicMock(spec=["table_names"])  # No list_tables attribute
+    mock_conn.table_names.return_value = ["old_table1", "old_table2"]
+
+    result = lance_db._get_table_names(mock_conn)
+
+    mock_conn.table_names.assert_called_once()
+    assert result == ["old_table1", "old_table2"]

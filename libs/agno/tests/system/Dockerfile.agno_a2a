@@ -1,0 +1,48 @@
+# Dockerfile for Remote AgentOS Server
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the entire agno library
+COPY . /app/agno
+
+# Install agno from local source
+WORKDIR /app/agno
+RUN pip install --no-cache-dir -e .
+
+# Install additional dependencies for the server
+RUN pip install --no-cache-dir \
+    sqlalchemy \
+    psycopg-binary \
+    psycopg \
+    fastapi \
+    uvicorn \
+    httpx \
+    ddgs \
+    pgvector \
+    openai \
+    PyJWT \
+    a2a-sdk \
+    slack-sdk
+
+# Copy the remote server script
+WORKDIR /app
+COPY tests/system/agno_a2a_server.py /app/agno_a2a_server.py
+
+# Expose the remote server port
+EXPOSE 7004
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:7004/health || exit 1
+
+# Run the remote server
+CMD ["python", "agno_a2a_server.py"]
+

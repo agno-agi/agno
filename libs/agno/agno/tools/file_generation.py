@@ -108,15 +108,17 @@ class FileGenerationTools(Toolkit):
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(json_content, filename)
 
+            content_bytes = json_content.encode("utf-8")
+
             # Create FileArtifact
             file_artifact = File(
                 id=str(uuid4()),
-                content=json_content,
+                content=content_bytes,
                 mime_type="application/json",
                 file_type="json",
                 filename=filename,
-                size=len(json_content.encode("utf-8")),
-                url=f"file://{file_path}" if file_path else None,
+                size=len(content_bytes),
+                filepath=file_path if file_path else None,
             )
 
             log_debug("JSON file generated successfully")
@@ -195,15 +197,17 @@ class FileGenerationTools(Toolkit):
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(csv_content, filename)
 
+            content_bytes = csv_content.encode("utf-8")
+
             # Create FileArtifact
             file_artifact = File(
                 id=str(uuid4()),
-                content=csv_content,
+                content=content_bytes,
                 mime_type="text/csv",
                 file_type="csv",
                 filename=filename,
-                size=len(csv_content.encode("utf-8")),
-                url=f"file://{file_path}" if file_path else None,
+                size=len(content_bytes),
+                filepath=file_path if file_path else None,
             )
 
             log_debug("CSV file generated successfully")
@@ -287,7 +291,7 @@ class FileGenerationTools(Toolkit):
                 file_type="pdf",
                 filename=filename,
                 size=len(pdf_content),
-                url=f"file://{file_path}" if file_path else None,
+                filepath=file_path if file_path else None,
             )
 
             log_debug("PDF file generated successfully")
@@ -325,15 +329,17 @@ class FileGenerationTools(Toolkit):
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(content, filename)
 
+            content_bytes = content.encode("utf-8")
+
             # Create FileArtifact
             file_artifact = File(
                 id=str(uuid4()),
-                content=content,
+                content=content_bytes,
                 mime_type="text/plain",
                 file_type="txt",
                 filename=filename,
-                size=len(content.encode("utf-8")),
-                url=f"file://{file_path}" if file_path else None,
+                size=len(content_bytes),
+                filepath=file_path if file_path else None,
             )
 
             log_debug("Text file generated successfully")

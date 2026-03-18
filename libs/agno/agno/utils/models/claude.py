@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
@@ -68,6 +68,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        img_type = None
+
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
             content_bytes = image.content
@@ -80,7 +82,6 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             import os
             from urllib.parse import urlparse
 
-            img_type = None
             if image.url:
                 parsed_url = urlparse(image.url)
                 _, ext = os.path.splitext(parsed_url.path)
@@ -151,9 +152,21 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     Add a document url or base64 encoded content to a message.
     """
 
-    mime_mapping = {
+    mime_mapping: dict[str, str] = {
         "application/pdf": "base64",
+        # All text/* MIME types use the "text" source type
         "text/plain": "text",
+        "text/csv": "text",
+        "text/html": "text",
+        "text/css": "text",
+        "text/md": "text",
+        "text/xml": "text",
+        "text/rtf": "text",
+        "text/javascript": "text",
+        "text/x-python": "text",
+        "application/json": "text",
+        "application/x-javascript": "text",
+        "application/x-python": "text",
     }
 
     # Case 0: File is an Anthropic uploaded file
@@ -183,7 +196,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
         path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
         if path.exists() and path.is_file():
-            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+            raw_bytes = path.read_bytes()
 
             # Determine media type
             media_type = file.mime_type
@@ -192,45 +205,77 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
                 media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
 
-            # Map media type to type, default to "base64" if no mapping exists
-            type = mime_mapping.get(media_type, "base64")
+            # Map media type to source type, default to "base64" if no mapping exists
+            source_type = mime_mapping.get(media_type, "base64")
 
-            return {
-                "type": "document",
-                "source": {
-                    "type": type,
-                    "media_type": media_type,
-                    "data": file_data,
-                },
-                "citations": {"enabled": True},
-            }
+            if source_type == "text":
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": raw_bytes.decode("utf-8", errors="replace"),
+                    },
+                    "citations": {"enabled": True},
+                }
+            else:
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
+                    },
+                    "citations": {"enabled": True},
+                }
         else:
             log_error(f"Document file not found: {file}")
             return None
     # Case 3: Document is bytes content
     elif file.content is not None:
-        import base64
+        media_type = file.mime_type or "application/pdf"
+        # Map media type to source type, default to "base64" if no mapping exists
+        source_type = mime_mapping.get(media_type, "base64")
 
-        file_data = base64.standard_b64encode(file.content).decode("utf-8")
-        return {
-            "type": "document",
-            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
-            "citations": {"enabled": True},
-        }
+        if source_type == "text":
+            return {
+                "type": "document",
+                "source": {
+                    "type": "text",
+                    "media_type": "text/plain",
+                    "data": file.content.decode("utf-8", errors="replace"),
+                },
+                "citations": {"enabled": True},
+            }
+        else:
+            import base64
+
+            return {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(file.content).decode("utf-8"),
+                },
+                "citations": {"enabled": True},
+            }
     return None
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def format_messages(
+    messages: List[Message], compress_tool_results: bool = False
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    chat_messages: List[Dict[str, str]] = []
+    chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
     for message in messages:
@@ -300,11 +345,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     )
         elif message.role == "tool":
             content = []
+
+            # Use compressed content for tool messages if compression is active
+            tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(message.content),
+                    "content": str(tool_result),
                 }
             )
 
@@ -319,6 +368,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
     """
     if not tools:
         return None
@@ -351,7 +401,14 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
                 "type": parameters.get("type", "object"),
                 "properties": input_properties,
                 "required": required_params,
+                "additionalProperties": False,
             },
         }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
         parsed_tools.append(tool)
     return parsed_tools
