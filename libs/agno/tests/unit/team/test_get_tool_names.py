@@ -8,9 +8,6 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 """
 
 from types import SimpleNamespace
-from typing import List
-
-import pytest
 
 from agno.team._messages import _get_tool_names
 from agno.tools import Toolkit
