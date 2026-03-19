@@ -678,22 +678,32 @@ class TestGetPresentationMetadata:
         tools.slides_service.presentations.return_value.get.return_value.execute.return_value = {
             "presentationId": "pres-id",
             "title": "My Deck",
+            "pageSize": {
+                "width": {"magnitude": 9144000, "unit": "EMU"},
+                "height": {"magnitude": 5143500, "unit": "EMU"},
+            },
             "slides": [{"objectId": "s1"}, {"objectId": "s2"}],
         }
         data = ok(tools.get_presentation_metadata("pres-id"))
         assert data["slide_count"] == 2
-        assert data["slide_ids"] == ["s1", "s2"]
+        assert data["slides"][0]["slide_id"] == "s1"
+        assert data["slides"][1]["slide_id"] == "s2"
         assert data["title"] == "My Deck"
+        assert data["page_width_inches"] == 10.0
 
     def test_no_slides(self, tools):
         tools.slides_service.presentations.return_value.get.return_value.execute.return_value = {
             "presentationId": "pres-id",
             "title": "Empty",
+            "pageSize": {
+                "width": {"magnitude": 9144000, "unit": "EMU"},
+                "height": {"magnitude": 5143500, "unit": "EMU"},
+            },
             "slides": [],
         }
         data = ok(tools.get_presentation_metadata("pres-id"))
         assert data["slide_count"] == 0
-        assert data["slide_ids"] == []
+        assert data["slides"] == []
 
     def test_empty_presentation_id(self, tools):
         assert "empty" in err(tools.get_presentation_metadata(""))

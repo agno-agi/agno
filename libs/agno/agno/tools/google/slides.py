@@ -926,7 +926,7 @@ class GoogleSlidesTools(Toolkit):
             presentation_id (str): The presentation ID.
 
         Returns:
-            JSON with title, slide_count, and list of slide_ids.
+            JSON with title, slide_count, slide_ids, page_width_inches, and page_height_inches.
         """
         try:
             if not presentation_id.strip():
@@ -936,17 +936,58 @@ class GoogleSlidesTools(Toolkit):
                 self.slides_service.presentations()
                 .get(
                     presentationId=presentation_id,
-                    fields="presentationId,title,slides.objectId",
+                    fields=(
+                        "presentationId,title,pageSize,"
+                        "slides(objectId,slideProperties(layoutObjectId),"
+                        "pageElements(objectId,size,transform,shape(shapeType,placeholder(type))))"
+                    ),
                 )
                 .execute()
             )
-            slides = result.get("slides", [])
+            page_size = result.get("pageSize", {})
+            width_emu = page_size.get("width", {}).get("magnitude", 9144000)
+            height_emu = page_size.get("height", {}).get("magnitude", 5143500)
+
+            slides_info = []
+            for slide in result.get("slides", []):
+                elements = []
+                for el in slide.get("pageElements", []):
+                    el_info: Dict[str, Any] = {"object_id": el.get("objectId")}
+                    shape = el.get("shape", {})
+                    if shape.get("shapeType"):
+                        el_info["type"] = shape["shapeType"]
+                    ph = shape.get("placeholder", {})
+                    if ph.get("type"):
+                        el_info["placeholder"] = ph["type"]
+                    transform = el.get("transform", {})
+                    if transform:
+                        el_info["x_inches"] = round(transform.get("translateX", 0) / 914400, 2)
+                        el_info["y_inches"] = round(transform.get("translateY", 0) / 914400, 2)
+                    size = el.get("size", {})
+                    if size:
+                        el_info["width_inches"] = round(
+                            size.get("width", {}).get("magnitude", 0) / 914400, 2
+                        )
+                        el_info["height_inches"] = round(
+                            size.get("height", {}).get("magnitude", 0) / 914400, 2
+                        )
+                    elements.append(el_info)
+                slides_info.append(
+                    {
+                        "slide_id": slide["objectId"],
+                        "layout": slide.get("slideProperties", {}).get("layoutObjectId"),
+                        "elements": elements,
+                    }
+                )
+
             return json.dumps(
                 {
                     "presentation_id": result.get("presentationId"),
                     "title": result.get("title"),
-                    "slide_count": len(slides),
-                    "slide_ids": [s["objectId"] for s in slides],
+                    "slide_count": len(slides_info),
+                    "page_width_inches": round(width_emu / 914400, 2),
+                    "page_height_inches": round(height_emu / 914400, 2),
+                    "slides": slides_info,
                 }
             )
         except Exception as e:
