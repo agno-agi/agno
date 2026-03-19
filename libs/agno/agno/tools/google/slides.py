@@ -390,10 +390,9 @@ class GoogleSlidesTools(Toolkit):
             if not presentation_id.strip():
                 return json.dumps({"error": "presentation_id cannot be empty."})
 
-            kwargs: dict = {"presentationId": presentation_id}
-            if fields:
-                kwargs["fields"] = fields
-            result = self.slides_service.presentations().get(**kwargs).execute()
+            result = self.slides_service.presentations().get(
+                presentationId=presentation_id, fields=fields
+            ).execute()
             return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": str(e)})

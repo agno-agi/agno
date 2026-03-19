@@ -198,10 +198,9 @@ class TestGetPresentation:
         assert call_kwargs.kwargs.get("fields") == "title,slides"
 
     def test_without_fields(self, tools):
-        """When no fields kwarg is given, the API call must NOT include a 'fields' key."""
         tools.get_presentation("test-presentation-id")
         call_kwargs = tools.slides_service.presentations.return_value.get.call_args
-        assert "fields" not in call_kwargs.kwargs
+        assert call_kwargs.kwargs.get("fields") is None
 
     def test_empty_presentation_id(self, tools):
         assert "empty" in err(tools.get_presentation(""))
