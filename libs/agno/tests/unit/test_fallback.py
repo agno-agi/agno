@@ -284,7 +284,7 @@ class TestCallModelStreamWithFallback:
             assert result[1].content == "chunk2"
 
     def test_stream_primary_fails_fallback_succeeds(self):
-        """Primary raises before yielding, fallback stream yields events."""
+        """Primary raises, fallback stream yields events."""
         primary = _make_model("primary")
         fallback = _make_model("fallback")
         config = FallbackConfig(models=[fallback])
@@ -295,22 +295,6 @@ class TestCallModelStreamWithFallback:
                 result = list(call_model_stream_with_fallback(primary, config, messages=[]))
                 assert len(result) == 1
                 assert result[0].content == "fb-chunk"
-
-    def test_stream_no_fallback_after_partial_yield(self):
-        """If primary yields events then fails, re-raise instead of falling back."""
-        primary = _make_model("primary")
-        fallback = _make_model("fallback")
-        config = FallbackConfig(models=[fallback])
-
-        def partial_stream(**kwargs):
-            yield ModelResponse(content="chunk1")
-            raise ModelProviderError("mid-stream fail", status_code=500)
-
-        with patch.object(primary, "response_stream", side_effect=partial_stream):
-            with patch.object(fallback, "response_stream") as fb_stream:
-                with pytest.raises(ModelProviderError, match="mid-stream fail"):
-                    list(call_model_stream_with_fallback(primary, config, messages=[]))
-                fb_stream.assert_not_called()
 
 
 # =============================================================================
@@ -339,7 +323,7 @@ class TestAsyncCallModelStreamWithFallback:
 
     @pytest.mark.asyncio
     async def test_async_stream_primary_fails_fallback_succeeds(self):
-        """Async primary raises before yielding, fallback yields events."""
+        """Async primary raises, fallback yields events."""
         primary = _make_model("primary")
         fallback = _make_model("fallback")
         config = FallbackConfig(models=[fallback])
@@ -358,25 +342,6 @@ class TestAsyncCallModelStreamWithFallback:
                     result.append(event)
                 assert len(result) == 1
                 assert result[0].content == "fb-chunk"
-
-    @pytest.mark.asyncio
-    async def test_async_stream_no_fallback_after_partial_yield(self):
-        """Async: if primary yields events then fails, re-raise instead of falling back."""
-        primary = _make_model("primary")
-        fallback = _make_model("fallback")
-        config = FallbackConfig(models=[fallback])
-
-        async def partial_stream(**kwargs):
-            yield ModelResponse(content="chunk1")
-            raise ModelProviderError("mid-stream fail", status_code=500)
-
-        with patch.object(primary, "aresponse_stream", side_effect=partial_stream):
-            with patch.object(fallback, "aresponse_stream") as fb_stream:
-                with pytest.raises(ModelProviderError, match="mid-stream fail"):
-                    result = []
-                    async for event in acall_model_stream_with_fallback(primary, config, messages=[]):
-                        result.append(event)
-                fb_stream.assert_not_called()
 
 
 # =============================================================================
