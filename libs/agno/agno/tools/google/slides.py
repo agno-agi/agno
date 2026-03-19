@@ -750,10 +750,8 @@ class GoogleSlidesTools(Toolkit):
             log_debug(f"Adding text box to slide {slide_id}")
             box_id = self._make_object_id("textbox")
             # Convert inches to EMU for API
-            emu_width = self._to_emu(width, "inch")
-            emu_height = self._to_emu(height, "inch")
-            emu_x = self._to_emu(x, "inch")
-            emu_y = self._to_emu(y, "inch")
+            emu_x, emu_y = self._to_emu(x), self._to_emu(y)
+            emu_width, emu_height = self._to_emu(width), self._to_emu(height)
 
             requests: List[Dict[str, Any]] = [
                 {
@@ -1122,10 +1120,8 @@ class GoogleSlidesTools(Toolkit):
                 return json.dumps({"error": "Width and height must be positive."})
 
             log_debug(f"Inserting YouTube video {video_id} into slide {slide_id}")
-            emu_width = self._to_emu(width, "inch")
-            emu_height = self._to_emu(height, "inch")
-            emu_x = self._to_emu(x, "inch")
-            emu_y = self._to_emu(y, "inch")
+            emu_x, emu_y = self._to_emu(x), self._to_emu(y)
+            emu_width, emu_height = self._to_emu(width), self._to_emu(height)
 
             video_obj_id = self._insert_video(
                 presentation_id=presentation_id,
@@ -1182,10 +1178,8 @@ class GoogleSlidesTools(Toolkit):
                 return json.dumps({"error": "Width and height must be positive."})
 
             log_debug(f"Inserting Drive video {file_id} into slide {slide_id}")
-            emu_width = self._to_emu(width, "inch")
-            emu_height = self._to_emu(height, "inch")
-            emu_x = self._to_emu(x, "inch")
-            emu_y = self._to_emu(y, "inch")
+            emu_x, emu_y = self._to_emu(x), self._to_emu(y)
+            emu_width, emu_height = self._to_emu(width), self._to_emu(height)
 
             video_obj_id = self._insert_video(
                 presentation_id=presentation_id,
