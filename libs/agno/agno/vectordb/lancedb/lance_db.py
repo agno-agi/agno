@@ -521,6 +521,17 @@ class LanceDb(VectorDb):
 
         search_results = self._build_search_results(results)
 
+        # Secondary deduplication by content to catch duplicates with different DB IDs
+        seen_content: set = set()
+        unique_results: List[Document] = []
+        for doc in search_results:
+            content_key = doc.content_id if doc.content_id else (doc.content[:100] if doc.content else None)
+            if content_key is None or content_key not in seen_content:
+                if content_key is not None:
+                    seen_content.add(content_key)
+                unique_results.append(doc)
+        search_results = unique_results
+
         # Filter results based on metadata if filters are provided
         if filters and search_results:
             filtered_results = []
@@ -639,8 +650,18 @@ class LanceDb(VectorDb):
 
     def _build_search_results(self, results: List[Dict[str, Any]]) -> List[Document]:
         search_results: List[Document] = []
+        seen_ids: set = set()
         try:
             for item in results:
+                # Deduplicate by document ID to prevent returning duplicate documents
+                # This can occur with hybrid search or when multiple indexes overlap
+                doc_id = item.get("id")
+                if doc_id is not None:
+                    if doc_id in seen_ids:
+                        log_debug(f"Skipping duplicate document with id: {doc_id}")
+                        continue
+                    seen_ids.add(doc_id)
+
                 payload = json.loads(item["payload"])
                 search_results.append(
                     Document(
