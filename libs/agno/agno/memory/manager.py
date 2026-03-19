@@ -315,21 +315,8 @@ class MemoryManager:
                 "clear_user_memories() is not supported with an async DB. Please use aclear_user_memories() instead."
             )
 
-        # TODO: This is inefficient - we fetch all memories just to get their IDs.
-        # Extend delete_user_memories() to accept just user_id and delete all memories
-        # for that user directly without requiring a list of memory_ids.
-        memories = self.get_user_memories(user_id=user_id)
-        if not memories:
-            log_debug(f"No memories found for user {user_id}")
-            return
-
-        # Extract memory IDs
-        memory_ids = [mem.memory_id for mem in memories if mem.memory_id]
-
-        if memory_ids:
-            # Delete all memories in a single batch operation
-            self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
-            log_debug(f"Cleared {len(memory_ids)} memories for user {user_id}")
+        self.db.clear_user_memories(user_id=user_id)
+        log_debug(f"Cleared all memories for user {user_id}")
 
     async def aclear_user_memories(self, user_id: Optional[str] = None) -> None:
         """Clear all memories for a specific user (async).
@@ -345,24 +332,10 @@ class MemoryManager:
             return
 
         if isinstance(self.db, AsyncBaseDb):
-            memories = await self.aget_user_memories(user_id=user_id)
+            await self.db.clear_user_memories(user_id=user_id)
         else:
-            memories = self.get_user_memories(user_id=user_id)
-
-        if not memories:
-            log_debug(f"No memories found for user {user_id}")
-            return
-
-        # Extract memory IDs
-        memory_ids = [mem.memory_id for mem in memories if mem.memory_id]
-
-        if memory_ids:
-            # Delete all memories in a single batch operation
-            if isinstance(self.db, AsyncBaseDb):
-                await self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
-            else:
-                self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
-            log_debug(f"Cleared {len(memory_ids)} memories for user {user_id}")
+            self.db.clear_user_memories(user_id=user_id)
+        log_debug(f"Cleared all memories for user {user_id}")
 
     # -*- Agent Functions
     def create_user_memories(

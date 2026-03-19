@@ -548,6 +548,28 @@ class JsonDb(BaseDb):
             log_error(f"Error deleting memories: {e}")
             raise e
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+        """
+        try:
+            memories = self._read_json_file(self.memory_table_name)
+            original_count = len(memories)
+            memories = [m for m in memories if m.get("user_id") != user_id]
+            deleted_count = original_count - len(memories)
+            self._write_json_file(self.memory_table_name, memories)
+
+            if deleted_count == 0:
+                log_debug(f"No memories found for user {user_id}")
+            else:
+                log_debug(f"Successfully deleted {deleted_count} memories for user {user_id}")
+
+        except Exception as e:
+            log_error(f"Error clearing memories for user {user_id}: {e}")
+            raise e
+
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the JSON file.
 
