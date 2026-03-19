@@ -57,6 +57,9 @@ class ToolExecution:
     # If True (and external_execution_required=True), suppresses verbose paused messages
     external_execution_silent: Optional[bool] = None
 
+    # Structured metadata for paused tools (e.g. OAuth provider, auth URL, scopes)
+    additional_data: Optional[Dict[str, Any]] = None
+
     # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
     approval_type: Optional[str] = None
     # ID of the approval record created for this tool (set when the run pauses).
@@ -101,6 +104,7 @@ class ToolExecution:
             else None,
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
+            additional_data=data.get("additional_data"),
             approval_type=data.get("approval_type"),
             approval_id=data.get("approval_id"),
             metrics=ToolCallMetrics.from_dict(data["metrics"]) if data.get("metrics") else None,

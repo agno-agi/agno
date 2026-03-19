@@ -32,6 +32,8 @@ class StreamState:
     title_set: bool = False
     # Incremented per error; used to generate unique fallback task card IDs
     error_count: int = 0
+    # Set by _on_run_error when OAuth is needed; checked by router after stream loop
+    auth_required: Optional[Dict[str, str]] = None
 
     text_buffer: str = ""
 
