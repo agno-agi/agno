@@ -112,8 +112,10 @@ def sanitize_response_schema(schema: dict):
             if "additionalProperties" not in schema:
                 schema["additionalProperties"] = False
             elif schema.get("additionalProperties") is True:
-                # Convert True to False for strict mode, but preserve schema objects
-                schema["additionalProperties"] = False
+                # Convert to False only for objects with properties (OpenAI strict mode).
+                # Preserve True for dict[str, Any] fields (no properties defined).
+                if "properties" in schema:
+                    schema["additionalProperties"] = False
 
             # Ensure all properties are required, EXCEPT Dict fields
             if "properties" in schema:
