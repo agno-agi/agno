@@ -11,9 +11,9 @@ from random import randint
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
+from agno.models.aws import Claude as AWSClaude
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat, OpenAIResponses
-from agno.models.aws import Claude as AWSClaude
 
 
 def get_weather(city: str) -> str:

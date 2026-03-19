@@ -9,6 +9,7 @@ def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny and 22C."
 
+
 def main() -> None:
     db_url = os.getenv(
         "AGNO_POSTGRES_URL",
