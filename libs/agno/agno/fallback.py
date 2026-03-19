@@ -86,7 +86,7 @@ def call_model_with_fallback(
     """
     try:
         return model.response(**kwargs)
-    except Exception as primary_error:
+    except ModelProviderError as primary_error:
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
@@ -102,7 +102,7 @@ async def acall_model_with_fallback(
     """Async variant of call_model_with_fallback."""
     try:
         return await model.aresponse(**kwargs)
-    except Exception as primary_error:
+    except ModelProviderError as primary_error:
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
@@ -120,10 +120,20 @@ def call_model_stream_with_fallback(
     fallback_config: Optional[FallbackConfig],
     **kwargs: Any,
 ) -> Iterator[StreamEvent]:
-    """Call the primary model stream, falling back on failure."""
+    """Call the primary model stream, falling back on failure.
+
+    Fallback is only attempted if the primary model fails before yielding
+    any events. Once events have been emitted to the caller, re-raises
+    instead of switching models to avoid corrupted/mixed output.
+    """
+    has_yielded = False
     try:
-        yield from model.response_stream(**kwargs)
-    except Exception as primary_error:
+        for event in model.response_stream(**kwargs):
+            has_yielded = True
+            yield event
+    except ModelProviderError as primary_error:
+        if has_yielded:
+            raise
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
@@ -136,11 +146,18 @@ async def acall_model_stream_with_fallback(
     fallback_config: Optional[FallbackConfig],
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
-    """Async variant of call_model_stream_with_fallback."""
+    """Async variant of call_model_stream_with_fallback.
+
+    Same guard as the sync version: no fallback after events have been yielded.
+    """
+    has_yielded = False
     try:
         async for event in model.aresponse_stream(**kwargs):
+            has_yielded = True
             yield event
-    except Exception as primary_error:
+    except ModelProviderError as primary_error:
+        if has_yielded:
+            raise
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
