@@ -689,7 +689,7 @@ def _get_delegate_task_function(
         # Find the member agent using the helper function
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
+            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context, async_mode=True)}"
             return
 
         _, member_agent = result
