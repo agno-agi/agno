@@ -81,7 +81,7 @@ def test_sanitize_response_schema_regular_fields_required():
 
 
 def test_sanitize_response_schema_removes_null_defaults():
-    """Test that null defaults are removed"""
+    """Test that null defaults are removed and optional fields are not required"""
     original_schema = OptionalModel.model_json_schema()
     schema = copy.deepcopy(original_schema)
 
@@ -91,6 +91,11 @@ def test_sanitize_response_schema_removes_null_defaults():
 
     # Should not have default: null
     assert "default" not in optional_field or optional_field.get("default") is not None
+
+    # Optional field should NOT be in required
+    required_fields = schema.get("required", [])
+    assert "name" in required_fields
+    assert "optional_field" not in required_fields
 
 
 def test_sanitize_response_schema_nested_objects():
@@ -220,3 +225,54 @@ def test_sanitize_response_schema_preserves_non_object_types():
     assert schema1["type"] == "string"
     assert schema2["type"] == "array"
     assert schema2["items"]["type"] == "integer"
+
+
+def test_sanitize_response_schema_optional_fields_not_required():
+    """Test that optional fields with default None are not marked as required"""
+
+    class MixedModel(BaseModel):
+        required_name: str = Field(..., description="Required name")
+        required_age: int = Field(..., description="Required age")
+        optional_attrs: Optional[Dict[str, str]] = Field(None, description="Optional attributes")
+        optional_content: Optional[str] = Field(None, description="Optional content")
+        optional_type: Optional[str] = Field(None, description="Optional type")
+
+    original_schema = MixedModel.model_json_schema()
+    schema = copy.deepcopy(original_schema)
+
+    sanitize_response_schema(schema)
+
+    required_fields = schema.get("required", [])
+
+    # Required fields should be in required
+    assert "required_name" in required_fields
+    assert "required_age" in required_fields
+
+    # Optional fields should NOT be in required
+    assert "optional_attrs" not in required_fields
+    assert "optional_content" not in required_fields
+    assert "optional_type" not in required_fields
+
+
+def test_sanitize_response_schema_optional_nested_objects_not_required():
+    """Test that optional nested object fields are not marked as required"""
+
+    class InnerModel(BaseModel):
+        value: str = Field(..., description="Inner value")
+
+    class OuterModel(BaseModel):
+        name: str = Field(..., description="Name")
+        inner: Optional[InnerModel] = Field(None, description="Optional inner model")
+
+    original_schema = OuterModel.model_json_schema()
+    schema = copy.deepcopy(original_schema)
+
+    sanitize_response_schema(schema)
+
+    required_fields = schema.get("required", [])
+
+    # Required field should be in required
+    assert "name" in required_fields
+
+    # Optional nested object should NOT be in required
+    assert "inner" not in required_fields
