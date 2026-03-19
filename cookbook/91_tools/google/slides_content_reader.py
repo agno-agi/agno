@@ -10,7 +10,7 @@ Key concepts:
 - read_all_text: extracts text from every slide (handles shapes, tables, groups)
 - get_slide_text: targeted text extraction from a single slide
 - get_presentation_metadata: lightweight metadata (title, slide count, IDs)
-- get_thumbnail_url: retrieves slide thumbnail image URLs
+- get_slide_thumbnail: retrieves slide thumbnail image URLs
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Slides API + Drive API)
