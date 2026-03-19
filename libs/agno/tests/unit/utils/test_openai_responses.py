@@ -220,3 +220,48 @@ def test_sanitize_response_schema_preserves_non_object_types():
     assert schema1["type"] == "string"
     assert schema2["type"] == "array"
     assert schema2["items"]["type"] == "integer"
+
+
+def test_sanitize_response_schema_preserves_dict_any_additional_properties_true():
+    """Test that dict[str, Any] fields preserve additionalProperties: true.
+
+    This is a regression test for issue #7066. When a field is typed as
+    dict[str, Any], Pydantic generates additionalProperties: true (not a schema).
+    This should NOT be converted to false, as that would break the Dict type.
+    """
+    # Schema for dict[str, Any] - no properties, just additionalProperties: true
+    dict_any_schema = {"type": "object", "additionalProperties": True}
+
+    schema = copy.deepcopy(dict_any_schema)
+    sanitize_response_schema(schema)
+
+    # Should preserve True because there are no properties defined
+    assert schema.get("additionalProperties") is True
+
+
+def test_sanitize_response_schema_nullable_dict_any_in_anyof():
+    """Test that dict[str, Any] | None preserves additionalProperties in anyOf.
+
+    When a field is typed as dict[str, Any] | None, Pydantic generates:
+    anyOf: [{type: object, additionalProperties: true}, {type: null}]
+
+    The additionalProperties: true should be preserved.
+    """
+    from typing import Any
+
+    class ModelWithOptionalDict(BaseModel):
+        data: Optional[Dict[str, Any]] = None
+
+    original_schema = ModelWithOptionalDict.model_json_schema()
+    schema = copy.deepcopy(original_schema)
+
+    sanitize_response_schema(schema)
+
+    # Find the data field
+    data_field = schema["properties"]["data"]
+
+    # It should have anyOf with the dict type preserving additionalProperties: true
+    assert "anyOf" in data_field
+    dict_type = next((t for t in data_field["anyOf"] if t.get("type") == "object"), None)
+    assert dict_type is not None
+    assert dict_type.get("additionalProperties") is True
