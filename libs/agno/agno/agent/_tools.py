@@ -370,6 +370,14 @@ def parse_tools(
         elif isinstance(tool, Toolkit):
             # For each function in the toolkit and process entrypoint
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+
+            # Detect MCP tools: output_schema strict mode should NOT be applied to MCP tools
+            # because MCP tools define their own schemas from the MCP server.
+            is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+            )
+            toolkit_strict = False if is_mcp_tool else strict
+
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
                     continue
@@ -379,9 +387,9 @@ def parse_tools(
                 if agent._team is not None:
                     _func._team = agent._team
                 # Respect the function's explicit strict setting if set
-                effective_strict = strict if _func.strict is None else _func.strict
+                effective_strict = toolkit_strict if _func.strict is None else _func.strict
                 _func.process_entrypoint(strict=effective_strict)
-                if strict and _func.strict is None:
+                if toolkit_strict and _func.strict is None:
                     _func.strict = True
                 if agent.tool_hooks is not None:
                     _func.tool_hooks = agent.tool_hooks
