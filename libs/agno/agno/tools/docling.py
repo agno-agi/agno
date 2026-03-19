@@ -24,7 +24,8 @@ class DoclingTools(Toolkit):
     """
     Toolkit for converting documents with Docling.
 
-    Supports local files and URLs. Export formats: markdown, text, html, json, doctags.
+    Supports local files and URLs. Export formats: markdown, text, html, html_split_page,
+    json, yaml, doctags, and vtt.
     Advanced pipeline/OCR options can be configured via init params.
 
     PDF/OCR options (init args):
@@ -43,6 +44,7 @@ class DoclingTools(Toolkit):
         self,
         converter: Optional[DocumentConverter] = None,
         max_chars: Optional[int] = None,
+        allowed_input_formats: Optional[List[str]] = None,
         format_options: Optional[Dict[Any, Any]] = None,
         pdf_pipeline_options: Optional[PdfPipelineOptions] = None,
         pdf_do_ocr: Optional[bool] = None,
@@ -57,12 +59,18 @@ class DoclingTools(Toolkit):
         enable_convert_to_markdown: bool = True,
         enable_convert_to_text: bool = True,
         enable_convert_to_html: bool = True,
+        enable_convert_to_html_split_page: bool = True,
         enable_convert_to_json: bool = True,
+        enable_convert_to_yaml: bool = True,
         enable_convert_to_doctags: bool = True,
+        enable_convert_to_vtt: bool = True,
+        enable_convert_string_content: bool = True,
+        enable_list_supported_parsers: bool = True,
         all: bool = False,
         **kwargs,
     ):
         self.converter: DocumentConverter = converter or self._build_converter(
+            allowed_input_formats=allowed_input_formats,
             format_options=format_options,
             pdf_pipeline_options=pdf_pipeline_options,
             pdf_do_ocr=pdf_do_ocr,
@@ -84,10 +92,20 @@ class DoclingTools(Toolkit):
             tools.append(self.convert_to_text)
         if all or enable_convert_to_html:
             tools.append(self.convert_to_html)
+        if all or enable_convert_to_html_split_page:
+            tools.append(self.convert_to_html_split_page)
         if all or enable_convert_to_json:
             tools.append(self.convert_to_json)
+        if all or enable_convert_to_yaml:
+            tools.append(self.convert_to_yaml)
         if all or enable_convert_to_doctags:
             tools.append(self.convert_to_doctags)
+        if all or enable_convert_to_vtt:
+            tools.append(self.convert_to_vtt)
+        if all or enable_convert_string_content:
+            tools.append(self.convert_string_content)
+        if all or enable_list_supported_parsers:
+            tools.append(self.list_supported_parsers)
 
         super().__init__(name="docling_tools", tools=tools, **kwargs)
 
@@ -145,6 +163,24 @@ class DoclingTools(Toolkit):
             max_file_size=max_file_size,
         )
 
+    def convert_to_html_split_page(
+        self,
+        source: str,
+        headers: Optional[Dict[str, str]] = None,
+        raises_on_error: bool = True,
+        max_num_pages: Optional[int] = None,
+        max_file_size: Optional[int] = None,
+    ) -> str:
+        """Convert a local file or URL to HTML with split page view enabled."""
+        return self._convert_and_export(
+            source,
+            export_format="html_split_page",
+            headers=headers,
+            raises_on_error=raises_on_error,
+            max_num_pages=max_num_pages,
+            max_file_size=max_file_size,
+        )
+
     def convert_to_json(
         self,
         source: str,
@@ -157,6 +193,24 @@ class DoclingTools(Toolkit):
         return self._convert_and_export(
             source,
             export_format="json",
+            headers=headers,
+            raises_on_error=raises_on_error,
+            max_num_pages=max_num_pages,
+            max_file_size=max_file_size,
+        )
+
+    def convert_to_yaml(
+        self,
+        source: str,
+        headers: Optional[Dict[str, str]] = None,
+        raises_on_error: bool = True,
+        max_num_pages: Optional[int] = None,
+        max_file_size: Optional[int] = None,
+    ) -> str:
+        """Convert a local file or URL to a YAML representation."""
+        return self._convert_and_export(
+            source,
+            export_format="yaml",
             headers=headers,
             raises_on_error=raises_on_error,
             max_num_pages=max_num_pages,
@@ -180,6 +234,58 @@ class DoclingTools(Toolkit):
             max_num_pages=max_num_pages,
             max_file_size=max_file_size,
         )
+
+    def convert_to_vtt(
+        self,
+        source: str,
+        headers: Optional[Dict[str, str]] = None,
+        raises_on_error: bool = True,
+        max_num_pages: Optional[int] = None,
+        max_file_size: Optional[int] = None,
+    ) -> str:
+        """Convert a local file or URL to VTT representation."""
+        return self._convert_and_export(
+            source,
+            export_format="vtt",
+            headers=headers,
+            raises_on_error=raises_on_error,
+            max_num_pages=max_num_pages,
+            max_file_size=max_file_size,
+        )
+
+    def convert_string_content(
+        self,
+        content: str,
+        source_format: str = "markdown",
+        output_format: str = "markdown",
+        name: Optional[str] = None,
+    ) -> str:
+        """Convert raw Markdown/HTML string content using Docling convert_string."""
+        if not content:
+            return "Error: No content provided"
+
+        try:
+            input_format = self._resolve_string_input_format(source_format)
+            result = self.converter.convert_string(content=content, format=input_format, name=name)
+            exported_content = self._export_document(result.document, output_format)
+            return self._truncate_content(exported_content, output_format)
+        except Exception as e:
+            log_error(f"Error converting string content: {e}")
+            return f"Error converting string content: {e}"
+
+    def list_supported_parsers(self) -> str:
+        """List all supported input parsers and currently active allowed formats."""
+        all_supported = sorted([input_format.name.lower() for input_format in InputFormat])
+        converter_allowed_formats = getattr(self.converter, "allowed_formats", None)
+        if isinstance(converter_allowed_formats, list):
+            active_formats = sorted([input_format.name.lower() for input_format in converter_allowed_formats])
+        else:
+            active_formats = all_supported
+        payload = {
+            "supported_input_parsers": all_supported,
+            "active_allowed_parsers": active_formats,
+        }
+        return json.dumps(payload, indent=2)
 
     def _convert_and_export(
         self,
@@ -205,28 +311,51 @@ class DoclingTools(Toolkit):
                 convert_kwargs["max_file_size"] = max_file_size
 
             result = self.converter.convert(source, **convert_kwargs)
-            document = result.document
+            content = self._export_document(result.document, export_format)
 
-            if export_format == "markdown":
-                content = document.export_to_markdown()
-            elif export_format == "text":
-                content = document.export_to_text()
-            elif export_format == "html":
-                content = document.export_to_html()
-            elif export_format == "json":
-                content = json.dumps(document.export_to_dict(), indent=2)
-            elif export_format == "doctags":
-                content = document.export_to_doctags()
-            else:
-                return f"Error: Unsupported export format {export_format}"
-
-            return self._truncate_content(content)
+            return self._truncate_content(content, export_format)
         except Exception as e:
             log_error(f"Error converting document: {e}")
             return f"Error converting document: {e}"
 
+    def _export_document(self, document: Any, export_format: str) -> str:
+        if export_format == "markdown":
+            return document.export_to_markdown()
+        if export_format == "text":
+            return document.export_to_text()
+        if export_format == "html":
+            return document.export_to_html()
+        if export_format == "html_split_page":
+            return document.export_to_html(split_page_view=True)
+        if export_format == "json":
+            return json.dumps(document.export_to_dict(), indent=2)
+        if export_format == "yaml":
+            import yaml
+
+            return yaml.safe_dump(document.export_to_dict())
+        if export_format == "doctags":
+            return document.export_to_doctags()
+        if export_format == "vtt":
+            document_obj: Any = document
+            export_to_vtt = getattr(document_obj, "export_to_vtt", None)
+            if not callable(export_to_vtt):
+                raise ValueError("VTT export is not supported by the installed docling version")
+            vtt_content = export_to_vtt()
+            return vtt_content if isinstance(vtt_content, str) else str(vtt_content)
+
+        raise ValueError(f"Unsupported export format {export_format}")
+
+    def _resolve_string_input_format(self, source_format: str) -> Any:
+        source_format_value = source_format.lower().strip()
+        if source_format_value in ["markdown", "md"]:
+            return InputFormat.MD
+        if source_format_value == "html":
+            return InputFormat.HTML
+        raise ValueError("source_format must be one of: markdown, md, html")
+
     def _build_converter(
         self,
+        allowed_input_formats: Optional[List[str]],
         format_options: Optional[Dict[Any, Any]],
         pdf_pipeline_options: Optional[PdfPipelineOptions],
         pdf_do_ocr: Optional[bool],
@@ -240,6 +369,7 @@ class DoclingTools(Toolkit):
         pdf_enable_remote_services: Optional[bool],
     ) -> DocumentConverter:
         options = dict(format_options or {})
+        resolved_allowed_formats = self._resolve_allowed_input_formats(allowed_input_formats)
 
         pdf_options = self._build_pdf_pipeline_options(
             pdf_pipeline_options=pdf_pipeline_options,
@@ -256,9 +386,45 @@ class DoclingTools(Toolkit):
         if pdf_options:
             options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_options)
 
+        converter_kwargs: Dict[str, Any] = {}
+        if resolved_allowed_formats is not None:
+            converter_kwargs["allowed_formats"] = resolved_allowed_formats
         if options:
-            return DocumentConverter(format_options=options)
+            converter_kwargs["format_options"] = options
+
+        if converter_kwargs:
+            return DocumentConverter(**converter_kwargs)
         return DocumentConverter()
+
+    def _resolve_allowed_input_formats(self, allowed_input_formats: Optional[List[str]]) -> Optional[List[InputFormat]]:
+        if allowed_input_formats is None:
+            return None
+
+        alias_map = {
+            "markdown": "md",
+            "xml": "xml_uspto",
+        }
+        resolved_formats: List[InputFormat] = []
+        valid_names = sorted([input_format.name.lower() for input_format in InputFormat])
+
+        for input_format_name in allowed_input_formats:
+            normalized_name = input_format_name.lower().strip()
+            normalized_name = alias_map.get(normalized_name, normalized_name)
+
+            resolved = None
+            for input_format in InputFormat:
+                if input_format.name.lower() == normalized_name:
+                    resolved = input_format
+                    break
+
+            if resolved is None:
+                raise ValueError(
+                    f"Invalid input parser '{input_format_name}'. Expected one of: {', '.join(valid_names)}"
+                )
+
+            resolved_formats.append(resolved)
+
+        return resolved_formats
 
     def _build_pdf_pipeline_options(
         self,
@@ -344,10 +510,26 @@ class DoclingTools(Toolkit):
             return ocr_cls(**kwargs)
 
         valid_engines = list(engine_map.keys())
-        log_error(f"Invalid OCR engine '{engine}'. Expected one of: {', '.join(valid_engines)}.")
-        return None
+        raise ValueError(f"Invalid OCR engine '{engine}'. Expected one of: {', '.join(valid_engines)}.")
 
-    def _truncate_content(self, content: str) -> str:
+    def _truncate_content(self, content: str, export_format: str) -> str:
         if self.max_chars and len(content) > self.max_chars:
+            if export_format == "json":
+                # Keep JSON output valid even when truncating long content.
+                truncated_payload = {
+                    "truncated": True,
+                    "max_chars": self.max_chars,
+                    "content": content[: self.max_chars] + "...",
+                }
+                return json.dumps(truncated_payload, indent=2)
+            if export_format == "yaml":
+                import yaml
+
+                truncated_payload = {
+                    "truncated": True,
+                    "max_chars": self.max_chars,
+                    "content": content[: self.max_chars] + "...",
+                }
+                return yaml.safe_dump(truncated_payload)
             return content[: self.max_chars] + "..."
         return content
