@@ -268,7 +268,7 @@ class GoogleSlidesTools(Toolkit):
             .execute()
         )
 
-    def _make_object_id(self, prefix: str) -> str:
+    def _generate_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
     def _to_emu(self, value: Union[int, float], unit: str = "inch") -> int:
@@ -321,7 +321,7 @@ class GoogleSlidesTools(Toolkit):
         height: Union[int, float] = 3086100,
         id_alias: str = "video",
     ) -> str:
-        obj_id = self._make_object_id(id_alias)
+        obj_id = self._generate_id(id_alias)
         requests: List[Dict[str, Any]] = [
             {
                 "createVideo": {
@@ -493,7 +493,7 @@ class GoogleSlidesTools(Toolkit):
             if layout not in valid_layouts:
                 return json.dumps({"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"})
 
-            slide_id = self._make_object_id("slide")
+            slide_id = self._generate_id("slide")
 
             create_req: dict = {
                 "createSlide": {
@@ -697,7 +697,7 @@ class GoogleSlidesTools(Toolkit):
             if width <= 0 or height <= 0:
                 return json.dumps({"error": "Width and height must be positive."})
 
-            box_id = self._make_object_id("textbox")
+            box_id = self._generate_id("textbox")
             emu_x, emu_y = self._to_emu(x), self._to_emu(y)
             emu_width, emu_height = self._to_emu(width), self._to_emu(height)
 
@@ -763,7 +763,7 @@ class GoogleSlidesTools(Toolkit):
             if content and (len(content) > rows or any(len(r) > columns for r in content)):
                 return json.dumps({"error": "Content dimensions exceed table dimensions."})
 
-            table_id = self._make_object_id("table")
+            table_id = self._generate_id("table")
             requests: List[Dict[str, Any]] = [
                 {
                     "createTable": {
