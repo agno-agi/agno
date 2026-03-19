@@ -376,10 +376,7 @@ class Agent:
         *,
         model: Optional[Union[Model, str]] = None,
         fallback_config: Optional[FallbackConfig] = None,
-        # Deprecated: use fallback_config instead
         fallback_models: Optional[List[Union[Model, str]]] = None,
-        rate_limit_fallbacks: Optional[List[Union[Model, str]]] = None,
-        context_window_fallbacks: Optional[List[Union[Model, str]]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -494,15 +491,10 @@ class Agent:
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
     ):
         self.model = model  # type: ignore[assignment]
-        # Build FallbackConfig from explicit config or deprecated flat params
         if fallback_config is not None:
             self.fallback_config = fallback_config
-        elif fallback_models or rate_limit_fallbacks or context_window_fallbacks:
-            self.fallback_config = FallbackConfig(
-                models=fallback_models or [],  # type: ignore[arg-type]
-                rate_limit_models=rate_limit_fallbacks or [],  # type: ignore[arg-type]
-                context_window_models=context_window_fallbacks or [],  # type: ignore[arg-type]
-            )
+        elif fallback_models:
+            self.fallback_config = FallbackConfig(models=fallback_models)
         else:
             self.fallback_config = None
         self.name = name
