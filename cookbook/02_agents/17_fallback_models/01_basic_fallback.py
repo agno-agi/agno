@@ -1,8 +1,6 @@
 """
-Fallback Models
+Fallback Models — Basic
 =============================
-
-Example demonstrating how to configure fallback models for an Agent.
 
 When the primary model fails (after exhausting its own retries),
 fallback models are tried in order until one succeeds.
@@ -14,9 +12,11 @@ from agno.models.openai import OpenAIChat
 
 # ---------------------------------------------------------------------------
 # Basic: pass a list of fallback models directly
+# The primary model uses an invalid ID so it will fail,
+# then the fallback (Claude) handles the request.
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o-invalid"),
     fallback_models=[Claude(id="claude-sonnet-4-20250514")],
 )
 

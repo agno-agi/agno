@@ -1,8 +1,8 @@
 """
-Fallback Models (Advanced)
-=============================
+Fallback Models — Error-Specific
+==================================
 
-Example demonstrating error-specific fallback models using FallbackConfig.
+Use FallbackConfig for error-specific fallback routing.
 
 - models: tried on any error from the primary model.
 - rate_limit_models: tried specifically on rate-limit (429) errors.
