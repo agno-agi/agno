@@ -412,15 +412,12 @@ class GoogleSlidesTools(Toolkit):
         try:
             if page_size <= 0:
                 return json.dumps({"error": "page_size must be a positive integer."})
-            params = {
-                "q": "mimeType='application/vnd.google-apps.presentation'",
-                "pageSize": page_size,
-                "fields": "nextPageToken, files(id, name, createdTime, modifiedTime)",
-            }
-            if page_token:
-                params["pageToken"] = page_token
-
-            response = self.drive_service.files().list(**params).execute()
+            response = self.drive_service.files().list(
+                q="mimeType='application/vnd.google-apps.presentation'",
+                pageSize=page_size,
+                pageToken=page_token,
+                fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
+            ).execute()
             files = response.get("files", [])
             next_token = response.get("nextPageToken")
             return json.dumps({"presentations": files, "next_page_token": next_token})
