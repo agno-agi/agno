@@ -122,7 +122,7 @@ class GoogleSlidesTools(Toolkit):
         get_page: bool = True,
         get_slide_text: bool = True,
         read_all_text: bool = True,
-        get_thumbnail_url: bool = True,
+        get_slide_thumbnail: bool = True,
         add_slide: bool = True,
         add_text_box: bool = True,
         add_table: bool = True,
@@ -165,8 +165,8 @@ class GoogleSlidesTools(Toolkit):
             tools.append(self.get_slide_text)
         if all or read_all_text:
             tools.append(self.read_all_text)
-        if all or get_thumbnail_url:
-            tools.append(self.get_thumbnail_url)
+        if all or get_slide_thumbnail:
+            tools.append(self.get_slide_thumbnail)
         if all or add_slide:
             tools.append(self.add_slide)
         if all or add_text_box:
@@ -943,7 +943,7 @@ class GoogleSlidesTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def get_thumbnail_url(self, presentation_id: str, slide_id: str) -> str:
+    def get_slide_thumbnail(self, presentation_id: str, slide_id: str) -> str:
         """
         Returns the thumbnail image URL for a specific slide.
 

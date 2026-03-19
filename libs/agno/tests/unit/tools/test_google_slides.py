@@ -651,24 +651,24 @@ class TestReadAllText:
 
 class TestGetThumbnailUrl:
     def test_success(self, tools):
-        data = ok(tools.get_thumbnail_url("pres-id", "slide-1"))
+        data = ok(tools.get_slide_thumbnail("pres-id", "slide-1"))
         assert data["thumbnail_url"] == "https://example.com/thumbnail.png"
 
     def test_missing_content_url(self, tools):
         tools.slides_service.presentations.return_value.pages.return_value.getThumbnail.return_value.execute.return_value = {}
-        assert "No thumbnail" in err(tools.get_thumbnail_url("pres-id", "slide-1"))
+        assert "No thumbnail" in err(tools.get_slide_thumbnail("pres-id", "slide-1"))
 
     def test_empty_presentation_id(self, tools):
-        assert "empty" in err(tools.get_thumbnail_url("", "slide-1"))
+        assert "empty" in err(tools.get_slide_thumbnail("", "slide-1"))
 
     def test_empty_slide_id(self, tools):
-        assert "empty" in err(tools.get_thumbnail_url("pres-id", ""))
+        assert "empty" in err(tools.get_slide_thumbnail("pres-id", ""))
 
     def test_api_error(self, tools):
         tools.slides_service.presentations.return_value.pages.return_value.getThumbnail.return_value.execute.side_effect = Exception(
             "thumb error"
         )
-        assert "thumb error" in err(tools.get_thumbnail_url("pres-id", "slide-1"))
+        assert "thumb error" in err(tools.get_slide_thumbnail("pres-id", "slide-1"))
 
 
 
@@ -918,7 +918,7 @@ class TestToolFiltering:
             "add_table",
             "set_background_image",
             "read_all_text",
-            "get_thumbnail_url",
+            "get_slide_thumbnail",
             "get_presentation_metadata",
             "get_page",
             "get_slide_text",
