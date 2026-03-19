@@ -140,6 +140,7 @@ async def test_non_streaming_store_media_false_response_has_images():
         files=None,
         videos=None,
         audio=None,
+        tools=None,
     )
     agent_mock.arun = AsyncMock(return_value=response_mock)
     mock_slack = make_slack_mock()
@@ -413,6 +414,7 @@ async def test_non_streaming_store_media_true_still_uploads():
             files=None,
             videos=None,
             audio=None,
+            tools=None,
         )
     )
     mock_slack = make_slack_mock()
