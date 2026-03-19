@@ -19,6 +19,20 @@ agent = Agent(
 agent.print_response("What meetings do I have tomorrow?", stream=True)
 ```
 
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.google.slides import GoogleSlidesTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GoogleSlidesTools()],
+    markdown=True,
+)
+
+agent.print_response("Create a presentation titled 'Q3 Review'", stream=True)
+```
+
 ## Setup
 
 ### 1. Google Cloud Project
