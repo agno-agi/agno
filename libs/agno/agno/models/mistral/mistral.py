@@ -11,24 +11,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
-from agno.utils.models._mistral_compat import (
-    AssistantMessage,
-    ChatCompletionResponse,
-    CompletionEvent,
-    DeltaMessage,
-    HTTPValidationError,
-    MistralClient,
-    ParsedChatCompletionResponse,
-    SDKError,
-    SystemMessage,
-    ToolMessage,
-    Unset,
-    UserMessage,
-    response_format_from_pydantic_model,
-)
-from agno.utils.models.mistral import format_messages
-
-MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
 
 @dataclass
@@ -60,9 +42,9 @@ class MistralChat(Model):
     timeout: Optional[int] = None
     client_params: Optional[Dict[str, Any]] = None
     # -*- Provide the Mistral Client manually
-    mistral_client: Optional[MistralClient] = None
+    mistral_client: Optional[Any] = None
 
-    def get_client(self) -> MistralClient:
+    def get_client(self) -> Any:
         """
         Get the Mistral client.
 
@@ -71,6 +53,8 @@ class MistralChat(Model):
         """
         if self.mistral_client:
             return self.mistral_client
+
+        from agno.utils.models._mistral_compat import MistralClient
 
         _client_params = self._get_client_params()
         self.mistral_client = MistralClient(**_client_params)
@@ -172,6 +156,15 @@ class MistralChat(Model):
         """
         Send a chat completion request to the Mistral model.
         """
+        from agno.utils.models._mistral_compat import (
+            ChatCompletionResponse,
+            HTTPValidationError,
+            ParsedChatCompletionResponse,
+            SDKError,
+            response_format_from_pydantic_model,
+        )
+        from agno.utils.models.mistral import format_messages
+
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
@@ -222,6 +215,9 @@ class MistralChat(Model):
         """
         Stream the response from the Mistral model.
         """
+        from agno.utils.models._mistral_compat import HTTPValidationError, SDKError
+        from agno.utils.models.mistral import format_messages
+
         mistral_messages = format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -256,6 +252,15 @@ class MistralChat(Model):
         """
         Send an asynchronous chat completion request to the Mistral API.
         """
+        from agno.utils.models._mistral_compat import (
+            ChatCompletionResponse,
+            HTTPValidationError,
+            ParsedChatCompletionResponse,
+            SDKError,
+            response_format_from_pydantic_model,
+        )
+        from agno.utils.models.mistral import format_messages
+
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
@@ -304,6 +309,9 @@ class MistralChat(Model):
         """
         Stream an asynchronous response from the Mistral API.
         """
+        from agno.utils.models._mistral_compat import HTTPValidationError, SDKError
+        from agno.utils.models.mistral import format_messages
+
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
             assistant_message.metrics.start_timer()
@@ -324,16 +332,16 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def _parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         """
         Parse the response from the Mistral model.
 
         Args:
-            response (ChatCompletionResponse): The response from the model.
+            response: The response from the model.
         """
         model_response = ModelResponse()
         if response.choices is not None and len(response.choices) > 0:
-            response_message: AssistantMessage = response.choices[0].message
+            response_message = response.choices[0].message
 
             # -*- Set content
             model_response.content = response_message.content  # type: ignore
@@ -358,13 +366,15 @@ class MistralChat(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: CompletionEvent) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
         """
         Parse the response delta from the Mistral model.
         """
+        from agno.utils.models._mistral_compat import Unset
+
         model_response = ModelResponse()
 
-        delta_message: DeltaMessage = response_delta.data.choices[0].delta
+        delta_message = response_delta.data.choices[0].delta
         if delta_message.role is not None and not isinstance(delta_message.role, Unset):
             model_response.role = delta_message.role  # type: ignore
 

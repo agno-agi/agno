@@ -3,19 +3,11 @@ from typing import Any, List, Optional, Union
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
-from agno.utils.models._mistral_compat import (
-    AssistantMessage,
-    ImageURLChunk,
-    SystemMessage,
-    TextChunk,
-    ToolMessage,
-    UserMessage,
-)
-
-MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
 
-def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
+def _format_image_for_message(image: Image) -> Optional[Any]:
+    from agno.utils.models._mistral_compat import ImageURLChunk
+
     # Case 1: Image is a URL
     if image.url is not None:
         return ImageURLChunk(image_url=image.url)
@@ -42,7 +34,14 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
     return None
 
 
-def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
+def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[Any]:
+    from agno.utils.models._mistral_compat import (
+        AssistantMessage,
+        SystemMessage,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
     from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
@@ -50,10 +49,10 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
     # Mistral requires alphanumeric tool call IDs (a-z, A-Z, 0-9) with length 9
     messages = reformat_tool_call_ids(messages, provider="mistral")
 
-    mistral_messages: List[MistralMessage] = []
+    mistral_messages: List[Any] = []
 
     for message in messages:
-        mistral_message: MistralMessage
+        mistral_message: Any
         if message.role == "user":
             if message.audio is not None and len(message.audio) > 0:
                 log_warning("Audio input is currently unsupported.")

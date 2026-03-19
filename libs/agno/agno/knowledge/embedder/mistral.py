@@ -4,8 +4,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import log_info, log_warning
-from agno.utils.models._mistral_compat import EmbeddingResponse
-from agno.utils.models._mistral_compat import MistralClient as Mistral
 
 
 @dataclass
@@ -21,12 +19,14 @@ class MistralEmbedder(Embedder):
     timeout: Optional[int] = None
     client_params: Optional[Dict[str, Any]] = None
     # -*- Provide the Mistral Client manually
-    mistral_client: Optional[Mistral] = None
+    mistral_client: Optional[Any] = None
 
     @property
-    def client(self) -> Mistral:
+    def client(self) -> Any:
         if self.mistral_client:
             return self.mistral_client
+
+        from agno.utils.models._mistral_compat import MistralClient as Mistral
 
         _client_params: Dict[str, Any] = {
             "api_key": self.api_key,
@@ -43,7 +43,7 @@ class MistralEmbedder(Embedder):
 
         return self.mistral_client
 
-    def _response(self, text: str) -> EmbeddingResponse:
+    def _response(self, text: str) -> Any:
         _request_params: Dict[str, Any] = {
             "inputs": [text],  # Mistral API expects a list
             "model": self.id,
@@ -57,7 +57,7 @@ class MistralEmbedder(Embedder):
 
     def get_embedding(self, text: str) -> List[float]:
         try:
-            response: EmbeddingResponse = self._response(text=text)
+            response = self._response(text=text)
             if response.data and response.data[0].embedding:
                 return response.data[0].embedding
             return []
@@ -67,7 +67,7 @@ class MistralEmbedder(Embedder):
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         try:
-            response: EmbeddingResponse = self._response(text=text)
+            response = self._response(text=text)
             embedding: List[float] = (
                 response.data[0].embedding if (response.data and response.data[0].embedding) else []
             )
@@ -82,7 +82,7 @@ class MistralEmbedder(Embedder):
         try:
             # Check if the client has an async version of embeddings.create
             if hasattr(self.client.embeddings, "create_async"):
-                response: EmbeddingResponse = await self.client.embeddings.create_async(
+                response = await self.client.embeddings.create_async(
                     inputs=[text], model=self.id, **self.request_params if self.request_params else {}
                 )
             else:
@@ -90,7 +90,7 @@ class MistralEmbedder(Embedder):
                 import asyncio
 
                 loop = asyncio.get_running_loop()
-                response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
+                response = await loop.run_in_executor(
                     None,
                     lambda: self.client.embeddings.create(
                         inputs=[text], model=self.id, **self.request_params if self.request_params else {}
@@ -109,7 +109,7 @@ class MistralEmbedder(Embedder):
         try:
             # Check if the client has an async version of embeddings.create
             if hasattr(self.client.embeddings, "create_async"):
-                response: EmbeddingResponse = await self.client.embeddings.create_async(
+                response = await self.client.embeddings.create_async(
                     inputs=[text], model=self.id, **self.request_params if self.request_params else {}
                 )
             else:
@@ -117,7 +117,7 @@ class MistralEmbedder(Embedder):
                 import asyncio
 
                 loop = asyncio.get_running_loop()
-                response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
+                response = await loop.run_in_executor(
                     None,
                     lambda: self.client.embeddings.create(
                         inputs=[text], model=self.id, **self.request_params if self.request_params else {}
@@ -162,13 +162,13 @@ class MistralEmbedder(Embedder):
             try:
                 # Check if the client has an async version of embeddings.create
                 if hasattr(self.client.embeddings, "create_async"):
-                    response: EmbeddingResponse = await self.client.embeddings.create_async(**_request_params)
+                    response = await self.client.embeddings.create_async(**_request_params)
                 else:
                     # Fallback to running sync method in thread executor
                     import asyncio
 
                     loop = asyncio.get_running_loop()
-                    response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
+                    response = await loop.run_in_executor(
                         None, lambda: self.client.embeddings.create(**_request_params)
                     )
 
