@@ -26,7 +26,6 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.agent._fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
@@ -35,6 +34,7 @@ from agno.exceptions import (
     OutputCheckError,
     RunCancelledException,
 )
+from agno.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
@@ -508,7 +508,8 @@ def _run(
                 agent.model = cast(Model, agent.model)
 
                 model_response: ModelResponse = call_model_with_fallback(
-                    agent,
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -1591,7 +1592,8 @@ async def _arun(
 
                 # 9. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
-                    agent,
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -2944,7 +2946,8 @@ def _continue_run(
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
                 model_response: ModelResponse = call_model_with_fallback(
-                    agent,
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -3710,7 +3713,8 @@ async def _acontinue_run(
 
                 # 8. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
-                    agent,
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
