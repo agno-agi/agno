@@ -296,6 +296,68 @@ class TestClaudeFormatMessages:
         tool_result = formatted[2]["content"][0]
         assert tool_result["tool_use_id"] == "fc_abc"
 
+    def test_tool_result_followed_by_user_message_merged(self):
+        """A tool result (mapped to user) followed by a user message should merge into one."""
+        from agno.utils.models.claude import format_messages
+
+        tc = _make_tool_call("toolu_001", name="get_weather")
+        msgs = [
+            Message(role="user", content="Check weather"),
+            _assistant_msg([tc]),
+            _tool_msg("toolu_001", content="Sunny"),
+            Message(role="user", content="Thanks, now check London"),
+        ]
+        formatted, system = format_messages(msgs)
+
+        # Should be: user, assistant, user (merged tool result + follow-up)
+        assert len(formatted) == 3
+        assert formatted[2]["role"] == "user"
+        content = formatted[2]["content"]
+        assert isinstance(content, list)
+        # Should contain tool_result + text
+        types = [item.get("type") if isinstance(item, dict) else None for item in content]
+        assert "tool_result" in types
+        assert "text" in types
+
+    def test_three_consecutive_tool_results_merged(self):
+        """Three parallel tool results should all merge into a single user message."""
+        from agno.utils.models.claude import format_messages
+
+        tc1 = _make_tool_call("toolu_001", name="search", arguments='{"q": "a"}')
+        tc2 = _make_tool_call("toolu_002", name="search", arguments='{"q": "b"}')
+        tc3 = _make_tool_call("toolu_003", name="search", arguments='{"q": "c"}')
+
+        msgs = [
+            Message(role="user", content="Search for a, b, c"),
+            _assistant_msg([tc1, tc2, tc3]),
+            _tool_msg("toolu_001", content="Result A"),
+            _tool_msg("toolu_002", content="Result B"),
+            _tool_msg("toolu_003", content="Result C"),
+        ]
+        formatted, system = format_messages(msgs)
+
+        assert len(formatted) == 3
+        content = formatted[2]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 3
+        assert all(item["type"] == "tool_result" for item in content)
+
+    def test_alternating_roles_no_merge_needed(self):
+        """When roles already alternate, no merging should happen."""
+        from agno.utils.models.claude import format_messages
+
+        msgs = [
+            Message(role="user", content="Hello"),
+            Message(role="assistant", content="Hi there"),
+            Message(role="user", content="How are you?"),
+        ]
+        formatted, system = format_messages(msgs)
+
+        assert len(formatted) == 3
+        assert formatted[0]["role"] == "user"
+        assert formatted[1]["role"] == "assistant"
+        assert formatted[2]["role"] == "user"
+
 
 # ---------------------------------------------------------------------------
 # Gemini format — individual tool messages

@@ -12,6 +12,7 @@ from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.models.aws import Claude as AWSClaude
 
 
 def get_weather(city: str) -> str:
@@ -53,3 +54,11 @@ agent.print_response("Summarize all the weather we checked.")
 # Turn 6 — Claude summarizes (sees history from all 4 providers)
 agent.model = Claude()
 agent.print_response("Which city had the best weather?")
+
+# Turn 7 — AWS Claude (UUID-style IDs)
+agent.model = AWSClaude()
+agent.print_response("What is the weather in Beijing?")
+
+# Turn 8 — OpenAI Responses (fc_* IDs)
+agent.model = OpenAIResponses()
+agent.print_response("What is the weather in London?")
