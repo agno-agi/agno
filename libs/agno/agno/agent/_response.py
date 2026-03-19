@@ -1058,9 +1058,6 @@ def handle_model_response_stream(
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
 
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     for model_response_event in agent.model.response_stream(
         messages=run_messages.messages,
@@ -1150,6 +1147,14 @@ def handle_model_response_stream(
             run_context=run_context,
         )
 
+    # Parse structured output from accumulated streamed content after streaming completes
+    if should_parse_structured_output and model_response.content:
+        convert_response_to_structured_format(agent, model_response, run_context=run_context)
+        output_schema = run_context.output_schema if run_context else None
+        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+        run_response.content = model_response.content
+        run_response.content_type = content_type
+
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1207,9 +1212,6 @@ async def ahandle_model_response_stream(
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
 
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     model_response_stream = agent.model.aresponse_stream(
         messages=run_messages.messages,
@@ -1302,6 +1304,14 @@ async def ahandle_model_response_stream(
         ):
             yield event
 
+    # Parse structured output from accumulated streamed content after streaming completes
+    if should_parse_structured_output and model_response.content:
+        convert_response_to_structured_format(agent, model_response, run_context=run_context)
+        output_schema = run_context.output_schema if run_context else None
+        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+        run_response.content = model_response.content
+        run_response.content_type = content_type
+
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1374,19 +1384,9 @@ def handle_model_response_chunk(
 
             # Process content and thinking
             if model_response_event.content is not None:
-                if parse_structured_output:
-                    model_response.content = model_response_event.content
-                    convert_response_to_structured_format(agent, model_response, run_context=run_context)
-
-                    # Get output_schema from run_context
-                    output_schema = run_context.output_schema if run_context else None
-                    content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
-                    run_response.content = model_response.content
-                    run_response.content_type = content_type
-                else:
-                    model_response.content = (model_response.content or "") + model_response_event.content
-                    run_response.content = model_response.content
-                    run_response.content_type = "str"
+                model_response.content = (model_response.content or "") + model_response_event.content
+                run_response.content = model_response.content
+                run_response.content_type = "str"
 
             # Process reasoning content
             if model_response_event.reasoning_content is not None:
