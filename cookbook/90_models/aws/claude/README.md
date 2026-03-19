@@ -75,3 +75,18 @@ python cookbook/92_models/aws/claude/storage.py
 ```shell
 python cookbook/92_models/aws/claude/knowledge.py
 ```
+
+### 9. Adaptive Thinking with `output_config`
+
+For Claude 4.6 Bedrock models that support adaptive thinking, pass `effort` under top-level `output_config`:
+
+```python
+from agno.models.aws import Claude
+
+model = Claude(
+    id="<your-claude-4-6-bedrock-model-id>",
+    max_tokens=4096,
+    thinking={"type": "adaptive"},
+    output_config={"effort": "high"},
+)
+```

@@ -97,3 +97,18 @@ python cookbook/92_models/anthropic/thinking_stream.py
 ```shell
 python cookbook/92_models/anthropic/financial_analyst_thinking.py
 ```
+
+### 13. Adaptive Thinking with `output_config`
+
+For Claude 4.6 models that support adaptive thinking, keep `thinking` and `output_config` as separate top-level parameters:
+
+```python
+from agno.models.anthropic import Claude
+
+model = Claude(
+    id="claude-sonnet-4-6",
+    max_tokens=4096,
+    thinking={"type": "adaptive"},
+    output_config={"effort": "high"},
+)
+```
