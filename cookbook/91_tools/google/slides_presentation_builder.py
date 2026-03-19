@@ -11,7 +11,7 @@ Key concepts:
 - add_slide: supports TITLE, TITLE_AND_BODY, TITLE_AND_TWO_COLUMNS, BLANK, etc.
 - add_table: pre-populates tables with structured data
 - add_text_box: positions text annotations on slides
-- get_presentation_metadata: retrieves slide IDs before modifications
+- get_presentation_metadata: returns page size, slide IDs, and element positions in inches
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Slides API + Drive API)
@@ -49,7 +49,9 @@ agent = Agent(
         "Use TITLE_AND_BODY for content slides with bullet points.",
         "Use SECTION_HEADER to divide major topics.",
         "Use BLANK slides for tables and custom layouts.",
-        "Always call get_presentation_metadata before adding content to existing slides.",
+        "Always call get_presentation_metadata to get page dimensions and element positions.",
+        "Use page_width_inches and page_height_inches to position elements correctly.",
+        "Check existing element positions to avoid overlaps when adding text boxes.",
         "After creating, return the presentation URL.",
     ],
     markdown=True,
@@ -67,10 +69,12 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # Build a presentation from a topic
+    # Smart layout: use metadata to position annotations without overlaps
     # agent.print_response(
-    #     "Create a 5-slide presentation about 'Introduction to Machine Learning' "
-    #     "covering what ML is, types of ML, common algorithms, real-world applications, "
-    #     "and getting started resources.",
+    #     "Using the presentation you just created, call get_presentation_metadata "
+    #     "to check slide dimensions and element positions. Then add a text box "
+    #     "annotation in the bottom-right corner of the KPI table slide that says "
+    #     "'Source: Finance Dashboard, Sept 2026'. Make sure it does not overlap "
+    #     "with the table.",
     #     stream=True,
     # )
