@@ -433,11 +433,10 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             "additionalProperties": False,
         }
 
-        # Preserve JSON Schema definition references for complex types (e.g., Pydantic models)
-        if parameters.get("$defs") is not None:
-            input_schema["$defs"] = parameters["$defs"]
-        if parameters.get("definitions") is not None:
-            input_schema["definitions"] = parameters["definitions"]
+        # Preserve JSON Schema $defs/$ref for MCP tools that pass raw schemas
+        for key in ("$defs", "definitions"):
+            if key in parameters:
+                input_schema[key] = parameters[key]
 
         tool = {
             "name": func_def.get("name") or "",

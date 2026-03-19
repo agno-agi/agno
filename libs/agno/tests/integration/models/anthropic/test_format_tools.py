@@ -270,9 +270,8 @@ def test_complex_nested_schema():
 
 
 def test_mcp_schema_with_defs_preserved():
-    """Test that $defs from MCP tool schemas are preserved."""
-    # MCP tools use raw JSON schemas from external servers (skip_entrypoint_processing=True),
-    # so we test with raw dicts rather than Function.from_callable()
+    """Test that $defs from MCP tool schemas are preserved alongside $ref pointers."""
+    # MCP tools pass raw JSON schemas from external servers (skip_entrypoint_processing=True)
     mcp_tool_schema = {
         "type": "function",
         "function": {
@@ -305,15 +304,18 @@ def test_mcp_schema_with_defs_preserved():
     result = format_tools_for_model([mcp_tool_schema])
     input_schema = result[0]["input_schema"]
 
-    assert "$defs" in input_schema
-    assert "DynamicData" in input_schema["$defs"]
-    assert input_schema["$defs"]["DynamicData"]["properties"]["dev"]["type"] == "string"
+    # $defs container preserved with full content
+    assert input_schema["$defs"]["DynamicData"]["properties"]["dev"] == {"type": "string", "minLength": 1}
+    # $ref pointer inside properties survived so it can resolve against $defs
+    assert input_schema["properties"]["request"]["anyOf"][0] == {"$ref": "#/$defs/DynamicData"}
+    # Standard fields still correct
+    assert input_schema["type"] == "object"
+    assert input_schema["required"] == ["request"]
 
 
 def test_mcp_schema_with_definitions_preserved():
-    """Test that definitions (legacy JSON Schema style) are preserved."""
-    # MCP tools use raw JSON schemas from external servers (skip_entrypoint_processing=True),
-    # so we test with raw dicts rather than Function.from_callable()
+    """Test that definitions (legacy JSON Schema draft-04 style) are preserved."""
+    # MCP tools pass raw JSON schemas from external servers (skip_entrypoint_processing=True)
     mcp_tool_schema = {
         "type": "function",
         "function": {
@@ -331,5 +333,7 @@ def test_mcp_schema_with_definitions_preserved():
     result = format_tools_for_model([mcp_tool_schema])
     input_schema = result[0]["input_schema"]
 
-    assert "definitions" in input_schema
-    assert "MyModel" in input_schema["definitions"]
+    # definitions container preserved with full content
+    assert input_schema["definitions"]["MyModel"] == {"type": "object", "properties": {"field": {"type": "string"}}}
+    # $ref pointer survived
+    assert input_schema["properties"]["data"] == {"$ref": "#/definitions/MyModel", "description": ""}
