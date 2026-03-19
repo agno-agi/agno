@@ -878,7 +878,7 @@ class TestGetTeams:
 
         get_teams(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM)
+        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM, exclude_component_ids=None)
 
     def test_get_teams_with_registry(self, mock_db):
         """Test get_teams passes registry to from_dict."""
