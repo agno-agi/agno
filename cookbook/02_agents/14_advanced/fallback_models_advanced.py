@@ -13,7 +13,7 @@ priority over the general models list.
 """
 
 from agno.agent import Agent
-from agno.agent.fallback_config import FallbackConfig
+from agno.fallback import FallbackConfig
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 

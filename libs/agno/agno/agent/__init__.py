@@ -7,8 +7,8 @@ from agno.agent.agent import (
     get_agent_by_id,
     get_agents,
 )
-from agno.agent.fallback_config import FallbackConfig
 from agno.agent.remote import RemoteAgent
+from agno.fallback import FallbackConfig
 from agno.run.agent import (
     Followups,
     FollowupsCompletedEvent,

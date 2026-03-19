@@ -32,12 +32,12 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.agent.fallback_config import FallbackConfig
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
+from agno.fallback import FallbackConfig
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
