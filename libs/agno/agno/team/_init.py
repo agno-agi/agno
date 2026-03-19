@@ -35,6 +35,7 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
+from agno.metrics import ModelType
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -694,6 +695,7 @@ def _resolve_models(team: "Team") -> None:
                 for fm in raw_list:
                     resolved_model = get_model(fm)
                     if resolved_model is not None:
+                        resolved_model.model_type = ModelType.MODEL
                         resolved.append(resolved_model)
                 setattr(config, attr, resolved)
 
