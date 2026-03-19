@@ -9,8 +9,8 @@ Setup:
   1. Create two WhatsApp Business apps at https://developers.facebook.com
   2. Each app gets its own phone number, access token, and verify token
   3. Set each app's webhook callback URL to its prefix:
-       - Basic Bot       ->  https://myapp.com/basic/webhook
-       - Research Bot     ->  https://myapp.com/web-research/webhook
+       - Assistant       ->  https://myapp.com/basic/webhook
+       - Web Research Assistant     ->  https://myapp.com/web-research/webhook
   4. Set environment variables (or pass tokens directly):
        BASIC_WHATSAPP_ACCESS_TOKEN, BASIC_WHATSAPP_PHONE_NUMBER_ID, BASIC_WHATSAPP_VERIFY_TOKEN
        RESEARCH_WHATSAPP_ACCESS_TOKEN, RESEARCH_WHATSAPP_PHONE_NUMBER_ID, RESEARCH_WHATSAPP_VERIFY_TOKEN
@@ -40,9 +40,16 @@ basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-5-mini"),
     db=agent_db,
+    instructions=[
+        "You are a friendly and helpful WhatsApp assistant.",
+        "When asked who you are, introduce yourself as a friendly WhatsApp assistant here to help.",
+        "Keep responses conversational, natural, and concise.",
+        "Keep each paragraph to 1-3 sentences max.",
+    ],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
+    markdown=True,
 )
 
 web_research_agent = Agent(
@@ -50,9 +57,17 @@ web_research_agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
     db=agent_db,
     tools=[WebSearchTools()],
+    instructions=[
+        "You are 'Web Research Assistant', a web research assistant on WhatsApp.",
+        "When asked who you are, say you are Web Research Assistant — a WhatsApp assistant that can search the web.",
+        "Search the web for relevant information to answer the user's question.",
+        "Keep responses concise and conversational — this is a WhatsApp chat.",
+        "Use bullet points for lists and bold for emphasis.",
+    ],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
+    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
