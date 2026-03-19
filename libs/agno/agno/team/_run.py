@@ -4740,7 +4740,6 @@ def _prepare_member_hitl_continuation(
     This is called after the member agent's HITL has been resolved and we need to
     continue the team run with the member's results.
     """
-    from agno.models.message import Message
 
     continuation_message = _build_continuation_message(member_results)
 
