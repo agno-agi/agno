@@ -4734,8 +4734,8 @@ def _prepare_member_hitl_continuation(
 ) -> None:
     """Prepare run_response and run_messages for member HITL continuation.
 
-    Updates the delegate_task_to_member tool result and appends a tool result message
-    to the run messages. Also resets run state for continuation.
+    Updates the delegate_task_to_member tool result in both run_response.tools
+    and the corresponding message in run_messages. Also resets run state for continuation.
 
     This is called after the member agent's HITL has been resolved and we need to
     continue the team run with the member's results.
@@ -4744,20 +4744,21 @@ def _prepare_member_hitl_continuation(
 
     continuation_message = _build_continuation_message(member_results)
 
-    # Update tool results with member response - replace the "requires human input" placeholder
+    # Find the tool_call_id for the delegate_task_to_member tool that needs updating
+    target_tool_call_id: Optional[str] = None
     for tool in run_response.tools or []:
         if tool.tool_name == "delegate_task_to_member" and tool.result is not None:
             if "requires human input" in (tool.result or ""):
                 tool.result = continuation_message
+                target_tool_call_id = tool.tool_call_id
+                break
 
-    # Add tool result message to run_messages
-    tool_result_msg = Message(role="tool", content=continuation_message)
-    for tool in run_response.tools or []:
-        if tool.tool_name == "delegate_task_to_member":
-            tool_result_msg.tool_call_id = tool.tool_call_id
-            tool_result_msg.tool_name = tool.tool_name
-            break
-    run_messages.messages.append(tool_result_msg)
+    # Update the existing tool result message in run_messages
+    if target_tool_call_id:
+        for msg in run_messages.messages:
+            if msg.role == "tool" and msg.tool_call_id == target_tool_call_id:
+                msg.content = continuation_message
+                break
 
     # Reset run state for continuation
     run_response.status = RunStatus.running
