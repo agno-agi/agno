@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
@@ -945,7 +946,9 @@ def _handle_model_response_stream(
         stream_model_response = False
 
     full_model_response = ModelResponse()
-    for model_response_event in team.model.response_stream(
+    for model_response_event in call_model_stream_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1097,7 +1100,9 @@ async def _ahandle_model_response_stream(
         stream_model_response = False
 
     full_model_response = ModelResponse()
-    model_stream = team.model.aresponse_stream(
+    model_stream = acall_model_stream_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
