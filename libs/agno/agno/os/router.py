@@ -1,4 +1,4 @@
-import json
+﻿import json
 from typing import TYPE_CHECKING, List, cast
 
 from fastapi import (
@@ -27,6 +27,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.utils.log import logger
+from agno.models.utils import normalize_model_provider
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -217,18 +218,24 @@ def get_base_router(
             for agent in os.agents:
                 model = cast(Model, agent.model)
                 if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
+                    normalized_provider = normalize_model_provider(model.provider, model.name)
+                    if normalized_provider is None:
+                        continue
+                    key = (model.id, normalized_provider)
                     if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
+                        unique_models[key] = Model(id=model.id, provider=normalized_provider)
 
         # Collect models from local teams
         if os.teams:
             for team in os.teams:
                 model = cast(Model, team.model)
                 if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
+                    normalized_provider = normalize_model_provider(model.provider, model.name)
+                    if normalized_provider is None:
+                        continue
+                    key = (model.id, normalized_provider)
                     if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
+                        unique_models[key] = Model(id=model.id, provider=normalized_provider)
 
         return list(unique_models.values())
 
@@ -308,3 +315,4 @@ def get_websocket_router(
             await websocket_manager.disconnect_websocket(websocket)
 
     return ws_router
+
