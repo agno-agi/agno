@@ -100,3 +100,33 @@ def test_vertexai_output_config_omitted_when_not_provided():
     request_params = model.get_request_params()
 
     assert "output_config" not in request_params
+
+
+def test_vertexai_request_params_can_override_output_config():
+    model = VertexAIClaude(
+        output_config={"effort": "high"},
+        request_params={"output_config": {"effort": "low"}},
+    )
+
+    request_params = model.get_request_params()
+
+    assert request_params["output_config"] == {"effort": "low"}
+
+
+def test_aws_to_dict_includes_output_config():
+    pytest.importorskip("boto3")
+    from agno.models.aws.claude import Claude as AwsClaude
+
+    model = AwsClaude(output_config={"effort": "high"})
+
+    model_dict = model.to_dict()
+
+    assert model_dict["output_config"] == {"effort": "high"}
+
+
+def test_vertexai_to_dict_includes_output_config():
+    model = VertexAIClaude(output_config={"effort": "medium"})
+
+    model_dict = model.to_dict()
+
+    assert model_dict["output_config"] == {"effort": "medium"}

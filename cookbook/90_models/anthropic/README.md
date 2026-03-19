@@ -100,7 +100,11 @@ python cookbook/92_models/anthropic/financial_analyst_thinking.py
 
 ### 13. Adaptive Thinking with `output_config`
 
-For Claude 4.6 models that support adaptive thinking, keep `thinking` and `output_config` as separate top-level parameters:
+For Claude 4.6 models that support adaptive thinking, use `output_config` to control thinking depth via the `effort` parameter. Keep `thinking` and `output_config` as separate top-level parameters:
+
+```shell
+python cookbook/90_models/anthropic/adaptive_thinking.py
+```
 
 ```python
 from agno.models.anthropic import Claude
@@ -112,3 +116,9 @@ model = Claude(
     output_config={"effort": "high"},
 )
 ```
+
+**Valid effort values:**
+- `"low"` - Most efficient, significant token savings
+- `"medium"` - Balanced approach with moderate savings
+- `"high"` - Default, high capability for complex reasoning
+- `"max"` - Absolute maximum capability (Opus 4.6 only)
