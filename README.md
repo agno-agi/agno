@@ -22,6 +22,10 @@
   <a href="https://www.agno.com/discord">Discord</a>
 </div>
 
+<p align="center">
+  <a href="README.zh.md">中文</a> | <strong>English</strong>
+</p>
+
 ## What is Agno
 
 Agno is the runtime for agentic software. Build agents, teams, and workflows. Run them as scalable services. Monitor and manage them in production.
