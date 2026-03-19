@@ -279,42 +279,36 @@ class GoogleSlidesTools(Toolkit):
             return int(value * 12700)
         return int(value)
 
+    def _extract_text(self, text_elements: List[Dict]) -> List[str]:
+        result = []
+        for te in text_elements:
+            content = ""
+            if "textRun" in te:
+                content = te["textRun"].get("content", "")
+            elif "autoText" in te:
+                content = te["autoText"].get("content", "")
+            if content.strip():
+                result.append(content.strip())
+        return result
+
     def _extract_text_recursive(self, element: Dict[str, Any]) -> List[str]:
-        lines = []
-
-        def extract_from_text_elements(text_elements: List[Dict]) -> List[str]:
-            result = []
-            for te in text_elements:
-                content = ""
-                if "textRun" in te:
-                    content = te["textRun"].get("content", "")
-                elif "autoText" in te:
-                    content = te["autoText"].get("content", "")
-                if content.strip():
-                    result.append(content.strip())
-            return result
-
-        # Case 1: Standard Shapes
         if "shape" in element:
-            text_elements = element["shape"].get("text", {}).get("textElements", [])
-            lines.extend(extract_from_text_elements(text_elements))
-        # Case 2: Tables
+            return self._extract_text(element["shape"].get("text", {}).get("textElements", []))
         elif "table" in element:
+            lines = []
             for row in element["table"].get("tableRows", []):
                 for cell in row.get("tableCells", []):
-                    text_elements = cell.get("text", {}).get("textElements", [])
-                    lines.extend(extract_from_text_elements(text_elements))
-        # Case 3: Groups
+                    lines.extend(self._extract_text(cell.get("text", {}).get("textElements", [])))
+            return lines
         elif "elementGroup" in element:
+            lines = []
             for child in element["elementGroup"].get("children", []):
                 lines.extend(self._extract_text_recursive(child))
-        # Case 4: WordArt
+            return lines
         elif "wordArt" in element:
-            art = element.get("wordArt", {})
-            content = art.get("renderedText", "").strip()
-            if content:
-                lines.append(content)
-        return lines
+            content = element.get("wordArt", {}).get("renderedText", "").strip()
+            return [content] if content else []
+        return []
 
     def _insert_video(
         self,
