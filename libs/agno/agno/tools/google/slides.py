@@ -357,7 +357,7 @@ class GoogleSlidesTools(Toolkit):
             title (str): Title of the new presentation.
 
         Returns:
-            JSON with presentation_id, url, and title.
+            str: JSON with presentation_id, url, and title.
         """
         try:
             if not title.strip():
@@ -384,7 +384,7 @@ class GoogleSlidesTools(Toolkit):
             fields (str, optional): Comma-separated fields to return e.g. "slides,title".
 
         Returns:
-            JSON representation of the presentation object.
+            str: JSON representation of the presentation object.
         """
         try:
             if not presentation_id.strip():
@@ -408,7 +408,7 @@ class GoogleSlidesTools(Toolkit):
             page_token (str, optional): Token for the next page of results.
 
         Returns:
-            JSON object with 'presentations' (list of files) and 'next_page_token' (string if more exist).
+            str: JSON with presentations list and next_page_token.
         """
         try:
             if page_size <= 0:
@@ -437,7 +437,7 @@ class GoogleSlidesTools(Toolkit):
             presentation_id (str): The presentation ID to delete.
 
         Returns:
-            JSON confirmation with deleted presentation ID.
+            str: JSON confirmation with deleted presentation ID.
         """
         try:
             if not presentation_id.strip():
@@ -464,19 +464,15 @@ class GoogleSlidesTools(Toolkit):
 
         Args:
             presentation_id (str): The presentation ID.
-            layout (str): BLANK, TITLE, TITLE_AND_BODY, TITLE_ONLY, SECTION_HEADER,
-                          ONE_COLUMN_TEXT, MAIN_POINT, BIG_NUMBER, SECTION_TITLE_AND_DESCRIPTION,
-                          CAPTION_ONLY, or TITLE_AND_TWO_COLUMNS.
+            layout (str): Slide layout, e.g. TITLE, TITLE_AND_BODY, BLANK, SECTION_HEADER.
             title (str, optional): Title placeholder text.
-            subtitle (str, optional): Subtitle or second placeholder text.
-            body (str, optional): Body or primary content placeholder text.
+            subtitle (str, optional): Subtitle placeholder text.
+            body (str, optional): Body placeholder text.
             body_2 (str, optional): Second column body text (for TITLE_AND_TWO_COLUMNS).
             insertion_index (int, optional): 0-based position. Appends if omitted.
 
         Returns:
-            JSON with slide_id, layout, title, subtitle, body, body_2, and warnings.
-            'warnings' is null on full success, or a list of error strings if text
-            insertion partially failed (slide was still created).
+            str: JSON with slide_id, layout, and warnings.
         """
         try:
             if not presentation_id.strip():
@@ -587,10 +583,10 @@ class GoogleSlidesTools(Toolkit):
 
         Args:
             presentation_id (str): The presentation ID.
-            slide_id (str): Object ID of the slide. Obtain from get_presentation.
+            slide_id (str): Object ID of the slide.
 
         Returns:
-            JSON confirmation with deleted_slide ID.
+            str: JSON confirmation with deleted slide ID.
         """
         try:
             if not presentation_id.strip():
@@ -606,14 +602,14 @@ class GoogleSlidesTools(Toolkit):
     @authenticate
     def duplicate_slide(self, presentation_id: str, slide_id: str) -> str:
         """
-        Duplicates a slide. The copy is inserted immediately after the original.
+        Duplicates a slide, inserting the copy after the original.
 
         Args:
             presentation_id (str): The presentation ID.
-            slide_id (str): Object ID of the slide. Obtain from get_presentation.
+            slide_id (str): Object ID of the slide to duplicate.
 
         Returns:
-            JSON batchUpdate response.
+            str: JSON batchUpdate response.
         """
         try:
             if not presentation_id.strip():
@@ -638,11 +634,11 @@ class GoogleSlidesTools(Toolkit):
 
         Args:
             presentation_id (str): The presentation ID.
-            slide_ids (list[str]): Ordered slide object IDs to move (must match current order).
+            slide_ids (list[str]): Ordered slide object IDs to move.
             insertion_index (int): Target 0-based position.
 
         Returns:
-            JSON confirmation with moved IDs and target index.
+            str: JSON confirmation with moved IDs and target index.
         """
         try:
             if not presentation_id.strip():
@@ -692,7 +688,7 @@ class GoogleSlidesTools(Toolkit):
             height (int/float): Height in inches. Default 1.0.
 
         Returns:
-            JSON with text_box_id and slide_id.
+            str: JSON with text_box_id and slide_id.
         """
         try:
             if not presentation_id.strip():
@@ -754,10 +750,10 @@ class GoogleSlidesTools(Toolkit):
             slide_id (str): The slide object ID.
             rows (int): Number of rows.
             columns (int): Number of columns.
-            content (list[list[str]], optional): 2D list e.g. [["H1","H2"],["R1C1","R1C2"]].
+            content (list[list[str]], optional): 2D list of cell values.
 
         Returns:
-            JSON with table_id, rows, columns.
+            str: JSON with table_id, rows, and columns.
         """
         try:
             if not presentation_id.strip():
@@ -817,7 +813,7 @@ class GoogleSlidesTools(Toolkit):
             image_url (str): Publicly accessible image URL.
 
         Returns:
-            JSON confirmation with slide_id.
+            str: JSON confirmation with slide_id.
         """
         try:
             if not presentation_id.strip():
@@ -859,7 +855,7 @@ class GoogleSlidesTools(Toolkit):
             presentation_id (str): The presentation ID.
 
         Returns:
-            JSON dict mapping slide objectId -> list of text strings found on that slide.
+            str: JSON mapping slide IDs to lists of text strings.
         """
         try:
             if not presentation_id.strip():
@@ -895,7 +891,7 @@ class GoogleSlidesTools(Toolkit):
             slide_id (str): The slide object ID.
 
         Returns:
-            JSON with thumbnail_url string.
+            str: JSON with thumbnail_url.
         """
         try:
             if not presentation_id.strip():
@@ -919,14 +915,13 @@ class GoogleSlidesTools(Toolkit):
     @authenticate
     def get_presentation_metadata(self, presentation_id: str) -> str:
         """
-        Fetches lightweight metadata about a presentation (title, slide count, slide IDs).
-        Use this before get_presentation to avoid fetching full content unnecessarily.
+        Fetches lightweight metadata about a presentation.
 
         Args:
             presentation_id (str): The presentation ID.
 
         Returns:
-            JSON with title, slide_count, slide_ids, page_width_inches, and page_height_inches.
+            str: JSON with title, slide_count, slides, and page dimensions.
         """
         try:
             if not presentation_id.strip():
@@ -996,14 +991,14 @@ class GoogleSlidesTools(Toolkit):
     @authenticate
     def get_page(self, presentation_id: str, page_object_id: str) -> str:
         """
-        Retrieves the full content of a specific slide/page by its object ID.
+        Retrieves the full content of a specific slide by its object ID.
 
         Args:
             presentation_id (str): The presentation ID.
-            page_object_id (str): The object ID of the page/slide to retrieve.
+            page_object_id (str): The object ID of the slide.
 
         Returns:
-            JSON representation of the page object.
+            str: JSON representation of the page object.
         """
         try:
             if not presentation_id.strip():
@@ -1024,14 +1019,14 @@ class GoogleSlidesTools(Toolkit):
     @authenticate
     def get_slide_text(self, presentation_id: str, page_object_id: str) -> str:
         """
-        Extracts only the text content from a single slide (no formatting or styling).
+        Extracts the text content from a single slide.
 
         Args:
             presentation_id (str): The presentation ID.
             page_object_id (str): The object ID of the slide.
 
         Returns:
-            JSON with slide_id and list of text strings found on that slide.
+            str: JSON with slide_id and text list.
         """
         try:
             if not presentation_id.strip():
@@ -1068,16 +1063,15 @@ class GoogleSlidesTools(Toolkit):
 
         Args:
             presentation_id (str): The presentation ID.
-            slide_id (str): The slide object ID to add the video to.
-            video_id (str): YouTube video ID - the value after 'v=' in the URL.
-                e.g. for youtube.com/watch?v=abc123, use 'abc123'.
-            x (int/float): X position in inches. Default ~1.6.
-            y (int/float): Y position in inches. Default ~1.6.
+            slide_id (str): The slide object ID.
+            video_id (str): YouTube video ID (the value after 'v=' in the URL).
+            x (int/float): X position in inches. Default 1.6.
+            y (int/float): Y position in inches. Default 1.6.
             width (int/float): Width in inches. Default 5.0.
             height (int/float): Height in inches. Default 3.0.
 
         Returns:
-            JSON with the new video object ID and slide_id.
+            str: JSON with video_object_id and slide_id.
         """
         try:
             if not presentation_id.strip():
@@ -1124,15 +1118,15 @@ class GoogleSlidesTools(Toolkit):
 
         Args:
             presentation_id (str): The presentation ID.
-            slide_id (str): The slide object ID to add the video to.
-            file_id (str): The Drive file ID.
-            x (int/float): X position in inches. Default ~1.6.
-            y (int/float): Y position in inches. Default ~1.6.
+            slide_id (str): The slide object ID.
+            file_id (str): The Google Drive file ID.
+            x (int/float): X position in inches. Default 1.6.
+            y (int/float): Y position in inches. Default 1.6.
             width (int/float): Width in inches. Default 5.0.
             height (int/float): Height in inches. Default 3.0.
 
         Returns:
-            JSON with the new video object ID and slide_id.
+            str: JSON with video_object_id and slide_id.
         """
         try:
             if not presentation_id.strip():
