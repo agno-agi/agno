@@ -313,6 +313,38 @@ class Claude(Model):
 
         return None
 
+    def _strip_trailing_assistant_for_output_format(
+        self,
+        chat_messages: List[Dict[str, Any]],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Remove trailing assistant messages when output_format is used.
+
+        Anthropic's API does not allow pre-filling (assistant message in the final
+        position) when ``output_format`` is specified.  This typically surfaces when
+        ``reasoning=True`` is combined with ``output_schema`` because the reasoning
+        loop may leave an assistant message at the end of the message history.
+
+        See: https://github.com/agno-agi/agno/issues/5582
+        """
+        if response_format is None or not self._supports_structured_outputs():
+            return chat_messages
+
+        # Only strip when response_format actually produces an output_format
+        # for the API call.  json_object format is ignored by _build_output_format
+        # (returns None), so the pre-filling restriction does not apply.
+        if self._build_output_format(response_format) is None:
+            return chat_messages
+
+        if chat_messages and chat_messages[-1].get("role") == "assistant":
+            log_debug(
+                "Stripping trailing assistant message to avoid pre-filling conflict with output_format"
+            )
+            return chat_messages[:-1]
+
+        return chat_messages
+
     def _validate_structured_outputs_usage(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -579,6 +611,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+            chat_messages = self._strip_trailing_assistant_for_output_format(chat_messages, response_format)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
@@ -643,6 +676,7 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+        chat_messages = self._strip_trailing_assistant_for_output_format(chat_messages, response_format)
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
@@ -698,6 +732,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+            chat_messages = self._strip_trailing_assistant_for_output_format(chat_messages, response_format)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             # Beta features
@@ -761,6 +796,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+            chat_messages = self._strip_trailing_assistant_for_output_format(chat_messages, response_format)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
