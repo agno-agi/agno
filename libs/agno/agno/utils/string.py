@@ -170,25 +170,38 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # First, try parsing raw content directly — avoids destroying valid JSON
+    # that contains fenced code blocks inside string values.
+    try:
+        structured_output = output_schema.model_validate_json(content)
+        return structured_output
+    except ValidationError:
+        pass
+
+    try:
+        data = json.loads(content)
+        structured_output = output_schema.model_validate(data)
+        return structured_output
+    except (ValidationError, json.JSONDecodeError):
+        pass
+
+    # Clean content as fallback — this may strip code blocks from values,
+    # but is needed for LLM outputs wrapped in markdown fences.
     cleaned_content = _clean_json_content(content)
 
     try:
-        # First attempt: direct JSON validation on cleaned content
         structured_output = output_schema.model_validate_json(cleaned_content)
-    except (ValidationError, json.JSONDecodeError):
+    except ValidationError:
         try:
-            # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
             structured_output = output_schema.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-            # Third attempt: Extract individual JSON objects
+            # Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
 
             if len(candidate_jsons) == 1:
-                # Single JSON object - try to parse it directly
                 try:
                     data = json.loads(candidate_jsons[0])
                     structured_output = output_schema.model_validate(data)
@@ -214,27 +227,31 @@ def parse_response_dict_str(content: str) -> Optional[dict]:
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # First, try parsing raw content directly — avoids destroying valid JSON
+    # that contains fenced code blocks inside string values.
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # Clean content as fallback
     cleaned_content = _clean_json_content(content)
 
     try:
-        # First attempt: direct JSON parsing on cleaned content
         return json.loads(cleaned_content)
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-        # Second attempt: Extract individual JSON objects
+        # Extract individual JSON objects
         candidate_jsons = _extract_json_objects(cleaned_content)
 
         if len(candidate_jsons) == 1:
-            # Single JSON object - try to parse it directly
             try:
                 return json.loads(candidate_jsons[0])
             except json.JSONDecodeError:
                 pass
 
         if len(candidate_jsons) > 1:
-            # Final attempt: Merge multiple JSON objects
             merged_data: dict = {}
             for candidate in candidate_jsons:
                 try:
