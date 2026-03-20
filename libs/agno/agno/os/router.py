@@ -230,6 +230,19 @@ def get_base_router(
                     if key not in unique_models:
                         unique_models[key] = Model(id=model.id, provider=model.provider)
 
+        # Also include models declared in config.available_models (e.g. "openai:gpt-4o")
+        # These are not necessarily backed by a running agent/team instance but must
+        # appear in the /models response so clients can discover available models.
+        if os.config and os.config.available_models:
+            for model_str in os.config.available_models:
+                if ":" in model_str:
+                    provider, model_id = model_str.split(":", 1)
+                else:
+                    provider, model_id = None, model_str
+                key = (model_id, provider)
+                if key not in unique_models:
+                    unique_models[key] = Model(id=model_id, provider=provider)
+
         return list(unique_models.values())
 
     return router
