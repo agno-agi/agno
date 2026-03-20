@@ -78,6 +78,8 @@ class Team:
 
     # Model for this Team
     model: Optional[Model] = None
+    # Fallback models tried when the primary model fails
+    fallback_models: Optional[List[Union[Model, str]]] = None
     # Fallback configuration for model failures (advanced: error-specific routing)
     fallback_config: Optional["FallbackConfig"] = None
 
