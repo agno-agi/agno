@@ -433,10 +433,11 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             "additionalProperties": False,
         }
 
-        # Preserve JSON Schema $defs/$ref for MCP tools that pass raw schemas
-        for key in ("$defs", "definitions"):
-            if key in parameters:
-                input_schema[key] = parameters[key]
+        # MCP tools pass raw JSON Schemas that may use $defs/$ref for nested types
+        if "$defs" in parameters:
+            input_schema["$defs"] = parameters["$defs"]
+        if "definitions" in parameters:
+            input_schema["definitions"] = parameters["definitions"]
 
         tool = {
             "name": func_def.get("name") or "",
