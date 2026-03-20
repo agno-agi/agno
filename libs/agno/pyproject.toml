@@ -264,6 +264,7 @@ tools = [
   "agno[valyu]",
   "agno[yfinance]",
   "agno[confluence]",
+  "agno[docling]",
   "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",

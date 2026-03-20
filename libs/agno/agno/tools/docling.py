@@ -38,6 +38,11 @@ class DoclingTools(Toolkit):
     - pdf_do_picture_classification: bool
     - pdf_document_timeout: float (seconds)
     - pdf_enable_remote_services: bool
+
+    Note:
+    Some OCR engines may require additional runtime dependencies. For example,
+    `easyocr` can require installing EasyOCR and its model/runtime stack in the
+    active environment.
     """
 
     def __init__(
@@ -402,13 +407,20 @@ class DoclingTools(Toolkit):
 
         alias_map = {
             "markdown": "md",
-            "xml": "xml_uspto",
         }
         resolved_formats: List[InputFormat] = []
         valid_names = sorted([input_format.name.lower() for input_format in InputFormat])
 
         for input_format_name in allowed_input_formats:
             normalized_name = input_format_name.lower().strip()
+
+            if normalized_name == "xml":
+                xml_variants = [name for name in valid_names if name.startswith("xml_")]
+                variants_message = ", ".join(xml_variants) if xml_variants else "explicit xml_* parser"
+                raise ValueError(
+                    f"Ambiguous input parser 'xml'. Use one of: {variants_message}."
+                )
+
             normalized_name = alias_map.get(normalized_name, normalized_name)
 
             resolved = None
@@ -507,7 +519,18 @@ class DoclingTools(Toolkit):
 
         ocr_cls = engine_map.get(engine_value)
         if ocr_cls is not None:
-            return ocr_cls(**kwargs)
+            dependency_hints = {
+                "easyocr": "Install optional dependencies, e.g. `uv pip install easyocr`.",
+                "tesseract": "Install the Python tesseract dependencies and ensure tesseract OCR is available.",
+                "tesseract_cli": "Install the tesseract CLI binary and ensure it is available on PATH.",
+                "rapidocr": "Install optional dependencies, e.g. `uv pip install rapidocr_onnxruntime`.",
+                "ocrmac": "OCRMac is only available on macOS with required native dependencies.",
+            }
+            try:
+                return ocr_cls(**kwargs)
+            except Exception as e:
+                hint = dependency_hints.get(engine_value, "Install required OCR runtime dependencies for this engine.")
+                raise RuntimeError(f"Failed to initialize OCR engine '{engine}'. {hint}") from e
 
         valid_engines = list(engine_map.keys())
         raise ValueError(f"Invalid OCR engine '{engine}'. Expected one of: {', '.join(valid_engines)}.")

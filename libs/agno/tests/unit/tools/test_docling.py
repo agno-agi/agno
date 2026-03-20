@@ -284,6 +284,24 @@ class TestDoclingToolsPdfPipeline:
         with pytest.raises(ValueError, match="Invalid input parser"):
             DoclingTools(allowed_input_formats=["not-a-parser"])
 
+    def test_ambiguous_xml_allowed_input_parser_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            DoclingTools(allowed_input_formats=["xml"])
+
+        error_message = str(exc_info.value)
+        assert "Ambiguous input parser 'xml'" in error_message
+        assert "xml_" in error_message
+
+    def test_explicit_xml_allowed_input_parser_is_applied(self):
+        with patch("agno.tools.docling.DocumentConverter") as mock_converter_cls:
+            mock_converter_cls.return_value = Mock()
+
+            DoclingTools(allowed_input_formats=["xml_uspto"])
+
+            _, kwargs = mock_converter_cls.call_args
+            assert "allowed_formats" in kwargs
+            assert InputFormat.XML_USPTO in kwargs["allowed_formats"]
+
 
 class TestDoclingToolsOcrOptions:
     def test_invalid_ocr_engine_raises_error(self, mock_converter):
