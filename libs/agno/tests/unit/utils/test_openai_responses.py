@@ -220,3 +220,52 @@ def test_sanitize_response_schema_preserves_non_object_types():
     assert schema1["type"] == "string"
     assert schema2["type"] == "array"
     assert schema2["items"]["type"] == "integer"
+
+
+def test_sanitize_response_schema_optional_fields_excluded_from_required():
+    """Test that Optional[X] fields with default=None are not added to required.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7066 — 
+    sanitize_response_schema() was unconditionally adding all fields to 'required',
+    even Optional fields with default=None, causing structured output failures.
+    """
+    import copy
+    original_schema = OptionalModel.model_json_schema()
+    schema = copy.deepcopy(original_schema)
+
+    sanitize_response_schema(schema)
+
+    required_fields = schema.get("required", [])
+
+    # Required field must be present
+    assert "name" in required_fields, "Non-optional 'name' field must be in required"
+
+    # Optional field with default=None must NOT be required
+    assert "optional_field" not in required_fields, (
+        "Optional field with default=None must NOT be in required — "
+        "adding it breaks OpenAI Structured Outputs strict mode when the LLM omits it"
+    )
+
+
+def test_sanitize_response_schema_mixed_required_optional():
+    """Test schema with mix of required and optional fields."""
+    import copy
+    from typing import Optional
+
+    class MixedModel(BaseModel):
+        required_str: str = Field(..., description="Always required")
+        required_int: int = Field(..., description="Also required")
+        optional_str: Optional[str] = Field(None, description="Optional string")
+        optional_int: Optional[int] = Field(None, description="Optional int")
+
+    original_schema = MixedModel.model_json_schema()
+    schema = copy.deepcopy(original_schema)
+
+    sanitize_response_schema(schema)
+
+    required_fields = schema.get("required", [])
+
+    assert "required_str" in required_fields
+    assert "required_int" in required_fields
+    assert "optional_str" not in required_fields
+    assert "optional_int" not in required_fields
