@@ -243,30 +243,24 @@ class Model(ABC):
         """Determine if an error is worth retrying.
 
         Non-retryable errors include:
-        - Client errors (400, 401, 403, 413, 422) that won't change on retry
-        - Context window/token limit exceeded errors
-        - Payload too large errors
+        - ContextWindowExceededError (fast path after classify_error)
+        - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
+        - Context window/token limit patterns in error message (defense-in-depth)
 
         Retryable errors include:
         - Rate limit errors (429)
         - Server errors (500, 502, 503, 504)
-
-        Args:
-            error: The ModelProviderError to evaluate.
-
-        Returns:
-            True if the error is transient and worth retrying, False otherwise.
+        - Anything else not explicitly non-retryable
         """
-        # Context-window errors are never retryable
+        # Fast path: already classified by classify_error()
         if isinstance(error, ContextWindowExceededError):
             return False
 
-        # Non-retryable status codes (client errors that won't change)
         non_retryable_codes = {400, 401, 403, 404, 413, 422}
         if error.status_code in non_retryable_codes:
             return False
 
-        # Non-retryable error message patterns (context/token limits)
+        # Defense-in-depth: catch context window errors even if not pre-classified
         error_msg = str(error.message).lower()
         if any(pattern in error_msg for pattern in self.CONTEXT_WINDOW_PATTERNS):
             return False
