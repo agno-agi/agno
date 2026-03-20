@@ -40,20 +40,6 @@ full_drive_agent = Agent(
     markdown=True,
 )
 
-# Example 3: Drive agent with custom content length for large documents
-large_doc_agent = Agent(
-    name="Large Document Reader",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleDriveTools(max_content_length=50000)],
-    description="You are a Google Drive agent optimized for reading large documents.",
-    instructions=[
-        "You specialize in reading and summarizing large documents from Google Drive.",
-        "You can read up to 50,000 characters of content from each file.",
-        "Provide structured summaries with key sections and bullet points.",
-    ],
-    markdown=True,
-)
-
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------

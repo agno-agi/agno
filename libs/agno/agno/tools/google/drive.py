@@ -81,7 +81,7 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
     - `sharedWithMe` — files shared with the user
     - `starred` — starred files
     - Combine with `and` / `or`: `name contains 'report' and mimeType = 'application/pdf'`
-    - `trashed=false` is added automatically unless you include a trashed clause.""")
+    - Trashed files are filtered automatically. Do not add trashed clauses.""")
 
 
 def authenticate(func):
@@ -156,7 +156,6 @@ class GoogleDriveTools(Toolkit):
         token_path: Optional[str] = None,  # OAuth token file path
         # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
-        service_account_file: Optional[str] = None,
         delegated_user: Optional[str] = None,
         # Bills API usage to a different GCP project than the credential owner
         quota_project_id: Optional[str] = None,
@@ -168,6 +167,8 @@ class GoogleDriveTools(Toolkit):
         # Writing tools — disabled by default for safety
         upload_file: bool = False,
         download_file: bool = False,
+        # When False, trashed files are excluded from search/list results automatically
+        include_trashed: bool = False,
         # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -178,12 +179,14 @@ class GoogleDriveTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.include_trashed = include_trashed
+
         # Pre-built credentials skip the OAuth/service account flow entirely
         self.creds = creds
         self.service = None
         self.credentials_path = creds_path
         self.token_path = token_path
-        self.service_account_path = service_account_path or service_account_file
+        self.service_account_path = service_account_path
         self.delegated_user = delegated_user
         # Pre-selects this email in the OAuth consent screen
         self.login_hint = login_hint
@@ -365,13 +368,12 @@ class GoogleDriveTools(Toolkit):
 
         try:
             service = cast(Resource, self.service)
-            # Drive API includes trashed files by default — exclude them unless caller handles it
-            if not query:
-                effective_query = "trashed=false"
-            elif "trashed=" in query.lower() or "trashed =" in query.lower():
-                effective_query = query
-            else:
+            if self.include_trashed:
+                effective_query = query or ""
+            elif query:
                 effective_query = f"({query}) and trashed=false"
+            else:
+                effective_query = "trashed=false"
             results = (
                 service.files()
                 .list(
@@ -474,9 +476,6 @@ class GoogleDriveTools(Toolkit):
             if export_mime:
                 request = service.files().export_media(fileId=file_id, mimeType=export_mime)
                 content_bytes = self._download_bytes(request)
-                # Google Drive API hard limit on Workspace file exports
-                if len(content_bytes) > 10 * 1024 * 1024:
-                    return json.dumps({"error": "Export exceeds the 10 MB Drive limit.", "file": metadata})
             else:
                 request = service.files().get_media(fileId=file_id)
                 content_bytes = self._download_bytes(request)

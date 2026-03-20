@@ -50,9 +50,12 @@ def test_search_files_trashed_auto(drive_tools):
     assert result["query"] == "(name contains 'x') and trashed=false"
 
 
-def test_search_files_trashed_manual(drive_tools):
-    result = json.loads(drive_tools.search_files(query="trashed=true"))
-    assert result["query"] == "trashed=true"
+def test_search_files_include_trashed(mock_creds, mock_service):
+    # include_trashed=True skips the trashed=false filter
+    tools = GoogleDriveTools(creds=mock_creds, include_trashed=True)
+    tools.service = mock_service
+    result = json.loads(tools.search_files(query="name contains 'x'"))
+    assert result["query"] == "name contains 'x'"
 
 
 def test_search_files_no_query(drive_tools):
@@ -169,7 +172,8 @@ def test_read_file_unsupported_workspace(drive_tools):
     assert "Cannot read" in result["error"]
 
 
-def test_read_file_export_too_large(drive_tools):
+def test_read_file_large_export_passes_through(drive_tools):
+    # Drive API enforces 10MB export limit server-side (HTTP 403), not client-side
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "big1",
         "name": "Huge Doc",
@@ -188,8 +192,8 @@ def test_read_file_export_too_large(drive_tools):
         mock_dl.side_effect = capture_buffer
         result = json.loads(drive_tools.read_file("big1"))
 
-    assert "error" in result
-    assert "10 MB" in result["error"] or "Export exceeds" in result["error"]
+    assert "content" in result
+    assert result["contentLength"] == len(big_content)
 
 
 def test_upload_file_success(tmp_path, drive_tools):
