@@ -70,8 +70,6 @@ class Agent:
     # --- Agent settings ---
     # Model for this Agent
     model: Optional[Model] = None
-    # Fallback models tried when the primary model fails
-    fallback_models: Optional[List[Union[Model, str]]] = None
     # Fallback configuration for model failures (advanced: error-specific routing)
     fallback_config: Optional[FallbackConfig] = None
     # Agent name
@@ -493,7 +491,6 @@ class Agent:
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
     ):
         self.model = model  # type: ignore[assignment]
-        self.fallback_models = fallback_models
         if fallback_config is not None:
             self.fallback_config = fallback_config
         elif fallback_models:
