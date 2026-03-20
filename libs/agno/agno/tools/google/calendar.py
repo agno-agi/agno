@@ -40,11 +40,7 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 
 
 def authenticate(func):
-    """Decorator to ensure authentication before executing the method.
-
-    When self.google_auth or self.oauth_redirect_url is set, the error message
-    directs the agent to call connect_google so the user gets an OAuth link.
-    """
+    """Decorator to ensure authentication before executing the method."""
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
