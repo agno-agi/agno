@@ -7,35 +7,25 @@ from agno.tools import Toolkit
 from agno.utils.log import log_info
 
 
-class GoogleOAuth(Toolkit):
-    """Shared Google OAuth for multi-toolkit agents.
+class GoogleAuth(Toolkit):
+    """Shared Google auth for multi-toolkit agents.
 
     Aggregates scopes from all registered Google toolkits and provides a single
     connect_google tool that builds an OAuth URL with only the requested services.
     Supports incremental auth via include_granted_scopes=true.
 
     Usage:
-        google = GoogleOAuth()
+        google = GoogleAuth()
         agent = Agent(tools=[
             google,
             GmailTools(google_auth=google),
             GoogleCalendarTools(google_auth=google),
         ])
 
-    For separate accounts:
-        personal = GoogleOAuth(name="personal", client_id="...")
-        work = GoogleOAuth(name="work", client_id="...")
-        agent = Agent(tools=[
-            personal, work,
-            GmailTools(google_auth=personal),
-            GoogleCalendarTools(google_auth=work),
-        ])
-
     Args:
         client_id: Google OAuth client ID. Falls back to GOOGLE_CLIENT_ID env var.
         client_secret: Google OAuth client secret. Falls back to GOOGLE_CLIENT_SECRET env var.
         redirect_uri: OAuth redirect URI. Must match Google Cloud Console config exactly.
-        name: Optional name for separate-account scenarios. Changes toolkit name to avoid collisions.
     """
 
     def __init__(
@@ -43,11 +33,9 @@ class GoogleOAuth(Toolkit):
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
         redirect_uri: str = "http://localhost:8080/",
-        name: Optional[str] = None,
         **kwargs: Any,
     ):
-        toolkit_name = f"google_oauth_{name}" if name else "google_oauth"
-        super().__init__(name=toolkit_name, **kwargs)
+        super().__init__(name="google_auth", **kwargs)
 
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
@@ -60,7 +48,7 @@ class GoogleOAuth(Toolkit):
     def register_service(self, service: str, scopes: List[str]) -> None:
         """Called by each Google toolkit during init to register its scopes."""
         self._services[service] = scopes
-        log_info(f"GoogleOAuth: registered {service} with {len(scopes)} scopes")
+        log_info(f"GoogleAuth: registered {service} with {len(scopes)} scopes")
 
     @property
     def registered_services(self) -> List[str]:

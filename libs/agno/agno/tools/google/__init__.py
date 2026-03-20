@@ -4,16 +4,16 @@ __all__ = [
     "GoogleDriveTools",
     "GmailTools",
     "GoogleMapTools",
-    "GoogleOAuth",
+    "GoogleAuth",
     "GoogleSheetsTools",
 ]
 
 
 def __getattr__(name: str):
-    if name == "GoogleOAuth":
-        from agno.tools.google.oauth import GoogleOAuth
+    if name == "GoogleAuth":
+        from agno.tools.google.auth import GoogleAuth
 
-        return GoogleOAuth
+        return GoogleAuth
     if name == "GoogleBigQueryTools":
         from agno.tools.google.bigquery import GoogleBigQueryTools
 
