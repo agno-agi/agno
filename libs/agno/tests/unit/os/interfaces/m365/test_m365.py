@@ -5,8 +5,7 @@ Tests the M365Copilot interface, models, authentication, and manifest generation
 """
 
 import time
-import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import jwt
 import pytest
@@ -14,16 +13,16 @@ import pytest
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os.interfaces.m365 import M365Copilot
+from agno.os.interfaces.m365.auth import (
+    extract_user_info,
+    validate_m365_token,
+)
+from agno.os.interfaces.m365.manifest import generate_openapi_spec
 from agno.os.interfaces.m365.models import (
     AgentManifest,
     InvokeRequest,
     InvokeResponse,
     ManifestResponse,
-)
-from agno.os.interfaces.m365.manifest import generate_openapi_spec
-from agno.os.interfaces.m365.auth import (
-    extract_user_info,
-    validate_m365_token,
 )
 
 
@@ -32,16 +31,9 @@ class TestM365CopilotInterface:
 
     def test_interface_creation_with_agent(self):
         """Test creating M365 interface with an agent."""
-        agent = Agent(
-            name="Test Agent",
-            model=OpenAIChat(id="gpt-4o"),
-            instructions="Test instructions"
-        )
+        agent = Agent(name="Test Agent", model=OpenAIChat(id="gpt-4o"), instructions="Test instructions")
 
-        with patch.dict("os.environ", {
-            "M365_TENANT_ID": "test-tenant",
-            "M365_CLIENT_ID": "test-client"
-        }):
+        with patch.dict("os.environ", {"M365_TENANT_ID": "test-tenant", "M365_CLIENT_ID": "test-client"}):
             interface = M365Copilot(agent=agent)
 
             assert interface.type == "m365"
@@ -52,10 +44,7 @@ class TestM365CopilotInterface:
 
     def test_interface_fails_without_component(self):
         """Test that interface fails without agent, team, or workflow."""
-        with patch.dict("os.environ", {
-            "M365_TENANT_ID": "test-tenant",
-            "M365_CLIENT_ID": "test-client"
-        }):
+        with patch.dict("os.environ", {"M365_TENANT_ID": "test-tenant", "M365_CLIENT_ID": "test-client"}):
             with pytest.raises(ValueError, match="requires at least one"):
                 M365Copilot()
 
@@ -71,23 +60,15 @@ class TestM365CopilotInterface:
         """Test that interface fails without client_id."""
         agent = Agent(name="Test", model=OpenAIChat(id="gpt-4o"))
 
-        with patch.dict("os.environ", {
-            "M365_TENANT_ID": "test-tenant"
-        }, clear=True):
+        with patch.dict("os.environ", {"M365_TENANT_ID": "test-tenant"}, clear=True):
             with pytest.raises(ValueError, match="client_id is required"):
                 M365Copilot(agent=agent)
 
     def test_get_router_returns_api_router(self):
         """Test that get_router returns an APIRouter."""
-        agent = Agent(
-            name="Test Agent",
-            model=OpenAIChat(id="gpt-4o")
-        )
+        agent = Agent(name="Test Agent", model=OpenAIChat(id="gpt-4o"))
 
-        with patch.dict("os.environ", {
-            "M365_TENANT_ID": "test-tenant",
-            "M365_CLIENT_ID": "test-client"
-        }):
+        with patch.dict("os.environ", {"M365_TENANT_ID": "test-tenant", "M365_CLIENT_ID": "test-client"}):
             interface = M365Copilot(agent=agent)
             router = interface.get_router()
 
@@ -106,7 +87,7 @@ class TestModels:
             name="Test Agent",
             description="Test description",
             type="agent",
-            capabilities=["test", "demo"]
+            capabilities=["test", "demo"],
         )
 
         assert manifest.agent_id == "test-agent"
@@ -116,10 +97,7 @@ class TestModels:
 
     def test_invoke_request_model(self):
         """Test InvokeRequest model."""
-        request = InvokeRequest(
-            component_id="test-agent",
-            message="Test message"
-        )
+        request = InvokeRequest(component_id="test-agent", message="Test message")
 
         assert request.component_id == "test-agent"
         assert request.message == "Test message"
@@ -129,10 +107,7 @@ class TestModels:
     def test_invoke_request_with_optional_fields(self):
         """Test InvokeRequest with optional fields."""
         request = InvokeRequest(
-            component_id="test-agent",
-            message="Test message",
-            session_id="test-session",
-            context={"key": "value"}
+            component_id="test-agent", message="Test message", session_id="test-session", context={"key": "value"}
         )
 
         assert request.session_id == "test-session"
@@ -145,7 +120,7 @@ class TestModels:
             component_type="agent",
             output="Test output",
             session_id="test-session",
-            status="success"
+            status="success",
         )
 
         assert response.component_id == "test-agent"
@@ -161,7 +136,7 @@ class TestModels:
             output="",
             session_id="test-session",
             status="error",
-            error="Test error"
+            error="Test error",
         )
 
         assert response.status == "error"
@@ -169,11 +144,7 @@ class TestModels:
 
     def test_manifest_response_model(self):
         """Test ManifestResponse model."""
-        manifest_response = ManifestResponse(
-            openapi={"openapi": "3.0.1"},
-            plugin_type="openapi",
-            version="1.0.0"
-        )
+        manifest_response = ManifestResponse(openapi={"openapi": "3.0.1"}, plugin_type="openapi", version="1.0.0")
 
         assert manifest_response.openapi == {"openapi": "3.0.1"}
         assert manifest_response.plugin_type == "openapi"
@@ -185,11 +156,7 @@ class TestManifestGeneration:
 
     def test_generate_openapi_spec_with_agent(self):
         """Test generating OpenAPI spec with an agent."""
-        agent = Agent(
-            name="Test Agent",
-            model=OpenAIChat(id="gpt-4o"),
-            instructions="Test instructions"
-        )
+        agent = Agent(name="Test Agent", model=OpenAIChat(id="gpt-4o"), instructions="Test instructions")
         agent.set_id()  # Initialize agent ID
 
         spec = generate_openapi_spec(
@@ -200,7 +167,7 @@ class TestManifestGeneration:
             team=None,
             workflow=None,
             agent_descriptions={},
-            server_url="https://test.example.com"
+            server_url="https://test.example.com",
         )
 
         assert spec["openapi"] == "3.0.1"
@@ -210,10 +177,7 @@ class TestManifestGeneration:
 
     def test_generate_openapi_spec_includes_security(self):
         """Test that OpenAPI spec includes security scheme."""
-        agent = Agent(
-            name="Test Agent",
-            model=OpenAIChat(id="gpt-4o")
-        )
+        agent = Agent(name="Test Agent", model=OpenAIChat(id="gpt-4o"))
         agent.set_id()  # Initialize agent ID
 
         spec = generate_openapi_spec(
@@ -223,7 +187,7 @@ class TestManifestGeneration:
             agent=agent,
             team=None,
             workflow=None,
-            agent_descriptions={}
+            agent_descriptions={},
         )
 
         # Check security scheme
@@ -238,10 +202,7 @@ class TestManifestGeneration:
 
     def test_generate_openapi_spec_with_custom_description(self):
         """Test generating spec with custom agent description."""
-        agent = Agent(
-            name="Test Agent",
-            model=OpenAIChat(id="gpt-4o")
-        )
+        agent = Agent(name="Test Agent", model=OpenAIChat(id="gpt-4o"))
         agent.set_id()  # Initialize agent ID
 
         custom_desc = "Custom description for test agent"
@@ -252,7 +213,7 @@ class TestManifestGeneration:
             agent=agent,
             team=None,
             workflow=None,
-            agent_descriptions={agent.id: custom_desc}
+            agent_descriptions={agent.id: custom_desc},
         )
 
         # Check that custom description is used
@@ -271,7 +232,7 @@ class TestAuthentication:
             "tid": "tenant-123",
             "name": "Test User",
             "scp": "User.Read Mail.ReadWrite",
-            "roles": ["Admin"]
+            "roles": ["Admin"],
         }
 
         user_info = extract_user_info(claims)
@@ -285,10 +246,7 @@ class TestAuthentication:
 
     def test_extract_user_info_with_missing_fields(self):
         """Test extracting user info with missing optional fields."""
-        claims = {
-            "upn": "test@example.com",
-            "oid": "user-123"
-        }
+        claims = {"upn": "test@example.com", "oid": "user-123"}
 
         user_info = extract_user_info(claims)
 
@@ -311,12 +269,12 @@ class TestAuthentication:
             "iat": now,
             "nbf": now,
             "exp": now + 3600,
-            **extra_claims
+            **extra_claims,
         }
         # Use HS256 for testing (real Entra ID uses RS256)
         return jwt.encode(payload, "test-secret", algorithm="HS256")
 
-    @patch('agno.os.interfaces.m365.auth.get_public_key_from_jwks')
+    @patch("agno.os.interfaces.m365.auth.get_public_key_from_jwks")
     @pytest.mark.asyncio
     async def test_validate_m365_token_success(self, mock_get_key):
         """Test successful token validation."""
@@ -331,14 +289,14 @@ class TestAuthentication:
             token=token,
             expected_tenant_id=tenant_id,
             expected_client_id=client_id,
-            enable_signature_verification=False  # Disable for test
+            enable_signature_verification=False,  # Disable for test
         )
 
         assert claims["aud"] == client_id
         assert claims["tid"] == tenant_id
         assert claims["upn"] == "test@example.com"
 
-    @patch('agno.os.interfaces.m365.auth.get_public_key_from_jwks')
+    @patch("agno.os.interfaces.m365.auth.get_public_key_from_jwks")
     @pytest.mark.asyncio
     async def test_validate_m365_token_wrong_tenant(self, mock_get_key):
         """Test token validation fails with wrong tenant."""
@@ -352,7 +310,7 @@ class TestAuthentication:
                 token=token,
                 expected_tenant_id="expected-tenant",
                 expected_client_id="test-client",
-                enable_signature_verification=False
+                enable_signature_verification=False,
             )
 
     @pytest.mark.asyncio

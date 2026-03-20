@@ -14,17 +14,14 @@ References:
 """
 
 import json
-import time
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
-import requests
 import jwt
-from jwt import PyJWTError
+import requests
 from jwt.algorithms import RSAAlgorithm
 
 from agno.utils.log import log_debug, log_error, log_warning
-
 
 # Default timeout for JWKS request (in seconds)
 JWKS_TIMEOUT = 5
@@ -35,6 +32,7 @@ JWKS_CACHE_TTL = 3600
 
 class JWKSValidationError(Exception):
     """Raised when JWKS validation fails."""
+
     pass
 
 
@@ -81,11 +79,7 @@ def get_jwks(tenant_id: str) -> Dict[str, Any]:
     jwks_url = get_jwks_url(tenant_id)
 
     try:
-        response = requests.get(
-            jwks_url,
-            timeout=JWKS_TIMEOUT,
-            headers={"Accept": "application/json"}
-        )
+        response = requests.get(jwks_url, timeout=JWKS_TIMEOUT, headers={"Accept": "application/json"})
         response.raise_for_status()
 
         jwks = response.json()
@@ -95,9 +89,7 @@ def get_jwks(tenant_id: str) -> Dict[str, Any]:
 
     except requests.RequestException as e:
         log_error(f"Failed to fetch JWKS for tenant {tenant_id}: {e}")
-        raise JWKSValidationError(
-            f"Failed to fetch JWKS from {jwks_url}: {str(e)}"
-        )
+        raise JWKSValidationError(f"Failed to fetch JWKS from {jwks_url}: {str(e)}")
 
 
 def get_public_key_from_jwks(
@@ -148,13 +140,8 @@ def get_public_key_from_jwks(
 
         # Key not found
         available_kids = [k.get("kid") for k in jwks.get("keys", [])]
-        log_warning(
-            f"Token kid '{kid}' not found in JWKS. "
-            f"Available kids: {available_kids}"
-        )
-        raise JWKSValidationError(
-            f"Signing key not found in JWKS for kid '{kid}'"
-        )
+        log_warning(f"Token kid '{kid}' not found in JWKS. Available kids: {available_kids}")
+        raise JWKSValidationError(f"Signing key not found in JWKS for kid '{kid}'")
 
     except jwt.PyJWTError as e:
         log_error(f"Failed to decode token header: {e}")
@@ -246,19 +233,16 @@ async def validate_m365_token(
             options={
                 "require": ["exp", "iat", "nbf"],
                 "verify_signature": enable_signature_verification,
-            }
+            },
         )
 
         # Additional tenant validation (tid claim)
         token_tenant_id = decoded.get("tid", "")
         if token_tenant_id != expected_tenant_id:
             log_warning(
-                f"Token validation failed: tid claim mismatch. "
-                f"Expected '{expected_tenant_id}', got '{token_tenant_id}'"
+                f"Token validation failed: tid claim mismatch. Expected '{expected_tenant_id}', got '{token_tenant_id}'"
             )
-            raise ValueError(
-                f"Invalid tenant ID. Expected {expected_tenant_id}, got {token_tenant_id}"
-            )
+            raise ValueError(f"Invalid tenant ID. Expected {expected_tenant_id}, got {token_tenant_id}")
 
         # Log successful validation
         user_upn = decoded.get("upn", "unknown")
@@ -273,16 +257,11 @@ async def validate_m365_token(
 
     except jwt.InvalidAudienceError as e:
         log_error(f"Token validation failed: invalid audience - {e}")
-        raise ValueError(
-            f"Invalid audience. Expected {expected_client_id}, "
-            f"got {e}"
-        )
+        raise ValueError(f"Invalid audience. Expected {expected_client_id}, got {e}")
 
     except jwt.InvalidIssuerError as e:
         log_error(f"Token validation failed: invalid issuer - {e}")
-        raise ValueError(
-            f"Invalid issuer. Expected {issuer}"
-        )
+        raise ValueError(f"Invalid issuer. Expected {issuer}")
 
     except jwt.InvalidTokenError as e:
         log_error(f"Token validation failed: invalid token - {e}")
@@ -453,13 +432,7 @@ def get_token_metadata(token: str) -> Dict[str, Any]:
     try:
         header = jwt.get_unverified_header(token)
         payload = jwt.decode(
-            token,
-            options={
-                "verify_signature": False,
-                "verify_aud": False,
-                "verify_exp": False,
-                "verify_iss": False
-            }
+            token, options={"verify_signature": False, "verify_aud": False, "verify_exp": False, "verify_iss": False}
         )
 
         return {

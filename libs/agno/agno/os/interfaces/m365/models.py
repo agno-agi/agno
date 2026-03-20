@@ -37,25 +37,12 @@ class AgentManifest(BaseModel):
         ```
     """
 
-    agent_id: str = Field(
-        ...,
-        description="Unique identifier for the agent/team/workflow"
-    )
-    name: str = Field(
-        ...,
-        description="Human-readable name"
-    )
-    description: str = Field(
-        ...,
-        description="Detailed description of capabilities and use cases"
-    )
-    type: str = Field(
-        ...,
-        description="Component type: 'agent', 'team', or 'workflow'"
-    )
+    agent_id: str = Field(..., description="Unique identifier for the agent/team/workflow")
+    name: str = Field(..., description="Human-readable name")
+    description: str = Field(..., description="Detailed description of capabilities and use cases")
+    type: str = Field(..., description="Component type: 'agent', 'team', or 'workflow'")
     capabilities: List[str] = Field(
-        default_factory=list,
-        description="List of agent capabilities (e.g., ['search', 'analysis'])"
+        default_factory=list, description="List of agent capabilities (e.g., ['search', 'analysis'])"
     )
 
 
@@ -82,24 +69,12 @@ class InvokeRequest(BaseModel):
         ```
     """
 
-    component_id: str = Field(
-        ...,
-        description="ID of the agent/team/workflow to invoke"
-    )
-    message: str = Field(
-        ...,
-        description="User message or task for the agent to process"
-    )
-    session_id: Optional[str] = Field(
-        None,
-        description="Session ID for maintaining conversation context"
-    )
-    context: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Additional context (user info, metadata, etc.)"
-    )
+    component_id: str = Field(..., description="ID of the agent/team/workflow to invoke")
+    message: str = Field(..., description="User message or task for the agent to process")
+    session_id: Optional[str] = Field(None, description="Session ID for maintaining conversation context")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context (user info, metadata, etc.)")
 
-    @field_validator('message')
+    @field_validator("message")
     @classmethod
     def message_not_empty(cls, v: str) -> str:
         """
@@ -115,10 +90,10 @@ class InvokeRequest(BaseModel):
             ValueError: If message is empty or whitespace only
         """
         if not v or not v.strip():
-            raise ValueError('message cannot be empty or whitespace only')
+            raise ValueError("message cannot be empty or whitespace only")
         return v
 
-    @field_validator('session_id')
+    @field_validator("session_id")
     @classmethod
     def session_id_format(cls, v: Optional[str]) -> Optional[str]:
         """
@@ -133,10 +108,8 @@ class InvokeRequest(BaseModel):
         Raises:
             ValueError: If session_id contains invalid characters
         """
-        if v and not re.match(r'^[a-zA-Z0-9\-_]+$', v):
-            raise ValueError(
-                'session_id must contain only alphanumeric characters, hyphens, and underscores'
-            )
+        if v and not re.match(r"^[a-zA-Z0-9\-_]+$", v):
+            raise ValueError("session_id must contain only alphanumeric characters, hyphens, and underscores")
         return v
 
 
@@ -168,34 +141,13 @@ class InvokeResponse(BaseModel):
         ```
     """
 
-    component_id: str = Field(
-        ...,
-        description="ID of the component that was invoked"
-    )
-    component_type: str = Field(
-        ...,
-        description="Type of component: 'agent', 'team', or 'workflow'"
-    )
-    output: str = Field(
-        ...,
-        description="The agent's response content"
-    )
-    session_id: Optional[str] = Field(
-        None,
-        description="Session ID for this invocation"
-    )
-    status: str = Field(
-        ...,
-        description="Status of invocation: 'success' or 'error'"
-    )
-    error: Optional[str] = Field(
-        None,
-        description="Error message if status is 'error'"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Optional metadata (timing, tools used, etc.)"
-    )
+    component_id: str = Field(..., description="ID of the component that was invoked")
+    component_type: str = Field(..., description="Type of component: 'agent', 'team', or 'workflow'")
+    output: str = Field(..., description="The agent's response content")
+    session_id: Optional[str] = Field(None, description="Session ID for this invocation")
+    status: str = Field(..., description="Status of invocation: 'success' or 'error'")
+    error: Optional[str] = Field(None, description="Error message if status is 'error'")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata (timing, tools used, etc.)")
 
 
 class ManifestResponse(BaseModel):
@@ -220,18 +172,9 @@ class ManifestResponse(BaseModel):
         ```
     """
 
-    openapi: Dict[str, Any] = Field(
-        ...,
-        description="OpenAPI specification for plugin registration"
-    )
-    plugin_type: str = Field(
-        ...,
-        description="Plugin type: 'openapi' or 'mcp'"
-    )
-    version: str = Field(
-        ...,
-        description="Plugin version"
-    )
+    openapi: Dict[str, Any] = Field(..., description="OpenAPI specification for plugin registration")
+    plugin_type: str = Field(..., description="Plugin type: 'openapi' or 'mcp'")
+    version: str = Field(..., description="Plugin version")
 
 
 class HealthResponse(BaseModel):
@@ -253,15 +196,6 @@ class HealthResponse(BaseModel):
         ```
     """
 
-    status: str = Field(
-        ...,
-        description="Health status: 'healthy' or 'unhealthy'"
-    )
-    interface: str = Field(
-        ...,
-        description="Interface type identifier"
-    )
-    components: Dict[str, bool] = Field(
-        ...,
-        description="Status of each component (agent, team, workflow)"
-    )
+    status: str = Field(..., description="Health status: 'healthy' or 'unhealthy'")
+    interface: str = Field(..., description="Interface type identifier")
+    components: Dict[str, bool] = Field(..., description="Status of each component (agent, team, workflow)")
