@@ -64,7 +64,6 @@ This will be used in the `run_local_server` method for OAuth authentication.
 
 import json
 import mimetypes
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Union
@@ -84,33 +83,9 @@ except ImportError:
     )
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
+from agno.tools.google.auth import google_authenticate
 
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                # Set quota project on credentials if available
-                creds_to_use = self.creds
-                if hasattr(self, "quota_project_id") and self.quota_project_id:
-                    creds_to_use = self.creds.with_quota_project(self.quota_project_id)
-                self.service = build("drive", "v3", credentials=creds_to_use)
-        except Exception as e:
-            log_error(f"Drive authentication failed: {e}")
-            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
-                return json.dumps(
-                    {
-                        "error": "Drive authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool with services=['drive'] to get the authentication URL."
-                    }
-                )
-            return json.dumps({"error": f"Drive authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("drive")
 
 
 class GoogleDriveTools(Toolkit):
@@ -168,6 +143,12 @@ class GoogleDriveTools(Toolkit):
             # Add write permission if allow_update is True
             if getattr(self, "allow_update", False):
                 self.scopes.append(self.DEFAULT_SCOPES[0])  # 'drive.file'
+
+    def _build_service(self):
+        creds_to_use = self.creds
+        if hasattr(self, "quota_project_id") and self.quota_project_id:
+            creds_to_use = self.creds.with_quota_project(self.quota_project_id)
+        return build("drive", "v3", credentials=creds_to_use)
 
     def _auth(self):
         """

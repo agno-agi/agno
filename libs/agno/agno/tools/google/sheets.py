@@ -45,7 +45,6 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import json
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Union
@@ -65,29 +64,9 @@ except ImportError:
     )
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
+from agno.tools.google.auth import google_authenticate
 
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                self.service = build("sheets", "v4", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Sheets authentication failed: {e}")
-            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
-                return json.dumps(
-                    {
-                        "error": "Sheets authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool with services=['sheets'] to get the authentication URL."
-                    }
-                )
-            return json.dumps({"error": f"Sheets authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("sheets")
 
 
 class GoogleSheetsTools(Toolkit):
@@ -204,6 +183,9 @@ class GoogleSheetsTools(Toolkit):
             tools.append(self.create_duplicate_sheet)
 
         super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
+
+    def _build_service(self):
+        return build("sheets", "v4", credentials=self.creds)
 
     def _auth(self) -> None:
         """

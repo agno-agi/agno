@@ -2,7 +2,6 @@ import datetime
 import json
 import textwrap
 import uuid
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
@@ -39,29 +38,9 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
     - Event IDs from list_events can be used with get_event, update_event, delete_event""")
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing the method."""
+from agno.tools.google.auth import google_authenticate
 
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                self.service = build("calendar", "v3", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Calendar authentication failed: {e}")
-            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
-                return json.dumps(
-                    {
-                        "error": "Calendar authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool with services=['calendar'] to get the authentication URL."
-                    }
-                )
-            return json.dumps({"error": f"Calendar authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("calendar")
 
 
 class GoogleCalendarTools(Toolkit):
@@ -216,6 +195,9 @@ class GoogleCalendarTools(Toolkit):
             write_scope = "https://www.googleapis.com/auth/calendar"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
+
+    def _build_service(self):
+        return build("calendar", "v3", credentials=self.creds)
 
     def _auth(self) -> None:
         """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""

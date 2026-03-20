@@ -68,7 +68,6 @@ import re
 import tempfile
 import textwrap
 from datetime import datetime, timedelta
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -93,29 +92,9 @@ except ImportError:
     )
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
+from agno.tools.google.auth import google_authenticate
 
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                self.service = build("gmail", "v1", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Gmail authentication failed: {e}")
-            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
-                return json.dumps(
-                    {
-                        "error": "Gmail authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool with services=['gmail'] to get the authentication URL."
-                    }
-                )
-            return json.dumps({"error": f"Gmail authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("gmail")
 
 
 def validate_email(email: str) -> bool:
@@ -386,6 +365,9 @@ class GmailTools(Toolkit):
             modify_scope = "https://www.googleapis.com/auth/gmail.modify"
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
+
+    def _build_service(self):
+        return build("gmail", "v1", credentials=self.creds)
 
     def _auth(self) -> None:
         """Authenticate with Gmail API using service account (priority) or OAuth flow."""
