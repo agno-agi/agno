@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.tools.google.auth import google_authenticate
 
 try:
     from google.auth.transport.requests import Request
@@ -63,8 +63,6 @@ except ImportError:
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
-
-from agno.tools.google.auth import google_authenticate
 
 authenticate = google_authenticate("sheets")
 

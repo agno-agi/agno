@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
+from agno.tools.google.auth import google_authenticate
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -37,8 +38,6 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
     - Use search_events for full-text search across event fields
     - Event IDs from list_events can be used with get_event, update_event, delete_event""")
 
-
-from agno.tools.google.auth import google_authenticate
 
 authenticate = google_authenticate("calendar")
 
