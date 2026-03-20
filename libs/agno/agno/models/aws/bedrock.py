@@ -294,9 +294,35 @@ class AwsBedrock(Model):
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
                 content = message.get_content(use_compressed_content=compress_tool_results)
+                tool_result_content: list = [{"json": {"result": content}}]
+
+                if message.images:
+                    for image in message.images:
+                        if not image.content:
+                            continue
+                        fmt = image.format
+                        if not fmt and image.mime_type:
+                            fmt = image.mime_type.split("/")[-1]
+                        if not fmt:
+                            continue
+                        if fmt not in BEDROCK_SUPPORTED_IMAGE_FORMATS:
+                            log_warning(
+                                f"Unsupported image format in tool result: {fmt}. "
+                                f"Supported formats: {BEDROCK_SUPPORTED_IMAGE_FORMATS}"
+                            )
+                            continue
+                        tool_result_content.append(
+                            {
+                                "image": {
+                                    "format": fmt,
+                                    "source": {"bytes": image.content},
+                                }
+                            }
+                        )
+
                 tool_result = {
                     "toolUseId": message.tool_call_id,
-                    "content": [{"json": {"result": content}}],
+                    "content": tool_result_content,
                 }
                 if (
                     formatted_messages
