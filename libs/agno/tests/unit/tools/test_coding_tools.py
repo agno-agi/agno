@@ -667,3 +667,104 @@ def test_default_allowed_commands():
         assert "python" in tools.allowed_commands
         assert "git" in tools.allowed_commands
         assert "pytest" in tools.allowed_commands
+
+
+# --- interpreter flag injection tests (CVE security fix) ---
+
+
+def test_run_shell_blocks_python_dash_c():
+    """Test that python -c inline code execution is blocked (interpreter flag injection)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("python -c \"__import__('os').system('id')\"")
+        assert "Error" in result
+        assert "-c" in result
+
+
+def test_run_shell_blocks_python3_dash_c():
+    """Test that python3 -c inline code execution is blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("python3 -c \"print('injected')\"")
+        assert "Error" in result
+        assert "-c" in result
+
+
+def test_run_shell_blocks_node_dash_e():
+    """Test that node -e inline code execution is blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("node -e \"console.log('pwned')\"")
+        assert "Error" in result
+
+
+def test_run_shell_blocks_ruby_dash_e():
+    """Test that ruby -e inline code execution is blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("ruby -e \"system('id')\"")
+        assert "Error" in result
+
+
+def test_run_shell_blocks_perl_dash_e():
+    """Test that perl -e inline code execution is blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("perl -e \"system('id')\"")
+        assert "Error" in result
+
+
+def test_run_shell_blocks_node_eval_flag():
+    """Test that node --eval inline code execution is blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("node --eval \"require('child_process').execSync('id')\"")
+        assert "Error" in result
+
+
+def test_run_shell_allows_python_script_file():
+    """Test that running a python script file still works after the interpreter flag fix."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        (base_dir / "safe_script.py").write_text("print('safe output')\n")
+        result = tools.run_shell("python3 safe_script.py")
+        assert "Exit code: 0" in result
+        assert "safe output" in result
+
+
+def test_run_shell_allows_non_injection_python_flags():
+    """Test that python3 --version is not blocked (not an injection flag)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("python3 --version")
+        # --version is not in _CODE_INJECTION_FLAGS; the command should succeed
+        assert "Exit code: 0" in result
+
+
+def test_run_shell_unrestricted_allows_interpreter_flags():
+    """Test that restrict_to_base_dir=False permits interpreter flags (sandbox off)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)
+        result = tools.run_shell("python3 -c \"print('unrestricted')\"")
+        assert "Exit code: 0" in result
+        assert "unrestricted" in result
+
+
+def test_run_shell_interpreter_error_names_flag_and_interpreter():
+    """Test that the block error message identifies both the flag and interpreter."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        result = tools.run_shell("python -c \"print('pwned')\"")
+        assert "Error" in result
+        assert "-c" in result
+        assert "python" in result.lower()
