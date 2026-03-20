@@ -301,6 +301,7 @@ class GoogleCalendarTools(Toolkit):
             }
         )
 
+    @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
         """
         List upcoming events from the user's Google Calendar.

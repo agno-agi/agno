@@ -265,6 +265,7 @@ class GoogleSheetsTools(Toolkit):
             }
         )
 
+    @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
         """
         Read values from a Google Sheet. Prioritizes instance attributes over method parameters.

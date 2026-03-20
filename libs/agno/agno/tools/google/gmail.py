@@ -494,6 +494,7 @@ class GmailTools(Toolkit):
             }
         )
 
+    @authenticate
     def get_latest_emails(self, count: int) -> str:
         """
         Get the latest X emails from the user's inbox.

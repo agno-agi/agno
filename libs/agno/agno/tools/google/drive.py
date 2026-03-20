@@ -220,6 +220,7 @@ class GoogleDriveTools(Toolkit):
             }
         )
 
+    @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:
         """
         List files in your Google Drive.
