@@ -8,25 +8,6 @@ from agno.utils.log import log_info
 
 
 class GoogleAuth(Toolkit):
-    """Shared Google auth for multi-toolkit agents.
-
-    Aggregates scopes from all registered Google toolkits and provides a single
-    connect_google tool that builds an OAuth URL with only the requested services.
-    Supports incremental auth via include_granted_scopes=true.
-
-    Usage:
-        google = GoogleAuth()
-        agent = Agent(tools=[
-            google,
-            GmailTools(google_auth=google),
-            GoogleCalendarTools(google_auth=google),
-        ])
-
-    Args:
-        client_id: Google OAuth client ID. Falls back to GOOGLE_CLIENT_ID env var.
-        client_secret: Google OAuth client secret. Falls back to GOOGLE_CLIENT_SECRET env var.
-        redirect_uri: OAuth redirect URI. Must match Google Cloud Console config exactly.
-    """
 
     def __init__(
         self,
