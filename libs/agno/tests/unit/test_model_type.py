@@ -156,6 +156,19 @@ class TestAccumulateModelMetrics:
         assert run_metrics.output_tokens == 15
         assert run_metrics.total_tokens == 45
 
+    def test_same_provider_and_id_but_different_api_variants_do_not_merge(self):
+        run_metrics = Metrics()
+        chat_model = _make_model()
+        chat_model.get_provider.return_value = "OpenAI Chat"
+        responses_model = _make_model()
+        responses_model.get_provider.return_value = "OpenAI Responses"
+
+        accumulate_model_metrics(_make_model_response(10, 5, 15), chat_model, ModelType.MODEL, run_metrics)
+        accumulate_model_metrics(_make_model_response(20, 10, 30), responses_model, ModelType.MODEL, run_metrics)
+
+        assert len(run_metrics.details["model"]) == 2
+        assert {entry.provider for entry in run_metrics.details["model"]} == {"OpenAI Chat", "OpenAI Responses"}
+
     def test_multiple_model_types_in_same_run(self):
         """Simulates an agent run using model + output_model."""
         run_metrics = Metrics()
@@ -260,6 +273,31 @@ class TestMetricsSerialization:
         assert "model" in restored.details
         assert "output_model" in restored.details
         assert restored.details["model"][0].id == "gpt-4o"
+
+
+class TestMetricsProviderVariants:
+    def test_openai_chat_provider_is_distinct(self):
+        from agno.models.openai.chat import OpenAIChat
+
+        model = OpenAIChat(id="gpt-4o-mini")
+
+        assert model.get_provider() == "OpenAI Chat"
+
+    def test_openai_responses_provider_is_distinct(self):
+        from agno.models.openai.responses import OpenAIResponses
+
+        model = OpenAIResponses(id="gpt-4o-mini")
+
+        assert model.get_provider() == "OpenAI Responses"
+
+    def test_openrouter_provider_variants_are_distinct(self):
+        from agno.models.openrouter import OpenRouter, OpenRouterResponses
+
+        chat_model = OpenRouter(id="openai/gpt-4o-mini")
+        responses_model = OpenRouterResponses(id="openai/gpt-4o-mini")
+
+        assert chat_model.get_provider() == "OpenRouter Chat"
+        assert responses_model.get_provider() == "OpenRouter Responses"
 
     def test_session_metrics_from_dict_with_string_keys(self):
         """SessionMetrics.from_dict should handle details from run Metrics (dict format)."""
