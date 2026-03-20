@@ -121,9 +121,14 @@ def sanitize_response_schema(schema: dict):
 
                 required_fields = []
                 for prop_name, prop_schema in schema["properties"].items():
-                    # Use the utility function to check if this is a Dict field
-                    if not is_dict_field(prop_schema):
-                        required_fields.append(prop_name)
+                    # Skip Dict fields (additionalProperties defines value type)
+                    if is_dict_field(prop_schema):
+                        continue
+                    # Skip Optional fields: those with default=null preserve their
+                    # optionality and must NOT be added to "required"
+                    if prop_schema.get("default") is None and "default" in prop_schema:
+                        continue
+                    required_fields.append(prop_name)
 
                 schema["required"] = required_fields
 
