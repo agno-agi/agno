@@ -20,7 +20,6 @@ Usage:
 
 import json
 import sys
-from typing import Any, Dict
 
 try:
     import requests
@@ -50,7 +49,7 @@ def print_response(response: requests.Response, show_body: bool = True):
     if show_body and response.content:
         try:
             body = response.json()
-            print(f"Response Body:")
+            print("Response Body:")
             print(json.dumps(body, indent=2))
         except json.JSONDecodeError:
             print(f"Response Body: {response.text}")
@@ -108,27 +107,29 @@ def test_manifest() -> bool:
 
             # Validate OpenAPI version
             if data.get("openapi") != "3.0.1":
-                print(f"\n⚠️  WARNING: Expected OpenAPI 3.0.1, got {data.get('openapi')}")
+                print(
+                    f"\n⚠️  WARNING: Expected OpenAPI 3.0.1, got {data.get('openapi')}"
+                )
 
             # Validate info section
             info = data.get("info", {})
             if not all(k in info for k in ["title", "description", "version"]):
-                print(f"\n❌ FAILED: Missing required info keys")
+                print("\n❌ FAILED: Missing required info keys")
                 return False
 
             # Check security scheme
             components = data.get("components", {})
             if "securitySchemes" not in components:
-                print(f"\n❌ FAILED: Missing securitySchemes in components")
+                print("\n❌ FAILED: Missing securitySchemes in components")
                 return False
 
             # Check that invoke path exists
             paths = data.get("paths", {})
             if not any("invoke" in path for path in paths.keys()):
-                print(f"\n❌ FAILED: No invoke path found in OpenAPI spec")
+                print("\n❌ FAILED: No invoke path found in OpenAPI spec")
                 return False
 
-            print(f"\n✅ PASSED: Manifest is valid")
+            print("\n✅ PASSED: Manifest is valid")
             print(f"   - Title: {info.get('title')}")
             print(f"   - Version: {info.get('version')}")
             print(f"   - OpenAPI: {data.get('openapi')}")
@@ -162,16 +163,20 @@ def test_manifest_structure() -> bool:
         # Check security scheme
         security_schemes = data.get("components", {}).get("securitySchemes", {})
         if "bearerAuth" not in security_schemes:
-            print(f"❌ FAILED: Missing bearerAuth security scheme")
+            print("❌ FAILED: Missing bearerAuth security scheme")
             return False
 
         bearer_auth = security_schemes["bearerAuth"]
         if bearer_auth.get("type") != "http":
-            print(f"❌ FAILED: bearerAuth type should be 'http', got {bearer_auth.get('type')}")
+            print(
+                f"❌ FAILED: bearerAuth type should be 'http', got {bearer_auth.get('type')}"
+            )
             return False
 
         if bearer_auth.get("scheme") != "bearer":
-            print(f"❌ FAILED: bearerAuth scheme should be 'bearer', got {bearer_auth.get('scheme')}")
+            print(
+                f"❌ FAILED: bearerAuth scheme should be 'bearer', got {bearer_auth.get('scheme')}"
+            )
             return False
 
         # Check schemas
@@ -193,10 +198,10 @@ def test_manifest_structure() -> bool:
         # Check that message has example
         message_prop = invoke_request["properties"]["message"]
         if "example" not in message_prop:
-            print(f"⚠️  WARNING: message property missing example")
+            print("⚠️  WARNING: message property missing example")
 
-        print(f"\n✅ PASSED: OpenAPI structure is valid")
-        print(f"   - Security scheme: bearerAuth (http/bearer)")
+        print("\n✅ PASSED: OpenAPI structure is valid")
+        print("   - Security scheme: bearerAuth (http/bearer)")
         print(f"   - Schemas defined: {len(schemas)}")
         print(f"   - InvokeRequest has example: {'example' in message_prop}")
         return True
@@ -218,10 +223,10 @@ def test_agent_discovery_without_auth() -> bool:
         print_response(response, show_body=False)
 
         if response.status_code == 401:
-            print(f"\n✅ PASSED: Correctly requires authentication (401)")
+            print("\n✅ PASSED: Correctly requires authentication (401)")
             return True
         elif response.status_code == 403:
-            print(f"\n✅ PASSED: Authenticated but discovery disabled (403)")
+            print("\n✅ PASSED: Authenticated but discovery disabled (403)")
             return True
         else:
             print(f"\n❌ FAILED: Expected 401 or 403, got {response.status_code}")
@@ -238,7 +243,7 @@ def main():
     print("  M365 Copilot Interface - Manual Test Suite")
     print("=" * 60)
     print(f"\nTarget: {BASE_URL}")
-    print(f"Testing M365 interface endpoints...\n")
+    print("Testing M365 interface endpoints...\n")
 
     results = []
 
@@ -268,7 +273,9 @@ def main():
         print("  4. Register OpenAPI spec in Copilot Studio")
         return 0
     else:
-        print(f"\n⚠️  {total - passed} test(s) failed. Please check the server configuration.")
+        print(
+            f"\n⚠️  {total - passed} test(s) failed. Please check the server configuration."
+        )
         return 1
 
 

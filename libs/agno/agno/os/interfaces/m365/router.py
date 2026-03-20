@@ -7,7 +7,7 @@ discover and invoke Agno agents.
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from agno.agent import Agent, RemoteAgent
@@ -16,6 +16,7 @@ from agno.os.interfaces.m365.auth import (
     validate_m365_token,
     validate_token_for_component,
 )
+from agno.os.interfaces.m365.manifest import generate_openapi_spec
 from agno.os.interfaces.m365.models import (
     AgentManifest,
     HealthResponse,
@@ -23,11 +24,9 @@ from agno.os.interfaces.m365.models import (
     InvokeResponse,
     ManifestResponse,
 )
-from agno.os.interfaces.m365.manifest import generate_openapi_spec
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
-
 
 # Bearer token security scheme
 security = HTTPBearer()
@@ -66,6 +65,7 @@ def _get_validated_token_dependency(
             ...
         ```
     """
+
     async def dependency(
         credentials: HTTPAuthorizationCredentials = Depends(security),
     ) -> Dict[str, Any]:
@@ -243,10 +243,7 @@ def attach_routes(
         """
         if not enable_agent_discovery:
             log_warning("Agent discovery attempted but is disabled")
-            raise HTTPException(
-                status_code=403,
-                detail="Agent discovery is disabled"
-            )
+            raise HTTPException(status_code=403, detail="Agent discovery is disabled")
 
         # Extract user info for logging
         user_info = extract_user_info(token)
@@ -257,8 +254,7 @@ def attach_routes(
         # Add agent manifest
         if agent:
             agent_desc = agent_descriptions.get(
-                agent.agent_id,
-                agent.instructions if hasattr(agent, 'instructions') else agent.name
+                agent.agent_id, agent.instructions if hasattr(agent, "instructions") else agent.name
             )
             manifests.append(
                 AgentManifest(
@@ -272,7 +268,7 @@ def attach_routes(
 
         # Add team manifest
         if team:
-            team_desc = team.instructions if hasattr(team, 'instructions') else team.name
+            team_desc = team.instructions if hasattr(team, "instructions") else team.name
             manifests.append(
                 AgentManifest(
                     agent_id=team.team_id,
@@ -285,7 +281,7 @@ def attach_routes(
 
         # Add workflow manifest
         if workflow:
-            workflow_desc = workflow.instructions if hasattr(workflow, 'instructions') else workflow.name
+            workflow_desc = workflow.instructions if hasattr(workflow, "instructions") else workflow.name
             manifests.append(
                 AgentManifest(
                     agent_id=workflow.workflow_id,
@@ -342,20 +338,12 @@ def attach_routes(
         user_email = user_info.get("email", "unknown")
         user_id = user_info.get("user_id", "unknown")
 
-        log_info(
-            f"M365: Invoke request from {user_email} ({user_id}) "
-            f"for component '{request.component_id}'"
-        )
+        log_info(f"M365: Invoke request from {user_email} ({user_id}) for component '{request.component_id}'")
 
         # Validate access to component
         if not validate_token_for_component(token, request.component_id):
-            log_warning(
-                f"Access denied for user {user_email} to component {request.component_id}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied to this component"
-            )
+            log_warning(f"Access denied for user {user_email} to component {request.component_id}")
+            raise HTTPException(status_code=403, detail="Access denied to this component")
 
         try:
             # Resolve component by ID
@@ -376,10 +364,7 @@ def attach_routes(
             else:
                 raise ValueError(f"Unknown component type: {component_type}")
 
-            log_info(
-                f"M365: Invoke successful for {request.component_id} "
-                f"by {user_email}"
-            )
+            log_info(f"M365: Invoke successful for {request.component_id} by {user_email}")
 
             return InvokeResponse(
                 component_id=request.component_id,
@@ -470,15 +455,15 @@ def _resolve_component(
         ```
     """
     # Check agent
-    if agent and hasattr(agent, 'agent_id') and agent.agent_id == component_id:
+    if agent and hasattr(agent, "agent_id") and agent.agent_id == component_id:
         return agent, "agent"
 
     # Check team
-    if team and hasattr(team, 'team_id') and team.team_id == component_id:
+    if team and hasattr(team, "team_id") and team.team_id == component_id:
         return team, "team"
 
     # Check workflow
-    if workflow and hasattr(workflow, 'workflow_id') and workflow.workflow_id == component_id:
+    if workflow and hasattr(workflow, "workflow_id") and workflow.workflow_id == component_id:
         return workflow, "workflow"
 
     # Component not found
@@ -491,8 +476,7 @@ def _resolve_component(
         available.append(f"workflow:{workflow.workflow_id}")
 
     raise ValueError(
-        f"Component '{component_id}' not found. "
-        f"Available: {', '.join(available) if available else 'none'}"
+        f"Component '{component_id}' not found. Available: {', '.join(available) if available else 'none'}"
     )
 
 
@@ -514,7 +498,7 @@ def _extract_capabilities(agent: Union[Agent, RemoteAgent]) -> List[str]:
     """
     capabilities = ["conversation"]
 
-    if hasattr(agent, 'tools') and agent.tools:
+    if hasattr(agent, "tools") and agent.tools:
         tool_names = [t.__class__.__name__ for t in agent.tools]
 
         # Check for MCP tools
@@ -563,7 +547,7 @@ async def _run_agent(
 
     # Extract output
     output = ""
-    if hasattr(response, 'content'):
+    if hasattr(response, "content"):
         output = response.content
     else:
         output = str(response)
@@ -573,7 +557,7 @@ async def _run_agent(
         "metadata": {
             "agent_id": agent.agent_id,
             "agent_name": agent.name,
-        }
+        },
     }
 
 
@@ -601,7 +585,7 @@ async def _run_team(
 
     # Extract output
     output = ""
-    if hasattr(response, 'content'):
+    if hasattr(response, "content"):
         output = response.content
     else:
         output = str(response)
@@ -611,8 +595,8 @@ async def _run_team(
         "metadata": {
             "team_id": team.team_id,
             "team_name": team.name,
-            "member_count": len(team.members) if hasattr(team, 'members') else 0,
-        }
+            "member_count": len(team.members) if hasattr(team, "members") else 0,
+        },
     }
 
 
@@ -640,7 +624,7 @@ async def _run_workflow(
 
     # Extract output
     output = ""
-    if hasattr(response, 'content'):
+    if hasattr(response, "content"):
         output = response.content
     else:
         output = str(response)
@@ -650,5 +634,5 @@ async def _run_workflow(
         "metadata": {
             "workflow_id": workflow.workflow_id,
             "workflow_name": workflow.name,
-        }
+        },
     }

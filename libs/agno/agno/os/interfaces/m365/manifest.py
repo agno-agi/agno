@@ -6,7 +6,7 @@ Agno agents as plugins.
 """
 
 import os
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from agno.agent import Agent, RemoteAgent
 from agno.team import RemoteTeam, Team
@@ -92,9 +92,7 @@ def generate_openapi_spec(
             "title": title,
             "description": description,
             "version": version,
-            "contact": {
-                "email": contact_email or "support@example.com"
-            } if contact_email else None,
+            "contact": {"email": contact_email or "support@example.com"} if contact_email else None,
         },
         "servers": [
             {
@@ -102,11 +100,7 @@ def generate_openapi_spec(
                 "description": "Agno Agent Server - Production endpoint",
             }
         ],
-        "security": [
-            {
-                "bearerAuth": []
-            }
-        ],
+        "security": [{"bearerAuth": []}],
         "components": {
             "securitySchemes": {
                 "bearerAuth": {
@@ -130,13 +124,13 @@ def generate_openapi_spec(
                             "description": "The user message or task for the agent to process",
                             "minLength": 1,
                             "maxLength": 10000,
-                            "example": "Analyze Q3 revenue trends and provide insights"
+                            "example": "Analyze Q3 revenue trends and provide insights",
                         },
                         "session_id": {
                             "type": "string",
                             "description": "Optional session ID for maintaining conversation context",
                             "pattern": "^[a-zA-Z0-9-_]+$",
-                            "example": "user-session-123"
+                            "example": "user-session-123",
                         },
                         "context": {
                             "type": "object",
@@ -145,47 +139,32 @@ def generate_openapi_spec(
                             "example": {
                                 "user_locale": "en-US",
                                 "time_zone": "America/New_York",
-                                "preferences": {"format": "detailed"}
-                            }
-                        }
-                    }
+                                "preferences": {"format": "detailed"},
+                            },
+                        },
+                    },
                 },
                 "InvokeResponse": {
                     "type": "object",
                     "properties": {
-                        "component_id": {
-                            "type": "string",
-                            "description": "ID of the component that was invoked"
-                        },
+                        "component_id": {"type": "string", "description": "ID of the component that was invoked"},
                         "component_type": {
                             "type": "string",
                             "enum": ["agent", "team", "workflow"],
-                            "description": "Type of component that was invoked"
+                            "description": "Type of component that was invoked",
                         },
-                        "output": {
-                            "type": "string",
-                            "description": "The agent's response content"
-                        },
-                        "session_id": {
-                            "type": "string",
-                            "description": "Session ID for this invocation"
-                        },
+                        "output": {"type": "string", "description": "The agent's response content"},
+                        "session_id": {"type": "string", "description": "Session ID for this invocation"},
                         "status": {
                             "type": "string",
                             "enum": ["success", "error"],
-                            "description": "Status of the invocation"
+                            "description": "Status of the invocation",
                         },
-                        "error": {
-                            "type": "string",
-                            "description": "Error message if status is 'error'"
-                        },
-                        "metadata": {
-                            "type": "object",
-                            "description": "Optional metadata (timing, tools used, etc.)"
-                        }
-                    }
-                }
-            }
+                        "error": {"type": "string", "description": "Error message if status is 'error'"},
+                        "metadata": {"type": "object", "description": "Optional metadata (timing, tools used, etc.)"},
+                    },
+                },
+            },
         },
         "paths": {},
         "tags": [],
@@ -193,33 +172,35 @@ def generate_openapi_spec(
 
     # Add tags for organization (important for Copilot Studio UX)
     if agent:
-        spec["tags"].append({
-            "name": "Agents",
-            "description": "Individual AI agents for specialized tasks",
-            "externalDocs": {
-                "description": "Learn about Agno agents",
-                "url": "https://github.com/agno-agi/agno"
+        spec["tags"].append(
+            {
+                "name": "Agents",
+                "description": "Individual AI agents for specialized tasks",
+                "externalDocs": {"description": "Learn about Agno agents", "url": "https://github.com/agno-agi/agno"},
             }
-        })
+        )
 
     if team:
-        spec["tags"].append({
-            "name": "Teams",
-            "description": "Multi-agent teams for collaborative problem-solving",
-        })
+        spec["tags"].append(
+            {
+                "name": "Teams",
+                "description": "Multi-agent teams for collaborative problem-solving",
+            }
+        )
 
     if workflow:
-        spec["tags"].append({
-            "name": "Workflows",
-            "description": "Automated workflows for orchestrated multi-step tasks",
-        })
+        spec["tags"].append(
+            {
+                "name": "Workflows",
+                "description": "Automated workflows for orchestrated multi-step tasks",
+            }
+        )
 
     # Add invoke endpoint for each component
     # Note: operationId must be stable (no changes after plugin registration)
     if agent:
         agent_desc = agent_descriptions.get(
-            agent.id,
-            agent.instructions if hasattr(agent, 'instructions') else f"Agent: {agent.name}"
+            agent.id, agent.instructions if hasattr(agent, "instructions") else f"Agent: {agent.name}"
         )
         spec["paths"][f"/m365/invoke/{agent.id}"] = _create_invoke_path(
             agent_id=agent.id,
@@ -230,7 +211,7 @@ def generate_openapi_spec(
         )
 
     if team:
-        team_desc = team.instructions if hasattr(team, 'instructions') else f"Team: {team.name}"
+        team_desc = team.instructions if hasattr(team, "instructions") else f"Team: {team.name}"
         spec["paths"][f"/m365/invoke/{team.id}"] = _create_invoke_path(
             agent_id=team.id,
             name=team.name,
@@ -240,7 +221,7 @@ def generate_openapi_spec(
         )
 
     if workflow:
-        workflow_desc = workflow.instructions if hasattr(workflow, 'instructions') else f"Workflow: {workflow.name}"
+        workflow_desc = workflow.instructions if hasattr(workflow, "instructions") else f"Workflow: {workflow.name}"
         spec["paths"][f"/m365/invoke/{workflow.id}"] = _create_invoke_path(
             agent_id=workflow.id,
             name=workflow.name,
@@ -307,13 +288,10 @@ def _create_invoke_path(
                         "example": {
                             "message": "Analyze Q3 revenue trends and provide insights",
                             "session_id": "user-session-123",
-                            "context": {
-                                "user_locale": "en-US",
-                                "time_zone": "America/New_York"
-                            }
-                        }
+                            "context": {"user_locale": "en-US", "time_zone": "America/New_York"},
+                        },
                     }
-                }
+                },
             },
             "responses": {
                 "200": {
@@ -323,44 +301,29 @@ def _create_invoke_path(
                             "schema": {
                                 "type": "object",
                                 "properties": {
-                                    "component_id": {
-                                        "type": "string",
-                                        "description": "ID of the invoked component"
-                                    },
+                                    "component_id": {"type": "string", "description": "ID of the invoked component"},
                                     "component_type": {
                                         "type": "string",
                                         "description": "Type of component",
-                                        "enum": ["agent", "team", "workflow"]
+                                        "enum": ["agent", "team", "workflow"],
                                     },
-                                    "output": {
-                                        "type": "string",
-                                        "description": "The agent's response"
-                                    },
+                                    "output": {"type": "string", "description": "The agent's response"},
                                     "status": {
                                         "type": "string",
                                         "description": "Invocation status",
-                                        "enum": ["success", "error"]
+                                        "enum": ["success", "error"],
                                     },
-                                    "error": {
-                                        "type": "string",
-                                        "description": "Error message if status is 'error'"
-                                    },
+                                    "error": {"type": "string", "description": "Error message if status is 'error'"},
                                 },
-                                "required": ["component_id", "component_type", "output", "status"]
+                                "required": ["component_id", "component_type", "output", "status"],
                             }
                         }
-                    }
+                    },
                 },
-                "401": {
-                    "description": "Unauthorized - Invalid or missing token"
-                },
-                "404": {
-                    "description": "Not Found - Component not found"
-                },
-                "500": {
-                    "description": "Internal Server Error - Agent execution failed"
-                }
-            }
+                "401": {"description": "Unauthorized - Invalid or missing token"},
+                "404": {"description": "Not Found - Component not found"},
+                "500": {"description": "Internal Server Error - Agent execution failed"},
+            },
         }
     }
 

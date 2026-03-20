@@ -191,8 +191,7 @@ class M365Copilot(BaseInterface):
         # Validation: At least one component must be provided
         if not (self.agent or self.team or self.workflow):
             raise ValueError(
-                "M365Copilot requires at least one of agent, team, or workflow. "
-                "Example: M365Copilot(agent=my_agent)"
+                "M365Copilot requires at least one of agent, team, or workflow. Example: M365Copilot(agent=my_agent)"
             )
 
         # Validation: tenant_id is required
