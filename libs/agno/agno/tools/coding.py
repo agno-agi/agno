@@ -235,6 +235,14 @@ class CodingTools(Toolkit):
 
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    # Interpreter commands whose flags can bypass the metacharacter check
+    _INTERPRETER_COMMANDS: List[str] = ["python", "python3", "ruby", "perl", "node", "nodejs", "php", "lua"]
+    # Flags that execute inline code strings; blocked in restricted mode
+    _CODE_INJECTION_FLAGS: List[str] = ["-c", "-e", "--eval", "--execute"]
+    # Interpreter commands that support inline code execution via flags like -c/-e
+    _INTERPRETER_COMMANDS: List[str] = ["python", "python3", "ruby", "perl", "node", "nodejs", "php", "lua"]
+    # Flags that pass code strings directly to interpreters; blocked in restricted mode
+    _CODE_INJECTION_FLAGS: List[str] = ["-c", "-e", "--eval", "--execute"]
 
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
@@ -270,6 +278,22 @@ class CodingTools(Toolkit):
             # Skip the command itself (already validated by allowlist above)
             if i == 0:
                 continue
+            # Block interpreter flags that allow inline code execution (-c, -e, etc.)
+            if token in self._CODE_INJECTION_FLAGS:
+                _base = Path(tokens[0]).name
+                if _base in self._INTERPRETER_COMMANDS:
+                    return (
+                        f"Error: Flag '{token}' is not allowed for interpreter "
+                        f"'{_base}' in restricted mode. Use PythonTools instead."
+                    )
+            # Block interpreter flags that allow inline code execution
+            if token in self._CODE_INJECTION_FLAGS:
+                _base = Path(tokens[0]).name
+                if _base in self._INTERPRETER_COMMANDS:
+                    return (
+                        f"Error: Flag '{token}' is not allowed for interpreter "
+                        f"'{_base}' in restricted mode. Use PythonTools instead."
+                    )
             # Skip flags
             if token.startswith("-"):
                 continue
