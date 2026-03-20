@@ -1,11 +1,9 @@
 import json
 import os
-from functools import wraps
 from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
 
 
 class GoogleAuth(Toolkit):
@@ -43,31 +41,3 @@ class GoogleAuth(Toolkit):
         }
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
         return json.dumps({"message": f"Connect {', '.join(services)}", "url": url})
-
-
-def google_authenticate(service_name: str):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            try:
-                if not self.creds or not self.creds.valid:
-                    self._auth()
-                if not self.service:
-                    self.service = self._build_service()
-            except Exception as e:
-                log_error(f"{service_name.title()} authentication failed: {e}")
-                if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
-                    return json.dumps(
-                        {
-                            "error": f"{service_name.title()} authentication failed. "
-                            "User has not connected their Google account. "
-                            f"Use the connect_google tool with services=['{service_name}'] "
-                            "to get the authentication URL."
-                        }
-                    )
-                return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
-            return func(self, *args, **kwargs)
-
-        return wrapper
-
-    return decorator
