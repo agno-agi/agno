@@ -77,11 +77,11 @@ def authenticate(func):
                 self.service = build("sheets", "v4", credentials=self.creds)
         except Exception as e:
             log_error(f"Sheets authentication failed: {e}")
-            if getattr(self, "oauth_redirect_url", None):
+            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
                 return json.dumps(
                     {
                         "error": "Sheets authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool to get the authentication URL for the user."
+                        "Use the connect_google tool with services=['sheets'] to get the authentication URL."
                     }
                 )
             return json.dumps({"error": f"Sheets authentication failed: {e}"})
@@ -120,6 +120,7 @@ class GoogleSheetsTools(Toolkit):
         enable_create_duplicate_sheet: Optional[bool] = None,
         all: bool = False,
         oauth_redirect_url: Optional[str] = None,
+        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
@@ -160,6 +161,7 @@ class GoogleSheetsTools(Toolkit):
         self.service: Optional[Resource] = None
         self.service_account_path = service_account_path
         self.oauth_redirect_url = oauth_redirect_url
+        self.google_auth = google_auth
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
@@ -186,8 +188,11 @@ class GoogleSheetsTools(Toolkit):
                     f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
                 )
 
+        if google_auth:
+            google_auth.register_service("sheets", self.scopes)
+
         tools: List[Any] = []
-        if oauth_redirect_url:
+        if oauth_redirect_url and not google_auth:
             tools.append(self.connect_google)
         if all or _read_sheet:
             tools.append(self.read_sheet)

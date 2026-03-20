@@ -42,8 +42,8 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 def authenticate(func):
     """Decorator to ensure authentication before executing the method.
 
-    When self.oauth_redirect_url is set, the error message directs the agent
-    to call connect_google so the user gets an OAuth link instead of a raw error.
+    When self.google_auth or self.oauth_redirect_url is set, the error message
+    directs the agent to call connect_google so the user gets an OAuth link.
     """
 
     @wraps(func)
@@ -55,11 +55,11 @@ def authenticate(func):
                 self.service = build("calendar", "v3", credentials=self.creds)
         except Exception as e:
             log_error(f"Calendar authentication failed: {e}")
-            if getattr(self, "oauth_redirect_url", None):
+            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
                 return json.dumps(
                     {
                         "error": "Calendar authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool to get the authentication URL for the user."
+                        "Use the connect_google tool with services=['calendar'] to get the authentication URL."
                     }
                 )
             return json.dumps({"error": f"Calendar authentication failed: {e}"})
@@ -103,6 +103,7 @@ class GoogleCalendarTools(Toolkit):
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         oauth_redirect_url: Optional[str] = None,
+        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         """Initialize GoogleCalendarTools with authentication and tool selection.
@@ -144,10 +145,12 @@ class GoogleCalendarTools(Toolkit):
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
         self.oauth_redirect_url = oauth_redirect_url
+        self.google_auth = google_auth
+        if google_auth:
+            google_auth.register_service("calendar", self.scopes)
 
         tools: List[Any] = []
-        # OAuth connect tool — only registered for server-side deployments
-        if oauth_redirect_url:
+        if oauth_redirect_url and not google_auth:
             tools.append(self.connect_google)
 
         if list_events:

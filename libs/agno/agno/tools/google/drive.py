@@ -100,11 +100,11 @@ def authenticate(func):
                 self.service = build("drive", "v3", credentials=creds_to_use)
         except Exception as e:
             log_error(f"Drive authentication failed: {e}")
-            if getattr(self, "oauth_redirect_url", None):
+            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
                 return json.dumps(
                     {
                         "error": "Drive authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool to get the authentication URL for the user."
+                        "Use the connect_google tool with services=['drive'] to get the authentication URL."
                     }
                 )
             return json.dumps({"error": f"Drive authentication failed: {e}"})
@@ -129,6 +129,7 @@ class GoogleDriveTools(Toolkit):
         upload_file: bool = False,
         download_file: bool = False,
         oauth_redirect_url: Optional[str] = None,
+        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         self.creds: Optional[Credentials] = creds
@@ -147,9 +148,12 @@ class GoogleDriveTools(Toolkit):
             raise ValueError("GOOGLE_AUTH_PORT is not set")
 
         self.oauth_redirect_url = oauth_redirect_url
+        self.google_auth = google_auth
+        if google_auth:
+            google_auth.register_service("drive", self.scopes)
 
         tools: List[Any] = []
-        if oauth_redirect_url:
+        if oauth_redirect_url and not google_auth:
             tools.append(self.connect_google)
         if list_files:
             tools.append(self.list_files)

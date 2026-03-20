@@ -96,8 +96,8 @@ except ImportError:
 def authenticate(func):
     """Decorator to ensure authentication before executing a function.
 
-    When self.oauth_redirect_url is set, the error message directs the agent
-    to call connect_google so the user gets an OAuth link instead of a raw error.
+    When self.google_auth or self.oauth_redirect_url is set, the error message
+    directs the agent to call connect_google so the user gets an OAuth link.
     """
 
     @wraps(func)
@@ -109,11 +109,11 @@ def authenticate(func):
                 self.service = build("gmail", "v1", credentials=self.creds)
         except Exception as e:
             log_error(f"Gmail authentication failed: {e}")
-            if getattr(self, "oauth_redirect_url", None):
+            if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
                 return json.dumps(
                     {
                         "error": "Gmail authentication failed. User has not connected their Google account. "
-                        "Use the connect_google tool to get the authentication URL for the user."
+                        "Use the connect_google tool with services=['gmail'] to get the authentication URL."
                     }
                 )
             return json.dumps({"error": f"Gmail authentication failed: {e}"})
@@ -208,6 +208,7 @@ class GmailTools(Toolkit):
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         oauth_redirect_url: Optional[str] = None,
+        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
@@ -251,10 +252,13 @@ class GmailTools(Toolkit):
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
         self.oauth_redirect_url = oauth_redirect_url
+        self.google_auth = google_auth
+        if google_auth:
+            google_auth.register_service("gmail", self.scopes)
 
         tools: List[Any] = []
-        # OAuth connect tool — only registered for server-side deployments
-        if oauth_redirect_url:
+        # Per-toolkit connect_google — only when using standalone oauth_redirect_url (no shared GoogleOAuth)
+        if oauth_redirect_url and not google_auth:
             tools.append(self.connect_google)
         # Reading emails
         if get_latest_emails:
