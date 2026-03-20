@@ -188,6 +188,8 @@ def __init__(
 
     team.model = model  # type: ignore[assignment]
     if fallback_config is not None:
+        if fallback_models:
+            log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
         team.fallback_config = fallback_config
     elif fallback_models:
         team.fallback_config = FallbackConfig(models=fallback_models)
