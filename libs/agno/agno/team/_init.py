@@ -187,7 +187,6 @@ def __init__(
     team.members = members
 
     team.model = model  # type: ignore[assignment]
-    team.fallback_models = fallback_models
     if fallback_config is not None:
         team.fallback_config = fallback_config
     elif fallback_models:

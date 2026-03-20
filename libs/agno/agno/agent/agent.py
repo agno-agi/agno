@@ -493,7 +493,6 @@ class Agent:
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
     ):
         self.model = model  # type: ignore[assignment]
-        self.fallback_models = fallback_models
         if fallback_config is not None:
             self.fallback_config = fallback_config
         elif fallback_models:
