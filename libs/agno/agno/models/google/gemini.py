@@ -748,6 +748,11 @@ class Gemini(Model):
             messages (List[Message]): The list of messages to convert.
             compress_tool_results: Whether to compress tool results.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages: List = []
         system_message = None
 
@@ -775,35 +780,27 @@ class Gemini(Model):
                         part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts.append(part)
                 for tool_call in message.tool_calls:
+                    try:
+                        args = (
+                            json.loads(tool_call["function"]["arguments"])
+                            if "arguments" in tool_call.get("function", {})
+                            else {}
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
                     part = Part.from_function_call(
                         name=tool_call["function"]["name"],
-                        args=json.loads(tool_call["function"]["arguments"]),
+                        args=args,
                     )
                     if "thought_signature" in tool_call:
                         part.thought_signature = base64.b64decode(tool_call["thought_signature"])
                     message_parts.append(part)
-            # Function call results
-            elif message.tool_calls is not None and len(message.tool_calls) > 0:
-                for idx, tool_call in enumerate(message.tool_calls):
-                    if isinstance(content, list) and idx < len(content):
-                        original_from_list = content[idx]
-
-                        if compress_tool_results:
-                            compressed_from_tool_call = tool_call.get("content")
-                            tc_content = compressed_from_tool_call if compressed_from_tool_call else original_from_list
-                        else:
-                            tc_content = original_from_list
-                    else:
-                        tc_content = message.get_content(use_compressed_content=compress_tool_results)
-
-                        if tc_content is None:
-                            tc_content = tool_call.get("content")
-                            if tc_content is None:
-                                tc_content = content
-
-                    message_parts.append(
-                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tc_content})
-                    )
+            # Individual tool result message (canonical format)
+            elif message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None:
+                tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                message_parts.append(
+                    Part.from_function_response(name=message.tool_name, response={"result": tc_content})
+                )
             # Regular text content
             else:
                 if isinstance(content, str):
@@ -882,7 +879,15 @@ class Gemini(Model):
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
 
-        return formatted_messages, system_message
+        # Merge consecutive messages with the same role (Gemini API rejects consecutive same-role messages)
+        merged: List[Content] = []
+        for msg in formatted_messages:
+            if merged and merged[-1].role == msg.role:
+                merged[-1].parts.extend(msg.parts)
+            else:
+                merged.append(msg)
+
+        return merged, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
         # Case 1: Audio is a bytes object
@@ -1087,42 +1092,11 @@ class Gemini(Model):
         """
         Format function call results for Gemini.
 
-        For combined messages:
-        - content: list of ORIGINAL content (for preservation)
-        - tool_calls[i]["content"]: compressed content if available (for API sending)
-
-        This allows the message to be saved with both original and compressed versions.
+        Stores individual Message per tool result in the canonical format, matching
+        OpenAI/Claude behavior for cross-model compatibility.
         """
-        combined_original_content: List = []
-        combined_function_result: List = []
-        tool_names: List[str] = []
-
-        message_metrics = MessageMetrics()
-
         if len(function_call_results) > 0:
-            for idx, result in enumerate(function_call_results):
-                combined_original_content.append(result.content)
-                compressed_content = result.get_content(use_compressed_content=compress_tool_results)
-                combined_function_result.append(
-                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
-                )
-                if result.tool_name:
-                    tool_names.append(result.tool_name)
-                if result.metrics is not None:
-                    message_metrics += result.metrics
-
-        tool_name = ", ".join(tool_names) if tool_names else None
-
-        if combined_original_content:
-            messages.append(
-                Message(
-                    role="tool",
-                    content=combined_original_content,
-                    tool_name=tool_name,
-                    tool_calls=combined_function_result,
-                    metrics=message_metrics,
-                )
-            )
+            messages.extend(function_call_results)
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
