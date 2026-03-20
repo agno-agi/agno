@@ -1,21 +1,27 @@
-from typing import Any, List, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
-from agno.utils.models._mistral_compat import (
-    AssistantMessage,
-    ImageURLChunk,
-    SystemMessage,
-    TextChunk,
-    ToolMessage,
-    UserMessage,
-)
 
-MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
+if TYPE_CHECKING:
+    from agno.utils.models._mistral_compat import (
+        AssistantMessage,
+        ImageURLChunk,
+        SystemMessage,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
+
+MistralMessage = Any  # resolved to Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage] at runtime
 
 
-def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
+def _format_image_for_message(image: Image) -> Optional[Any]:
+    from agno.utils.models._mistral_compat import ImageURLChunk
+
     # Case 1: Image is a URL
     if image.url is not None:
         return ImageURLChunk(image_url=image.url)
@@ -42,8 +48,15 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
     return None
 
 
-def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
+def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[Any]:
     from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+    from agno.utils.models._mistral_compat import (
+        AssistantMessage,
+        SystemMessage,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
     messages = normalize_tool_messages(messages)

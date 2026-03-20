@@ -8,13 +8,16 @@ can simply do:
 
 import importlib.metadata
 
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug
 
 try:
     _mistral_version = int(importlib.metadata.version("mistralai").split(".")[0])
 except importlib.metadata.PackageNotFoundError:
-    log_error("`mistralai` not installed. Please install using `pip install mistralai`")
-    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
+    raise ImportError(
+        "`mistralai` not installed. Please install it with: pip install mistralai
+"
+        "Or install agno with the mistral extra: pip install agno[mistral]"
+    )
 
 
 if _mistral_version >= 2:
