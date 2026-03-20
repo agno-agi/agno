@@ -62,6 +62,7 @@ This will be used in the `run_local_server` method for OAuth authentication.
 
 """
 
+import json
 import mimetypes
 from functools import wraps
 from os import getenv
@@ -88,14 +89,25 @@ def authenticate(func):
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        if not self.creds or not self.creds.valid:
-            self._auth()
-        if not self.service:
-            # Set quota project on credentials if available
-            creds_to_use = self.creds
-            if hasattr(self, "quota_project_id") and self.quota_project_id:
-                creds_to_use = self.creds.with_quota_project(self.quota_project_id)
-            self.service = build("drive", "v3", credentials=creds_to_use)
+        try:
+            if not self.creds or not self.creds.valid:
+                self._auth()
+            if not self.service:
+                # Set quota project on credentials if available
+                creds_to_use = self.creds
+                if hasattr(self, "quota_project_id") and self.quota_project_id:
+                    creds_to_use = self.creds.with_quota_project(self.quota_project_id)
+                self.service = build("drive", "v3", credentials=creds_to_use)
+        except Exception as e:
+            log_error(f"Drive authentication failed: {e}")
+            if getattr(self, "oauth_redirect_url", None):
+                return json.dumps(
+                    {
+                        "error": "Drive authentication failed. User has not connected their Google account. "
+                        "Use the connect_google tool to get the authentication URL for the user."
+                    }
+                )
+            return json.dumps({"error": f"Drive authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -116,6 +128,7 @@ class GoogleDriveTools(Toolkit):
         list_files: bool = True,
         upload_file: bool = False,
         download_file: bool = False,
+        oauth_redirect_url: Optional[str] = None,
         **kwargs,
     ):
         self.creds: Optional[Credentials] = creds
@@ -133,7 +146,11 @@ class GoogleDriveTools(Toolkit):
         if not self.auth_port:
             raise ValueError("GOOGLE_AUTH_PORT is not set")
 
+        self.oauth_redirect_url = oauth_redirect_url
+
         tools: List[Any] = []
+        if oauth_redirect_url:
+            tools.append(self.connect_google)
         if list_files:
             tools.append(self.list_files)
         if upload_file:
@@ -187,7 +204,18 @@ class GoogleDriveTools(Toolkit):
 
             token_file.write_text(self.creds.to_json()) if self.creds else None
 
-    @authenticate
+    def connect_google(self) -> str:
+        """Get the Google OAuth URL so the user can connect their Google account.
+        Call this tool when any Drive tool returns an authentication error.
+        The user must visit the returned URL to grant access to their Google Drive.
+        """
+        return json.dumps(
+            {
+                "message": "The user needs to visit this URL to connect their Google account",
+                "url": self.oauth_redirect_url,
+            }
+        )
+
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:
         """
         List files in your Google Drive.

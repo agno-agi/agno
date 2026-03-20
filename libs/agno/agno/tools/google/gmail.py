@@ -94,7 +94,11 @@ except ImportError:
 
 
 def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
+    """Decorator to ensure authentication before executing a function.
+
+    When self.oauth_redirect_url is set, the error message directs the agent
+    to call connect_google so the user gets an OAuth link instead of a raw error.
+    """
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -105,6 +109,13 @@ def authenticate(func):
                 self.service = build("gmail", "v1", credentials=self.creds)
         except Exception as e:
             log_error(f"Gmail authentication failed: {e}")
+            if getattr(self, "oauth_redirect_url", None):
+                return json.dumps(
+                    {
+                        "error": "Gmail authentication failed. User has not connected their Google account. "
+                        "Use the connect_google tool to get the authentication URL for the user."
+                    }
+                )
             return json.dumps({"error": f"Gmail authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
@@ -196,6 +207,7 @@ class GmailTools(Toolkit):
         max_batch_size: int = 10,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        oauth_redirect_url: Optional[str] = None,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
@@ -215,6 +227,7 @@ class GmailTools(Toolkit):
             max_batch_size (int): Max items per Gmail API batch request. Maximum 100 (Gmail API limit). Defaults to 10.
             instructions (Optional[str]): Custom instructions for the toolkit. If None, uses DEFAULT_INSTRUCTIONS.
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
+            oauth_redirect_url (Optional[str]): Google OAuth consent URL for server-side auth. When set, a connect_google tool is registered and auth errors direct the agent to call it. Use for interfaces (Slack, WhatsApp) where browser popup auth is not possible.
         """
         if instructions is None:
             self.instructions = GMAIL_QUERY_INSTRUCTIONS
@@ -237,8 +250,12 @@ class GmailTools(Toolkit):
         self.max_batch_size = max(min(max_batch_size, 100), 1)
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
+        self.oauth_redirect_url = oauth_redirect_url
 
         tools: List[Any] = []
+        # OAuth connect tool — only registered for server-side deployments
+        if oauth_redirect_url:
+            tools.append(self.connect_google)
         # Reading emails
         if get_latest_emails:
             tools.append(self.get_latest_emails)
@@ -461,7 +478,18 @@ class GmailTools(Toolkit):
 
         return "\n\n".join(formatted_emails)
 
-    @authenticate
+    def connect_google(self) -> str:
+        """Get the Google OAuth URL so the user can connect their Google account.
+        Call this tool when any Gmail tool returns an authentication error.
+        The user must visit the returned URL to grant access to their Gmail.
+        """
+        return json.dumps(
+            {
+                "message": "The user needs to visit this URL to connect their Google account",
+                "url": self.oauth_redirect_url,
+            }
+        )
+
     def get_latest_emails(self, count: int) -> str:
         """
         Get the latest X emails from the user's inbox.

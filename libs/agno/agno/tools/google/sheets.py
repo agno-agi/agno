@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
+from agno.utils.log import log_error
 
 try:
     from google.auth.transport.requests import Request
@@ -69,10 +70,21 @@ def authenticate(func):
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        if not self.creds or not self.creds.valid:
-            self._auth()
-        if not self.service:
-            self.service = build("sheets", "v4", credentials=self.creds)
+        try:
+            if not self.creds or not self.creds.valid:
+                self._auth()
+            if not self.service:
+                self.service = build("sheets", "v4", credentials=self.creds)
+        except Exception as e:
+            log_error(f"Sheets authentication failed: {e}")
+            if getattr(self, "oauth_redirect_url", None):
+                return json.dumps(
+                    {
+                        "error": "Sheets authentication failed. User has not connected their Google account. "
+                        "Use the connect_google tool to get the authentication URL for the user."
+                    }
+                )
+            return json.dumps({"error": f"Sheets authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -107,6 +119,7 @@ class GoogleSheetsTools(Toolkit):
         enable_update_sheet: Optional[bool] = None,
         enable_create_duplicate_sheet: Optional[bool] = None,
         all: bool = False,
+        oauth_redirect_url: Optional[str] = None,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
@@ -146,6 +159,7 @@ class GoogleSheetsTools(Toolkit):
         self.oauth_port = oauth_port
         self.service: Optional[Resource] = None
         self.service_account_path = service_account_path
+        self.oauth_redirect_url = oauth_redirect_url
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
@@ -173,6 +187,8 @@ class GoogleSheetsTools(Toolkit):
                 )
 
         tools: List[Any] = []
+        if oauth_redirect_url:
+            tools.append(self.connect_google)
         if all or _read_sheet:
             tools.append(self.read_sheet)
         if all or _create_sheet:
@@ -232,7 +248,18 @@ class GoogleSheetsTools(Toolkit):
                 self.creds = flow.run_local_server(port=self.oauth_port)
             token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
 
-    @authenticate
+    def connect_google(self) -> str:
+        """Get the Google OAuth URL so the user can connect their Google account.
+        Call this tool when any Sheets tool returns an authentication error.
+        The user must visit the returned URL to grant access to their Google Sheets.
+        """
+        return json.dumps(
+            {
+                "message": "The user needs to visit this URL to connect their Google account",
+                "url": self.oauth_redirect_url,
+            }
+        )
+
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
         """
         Read values from a Google Sheet. Prioritizes instance attributes over method parameters.

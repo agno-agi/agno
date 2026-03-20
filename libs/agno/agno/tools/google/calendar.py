@@ -40,7 +40,11 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 
 
 def authenticate(func):
-    """Decorator to ensure authentication before executing the method."""
+    """Decorator to ensure authentication before executing the method.
+
+    When self.oauth_redirect_url is set, the error message directs the agent
+    to call connect_google so the user gets an OAuth link instead of a raw error.
+    """
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -51,6 +55,13 @@ def authenticate(func):
                 self.service = build("calendar", "v3", credentials=self.creds)
         except Exception as e:
             log_error(f"Calendar authentication failed: {e}")
+            if getattr(self, "oauth_redirect_url", None):
+                return json.dumps(
+                    {
+                        "error": "Calendar authentication failed. User has not connected their Google account. "
+                        "Use the connect_google tool to get the authentication URL for the user."
+                    }
+                )
             return json.dumps({"error": f"Calendar authentication failed: {e}"})
         return func(self, *args, **kwargs)
 
@@ -91,6 +102,7 @@ class GoogleCalendarTools(Toolkit):
         respond_to_event: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        oauth_redirect_url: Optional[str] = None,
         **kwargs,
     ):
         """Initialize GoogleCalendarTools with authentication and tool selection.
@@ -107,6 +119,7 @@ class GoogleCalendarTools(Toolkit):
             calendar_id: Calendar to operate on. Defaults to "primary".
             instructions: Custom instructions for the toolkit. If None, uses default.
             add_instructions: Whether to inject instructions into the agent system prompt.
+            oauth_redirect_url: Google OAuth consent URL for server-side auth. When set, a connect_google tool is registered and auth errors direct the agent to call it.
         """
         if allow_update:
             create_event = True
@@ -130,8 +143,12 @@ class GoogleCalendarTools(Toolkit):
         self.login_hint = login_hint
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
+        self.oauth_redirect_url = oauth_redirect_url
 
         tools: List[Any] = []
+        # OAuth connect tool — only registered for server-side deployments
+        if oauth_redirect_url:
+            tools.append(self.connect_google)
 
         if list_events:
             tools.append(self.list_events)
@@ -269,7 +286,18 @@ class GoogleCalendarTools(Toolkit):
             log_debug("Successfully authenticated with Google Calendar API.")
             log_info(f"Token file path: {token_file}")
 
-    @authenticate
+    def connect_google(self) -> str:
+        """Get the Google OAuth URL so the user can connect their Google account.
+        Call this tool when any Calendar tool returns an authentication error.
+        The user must visit the returned URL to grant access to their Google Calendar.
+        """
+        return json.dumps(
+            {
+                "message": "The user needs to visit this URL to connect their Google account",
+                "url": self.oauth_redirect_url,
+            }
+        )
+
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
         """
         List upcoming events from the user's Google Calendar.
