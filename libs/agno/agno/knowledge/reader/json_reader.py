@@ -60,7 +60,7 @@ class JSONReader(Reader):
                     name=json_name,
                     id=str(uuid4()),
                     meta_data={"page": page_number},
-                    content=json.dumps(content),
+                    content=json.dumps(content, ensure_ascii=False),
                 )
                 for page_number, content in enumerate(json_contents, start=1)
             ]
