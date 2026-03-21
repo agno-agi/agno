@@ -916,6 +916,14 @@ class Claude(Model):
                     model_response.provider_data["context_management"] = response.context_management.model_dump()  # type: ignore
                 else:
                     model_response.provider_data["context_management"] = response.context_management  # type: ignore
+        # Capture container information (ID and expiry) for session reuse
+        if hasattr(response, "container") and response.container is not None:
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data["container"] = {
+                "id": response.container.id,
+                "expires_at": str(response.container.expires_at),
+            }
+
         # Extract file IDs if skills are enabled
         if self.skills and response.content:
             file_ids: List[str] = []
@@ -1059,6 +1067,28 @@ class Claude(Model):
                         model_response.provider_data["context_management"] = context_mgmt.model_dump()
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
+
+            # Capture container information (ID and expiry) for session reuse
+            if hasattr(response.message, "container") and response.message.container is not None:  # type: ignore
+                model_response.provider_data = model_response.provider_data or {}
+                model_response.provider_data["container"] = {
+                    "id": response.message.container.id,  # type: ignore
+                    "expires_at": str(response.message.container.expires_at),  # type: ignore
+                }
+
+            # Extract file IDs from bash_code_execution_tool_result blocks (skills/code execution)
+            if self.skills and hasattr(response.message, "content") and response.message.content:  # type: ignore
+                file_ids: List[str] = []
+                for block in response.message.content:  # type: ignore
+                    if block.type == "bash_code_execution_tool_result":
+                        if hasattr(block, "content") and hasattr(block.content, "content"):
+                            if isinstance(block.content.content, list):
+                                for output_block in block.content.content:
+                                    if hasattr(output_block, "file_id"):
+                                        file_ids.append(output_block.file_id)
+                if file_ids:
+                    model_response.provider_data = model_response.provider_data or {}
+                    model_response.provider_data["file_ids"] = file_ids
 
         if (
             isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent))
