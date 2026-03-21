@@ -297,11 +297,11 @@ class MongoDb(VectorDb):
                             collection = self._get_collection()
                             collection.drop_search_index(index_name)
                             # Wait longer after index deletion
-                            time.sleep(retry_delay * 2)
+                            asyncio.sleep(retry_delay * 2)
                         except errors.OperationFailure as e:
                             if "Index already requested to be deleted" in str(e):
                                 log_info("Index is already being deleted, waiting...")
-                                time.sleep(retry_delay * 2)  # Wait longer for deletion to complete
+                                asyncio.sleep(retry_delay * 2)  # Wait longer for deletion to complete
                             else:
                                 raise
 
@@ -309,7 +309,7 @@ class MongoDb(VectorDb):
                     retries = 3
                     while retries > 0 and self._search_index_exists():
                         log_info("Waiting for index deletion to complete...")
-                        time.sleep(retry_delay)
+                        asyncio.sleep(retry_delay)
                         retries -= 1
 
                     log_info(f"Creating search index '{index_name}'.")
@@ -344,7 +344,7 @@ class MongoDb(VectorDb):
                 except errors.OperationFailure as e:
                     if "Duplicate Index" in str(e) and attempt < max_retries - 1:
                         logger.warning(f"Index already exists, retrying... (attempt {attempt + 1})")
-                        time.sleep(retry_delay * (attempt + 1))
+                        asyncio.sleep(retry_delay * (attempt + 1))
                         continue
                     logger.error(f"Failed to create search index: {e}")
                     raise
@@ -437,7 +437,7 @@ class MongoDb(VectorDb):
             except Exception as e:
                 logger.error(f"Error checking index status: {e}")
                 raise TimeoutError("Timeout waiting for search index to become ready.")
-            time.sleep(1)
+            asyncio.sleep(1)
 
     async def _wait_for_index_ready_async(self) -> None:
         """Wait until the Atlas Search index is ready asynchronously."""
@@ -551,7 +551,7 @@ class MongoDb(VectorDb):
                 collection.insert_many(prepared_docs, ordered=False)
                 log_info(f"Inserted {len(prepared_docs)} documents successfully.")
                 if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
-                    time.sleep(self.wait_after_insert_in_seconds)
+                    asyncio.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
                 logger.warning(f"Bulk write error while inserting documents: {e.details}")
             except Exception as e:
@@ -946,7 +946,7 @@ class MongoDb(VectorDb):
                 try:
                     if self._search_index_exists():
                         collection.drop_search_index(index_name)
-                        time.sleep(2)
+                        asyncio.sleep(2)
 
                 except Exception as e:
                     logger.error(f"Error dropping collection: {e}")
@@ -954,7 +954,7 @@ class MongoDb(VectorDb):
 
         # Drop the collection
         collection.drop()
-        time.sleep(2)
+        asyncio.sleep(2)
 
         log_info(f"Collection '{self.collection_name}' dropped successfully")
 

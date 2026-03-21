@@ -76,7 +76,7 @@ class WebSearchReader(Reader):
         if time_since_last_search < self.search_delay:
             sleep_time = self.search_delay - time_since_last_search
             log_debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
-            time.sleep(sleep_time)
+            asyncio.sleep(sleep_time)
 
         self._last_search_time = time.time()
 
@@ -113,10 +113,10 @@ class WebSearchReader(Reader):
                         self.rate_limit_delay * (2**attempt) if self.exponential_backoff else self.rate_limit_delay
                     )
                     logger.info(f"Rate limited, waiting {wait_time} seconds before retry")
-                    time.sleep(wait_time)
+                    asyncio.sleep(wait_time)
                 elif attempt < self.max_search_retries - 1:
                     # Other error - shorter wait
-                    time.sleep(self.search_delay)
+                    asyncio.sleep(self.search_delay)
                 else:
                     logger.error(f"All DuckDuckGo search attempts failed: {e}")
                     return []
@@ -181,7 +181,7 @@ class WebSearchReader(Reader):
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} failed for {url}: {e}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(random.uniform(1, 3))  # Random delay between retries
+                    asyncio.sleep(random.uniform(1, 3))  # Random delay between retries
                 continue
 
         logger.error(f"Failed to fetch content from {url} after {self.max_retries} attempts")
@@ -236,7 +236,7 @@ class WebSearchReader(Reader):
 
             # Add delay between requests to be respectful
             if len(documents) > 0:
-                time.sleep(self.delay_between_requests)
+                asyncio.sleep(self.delay_between_requests)
 
             # Fetch content from URL
             content = self._fetch_url_content(url)
