@@ -104,6 +104,7 @@ class Claude(Model):
     # Request parameters
     max_tokens: Optional[int] = 8192
     thinking: Optional[Dict[str, Any]] = None
+    output_config: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
     top_p: Optional[float] = None
@@ -399,6 +400,7 @@ class Claude(Model):
             {
                 "max_tokens": self.max_tokens,
                 "thinking": self.thinking,
+                "output_config": self.output_config,
                 "temperature": self.temperature,
                 "stop_sequences": self.stop_sequences,
                 "top_p": self.top_p,
@@ -470,6 +472,8 @@ class Claude(Model):
             _request_params["max_tokens"] = self.max_tokens
         if self.thinking:
             _request_params["thinking"] = self.thinking
+        if self.output_config:
+            _request_params["output_config"] = self.output_config
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
