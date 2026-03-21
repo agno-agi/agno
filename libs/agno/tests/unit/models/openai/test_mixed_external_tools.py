@@ -21,8 +21,8 @@ def _make_assistant_message_with_tool_calls(tool_calls: List[Dict]) -> Message:
 class TestFormatFunctionCallResultsMixedTools:
     """Tests for OpenAIResponses.format_function_call_results with mixed tool types."""
 
-    def test_single_regular_tool_call_id_mapped_correctly(self):
-        """A single regular tool result should have its call_id properly translated."""
+    def test_single_regular_tool_call_id_preserved(self):
+        """A single regular tool result should keep its fc_* id (translation happens at runtime)."""
         model = OpenAIResponses(id="gpt-4o")
 
         assistant_msg = _make_assistant_message_with_tool_calls(
@@ -50,8 +50,8 @@ class TestFormatFunctionCallResultsMixedTools:
             tool_call_ids=["call_regular"],
         )
 
-        # The result should have been translated to call_id
-        assert result.tool_call_id == "call_regular"
+        # fc_* id should be preserved — translation to call_* happens at runtime in _format_messages
+        assert result.tool_call_id == "fc_regular"
         assert messages[-1] is result
 
     def test_mixed_external_and_regular_tool_correct_mapping(self):
@@ -96,11 +96,11 @@ class TestFormatFunctionCallResultsMixedTools:
             tool_call_ids=["call_external", "call_regular"],
         )
 
-        # The regular result should have the REGULAR call_id, NOT the external one
-        assert regular_result.tool_call_id == "call_regular"
+        # fc_* id should be preserved — translation to call_* happens at runtime in _format_messages
+        assert regular_result.tool_call_id == "fc_regular"
 
     def test_mixed_tools_reverse_order(self):
-        """Regular tool first, external tool second - should still map correctly."""
+        """Regular tool first, external tool second - fc_* ids preserved."""
         model = OpenAIResponses(id="gpt-4o")
 
         assistant_msg = _make_assistant_message_with_tool_calls(
@@ -133,10 +133,10 @@ class TestFormatFunctionCallResultsMixedTools:
             tool_call_ids=["call_regular", "call_external"],
         )
 
-        assert regular_result.tool_call_id == "call_regular"
+        assert regular_result.tool_call_id == "fc_regular"
 
     def test_multiple_regular_tools_with_external(self):
-        """Multiple regular tools plus one external tool should all map correctly."""
+        """Multiple regular tools plus one external tool - fc_* ids preserved."""
         model = OpenAIResponses(id="gpt-4o")
 
         assistant_msg = _make_assistant_message_with_tool_calls(
@@ -176,11 +176,11 @@ class TestFormatFunctionCallResultsMixedTools:
             tool_call_ids=["call_external", "call_date", "call_time"],
         )
 
-        assert date_result.tool_call_id == "call_date"
-        assert time_result.tool_call_id == "call_time"
+        assert date_result.tool_call_id == "fc_date"
+        assert time_result.tool_call_id == "fc_time"
 
     def test_all_regular_tools_no_regression(self):
-        """All regular tools (no external) should continue to work correctly."""
+        """All regular tools (no external) - fc_* ids preserved."""
         model = OpenAIResponses(id="gpt-4o")
 
         assistant_msg = _make_assistant_message_with_tool_calls(
@@ -214,8 +214,8 @@ class TestFormatFunctionCallResultsMixedTools:
             tool_call_ids=["call_date", "call_time"],
         )
 
-        assert date_result.tool_call_id == "call_date"
-        assert time_result.tool_call_id == "call_time"
+        assert date_result.tool_call_id == "fc_date"
+        assert time_result.tool_call_id == "fc_time"
 
     def test_result_with_call_id_already_set(self):
         """If a result already has a call_id (not fc_id), it should not be corrupted."""
@@ -367,8 +367,8 @@ class TestFormatFunctionCallResultsMixedTools:
             tool_call_ids=["call_external", "call_regular"],
         )
 
-        # Should map to turn 2's regular call_id, not confused by turn 1's IDs
-        assert regular_result.tool_call_id == "call_regular"
+        # fc_* id should be preserved — translation to call_* happens at runtime in _format_messages
+        assert regular_result.tool_call_id == "fc_regular"
 
 
 class TestBuildFcIdToCallIdMap:

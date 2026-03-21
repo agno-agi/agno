@@ -1,8 +1,10 @@
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from agno.models.message import Message
+from agno.run.base import RunContext
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
 
