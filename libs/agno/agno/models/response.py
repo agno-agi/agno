@@ -4,9 +4,10 @@ from time import time
 from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import ToolCallMetrics
 from agno.models.message import Citations
-from agno.models.metrics import Metrics
-from agno.tools.function import UserInputField
+from agno.models.metrics import MessageMetrics
+from agno.tools.function import UserFeedbackQuestion, UserInputField
 
 
 class ModelResponseEvent(str, Enum):
@@ -31,7 +32,7 @@ class ToolExecution:
     tool_args: Optional[Dict[str, Any]] = None
     tool_call_error: Optional[bool] = None
     result: Optional[str] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[ToolCallMetrics] = None
 
     # In the case where a tool call creates a run of an agent/team/workflow
     child_run_id: Optional[str] = None
@@ -48,6 +49,7 @@ class ToolExecution:
 
     requires_user_input: Optional[bool] = None
     user_input_schema: Optional[List[UserInputField]] = None
+    user_feedback_schema: Optional[List[UserFeedbackQuestion]] = None
     answered: Optional[bool] = None
 
     external_execution_required: Optional[bool] = None
@@ -57,6 +59,8 @@ class ToolExecution:
 
     # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
     approval_type: Optional[str] = None
+    # ID of the approval record created for this tool (set when the run pauses).
+    approval_id: Optional[str] = None
 
     @property
     def is_paused(self) -> bool:
@@ -69,6 +73,9 @@ class ToolExecution:
 
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]
+
+        if self.user_feedback_schema is not None:
+            _dict["user_feedback_schema"] = [q.to_dict() for q in self.user_feedback_schema]
 
         return _dict
 
@@ -89,10 +96,14 @@ class ToolExecution:
             user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema") or []]
             if "user_input_schema" in data
             else None,
+            user_feedback_schema=[UserFeedbackQuestion.from_dict(q) for q in data.get("user_feedback_schema") or []]
+            if "user_feedback_schema" in data
+            else None,
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
             approval_type=data.get("approval_type"),
-            metrics=Metrics(**(data.get("metrics", {}) or {})),
+            approval_id=data.get("approval_id"),
+            metrics=ToolCallMetrics.from_dict(data["metrics"]) if data.get("metrics") else None,
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
 
@@ -128,7 +139,7 @@ class ModelResponse:
 
     citations: Optional[Citations] = None
 
-    response_usage: Optional[Metrics] = None
+    response_usage: Optional[MessageMetrics] = None
 
     created_at: int = int(time())
 
@@ -211,9 +222,9 @@ class ModelResponse:
 
         # Reconstruct response usage (Metrics)
         if data.get("response_usage") and isinstance(data["response_usage"], dict):
-            from agno.models.metrics import Metrics
+            from agno.models.metrics import MessageMetrics as _MessageMetrics
 
-            data["response_usage"] = Metrics(**data["response_usage"])
+            data["response_usage"] = _MessageMetrics.from_dict(data["response_usage"])
 
         return cls(**data)
 
@@ -223,3 +234,5 @@ class FileType(str, Enum):
     GIF = "gif"
     MP3 = "mp3"
     WAV = "wav"
+    PNG = "png"
+    JPG = "jpg"

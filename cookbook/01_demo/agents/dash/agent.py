@@ -2,6 +2,12 @@
 Dash - Self-Learning Data Agent
 =================================
 
+A self-learning data agent that queries a database and provides insights.
+
+Dash uses a dual knowledge system:
+- KNOWLEDGE: static curated knowledge (table schemas, validated queries, business rules)
+- LEARNINGS: dynamic learnings it discovers through use (type gotchas, date formats, column quirks).
+
 Test:
     python -m agents.dash.agent
 """
@@ -13,12 +19,9 @@ from agno.learn import (
     LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    UserMemoryConfig,
-    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
-from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
 from db import create_knowledge, db_url, get_postgres_db
 
@@ -27,38 +30,39 @@ from .context.semantic_model import SEMANTIC_MODEL_STR
 from .tools import create_introspect_schema_tool, create_save_validated_query_tool
 
 # ---------------------------------------------------------------------------
-# Database & Knowledge
+# Setup
 # ---------------------------------------------------------------------------
-
 agent_db = get_postgres_db()
 
-# KNOWLEDGE: Static, curated (table schemas, validated queries, business rules)
+# Dual knowledge system
+# - KNOWLEDGE: Static, curated (table schemas, validated queries, business rules)
+# - LEARNINGS: Dynamic, discovered (type errors, date formats, business rules)
 dash_knowledge = create_knowledge("Dash Knowledge", "dash_knowledge")
-
-# LEARNINGS: Dynamic, discovered (type errors, date formats, business rules)
 dash_learnings = create_knowledge("Dash Learnings", "dash_learnings")
 
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
-
 save_validated_query = create_save_validated_query_tool(dash_knowledge)
 introspect_schema = create_introspect_schema_tool(db_url)
+EXA_API_KEY = getenv("EXA_API_KEY", "")
+EXA_MCP_URL = (
+    f"https://mcp.exa.ai/mcp?exaApiKey={EXA_API_KEY}&tools="
+    "web_search_exa,"
+    "get_code_context_exa"
+)
 
-base_tools: list = [
+dash_tools: list = [
     SQLTools(db_url=db_url),
-    save_validated_query,
     introspect_schema,
-    MCPTools(
-        url=f"https://mcp.exa.ai/mcp?exaApiKey={getenv('EXA_API_KEY', '')}&tools=web_search_exa"
-    ),
+    save_validated_query,
+    MCPTools(url=EXA_MCP_URL),
 ]
 
 # ---------------------------------------------------------------------------
 # Instructions
 # ---------------------------------------------------------------------------
-
-INSTRUCTIONS = f"""\
+instructions = f"""\
 You are Dash, a self-learning data agent that provides **insights**, not just query results.
 
 ## Your Purpose
@@ -75,7 +79,7 @@ Your goal: make the user look like they've been working with this data for years
 
 **Knowledge** (static, curated):
 - Table schemas, validated queries, business rules
-- Searched automatically before each response
+- Search these using the `search_knowledge_base` tool
 - Add successful queries here with `save_validated_query`
 
 **Learnings** (dynamic, discovered):
@@ -85,7 +89,7 @@ Your goal: make the user look like they've been working with this data for years
 
 ## Workflow
 
-1. Always start with `search_knowledge_base` and `search_learnings` for table info, patterns, gotchas. Context that will help you write the best possible SQL.
+1. Always start by running `search_knowledge_base` and `search_learnings` for table info, patterns, gotchas. Context that will help you write the best possible SQL.
 2. Write SQL (LIMIT 50, no SELECT *, ORDER BY for rankings)
 3. If error -> `introspect_schema` -> fix -> `save_learning`
 4. Provide **insights**, not just data, based on the context you found.
@@ -153,38 +157,29 @@ Don't guess. If the schema doesn't have it, say so and explain what IS available
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-
 dash = Agent(
-    id="dash",
     name="Dash",
     model=OpenAIResponses(id="gpt-5.2"),
     db=agent_db,
-    instructions=INSTRUCTIONS,
+    instructions=instructions,
     knowledge=dash_knowledge,
     search_knowledge=True,
     learning=LearningMachine(
         knowledge=dash_learnings,
-        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
-        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
         learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
     ),
-    tools=base_tools,
+    tools=dash_tools,
+    enable_agentic_memory=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     read_chat_history=True,
-    num_history_runs=5,
+    num_history_runs=10,
     markdown=True,
 )
 
-# Reasoning variant - adds think/analyze tools
-reasoning_dash = dash.deep_copy(
-    update={
-        "id": "reasoning-dash",
-        "name": "Reasoning Dash",
-        "tools": base_tools + [ReasoningTools(add_instructions=True)],
-    }
-)
-
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_cases = [
         "Who won the most races in 2019?",

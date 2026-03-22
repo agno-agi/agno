@@ -1,12 +1,11 @@
-# Test Log: 01_quickstart
-
-> Updated: 2026-02-13
+# Validation run 2026-02-15T00:34:21
 
 ## Pattern Check
-
 **Status:** PASS
+**Notes:** Passed.
 
-**Result:** Checked 11 file(s). Violations: 0
+## OpenAIChat references
+- TEST_LOG.md
 
 ---
 
@@ -14,49 +13,39 @@
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/01_basic_coordination.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Missing dependency: newspaper4k.
+**Result:** Timeout after 30s
 
 ---
 
 ### 02_respond_directly_router_team.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/02_respond_directly_router_team.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
-
----
-
-### 03_delegate_to_all_members.py
-
-**Status:** PASS
-
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/03_delegate_to_all_members.py`.
-
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
 
 ### 04_respond_directly_with_history.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/04_respond_directly_with_history.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** Timeout after 30s
 
 ---
 
-### 05_team_history.py
+### 03_delegate_to_all_members.py
 
 **Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/05_team_history.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Pre-existing API issue: TypeError: Team.__init__() got an unexpected keyword argument 'pass_user_input_to_members'
+**Result:** Timeout after 30s
 
 ---
 
@@ -64,9 +53,151 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/06_history_of_members.py`.
+**Description:** Cookbook execution attempt
 
-**Result:** Executed successfully.
+**Result:** DEBUG *********** Team ID: multi-lingual-q-and-a-team ************              
+DEBUG  Session ID: conversation_f43eb21b-84cb-49e7-90fb-56595df594e6            
+DEBUG Creating new TeamSession:                                                 
+      conversation_f43eb21b-84cb-49e7-90fb-56595df594e6                         
+DEBUG *** Team Run Start: b1bbdea8-d5cc-4434-9717-7adc882fa687 ***              
+DEBUG Processing tools for model                                                
+DEBUG Added tool delegate_task_to_member                                        
+DEBUG --------------- OpenAI Response Stream Start ---------------              
+DEBUG ---------------------- Model: gpt-5.2 ----------------------              
+DEBUG ========================== system ==========================              
+DEBUG You coordinate a team of specialized AI agents to fulfill the user's      
+      request. Delegate to members when their expertise or tools are needed. For
+      straightforward requests you can handle directly — including using your   
+      own tools — respond without delegating.                                   
+                                                                  
+
+---
+
+### 09_caching.py
+
+**Status:** PASS
+
+**Description:** Cookbook execution attempt
+
+**Result:** DEBUG ****** Team ID: 383e3b9c-1acb-4d95-abc8-521b12bce557 *******              
+DEBUG ***** Session ID: 3d473467-5739-4cda-ba00-986230573c74 *****              
+DEBUG Creating new TeamSession: 3d473467-5739-4cda-ba00-986230573c74            
+DEBUG *** Team Run Start: 6495ad93-b386-4a33-a46c-d2333cb9a568 ***              
+DEBUG Processing tools for model                                                
+DEBUG Added tool delegate_task_to_member                                        
+INFO Cache hit for model response                                               
+DEBUG Added RunOutput to Team Session                                           
+DEBUG **** Team Run End: 6495ad93-b386-4a33-a46c-d2333cb9a568 ****              
+┏━ Message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                              ┃
+┃ Write a very very very explanation of caching in software                    ┃
+┃                                                                              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━ Response (0.5s) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+---
+
+### 05_team_history.py
+
+**Status:** PASS
+
+**Description:** Cookbook execution attempt
+
+**Result:** DEBUG *********** Team ID: multi-lingual-q-and-a-team ************              
+DEBUG  Session ID: conversation_5f6ff1a0-f107-49ec-b18e-4fcd8ad2850a            
+DEBUG Creating new TeamSession:                                                 
+      conversation_5f6ff1a0-f107-49ec-b18e-4fcd8ad2850a                         
+DEBUG *** Team Run Start: d7bb99ca-9dff-42f7-94f3-57ebd41c8d48 ***              
+DEBUG Processing tools for model                                                
+DEBUG Added tool delegate_task_to_member                                        
+DEBUG --------------- OpenAI Response Stream Start ---------------              
+DEBUG -------------------- Model: gpt-5-mini ---------------------              
+DEBUG ========================== system ==========================              
+DEBUG You coordinate a team of specialized AI agents to fulfill the user's      
+      request. Delegate to members when their expertise or tools are needed. For
+      straightforward requests you can handle directly — including using your   
+      own tools — respond without delegating.                                   
+                                                                  
+
+---
+
+### 07_share_member_interactions.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
+### 08_concurrent_member_agents.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
+### broadcast_mode.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
+### nested_teams.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
+### task_mode.py
+
+**Status:** FAIL
+
+**Description:** Cookbook execution attempt
+
+**Result:** Timeout after 30s
+
+---
+
+### 04_respond_directly_with_history.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 05_team_history.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
+
+---
+
+### 06_history_of_members.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
 
 ---
 
@@ -74,9 +205,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/07_share_member_interactions.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully.
+**Result:** PASS
 
 ---
 
@@ -84,9 +215,19 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/08_concurrent_member_agents.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully.
+**Result:** PASS
+
+---
+
+### 09_caching.py
+
+**Status:** PASS
+
+**Description:** Example executed (demo run)
+
+**Result:** PASS
 
 ---
 
@@ -94,19 +235,19 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/broadcast_mode.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully.
+**Result:** PASS
 
 ---
 
 ### nested_teams.py
 
-**Status:** PASS
+**Status:** FAIL
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/nested_teams.py`.
+**Description:** Example execution attempt
 
-**Result:** Executed successfully.
+**Result:** FAIL. Timeout after 120s
 
 ---
 
@@ -114,8 +255,9 @@
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/01_quickstart/task_mode.py`.
+**Description:** Example executed (demo run)
 
-**Result:** Executed successfully.
+**Result:** PASS
 
 ---
+

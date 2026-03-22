@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -30,9 +31,10 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -131,9 +133,11 @@ class Team:
     share_member_interactions: bool = False
 
     # If True, adds a tool to allow searching through previous sessions
-    search_session_history: Optional[bool] = False
-    # Number of past sessions to include in the search
-    num_history_sessions: Optional[int] = None
+    search_past_sessions: Optional[bool] = False
+    # Max past sessions to search (default 20 when None)
+    num_past_sessions_to_search: Optional[int] = None
+    # Max runs per session in preview (default 3 when None)
+    num_past_session_runs_in_search: Optional[int] = None
 
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
@@ -156,6 +160,9 @@ class Team:
     add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_context: bool = False
+    # Allows for custom datetime format string (e.g. "%Y-%m-%d %H:%M:%S", "%d/%m/%Y")
+    # If None, the default datetime string representation is used
+    datetime_format: Optional[str] = None
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, add the team name to the instructions
@@ -317,8 +324,6 @@ class Team:
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
-    # Version of the team config (set when loaded from DB)
-    version: Optional[int] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -326,6 +331,14 @@ class Team:
     reasoning_agent: Optional[Agent] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
+
+    # --- Team Followups ---
+    # If True, generate followup prompts after the main response
+    followups: bool = False
+    # Number of followup prompts to generate (default 3)
+    num_followups: int = 3
+    # Optional model to use for generating followups (defaults to team's model)
+    followup_model: Optional[Model] = None
 
     # --- Team Streaming ---
     # Stream the response from the Team
@@ -425,7 +438,11 @@ class Team:
         cache_session: bool = False,
         add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
-        search_session_history: Optional[bool] = False,
+        search_past_sessions: Optional[bool] = False,
+        num_past_sessions_to_search: Optional[int] = None,
+        num_past_session_runs_in_search: Optional[int] = None,
+        # Deprecated params — kept for backward compatibility
+        search_session_history: Optional[bool] = None,
         num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -435,6 +452,7 @@ class Team:
         markdown: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        datetime_format: Optional[str] = None,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
         add_member_tools_to_context: bool = False,
@@ -497,6 +515,9 @@ class Team:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        followups: bool = False,
+        num_followups: int = 3,
+        followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -537,6 +558,9 @@ class Team:
             cache_session=cache_session,
             add_team_history_to_members=add_team_history_to_members,
             num_team_history_runs=num_team_history_runs,
+            search_past_sessions=search_past_sessions,
+            num_past_sessions_to_search=num_past_sessions_to_search,
+            num_past_session_runs_in_search=num_past_session_runs_in_search,
             search_session_history=search_session_history,
             num_history_sessions=num_history_sessions,
             description=description,
@@ -547,6 +571,7 @@ class Team:
             markdown=markdown,
             add_datetime_to_context=add_datetime_to_context,
             add_location_to_context=add_location_to_context,
+            datetime_format=datetime_format,
             timezone_identifier=timezone_identifier,
             add_name_to_context=add_name_to_context,
             add_member_tools_to_context=add_member_tools_to_context,
@@ -609,6 +634,9 @@ class Team:
             reasoning_agent=reasoning_agent,
             reasoning_min_steps=reasoning_min_steps,
             reasoning_max_steps=reasoning_max_steps,
+            followups=followups,
+            num_followups=num_followups,
+            followup_model=followup_model,
             stream=stream,
             stream_events=stream_events,
             store_events=store_events,
@@ -627,6 +655,10 @@ class Team:
             callable_knowledge_cache_key=callable_knowledge_cache_key,
             callable_members_cache_key=callable_members_cache_key,
         )
+
+        # Component metadata (set by get_teams during DB loading)
+        self._version: Optional[int] = None
+        self._stage: Optional[str] = None
 
     @property
     def background_executor(self) -> Any:
@@ -830,7 +862,7 @@ class Team:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         background: bool = False,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def arun(
@@ -1006,7 +1038,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> TeamRunOutput: ...
+    ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
     @overload
     def acontinue_run(
@@ -1259,8 +1291,11 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        return _response.calculate_metrics(self, messages, current_run_metrics=current_run_metrics)
+    def _calculate_metrics(
+        self, messages: List[Message], current_run_metrics: Optional[RunMetrics] = None
+    ) -> RunMetrics:
+        # Metrics are now accumulated immediately during model calls
+        return current_run_metrics or RunMetrics()
 
     def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         _session.update_session_metrics(self, session, run_response)
@@ -1311,8 +1346,12 @@ class Team:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
-        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
+    def get_members_system_message_content(
+        self, indent: int = 0, run_context: Optional[RunContext] = None, async_mode: bool = False
+    ) -> str:
+        return _messages.get_members_system_message_content(
+            self, indent=indent, run_context=run_context, async_mode=async_mode
+        )
 
     def get_system_message(
         self,
@@ -1541,10 +1580,10 @@ class Team:
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None):
@@ -1706,6 +1745,7 @@ def get_team_by_id(
 def get_teams(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
 ) -> List["Team"]:
     """
     Get all teams from the database.
@@ -1713,13 +1753,16 @@ def get_teams(
     Args:
         db: Database to load teams from
         registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
 
     Returns:
         List of Team instances loaded from the database
     """
     teams: List[Team] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        components, _ = db.list_components(
+            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids
+        )
         for component in components:
             component_id = component["component_id"]
             config = db.get_config(component_id=component_id)
@@ -1729,8 +1772,9 @@ def get_teams(
                     if "id" not in team_config:
                         team_config["id"] = component_id
                     team = Team.from_dict(team_config, db=db, registry=registry)
-                    # Ensure team.id is set to the component_id
                     team.id = component_id
+                    team._version = component.get("current_version")
+                    team._stage = config.get("stage")
                     teams.append(team)
         return teams
 

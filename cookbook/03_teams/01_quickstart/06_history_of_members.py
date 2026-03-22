@@ -10,7 +10,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.team import Team
+from agno.team import Team, TeamMode
 
 # ---------------------------------------------------------------------------
 # Create Members
@@ -44,7 +44,7 @@ multi_lingual_q_and_a_team = Team(
         db_file="tmp/multi_lingual_q_and_a_team.db"
     ),  # Add a database to store the conversation history. This is a requirement for history to work correctly.
     determine_input_for_members=False,  # Send input directly to member agents.
-    respond_directly=True,  # Return member responses directly to the user.
+    mode=TeamMode.route,  # Return member responses directly to the user.
 )
 
 # ---------------------------------------------------------------------------

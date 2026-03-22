@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
@@ -50,6 +50,9 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -194,6 +197,7 @@ class EntityMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=effective_namespace,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -219,6 +223,7 @@ class EntityMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=effective_namespace,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -2634,6 +2639,7 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Extract entities from messages (sync)."""
         if not self.model or not self.db:
@@ -2664,6 +2670,11 @@ class EntityMemoryStore(LearningStore):
                 tools=functions,
             )
 
+            if run_metrics is not None and response.response_usage is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+
             if response.tool_executions:
                 self.entity_updated = True
                 log_debug("EntityMemoryStore: Extraction saved entities")
@@ -2678,6 +2689,7 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Extract entities from messages (async)."""
         if not self.model or not self.db:
@@ -2705,6 +2717,11 @@ class EntityMemoryStore(LearningStore):
                 messages=messages_for_model,
                 tools=functions,
             )
+
+            if run_metrics is not None and response.response_usage is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
             if response.tool_executions:
                 self.entity_updated = True
