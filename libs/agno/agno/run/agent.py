@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, MISSING
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
@@ -512,9 +512,25 @@ class CustomEvent(BaseAgentRunEvent):
     tool_call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
-        # Store arbitrary attributes directly on the instance
+        # Set declared dataclass fields to their defaults first
+        for f in self.__dataclass_fields__.values():
+            if f.name not in kwargs and f.default is not MISSING:
+                object.__setattr__(self, f.name, f.default)
+            elif f.name not in kwargs and f.default_factory is not MISSING:
+                object.__setattr__(self, f.name, f.default_factory())
+        # Then set custom attributes passed as kwargs
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            object.__setattr__(self, key, value)
+
+    def to_dict(self) -> Dict[str, Any]:
+        # Use parent to_dict (which uses asdict for declared fields)
+        _dict = super().to_dict()
+        # Add dynamic attributes set via setattr (not captured by asdict)
+        declared_fields = {f.name for f in self.__dataclass_fields__.values()}
+        for key, value in self.__dict__.items():
+            if key not in declared_fields and value is not None and key not in _dict:
+                _dict[key] = value
+        return _dict
 
 
 RunOutputEvent = Union[
