@@ -93,6 +93,40 @@ def test_sanitize_response_schema_removes_null_defaults():
     assert "default" not in optional_field or optional_field.get("default") is not None
 
 
+class OptionalWithNoneDefaultsModel(BaseModel):
+    """Model with Optional fields that have default=None, similar to issue #7066"""
+    required_field: str
+    optional_dict: dict | None = None
+    optional_list: list | None = None
+    optional_str: str | None = None
+
+
+def test_sanitize_response_schema_optional_fields_not_marked_required():
+    """Test that Optional fields (default: null) are not added to required.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7066
+    Without the fix, sanitize_response_schema unconditionally adds all
+    non-Dict fields to required, even Optional fields with default: null.
+    This breaks Structured Outputs when the LLM omits optional fields.
+    """
+    original_schema = OptionalWithNoneDefaultsModel.model_json_schema()
+    schema = copy.deepcopy(original_schema)
+
+    # Before sanitization, required should be just the required field
+    assert original_schema.get("required") == ["required_field"]
+
+    sanitize_response_schema(schema)
+
+    # After sanitization, only required_field should be in required
+    # optional_dict, optional_list, optional_str have default: null
+    # and should NOT be added to required
+    assert schema.get("required") == ["required_field"]
+    # Verify the Optional fields still have default: null (before removal)
+    assert schema["properties"]["optional_dict"].get("default") is None
+    assert schema["properties"]["optional_list"].get("default") is None
+    assert schema["properties"]["optional_str"].get("default") is None
+
+
 def test_sanitize_response_schema_nested_objects():
     """Test sanitization works with nested objects"""
 

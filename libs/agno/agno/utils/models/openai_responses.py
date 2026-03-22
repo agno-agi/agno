@@ -100,9 +100,8 @@ def sanitize_response_schema(schema: dict):
     - Sets "additionalProperties": false for all object types to disallow extra fields,
       EXCEPT when additionalProperties is already defined with a schema (Dict types).
     - Removes "default": null from optional fields.
-    - Ensures that all fields defined in "properties" are listed in "required",
-      making every property explicitly required as per OpenAI's expectations,
-      EXCEPT for Dict fields which should not be in the required array.
+    - Adds non-optional fields to "required", preserving the optionality of
+      fields with default: null (Optional fields).
     """
     if isinstance(schema, dict):
         # Enforce additionalProperties: false for object types, but preserve Dict schemas
@@ -115,15 +114,19 @@ def sanitize_response_schema(schema: dict):
                 # Convert True to False for strict mode, but preserve schema objects
                 schema["additionalProperties"] = False
 
-            # Ensure all properties are required, EXCEPT Dict fields
+            # Ensure all non-optional properties are required, EXCEPT Dict fields
             if "properties" in schema:
                 from agno.utils.models.schema_utils import is_dict_field
 
                 required_fields = []
                 for prop_name, prop_schema in schema["properties"].items():
-                    # Use the utility function to check if this is a Dict field
-                    if not is_dict_field(prop_schema):
-                        required_fields.append(prop_name)
+                    # Skip Dict fields
+                    if is_dict_field(prop_schema):
+                        continue
+                    # Skip optional fields (those with default: null)
+                    if prop_schema.get("default") is None and "default" in prop_schema:
+                        continue
+                    required_fields.append(prop_name)
 
                 schema["required"] = required_fields
 
