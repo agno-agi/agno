@@ -72,7 +72,7 @@ class WebsiteReader(Reader):
         :param max_seconds: Maximum number of seconds to delay. Default is 3.
         """
         sleep_time = random.uniform(min_seconds, max_seconds)
-        time.sleep(sleep_time)
+        asyncio.sleep(sleep_time)
 
     async def async_delay(self, min_seconds=1, max_seconds=3):
         """
