@@ -24,9 +24,7 @@ except importlib.metadata.PackageNotFoundError:
 
 
 def _raise_not_installed():
-    raise ImportError(
-        "`mistralai` not installed. Please install using `pip install mistralai`"
-    )
+    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
 
 if _mistral_available:
