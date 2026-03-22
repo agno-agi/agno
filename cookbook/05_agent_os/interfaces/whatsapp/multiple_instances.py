@@ -12,8 +12,8 @@ Setup:
        - Assistant       ->  https://myapp.com/basic/webhook
        - Web Research Assistant     ->  https://myapp.com/web-research/webhook
   4. Set environment variables (or pass tokens directly):
-       BASIC_WHATSAPP_ACCESS_TOKEN, BASIC_WHATSAPP_PHONE_NUMBER_ID, BASIC_WHATSAPP_VERIFY_TOKEN
-       RESEARCH_WHATSAPP_ACCESS_TOKEN, RESEARCH_WHATSAPP_PHONE_NUMBER_ID, RESEARCH_WHATSAPP_VERIFY_TOKEN
+       BASIC_WHATSAPP_ACCESS_TOKEN, BASIC_WHATSAPP_PHONE_NUMBER_ID, BASIC_WHATSAPP_VERIFY_TOKEN, BASIC_WHATSAPP_APP_SECRET
+       RESEARCH_WHATSAPP_ACCESS_TOKEN, RESEARCH_WHATSAPP_PHONE_NUMBER_ID, RESEARCH_WHATSAPP_VERIFY_TOKEN, RESEARCH_WHATSAPP_APP_SECRET
 
 Note: Unlike Slack (where each app can have its own Event Subscription URL),
 Meta only allows ONE webhook callback URL per WhatsApp Business app.
@@ -83,6 +83,7 @@ agent_os = AgentOS(
             access_token=getenv("BASIC_WHATSAPP_ACCESS_TOKEN"),
             phone_number_id=getenv("BASIC_WHATSAPP_PHONE_NUMBER_ID"),
             verify_token=getenv("BASIC_WHATSAPP_VERIFY_TOKEN"),
+            app_secret=getenv("BASIC_WHATSAPP_APP_SECRET"),
         ),
         Whatsapp(
             agent=web_research_agent,
@@ -90,6 +91,7 @@ agent_os = AgentOS(
             access_token=getenv("RESEARCH_WHATSAPP_ACCESS_TOKEN"),
             phone_number_id=getenv("RESEARCH_WHATSAPP_PHONE_NUMBER_ID"),
             verify_token=getenv("RESEARCH_WHATSAPP_VERIFY_TOKEN"),
+            app_secret=getenv("RESEARCH_WHATSAPP_APP_SECRET"),
         ),
     ],
 )
