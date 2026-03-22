@@ -238,6 +238,94 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         raise ValueError(f"Model provider '{model_provider}' is not supported.")
 
 
+# Mapping from runtime model provider names (as stored in Model.provider) to the
+# canonical lowercase keys accepted by _get_model_class().  This ensures that
+# model strings serialised from live model instances (e.g. by AgentOS / Studio)
+# can be safely parsed back with get_model() / _parse_model_string() — i.e. the
+# round-trip "model_instance → provider:id string → model_instance" always works.
+#
+# Keys are the lowercased runtime provider value; values are the canonical key.
+_PROVIDER_ALIAS_MAP: dict = {
+    # OpenAI family
+    "openai": "openai",
+    "openairesponses": "openai-responses",
+    "openresponses": "openai-responses",
+    # Azure family
+    "azure": "azure-openai",
+    "azureopenai": "azure-openai",
+    "azureaifoundry": "azure-ai-foundry",
+    # AWS
+    "awsbedrock": "aws-bedrock",
+    "awsclaude": "aws-claude",
+    # Google / VertexAI
+    "vertexai": "vertexai-google",
+    # Llama / Meta
+    "llamacpp": "llama-cpp",
+    "llamaopenai": "llama-openai",
+    "llama": "meta",
+    # Cerebras
+    "cerebrasopenai": "cerebras-openai",
+    # LiteLLM
+    "litellmopenai": "litellm-openai",
+    # Misc pass-through – lowercased names already match canonical keys;
+    # these entries are listed explicitly for documentation purposes.
+    "anthropic": "anthropic",
+    "google": "google",
+    "groq": "groq",
+    "mistral": "mistral",
+    "cohere": "cohere",
+    "deepseek": "deepseek",
+    "ollama": "ollama",
+    "openrouter": "openrouter",
+    "perplexity": "perplexity",
+    "huggingface": "huggingface",
+    "fireworks": "fireworks",
+    "together": "together",
+    "nebius": "nebius",
+    "nvidia": "nvidia",
+    "deepinfra": "deepinfra",
+    "ibm": "ibm",
+    "internlm": "internlm",
+    "siliconflow": "siliconflow",
+    "sambanova": "sambanova",
+    "aimlapi": "aimlapi",
+    "lmstudio": "lmstudio",
+    "langdb": "langdb",
+    "portkey": "portkey",
+    "requesty": "requesty",
+    "moonshot": "moonshot",
+    "xai": "xai",
+    "vllm": "vllm",
+    "vercel": "vercel",
+    "litellm": "litellm",
+    "nexus": "nexus",
+    "dashscope": "dashscope",
+    "neosantara": "neosantara",
+    "n1n": "n1n",
+    "cerebras": "cerebras",
+}
+
+
+def _normalize_provider(provider: str) -> str:
+    """Normalise a provider string to the canonical key used by ``_get_model_class``.
+
+    Accepts both runtime provider values (e.g. ``"OpenAI"``, ``"Azure"``,
+    ``"LMStudio"``) and already-canonical keys (e.g. ``"openai"``,
+    ``"azure-openai"``, ``"lmstudio"``).  Unknown values are returned lowercased
+    so that newly-added providers continue to work without updating this helper.
+    """
+    lowered = provider.strip().lower()
+    # Strip hyphens for alias map lookup so that canonical keys like
+    # "azure-openai" also resolve correctly.
+    normalized = _PROVIDER_ALIAS_MAP.get(lowered, None)
+    if normalized is None:
+        # Fall back: try with hyphens stripped (canonical keys already use hyphens
+        # so we preserve them when they exist in the map; otherwise just use the
+        # lowercased value as-is).
+        normalized = lowered
+    return normalized
+
+
 def _parse_model_string(model_string: str) -> Model:
     if not model_string or not isinstance(model_string, str):
         raise ValueError(f"Model string must be a non-empty string, got: {model_string}")
@@ -254,7 +342,7 @@ def _parse_model_string(model_string: str) -> Model:
         )
 
     model_provider, model_id = parts
-    model_provider = model_provider.strip().lower()
+    model_provider = _normalize_provider(model_provider)
     model_id = model_id.strip()
 
     if not model_provider or not model_id:
