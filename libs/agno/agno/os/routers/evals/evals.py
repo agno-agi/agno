@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
-from agno.models.utils import get_model
+from agno.models.utils import get_model, normalize_provider
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
@@ -429,7 +429,7 @@ def attach_routes(
             ):
                 default_model = deepcopy(agent.model)
                 if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
-                    model_provider = eval_run_input.model_provider.lower()
+                    model_provider = normalize_provider(eval_run_input.model_provider)
                     model_id = eval_run_input.model_id.lower()
                     model_string = f"{model_provider}:{model_id}"
                     model = get_model(model_string)
@@ -455,7 +455,7 @@ def attach_routes(
             ):
                 default_model = deepcopy(team.model)  # Save original
                 if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
-                    model_provider = eval_run_input.model_provider.lower()
+                    model_provider = normalize_provider(eval_run_input.model_provider)
                     model_id = eval_run_input.model_id.lower()
                     model_string = f"{model_provider}:{model_id}"
                     model = get_model(model_string)

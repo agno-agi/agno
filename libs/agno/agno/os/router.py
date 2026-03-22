@@ -9,6 +9,7 @@ from fastapi import (
 )
 
 from agno.exceptions import RemoteServerUnavailableError
+from agno.models.utils import normalize_provider
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
@@ -217,18 +218,20 @@ def get_base_router(
             for agent in os.agents:
                 model = cast(Model, agent.model)
                 if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
+                    normalized = normalize_provider(model.provider)
+                    key = (model.id, normalized)
                     if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
+                        unique_models[key] = Model(id=model.id, provider=normalized)
 
         # Collect models from local teams
         if os.teams:
             for team in os.teams:
                 model = cast(Model, team.model)
                 if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
+                    normalized = normalize_provider(model.provider)
+                    key = (model.id, normalized)
                     if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
+                        unique_models[key] = Model(id=model.id, provider=normalized)
 
         return list(unique_models.values())
 

@@ -1,6 +1,35 @@
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 from agno.models.base import Model
+
+# Mapping from runtime/display provider names to the canonical keys expected by
+# ``_get_model_class``.  Keys **must** be lowercase.  Canonical keys that are
+# already lowercase-equal to their display names (e.g. "groq" → "groq") are
+# handled automatically – only entries where the lowercased display name differs
+# from the canonical key need to appear here.
+_PROVIDER_ALIASES: Dict[str, str] = {
+    # Display name (lowered)  →  canonical key
+    "awsbedrock": "aws-bedrock",
+    "azure": "azure-openai",  # AzureOpenAI & AzureAIFoundry both expose "Azure"
+    "cerebrasopenai": "cerebras-openai",
+    "llamacpp": "llama-cpp",
+    "llamaopenai": "llama-openai",
+    "llama": "meta",
+    "openresponses": "openai-responses",
+    "vertexai": "vertexai-claude",
+    "watsonx": "ibm",
+}
+
+
+def normalize_provider(provider: str) -> str:
+    """Normalize a provider identifier to its canonical key.
+
+    Accepts any casing of the display name (e.g. ``"OpenAI"``, ``"LMStudio"``,
+    ``"Azure"``) or a canonical key (``"openai"``, ``"azure-openai"``), and
+    returns the lowercase canonical key used by ``_get_model_class``.
+    """
+    key = provider.strip().lower()
+    return _PROVIDER_ALIASES.get(key, key)
 
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:
@@ -254,7 +283,7 @@ def _parse_model_string(model_string: str) -> Model:
         )
 
     model_provider, model_id = parts
-    model_provider = model_provider.strip().lower()
+    model_provider = normalize_provider(model_provider)
     model_id = model_id.strip()
 
     if not model_provider or not model_id:
