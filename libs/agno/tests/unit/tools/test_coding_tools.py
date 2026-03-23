@@ -767,4 +767,28 @@ def test_run_shell_interpreter_error_names_flag_and_interpreter():
         result = tools.run_shell("python -c \"print('pwned')\"")
         assert "Error" in result
         assert "-c" in result
+
+
+def test_run_shell_blocks_bash_dash_c():
+    """bash -c should be blocked (shell interpreter injection)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+        result = tools.run_shell("bash -c 'id'")
+        assert "Error" in result
+
+
+def test_run_shell_blocks_sh_dash_c():
+    """sh -c should be blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+        result = tools.run_shell("sh -c 'id'")
+        assert "Error" in result
+
+
+def test_run_shell_blocks_spaceless_flag():
+    """python3 -cprint(...) with no space should be blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+        result = tools.run_shell('python3 -cprint("pwned")')
+        assert "Error" in result
         assert "python" in result.lower()

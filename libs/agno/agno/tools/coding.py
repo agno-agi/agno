@@ -1,4 +1,5 @@
 import functools
+import re
 import shlex
 import subprocess
 import tempfile
@@ -236,7 +237,7 @@ class CodingTools(Toolkit):
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
     # Interpreter commands that support inline code execution via flags like -c/-e
-    _INTERPRETER_COMMANDS: List[str] = ["python", "python3", "ruby", "perl", "node", "nodejs", "php", "lua"]
+    _INTERPRETER_COMMANDS: List[str] = ["python", "python3", "ruby", "perl", "node", "nodejs", "php", "lua", "bash", "sh", "zsh", "dash", "ksh"]
     # Flags that pass code strings directly to interpreters; blocked in restricted mode
     _CODE_INJECTION_FLAGS: List[str] = ["-c", "-e", "--eval", "--execute"]
 
@@ -281,6 +282,14 @@ class CodingTools(Toolkit):
                     return (
                         f"Error: Flag '{token}' is not allowed for interpreter "
                         f"'{_base}' in restricted mode. Use PythonTools instead."
+                    )
+            # Also block flags glued to code without a space (e.g. python3 -cprint(...))
+            _base2 = Path(tokens[0]).name
+            if _base2 in self._INTERPRETER_COMMANDS:
+                if re.match(r'^(-c|-e|--eval|--execute)\S', token):
+                    return (
+                        f"Error: Interpreter flag injection detected in token '{token[:20]}' "
+                        f"for '{_base2}' in restricted mode."
                     )
             # Skip flags
             if token.startswith("-"):
