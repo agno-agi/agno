@@ -209,7 +209,12 @@ def get_base_router(
         },
     )
     async def get_models() -> List[Model]:
-        """Return the list of all models used by agents and teams in the contextual OS"""
+        """Return the list of all models used by agents and teams in the contextual OS.
+
+        Also includes any models listed in the ``available_models`` field of the
+        AgentOS YAML configuration so that models which are offered by the server
+        but not yet assigned to a specific agent are discoverable via this endpoint.
+        """
         unique_models = {}
 
         # Collect models from local agents
@@ -229,6 +234,14 @@ def get_base_router(
                     key = (model.id, model.provider)
                     if key not in unique_models:
                         unique_models[key] = Model(id=model.id, provider=model.provider)
+
+        # Include models declared in the YAML config's available_models list.
+        # These are stored as plain model-ID strings; provider is unknown at this
+        # point so we leave it as None rather than guessing.
+        if os.config is not None and os.config.available_models:
+            for model_id in os.config.available_models:
+                if model_id and model_id not in {m.id for m in unique_models.values()}:
+                    unique_models[model_id] = Model(id=model_id)
 
         return list(unique_models.values())
 
