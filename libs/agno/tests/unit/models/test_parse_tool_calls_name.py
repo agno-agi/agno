@@ -357,7 +357,6 @@ def test_empty_string_does_not_overwrite_name(provider: str) -> None:
     When an empty string name appears in a subsequent chunk (common with Claude
     via LiteLLM streaming), the valid name must NOT be overwritten.
 
-    This tests the fix for GitHub Issue #6757 where:
     - Chunk 1: name="add" (valid)
     - Chunk 2: name="" (empty string, should be ignored)
     - Result should have name="add", not name=""
@@ -376,8 +375,11 @@ def test_empty_string_does_not_overwrite_name(provider: str) -> None:
     result = _parse(provider, chunks)
     assert len(result) >= 1, f"[{provider}] Expected at least 1 tool call, got {len(result)}"
     assert result[0]["function"]["name"] == "get_weather", (
-        f"[{provider}] Expected 'get_weather' but got '{result[0]['function']['name']}' — "
-        "empty string name overwrote valid name (GitHub Issue #6757)"
+        f"[{provider}] Expected 'get_weather' but got '{result[0]['function']['name']}'. "
+        "When streaming tool calls, the name is sent in the first chunk and subsequent chunks "
+        "may contain empty string names. The condition `if name is not None` incorrectly treats "
+        "empty strings as valid, overwriting the real name. Fix: use `if name:` (truthiness check) "
+        "to skip empty strings."
     )
     assert result[0]["function"]["arguments"] == '{"city":"Paris"}', (
         f"[{provider}] Arguments not accumulated correctly: '{result[0]['function']['arguments']}'"
