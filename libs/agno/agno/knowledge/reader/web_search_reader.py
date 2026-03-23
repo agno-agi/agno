@@ -49,8 +49,12 @@ class WebSearchReader(Reader):
     _visited_urls: Set[str] = field(default_factory=set)
     _last_search_time: float = field(default=0.0, init=False)
 
-    # Override default chunking strategy
-    chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking()
+    # Override default chunking strategy (created in __post_init__ to respect chunk_size)
+    chunking_strategy: Optional[ChunkingStrategy] = None
+
+    def __post_init__(self):
+        if self.chunking_strategy is None:
+            self.chunking_strategy = SemanticChunking(chunk_size=self.chunk_size)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
