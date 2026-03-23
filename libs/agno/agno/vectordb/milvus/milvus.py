@@ -36,6 +36,7 @@ class Milvus(VectorDb):
         distance: Distance = Distance.cosine,
         uri: str = "http://localhost:19530",
         token: Optional[str] = None,
+        db_name: Optional[str] = None,
         search_type: SearchType = SearchType.vector,
         reranker: Optional[Reranker] = None,
         sparse_vector_dimensions: int = 10000,
@@ -97,7 +98,7 @@ class Milvus(VectorDb):
         self.distance: Distance = distance
         self.uri: str = uri
         self.token: Optional[str] = token
-        self.db_name: Optional[str] = None
+        self.db_name: Optional[str] = db_name
         self._client: Optional[MilvusClient] = None
         self._async_client: Optional[AsyncMilvusClient] = None
         self.search_type: SearchType = search_type
