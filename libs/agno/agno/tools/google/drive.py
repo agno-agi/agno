@@ -135,8 +135,8 @@ class GoogleDriveTools(Toolkit):
 
     def _build_service(self):
         creds_to_use = self.creds
-        if hasattr(self, "quota_project_id") and self.quota_project_id:
-            creds_to_use = self.creds.with_quota_project(self.quota_project_id)
+        if creds_to_use and hasattr(self, "quota_project_id") and self.quota_project_id:
+            creds_to_use = creds_to_use.with_quota_project(self.quota_project_id)
         return build("drive", "v3", credentials=creds_to_use)
 
     def _auth(self, **kwargs):
@@ -174,8 +174,7 @@ class GoogleDriveTools(Toolkit):
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
                 # Opens up a browser window for OAuth authentication
-                # include_granted_scopes merges with previously granted scopes instead of replacing
-                self.creds = flow.run_local_server(port=self.auth_port, include_granted_scopes="true")  # type: ignore
+                self.creds = flow.run_local_server(port=self.auth_port)  # type: ignore
 
             token_file.write_text(self.creds.to_json()) if self.creds else None
 
