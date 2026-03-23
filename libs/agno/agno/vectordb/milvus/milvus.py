@@ -65,6 +65,7 @@ class Milvus(VectorDb):
                   [Public Endpoint and API key](https://docs.zilliz.com/docs/on-zilliz-cloud-console#cluster-details)
                   in Zilliz Cloud.
             token (Optional[str]): Token for authentication with the Milvus server.
+            db_name (Optional[str]): Default database name with the Milvus server. 
             search_type (SearchType): Type of search to perform (vector, keyword, or hybrid)
             reranker (Optional[Reranker]): Reranker to use for hybrid search results
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
@@ -96,6 +97,7 @@ class Milvus(VectorDb):
         self.distance: Distance = distance
         self.uri: str = uri
         self.token: Optional[str] = token
+        self.db_name: Optional[str] = None
         self._client: Optional[MilvusClient] = None
         self._async_client: Optional[AsyncMilvusClient] = None
         self.search_type: SearchType = search_type
@@ -112,6 +114,8 @@ class Milvus(VectorDb):
                 token=self.token,
                 **self.kwargs,
             )
+            if self.db_name :
+                self._client.use_database(db_name = self.db_name )
         return self._client
 
     @property
