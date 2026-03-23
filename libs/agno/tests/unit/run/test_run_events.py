@@ -395,3 +395,52 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tests for CustomEvent.to_dict() preserving dynamic attributes (issue #7075)
+# ──────────────────────────────────────────────────────────────────────────────
+
+from agno.run.agent import CustomEvent as AgentCustomEvent
+from agno.run.team import CustomEvent as TeamCustomEvent
+from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+
+
+def test_agent_custom_event_to_dict_preserves_dynamic_attrs():
+    """CustomEvent dynamic attributes must survive to_dict() serialisation.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7075.
+    """
+    evt = AgentCustomEvent(event="my_custom_event", user_id="u-42", step=3)
+    d = evt.to_dict()
+
+    assert d.get("event") == "my_custom_event"
+    assert d.get("user_id") == "u-42"
+    assert d.get("step") == 3
+
+
+def test_team_custom_event_to_dict_preserves_dynamic_attrs():
+    evt = TeamCustomEvent(event="team_event", payload={"key": "value"})
+    d = evt.to_dict()
+
+    assert d.get("event") == "team_event"
+    assert d.get("payload") == {"key": "value"}
+
+
+def test_workflow_custom_event_to_dict_preserves_dynamic_attrs():
+    # Note: "status" is a property on BaseWorkflowRunOutputEvent, so use a different name
+    evt = WorkflowCustomEvent(event="wf_event", wf_status="running", progress=0.5)
+    d = evt.to_dict()
+
+    assert d.get("event") == "wf_event"
+    assert d.get("wf_status") == "running"
+    assert d.get("progress") == 0.5
+
+
+def test_agent_custom_event_none_dynamic_attrs_excluded():
+    """Attributes explicitly set to None should be excluded from to_dict()."""
+    evt = AgentCustomEvent(event="evt", nullable_field=None, real_field="hello")
+    d = evt.to_dict()
+
+    assert "nullable_field" not in d
+    assert d.get("real_field") == "hello"

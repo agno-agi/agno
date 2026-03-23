@@ -493,6 +493,15 @@ class CustomEvent(BaseAgentRunEvent):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Override to include dynamically-set attributes not declared as dataclass fields.
+
+        CustomEvent uses a custom __init__ that stores all kwargs directly via setattr,
+        bypassing the dataclass __init__. As a result asdict() cannot be used safely here.
+        We build the dict directly from __dict__ instead, filtering out private attributes.
+        """
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_") and v is not None}
+
 
 RunOutputEvent = Union[
     RunStartedEvent,
