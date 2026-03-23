@@ -62,7 +62,6 @@ This will be used in the `run_local_server` method for OAuth authentication.
 
 """
 
-import json
 import mimetypes
 from os import getenv
 from pathlib import Path
