@@ -143,6 +143,10 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
+        # Container ID from the previous turn — reused within a single run so the
+        # sandbox filesystem persists between tool-call turns. Reset to None on each
+        # new model instance (i.e. each new user message).
+        self._current_container_id: Optional[str] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -503,7 +507,10 @@ class Claude(Model):
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
         if self.skills:
-            _request_params["container"] = {"skills": self.skills}
+            container: Dict[str, Any] = {"skills": self.skills}
+            if self._current_container_id:
+                container["id"] = self._current_container_id
+            _request_params["container"] = container
         if self.request_params:
             _request_params.update(self.request_params)
 
@@ -923,6 +930,7 @@ class Claude(Model):
                 "id": response.container.id,
                 "expires_at": str(response.container.expires_at),
             }
+            self._current_container_id = response.container.id
 
         # Extract file IDs if skills are enabled
         if self.skills and response.content:
@@ -1075,6 +1083,7 @@ class Claude(Model):
                     "id": response.message.container.id,  # type: ignore
                     "expires_at": str(response.message.container.expires_at),  # type: ignore
                 }
+                self._current_container_id = response.message.container.id  # type: ignore
 
             # Extract file IDs from bash_code_execution_tool_result blocks (skills/code execution)
             if self.skills and hasattr(response.message, "content") and response.message.content:  # type: ignore
