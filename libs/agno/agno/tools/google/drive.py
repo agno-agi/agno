@@ -135,8 +135,8 @@ class GoogleDriveTools(Toolkit):
 
     def _build_service(self):
         creds_to_use = self.creds
-        if hasattr(self, "quota_project_id") and self.quota_project_id:
-            creds_to_use = self.creds.with_quota_project(self.quota_project_id)
+        if creds_to_use and hasattr(self, "quota_project_id") and self.quota_project_id:
+            creds_to_use = creds_to_use.with_quota_project(self.quota_project_id)
         return build("drive", "v3", credentials=creds_to_use)
 
     def _auth(self):
