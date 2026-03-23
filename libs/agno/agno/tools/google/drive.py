@@ -102,8 +102,6 @@ class GoogleDriveTools(Toolkit):
         list_files: bool = True,
         upload_file: bool = False,
         download_file: bool = False,
-        oauth_redirect_url: Optional[str] = None,
-        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         self.creds: Optional[Credentials] = creds
@@ -121,14 +119,7 @@ class GoogleDriveTools(Toolkit):
         if not self.auth_port:
             raise ValueError("GOOGLE_AUTH_PORT is not set")
 
-        self.oauth_redirect_url = oauth_redirect_url
-        self.google_auth = google_auth
-        if google_auth:
-            google_auth.register_service("drive", self.scopes)
-
         tools: List[Any] = []
-        if oauth_redirect_url and not google_auth:
-            tools.append(self.connect_google)
         if list_files:
             tools.append(self.list_files)
         if upload_file:
@@ -188,18 +179,6 @@ class GoogleDriveTools(Toolkit):
                 self.creds = flow.run_local_server(port=self.auth_port, include_granted_scopes="true")  # type: ignore
 
             token_file.write_text(self.creds.to_json()) if self.creds else None
-
-    def connect_google(self) -> str:
-        """Get the Google OAuth URL so the user can connect their Google account.
-        Call this tool when any Drive tool returns an authentication error.
-        The user must visit the returned URL to grant access to their Google Drive.
-        """
-        return json.dumps(
-            {
-                "message": "The user needs to visit this URL to connect their Google account",
-                "url": self.oauth_redirect_url,
-            }
-        )
 
     @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:

@@ -96,8 +96,6 @@ class GoogleSheetsTools(Toolkit):
         enable_update_sheet: Optional[bool] = None,
         enable_create_duplicate_sheet: Optional[bool] = None,
         all: bool = False,
-        oauth_redirect_url: Optional[str] = None,
-        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
@@ -137,9 +135,6 @@ class GoogleSheetsTools(Toolkit):
         self.oauth_port = oauth_port
         self.service: Optional[Resource] = None
         self.service_account_path = service_account_path
-        self.oauth_redirect_url = oauth_redirect_url
-        self.google_auth = google_auth
-
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
             self.scopes = []
@@ -165,12 +160,7 @@ class GoogleSheetsTools(Toolkit):
                     f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
                 )
 
-        if google_auth:
-            google_auth.register_service("sheets", self.scopes)
-
         tools: List[Any] = []
-        if oauth_redirect_url and not google_auth:
-            tools.append(self.connect_google)
         if all or _read_sheet:
             tools.append(self.read_sheet)
         if all or _create_sheet:
@@ -233,18 +223,6 @@ class GoogleSheetsTools(Toolkit):
                 # include_granted_scopes merges with previously granted scopes instead of replacing
                 self.creds = flow.run_local_server(port=self.oauth_port, include_granted_scopes="true")
             token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
-
-    def connect_google(self) -> str:
-        """Get the Google OAuth URL so the user can connect their Google account.
-        Call this tool when any Sheets tool returns an authentication error.
-        The user must visit the returned URL to grant access to their Google Sheets.
-        """
-        return json.dumps(
-            {
-                "message": "The user needs to visit this URL to connect their Google account",
-                "url": self.oauth_redirect_url,
-            }
-        )
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

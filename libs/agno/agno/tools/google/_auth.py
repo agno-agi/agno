@@ -27,16 +27,6 @@ def google_authenticate(service_name: str):
                     self.service = self._build_service()
             except Exception as e:
                 log_error(f"{service_name.title()} authentication failed: {e}")
-                # When google_auth or oauth_redirect_url is set, direct agent to connect_google tool
-                if getattr(self, "google_auth", None) or getattr(self, "oauth_redirect_url", None):
-                    return json.dumps(
-                        {
-                            "error": f"{service_name.title()} authentication failed. "
-                            "User has not connected their Google account. "
-                            f"Use the connect_google tool with services=['{service_name}'] "
-                            "to get the authentication URL."
-                        }
-                    )
                 return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
             return func(self, *args, **kwargs)
 

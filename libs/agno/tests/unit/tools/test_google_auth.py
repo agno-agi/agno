@@ -1,5 +1,5 @@
 import json
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -46,6 +46,12 @@ def test_google_auth_custom_redirect_uri():
     assert ga.redirect_uri == "https://myapp.com/callback"
 
 
+def test_google_auth_default_redirect_uri_from_env(monkeypatch):
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", "https://env.example.com/callback")
+    ga = GoogleAuth(client_id="id")
+    assert ga.redirect_uri == "https://env.example.com/callback"
+
+
 # ---------------------------------------------------------------------------
 # Service registration
 # ---------------------------------------------------------------------------
@@ -56,20 +62,9 @@ def test_register_service(google_auth):
     assert google_auth._services["gmail"] == ["scope1", "scope2"]
 
 
-def test_gmail_registers_with_google_auth(google_auth):
-    GmailTools(google_auth=google_auth)
-    assert "gmail" in google_auth._services
-    assert google_auth._services["gmail"] == GmailTools.DEFAULT_SCOPES
-
-
-def test_calendar_registers_with_google_auth(google_auth):
-    GoogleCalendarTools(google_auth=google_auth)
-    assert "calendar" in google_auth._services
-
-
-def test_multi_toolkit_registration(google_auth):
-    GmailTools(google_auth=google_auth)
-    GoogleCalendarTools(google_auth=google_auth)
+def test_register_multiple_services(google_auth):
+    google_auth.register_service("gmail", GmailTools.DEFAULT_SCOPES)
+    google_auth.register_service("calendar", GoogleCalendarTools.DEFAULT_SCOPES)
     assert len(google_auth._services) == 2
     assert "gmail" in google_auth._services
     assert "calendar" in google_auth._services
@@ -101,7 +96,6 @@ def test_connect_google_combined_url(google_auth):
     parsed = urlparse(result["url"])
     params = parse_qs(parsed.query)
 
-    # All 3 scopes present in the URL
     scope_str = params["scope"][0]
     assert "gmail.readonly" in scope_str
     assert "gmail.modify" in scope_str
@@ -144,86 +138,48 @@ def test_connect_google_unknown_service(google_auth):
 def test_connect_google_partial_unknown(google_auth):
     google_auth.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    # "drive" not registered, "gmail" is — should still generate URL with gmail scopes
     result = json.loads(google_auth.connect_google(services=["gmail", "drive"]))
     assert "url" in result
     assert "gmail.readonly" in result["url"]
 
 
 # ---------------------------------------------------------------------------
-# Per-toolkit connect_google exclusion
+# Shared credentials (app-level pattern)
 # ---------------------------------------------------------------------------
 
 
-def test_no_per_toolkit_connect_google_with_google_auth(google_auth):
-    gmail = GmailTools(google_auth=google_auth)
-    # GoogleAuth handles connect_google centrally — toolkit should NOT register its own
-    assert "connect_google" not in gmail.functions
-
-
-def test_per_toolkit_connect_google_with_oauth_redirect_url():
-    gmail = GmailTools(oauth_redirect_url="https://example.com/oauth")
-    assert "connect_google" in gmail.functions
-
-
-def test_no_connect_google_without_either():
-    gmail = GmailTools()
-    assert "connect_google" not in gmail.functions
-
-
-# ---------------------------------------------------------------------------
-# Auth decorator error routing
-# ---------------------------------------------------------------------------
-
-
-def test_auth_error_mentions_connect_google_with_google_auth(google_auth):
-    # creds=None → _auth() will be called → will fail → should mention connect_google
-    gmail = GmailTools(google_auth=google_auth)
-    result = gmail.get_latest_emails(count=1)
-    data = json.loads(result)
-    assert "connect_google" in data["error"]
-    assert "gmail" in data["error"]
-
-
-def test_auth_error_mentions_connect_google_with_oauth_redirect_url():
-    gmail = GmailTools(oauth_redirect_url="https://example.com")
-    result = gmail.get_latest_emails(count=1)
-    data = json.loads(result)
-    assert "connect_google" in data["error"]
-
-
-def test_auth_error_plain_without_google_auth():
-    gmail = GmailTools()
-    result = gmail.get_latest_emails(count=1)
-    data = json.loads(result)
-    assert "error" in data
-    # Should NOT mention connect_google — no server-side auth configured
-    assert "connect_google" not in data["error"]
-
-
-# ---------------------------------------------------------------------------
-# Shared credentials identity
-# ---------------------------------------------------------------------------
-
-
-def test_shared_creds_same_object(mock_creds, google_auth):
-    gmail = GmailTools(creds=mock_creds, google_auth=google_auth)
-    cal = GoogleCalendarTools(creds=mock_creds, google_auth=google_auth)
-    # Both toolkit instances hold the same Credentials reference
+def test_shared_creds_same_object(mock_creds):
+    gmail = GmailTools(creds=mock_creds)
+    cal = GoogleCalendarTools(creds=mock_creds)
     assert gmail.creds is cal.creds
     assert gmail.creds is mock_creds
 
 
-def test_shared_creds_skips_auth(mock_creds, google_auth):
-    from unittest.mock import MagicMock, patch
-
-    gmail = GmailTools(creds=mock_creds, google_auth=google_auth)
+def test_shared_creds_skips_auth(mock_creds):
+    gmail = GmailTools(creds=mock_creds)
     with patch("agno.tools.google.gmail.build") as mock_build:
         mock_build.return_value = MagicMock()
         with patch.object(gmail, "_auth") as mock_auth:
             gmail.get_latest_emails(count=1)
-            # _auth() should NOT be called — creds.valid is True
             mock_auth.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Auth decorator
+# ---------------------------------------------------------------------------
+
+
+def test_auth_error_returns_json():
+    gmail = GmailTools()
+    result = gmail.get_latest_emails(count=1)
+    data = json.loads(result)
+    assert "error" in data
+    assert "Gmail" in data["error"]
+
+
+def test_no_connect_google_on_toolkit():
+    gmail = GmailTools()
+    assert "connect_google" not in gmail.functions
 
 
 # ---------------------------------------------------------------------------
@@ -231,19 +187,12 @@ def test_shared_creds_skips_auth(mock_creds, google_auth):
 # ---------------------------------------------------------------------------
 
 
-def test_backward_compat_no_google_auth():
+def test_backward_compat_custom_token_path():
     gmail = GmailTools(token_path="token_gmail.json")
-    assert gmail.google_auth is None
     assert gmail.token_path == "token_gmail.json"
 
 
-def test_backward_compat_no_oauth_redirect_url():
-    gmail = GmailTools()
-    assert gmail.oauth_redirect_url is None
-    assert gmail.google_auth is None
-
-
-def test_backward_compat_custom_scopes_still_work():
+def test_backward_compat_custom_scopes():
     custom = ["https://www.googleapis.com/auth/gmail.readonly"]
     gmail = GmailTools(
         scopes=custom,

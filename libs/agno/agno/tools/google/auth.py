@@ -7,10 +7,15 @@ from agno.tools import Toolkit
 
 
 class GoogleAuth(Toolkit):
-    def __init__(self, client_id: Optional[str] = None, redirect_uri: str = "http://localhost:8080/", **kwargs: Any):
+    def __init__(
+        self,
+        client_id: Optional[str] = None,
+        redirect_uri: Optional[str] = None,
+        **kwargs: Any,
+    ):
         super().__init__(name="google_auth", **kwargs)
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
-        self.redirect_uri = redirect_uri
+        self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
         self._services: Dict[str, List[str]] = {}
         self.register(self.connect_google)
 
@@ -18,11 +23,12 @@ class GoogleAuth(Toolkit):
         self._services[service] = scopes
 
     def connect_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets"]]) -> str:
-        """Get the Google OAuth URL to connect specific Google services.
-        Call this when any Google tool returns an authentication error.
+        """Get the OAuth URL for the user to connect their Google account.
+        Call this when a Google tool returns an authentication error.
+        Send the returned URL to the user — they must visit it to grant access.
 
         Args:
-            services: Google services to connect. Select the ones that returned auth errors.
+            services: Which Google services need access. Use the service name from the auth error.
         """
         scopes: Set[str] = set()
         for service in services:

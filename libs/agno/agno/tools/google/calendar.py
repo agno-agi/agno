@@ -76,8 +76,6 @@ class GoogleCalendarTools(Toolkit):
         respond_to_event: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
-        oauth_redirect_url: Optional[str] = None,
-        google_auth: Optional[Any] = None,
         **kwargs,
     ):
         """Initialize GoogleCalendarTools with authentication and tool selection.
@@ -94,7 +92,6 @@ class GoogleCalendarTools(Toolkit):
             calendar_id: Calendar to operate on. Defaults to "primary".
             instructions: Custom instructions for the toolkit. If None, uses default.
             add_instructions: Whether to inject instructions into the agent system prompt.
-            oauth_redirect_url: Google OAuth consent URL for server-side auth. When set, a connect_google tool is registered and auth errors direct the agent to call it.
         """
         if allow_update:
             create_event = True
@@ -118,14 +115,7 @@ class GoogleCalendarTools(Toolkit):
         self.login_hint = login_hint
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
-        self.oauth_redirect_url = oauth_redirect_url
-        self.google_auth = google_auth
-        if google_auth:
-            google_auth.register_service("calendar", self.scopes)
-
         tools: List[Any] = []
-        if oauth_redirect_url and not google_auth:
-            tools.append(self.connect_google)
 
         if list_events:
             tools.append(self.list_events)
@@ -266,18 +256,6 @@ class GoogleCalendarTools(Toolkit):
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
             log_debug("Successfully authenticated with Google Calendar API.")
             log_info(f"Token file path: {token_file}")
-
-    def connect_google(self) -> str:
-        """Get the Google OAuth URL so the user can connect their Google account.
-        Call this tool when any Calendar tool returns an authentication error.
-        The user must visit the returned URL to grant access to their Google Calendar.
-        """
-        return json.dumps(
-            {
-                "message": "The user needs to visit this URL to connect their Google account",
-                "url": self.oauth_redirect_url,
-            }
-        )
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
