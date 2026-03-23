@@ -167,8 +167,12 @@ class GoogleDriveTools(Toolkit):
         # Writing tools — disabled by default for safety
         upload_file: bool = False,
         download_file: bool = False,
+        # Restricts download_file writes to this directory; None = no restriction
+        allowed_download_dir: Optional[Path] = None,
         # When False, trashed files are excluded from search/list results automatically
         include_trashed: bool = False,
+        # Maximum file size (bytes) read_file will load into memory for non-Workspace files
+        max_read_size: int = 10 * 1024 * 1024,
         # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -180,6 +184,8 @@ class GoogleDriveTools(Toolkit):
             self.instructions = instructions
 
         self.include_trashed = include_trashed
+        self.max_read_size = max_read_size
+        self.allowed_download_dir = Path(allowed_download_dir).resolve() if allowed_download_dir else None
 
         # Pre-built credentials skip the OAuth/service account flow entirely
         self.creds = creds
@@ -323,6 +329,7 @@ class GoogleDriveTools(Toolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
+    @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> str:
         """
         Browse Google Drive files and folders. Returns metadata only, not file contents.
@@ -474,9 +481,19 @@ class GoogleDriveTools(Toolkit):
                 export_mime = None
 
             if export_mime:
+                # Workspace exports are capped at 10MB server-side
                 request = service.files().export_media(fileId=file_id, mimeType=export_mime)
                 content_bytes = self._download_bytes(request)
             else:
+                # Non-Workspace files have no server-side cap — check before downloading
+                file_size = int(metadata.get("size", 0))
+                if file_size > self.max_read_size:
+                    return json.dumps(
+                        {
+                            "error": f"File is {file_size} bytes, exceeds max_read_size ({self.max_read_size}). Use download_file instead.",
+                            "file": metadata,
+                        }
+                    )
                 request = service.files().get_media(fileId=file_id)
                 content_bytes = self._download_bytes(request)
 
@@ -509,13 +526,12 @@ class GoogleDriveTools(Toolkit):
         return await asyncio.to_thread(self.read_file, file_id)
 
     @authenticate
-    def upload_file(self, file_path: Union[str, Path], mime_type: Optional[str] = None) -> str:
+    def upload_file(self, file_path: Union[str, Path]) -> str:
         """
         Upload a local file from disk to Google Drive as a new file.
 
         Args:
             file_path (str): Local filesystem path to the file to upload
-            mime_type (str): MIME type override, inferred from file name if omitted
 
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
@@ -524,11 +540,9 @@ class GoogleDriveTools(Toolkit):
         if not path.exists() or not path.is_file():
             return json.dumps({"error": f"The file '{path}' does not exist or is not a file."})
 
-        resolved_mime_type = mime_type
+        resolved_mime_type, _ = mimetypes.guess_type(path.as_posix())
         if resolved_mime_type is None:
-            resolved_mime_type, _ = mimetypes.guess_type(path.as_posix())
-            if resolved_mime_type is None:
-                resolved_mime_type = "application/octet-stream"
+            resolved_mime_type = "application/octet-stream"
 
         try:
             service = cast(Resource, self.service)
@@ -548,18 +562,17 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not upload file '{path}': {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aupload_file(self, file_path: Union[str, Path], mime_type: Optional[str] = None) -> str:
+    async def aupload_file(self, file_path: Union[str, Path]) -> str:
         """
         Upload a local file from disk to Google Drive (async).
 
         Args:
             file_path (str): Local filesystem path to the file to upload
-            mime_type (str): MIME type override, inferred from file name if omitted
 
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await asyncio.to_thread(self.upload_file, file_path, mime_type=mime_type)
+        return await asyncio.to_thread(self.upload_file, file_path)
 
     @authenticate
     def download_file(self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None) -> str:
@@ -579,6 +592,12 @@ class GoogleDriveTools(Toolkit):
         try:
             service = cast(Resource, self.service)
             path = Path(dest_path)
+
+            if self.allowed_download_dir:
+                is_safe, path = self._check_path(str(path), self.allowed_download_dir)
+                if not is_safe:
+                    return json.dumps({"error": f"Path escapes allowed_download_dir: {dest_path}"})
+
             metadata = self._get_file_metadata(file_id, "id,name,mimeType")
             mime_type = metadata.get("mimeType", "")
 

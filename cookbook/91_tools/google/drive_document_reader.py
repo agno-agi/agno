@@ -3,8 +3,8 @@ Drive Document Reader
 =====================
 Reads and summarizes large documents from Google Drive.
 
-Uses a higher max_content_length to handle big files and returns
-structured summaries with key sections.
+Uses max_read_size to control the maximum file size loaded into memory
+and returns structured summaries with key sections.
 
 Key concepts:
 - read_file: Exports Google Docs as text, Sheets as CSV, Slides as text
