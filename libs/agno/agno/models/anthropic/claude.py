@@ -602,7 +602,9 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
+            request_kwargs = self._prepare_request_kwargs(
+                system_message, tools=tools, response_format=response_format, messages=messages
+            )
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -666,7 +668,9 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
+        request_kwargs = self._prepare_request_kwargs(
+            system_message, tools=tools, response_format=response_format, messages=messages
+        )
 
         try:
             # Beta features
@@ -721,7 +725,9 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
+            request_kwargs = self._prepare_request_kwargs(
+                system_message, tools=tools, response_format=response_format, messages=messages
+            )
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
@@ -784,7 +790,9 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
+            request_kwargs = self._prepare_request_kwargs(
+                system_message, tools=tools, response_format=response_format, messages=messages
+            )
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
