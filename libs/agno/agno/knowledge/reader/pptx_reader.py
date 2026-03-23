@@ -3,8 +3,7 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
-from agno.knowledge.chunking.document import DocumentChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -19,7 +18,9 @@ except ImportError:
 class PPTXReader(Reader):
     """Reader for PPTX files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(ChunkingStrategyType.DOCUMENT_CHUNKER, **kwargs)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod

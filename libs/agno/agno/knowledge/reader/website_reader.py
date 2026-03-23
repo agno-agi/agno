@@ -7,8 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -32,13 +31,17 @@ class WebsiteReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         max_depth: int = 3,
         max_links: int = 10,
         timeout: int = 10,
         proxy: Optional[str] = None,
         **kwargs,
     ):
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.FIXED_SIZE_CHUNKER, **kwargs
+            )
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.max_depth = max_depth
         self.max_links = max_links

@@ -3,8 +3,7 @@ import io
 from pathlib import Path
 from typing import IO, Any, Iterable, List, Optional, Sequence, Tuple, Union
 
-from agno.knowledge.chunking.row import RowChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.utils import (
@@ -23,9 +22,11 @@ class ExcelReader(Reader):
     def __init__(
         self,
         sheets: Optional[List[Union[str, int]]] = None,
-        chunking_strategy: Optional[ChunkingStrategy] = RowChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         **kwargs,
     ):
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(ChunkingStrategyType.ROW_CHUNKER, **kwargs)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.sheets = sheets
 

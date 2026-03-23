@@ -1,8 +1,7 @@
 import asyncio
 from typing import List, Optional
 
-from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -34,10 +33,14 @@ class ArxivReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance,
         **kwargs,
     ) -> None:
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.FIXED_SIZE_CHUNKER, **kwargs
+            )
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
         # ArxivReader-specific attributes
