@@ -435,3 +435,30 @@ class TestHandleAgentException:
         assert len(additional) == 2
         assert additional[0].role == "user"
         assert additional[1].role == "assistant"
+
+    def test_cache_key_with_non_serialisable_response_format(self, model):
+        """_get_model_cache_key must not raise TypeError when response_format
+        is a class (ModelMetaclass) rather than a JSON-serialisable value.
+
+        Regression test for https://github.com/agno-agi/agno/issues/7126.
+        """
+        from pydantic import BaseModel
+
+        class MyOutputModel(BaseModel):
+            answer: str
+
+        msgs = [Message(role="user", content="hello")]
+        # Should not raise TypeError: Object of type ModelMetaclass is not JSON serializable
+        key = model._get_model_cache_key(msgs, stream=False, response_format=MyOutputModel)
+        assert isinstance(key, str) and len(key) == 32  # MD5 hex digest
+
+    def test_cache_key_with_arbitrary_non_serialisable_type(self, model):
+        """Other non-serialisable types in kwargs are also handled gracefully."""
+
+        class _Opaque:
+            def __str__(self):
+                return "opaque-object"
+
+        msgs = [Message(role="user", content="test")]
+        key = model._get_model_cache_key(msgs, stream=False, response_format=_Opaque())
+        assert isinstance(key, str) and len(key) == 32

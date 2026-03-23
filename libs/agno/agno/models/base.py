@@ -463,7 +463,22 @@ class Model(ABC):
             "stream": stream,
         }
 
-        cache_str = json.dumps(cache_data, sort_keys=True)
+        def _safe_json_default(obj: Any) -> Any:
+            """Fallback serializer for types json cannot handle natively.
+
+            Pydantic ModelMetaclass and similar non-serialisable types (e.g. those
+            passed via response_format) trigger TypeError with the default encoder.
+            Convert them to a stable string representation so cache-key generation
+            never fails due to unexpected types in the message payload.
+            """
+            if isinstance(obj, type):
+                return obj.__name__
+            try:
+                return str(obj)
+            except Exception:
+                return repr(obj)
+
+        cache_str = json.dumps(cache_data, sort_keys=True, default=_safe_json_default)
         return md5(cache_str.encode()).hexdigest()
 
     def _get_model_cache_file_path(self, cache_key: str) -> Path:
