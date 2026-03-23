@@ -248,8 +248,7 @@ class GoogleCalendarTools(Toolkit):
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
             oauth_kwargs["port"] = self.oauth_port
-            # include_granted_scopes merges with previously granted scopes instead of replacing
-            self.creds = flow.run_local_server(include_granted_scopes="true", **oauth_kwargs)
+            self.creds = flow.run_local_server(**oauth_kwargs)
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:

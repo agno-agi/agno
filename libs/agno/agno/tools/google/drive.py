@@ -174,8 +174,7 @@ class GoogleDriveTools(Toolkit):
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
                 # Opens up a browser window for OAuth authentication
-                # include_granted_scopes merges with previously granted scopes instead of replacing
-                self.creds = flow.run_local_server(port=self.auth_port, include_granted_scopes="true")  # type: ignore
+                self.creds = flow.run_local_server(port=self.auth_port)  # type: ignore
 
             token_file.write_text(self.creds.to_json()) if self.creds else None
 

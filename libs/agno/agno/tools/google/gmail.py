@@ -419,8 +419,7 @@ class GmailTools(Toolkit):
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            # include_granted_scopes merges with previously granted scopes instead of replacing
-            self.creds = flow.run_local_server(port=self.port, include_granted_scopes="true", **oauth_kwargs)
+            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
