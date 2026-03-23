@@ -32,7 +32,7 @@ def test_google_auth_init():
     ga = GoogleAuth(client_id="my-id")
     assert ga.client_id == "my-id"
     assert ga._services == {}
-    assert "connect_google" in ga.functions
+    assert "authenticate_google" in ga.functions
 
 
 def test_google_auth_init_from_env(monkeypatch):
@@ -75,7 +75,7 @@ def test_register_multiple_services(google_auth):
 # ---------------------------------------------------------------------------
 
 
-def test_connect_google_combined_url(google_auth):
+def test_authenticate_google_combined_url(google_auth):
     google_auth.register_service(
         "gmail",
         [
@@ -90,7 +90,7 @@ def test_connect_google_combined_url(google_auth):
         ],
     )
 
-    result = json.loads(google_auth.connect_google(services=["gmail", "calendar"]))
+    result = json.loads(google_auth.authenticate_google(services=["gmail", "calendar"]))
 
     assert "url" in result
     parsed = urlparse(result["url"])
@@ -102,10 +102,10 @@ def test_connect_google_combined_url(google_auth):
     assert "calendar" in scope_str
 
 
-def test_connect_google_includes_oauth_params(google_auth):
+def test_authenticate_google_includes_oauth_params(google_auth):
     google_auth.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    result = json.loads(google_auth.connect_google(services=["gmail"]))
+    result = json.loads(google_auth.authenticate_google(services=["gmail"]))
     parsed = urlparse(result["url"])
     params = parse_qs(parsed.query)
 
@@ -116,29 +116,29 @@ def test_connect_google_includes_oauth_params(google_auth):
     assert params["include_granted_scopes"] == ["true"]
 
 
-def test_connect_google_single_service(google_auth):
+def test_authenticate_google_single_service(google_auth):
     google_auth.register_service("calendar", ["https://www.googleapis.com/auth/calendar"])
 
-    result = json.loads(google_auth.connect_google(services=["calendar"]))
+    result = json.loads(google_auth.authenticate_google(services=["calendar"]))
 
     assert "url" in result
     assert "calendar" in result["url"]
     assert result["message"] == "Connect calendar"
 
 
-def test_connect_google_unknown_service(google_auth):
+def test_authenticate_google_unknown_service(google_auth):
     google_auth.register_service("gmail", ["scope1"])
 
-    result = json.loads(google_auth.connect_google(services=["sheets"]))
+    result = json.loads(google_auth.authenticate_google(services=["sheets"]))
 
     assert "error" in result
     assert "gmail" in result["error"]
 
 
-def test_connect_google_partial_unknown(google_auth):
+def test_authenticate_google_partial_unknown(google_auth):
     google_auth.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    result = json.loads(google_auth.connect_google(services=["gmail", "drive"]))
+    result = json.loads(google_auth.authenticate_google(services=["gmail", "drive"]))
     assert "url" in result
     assert "gmail.readonly" in result["url"]
 
@@ -177,9 +177,9 @@ def test_auth_error_returns_json():
     assert "Gmail" in data["error"]
 
 
-def test_no_connect_google_on_toolkit():
+def test_no_authenticate_google_on_toolkit():
     gmail = GmailTools()
-    assert "connect_google" not in gmail.functions
+    assert "authenticate_google" not in gmail.functions
 
 
 # ---------------------------------------------------------------------------

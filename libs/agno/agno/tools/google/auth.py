@@ -13,22 +13,26 @@ class GoogleAuth(Toolkit):
         redirect_uri: Optional[str] = None,
         **kwargs: Any,
     ):
-        super().__init__(name="google_auth", **kwargs)
+        super().__init__(
+            name="google_auth",
+            instructions="When any Google tool (Gmail, Calendar, Drive, Sheets) returns an authentication error, immediately call authenticate_google to get the OAuth URL for the user.",
+            **kwargs,
+        )
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
         self._services: Dict[str, List[str]] = {}
-        self.register(self.connect_google)
+        self.register(self.authenticate_google)
 
     def register_service(self, service: str, scopes: List[str]) -> None:
         self._services[service] = scopes
 
-    def connect_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets"]]) -> str:
-        """Get the OAuth URL for the user to connect their Google account.
-        Call this when a Google tool returns an authentication error.
+    def authenticate_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets"]]) -> str:
+        """Get the Google OAuth URL for the user to authenticate their Google account.
+        Call this immediately when any Google tool returns an authentication error.
         Send the returned URL to the user — they must visit it to grant access.
 
         Args:
-            services: Which Google services need access. Use the service name from the auth error.
+            services: Which Google services failed authentication (e.g. ["gmail"], ["calendar"], ["gmail", "calendar"]).
         """
         scopes: Set[str] = set()
         for service in services:
