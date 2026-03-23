@@ -143,10 +143,6 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
-        # Container ID from the previous turn — reused within a single run so the
-        # sandbox filesystem persists between tool-call turns. Reset to None on each
-        # new model instance (i.e. each new user message).
-        self._current_container_id: Optional[str] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -507,20 +503,32 @@ class Claude(Model):
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
         if self.skills:
-            container: Dict[str, Any] = {"skills": self.skills}
-            if self._current_container_id:
-                container["id"] = self._current_container_id
-            _request_params["container"] = container
+            _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
 
         return _request_params
+
+    @staticmethod
+    def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:
+        """Extract the most recent container ID from message provider_data.
+
+        Reads from messages rather than model state so it is safe when the same
+        Claude instance is shared across multiple agents or concurrent runs.
+        """
+        for message in reversed(messages):
+            pd = getattr(message, "provider_data", None) or {}
+            container_id = pd.get("container", {}).get("id")
+            if container_id:
+                return container_id
+        return None
 
     def _prepare_request_kwargs(
         self,
         system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        messages: Optional[List["Message"]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
@@ -529,6 +537,7 @@ class Claude(Model):
             system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
+            messages: Original Message objects — used to extract container ID for reuse.
 
         Returns:
             Dict[str, Any]: The request keyword arguments.
@@ -538,6 +547,14 @@ class Claude(Model):
 
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
+
+        # Reuse container ID from previous turn if present — preserves sandbox filesystem
+        # across tool-call turns. Reading from messages (not self) is safe when the model
+        # instance is shared across agents or concurrent runs.
+        if self.skills and messages:
+            container_id = self._extract_container_id_from_messages(messages)
+            if container_id:
+                request_kwargs["container"]["id"] = container_id
         if system_message:
             if self.cache_system_prompt:
                 cache_control = (
@@ -586,7 +603,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -650,7 +667,7 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
 
         try:
             # Beta features
@@ -705,7 +722,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
@@ -768,7 +785,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format, messages=messages)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -930,7 +947,6 @@ class Claude(Model):
                 "id": response.container.id,
                 "expires_at": str(response.container.expires_at),
             }
-            self._current_container_id = response.container.id
 
         # Extract file IDs if skills are enabled
         if self.skills and response.content:
@@ -1083,7 +1099,6 @@ class Claude(Model):
                     "id": response.message.container.id,  # type: ignore
                     "expires_at": str(response.message.container.expires_at),  # type: ignore
                 }
-                self._current_container_id = response.message.container.id  # type: ignore
 
             # Extract file IDs from bash_code_execution_tool_result blocks (skills/code execution)
             if self.skills and hasattr(response.message, "content") and response.message.content:  # type: ignore
