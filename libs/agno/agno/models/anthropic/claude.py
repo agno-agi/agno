@@ -513,8 +513,7 @@ class Claude(Model):
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:
         """Extract the most recent container ID from message provider_data.
 
-        Reads from messages rather than model state so it is safe when the same
-        Claude instance is shared across multiple agents or concurrent runs.
+        Reads from messages for container id so we can re-use it.
         """
         for message in reversed(messages):
             pd = getattr(message, "provider_data", None) or {}
