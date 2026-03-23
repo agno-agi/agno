@@ -8,7 +8,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Custom prompt with specific chunk size
 custom_prompt = """
-Analyze the text and break it into chunks of approximately 3000 characters.
+Analyze the text and break it into logical chunks.
 Focus on keeping recipe instructions together as complete units.
 Avoid splitting ingredient lists or cooking steps mid-sentence.
 """
