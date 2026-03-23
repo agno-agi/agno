@@ -1,27 +1,46 @@
+"""Utility helpers for the Mistral model integration.
+
+mistralai imports are intentionally deferred to function bodies so that
+importing this module never raises an error when the optional ``mistralai``
+package is not installed.  The ImportError is raised only when a function
+that actually needs the package is called, giving users a clear, actionable
+message.
+"""
+
 from typing import Any, List, Optional, Union
 
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
-try:
-    # TODO: Adapt these imports to the new Mistral SDK versions
-    from mistralai.models import (  # type: ignore
-        AssistantMessage,  # type: ignore
-        ImageURLChunk,  # type: ignore
-        SystemMessage,  # type: ignore
-        TextChunk,  # type: ignore
-        ToolMessage,  # type: ignore
-        UserMessage,  # type: ignore
-    )
-
-    MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
-
-except ImportError:
-    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
+# ---------------------------------------------------------------------------
+# Type alias – resolved lazily; use ``Any`` at module level so the module
+# can always be imported without the optional dependency being present.
+# ---------------------------------------------------------------------------
+MistralMessage = Any
 
 
-def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
+def _get_mistral_types() -> Any:
+    """Import and return the mistralai message types, raising a clear error
+    if the optional package is not installed."""
+    try:
+        from mistralai.models import (  # type: ignore
+            AssistantMessage,  # type: ignore
+            ImageURLChunk,  # type: ignore
+            SystemMessage,  # type: ignore
+            TextChunk,  # type: ignore
+            ToolMessage,  # type: ignore
+            UserMessage,  # type: ignore
+        )
+    except ImportError:
+        raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
+
+    return AssistantMessage, ImageURLChunk, SystemMessage, TextChunk, ToolMessage, UserMessage
+
+
+def _format_image_for_message(image: Image) -> Optional[Any]:
+    _, ImageURLChunk, _, _, _, _ = _get_mistral_types()
+
     # Case 1: Image is a URL
     if image.url is not None:
         return ImageURLChunk(image_url=image.url)
@@ -48,11 +67,13 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
     return None
 
 
-def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
-    mistral_messages: List[MistralMessage] = []
+def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[Any]:
+    AssistantMessage, _, SystemMessage, TextChunk, ToolMessage, UserMessage = _get_mistral_types()
+
+    mistral_messages: List[Any] = []
 
     for message in messages:
-        mistral_message: MistralMessage
+        mistral_message: Any
         if message.role == "user":
             if message.audio is not None and len(message.audio) > 0:
                 log_warning("Audio input is currently unsupported.")
