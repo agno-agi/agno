@@ -255,6 +255,10 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
@@ -286,6 +290,10 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -317,6 +325,10 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat.completions.create(
@@ -348,6 +360,10 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         async_stream = await self.get_async_client().chat.completions.create(
