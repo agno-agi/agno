@@ -175,7 +175,7 @@ class GoogleSheetsTools(Toolkit):
     def _build_service(self):
         return build("sheets", "v4", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, **kwargs) -> None:
         """
         Authenticate with Google Sheets API
         """

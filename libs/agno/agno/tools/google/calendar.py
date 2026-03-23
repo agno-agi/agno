@@ -195,7 +195,17 @@ class GoogleCalendarTools(Toolkit):
     def _build_service(self):
         return build("calendar", "v3", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, workspace_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+        # Per-user mode: load from DB token store
+        if self.token_store and workspace_id and user_id:
+            from agno.tools.google.oauth.token_store import load_user_credentials
+
+            self.creds = load_user_credentials(
+                self.token_store, workspace_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
+            )
+            self._current_user_key = (workspace_id, user_id)
+            return
+
         if self.creds and self.creds.valid:
             return
 
