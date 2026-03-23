@@ -188,3 +188,82 @@ def test_streaming_extracts_multiple_file_ids():
 
     assert result.provider_data is not None
     assert result.provider_data["file_ids"] == ["file_one", "file_two"]
+
+
+# =============================================================================
+# Container ID reuse across turns (reads from messages, not model instance)
+# =============================================================================
+
+
+def _make_message(role: str, container_id: str | None = None):
+    """Create a minimal Message-like mock with optional container provider_data."""
+    msg = MagicMock()
+    msg.role = role
+    if container_id:
+        msg.provider_data = {"container": {"id": container_id}}
+    else:
+        msg.provider_data = None
+    return msg
+
+
+def test_extract_container_id_from_messages_returns_last():
+    """Should return the container ID from the most recent message that has one."""
+    model = Claude(id="claude-sonnet-4-5-20250929")
+    messages = [
+        _make_message("user"),
+        _make_message("assistant", container_id="container_turn1"),
+        _make_message("user"),
+        _make_message("assistant", container_id="container_turn2"),
+    ]
+    assert model._extract_container_id_from_messages(messages) == "container_turn2"
+
+
+def test_extract_container_id_from_messages_returns_none_when_absent():
+    """Should return None when no message has a container ID."""
+    model = Claude(id="claude-sonnet-4-5-20250929")
+    messages = [_make_message("user"), _make_message("assistant")]
+    assert model._extract_container_id_from_messages(messages) is None
+
+
+def test_prepare_request_kwargs_includes_container_id_when_messages_have_one():
+    """get_request_params should include container.id when messages contain a prior container."""
+    model = Claude(
+        id="claude-sonnet-4-5-20250929",
+        skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
+    )
+    messages = [
+        _make_message("user"),
+        _make_message("assistant", container_id="container_abc"),
+    ]
+    kwargs = model._prepare_request_kwargs("system prompt", messages=messages)
+    assert kwargs["container"]["id"] == "container_abc"
+    assert kwargs["container"]["skills"] == model.skills
+
+
+def test_prepare_request_kwargs_omits_container_id_on_first_turn():
+    """On the first turn (no prior assistant message with container), no id should be set."""
+    model = Claude(
+        id="claude-sonnet-4-5-20250929",
+        skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
+    )
+    messages = [_make_message("user")]
+    kwargs = model._prepare_request_kwargs("system prompt", messages=messages)
+    assert "id" not in kwargs["container"]
+    assert kwargs["container"]["skills"] == model.skills
+
+
+def test_prepare_request_kwargs_safe_with_shared_model_instance():
+    """Two independent runs using the same model instance should not share container IDs."""
+    model = Claude(
+        id="claude-sonnet-4-5-20250929",
+        skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
+    )
+    # Run A has a container from a previous turn
+    messages_a = [_make_message("assistant", container_id="container_run_a")]
+    kwargs_a = model._prepare_request_kwargs("system", messages=messages_a)
+    assert kwargs_a["container"]["id"] == "container_run_a"
+
+    # Run B starts fresh — no container in its messages
+    messages_b = [_make_message("user")]
+    kwargs_b = model._prepare_request_kwargs("system", messages=messages_b)
+    assert "id" not in kwargs_b["container"]
