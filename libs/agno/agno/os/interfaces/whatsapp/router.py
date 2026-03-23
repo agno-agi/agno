@@ -50,10 +50,6 @@ _WA_TOOL_NAMES = frozenset(
     }
 )
 
-# Tracks entity IDs registered in the current startup cycle.
-# Cleared on each module reload; warns when the same entity_id is used twice.
-_registered_entity_ids: dict = {}  # entity_id -> count
-
 
 class _SessionConfig(NamedTuple):
     session_type: SessionType
@@ -150,12 +146,15 @@ def attach_routes(
 
     _log_prefix = f"[{entity_name}]"
 
-    _registered_entity_ids[entity_id] = _registered_entity_ids.get(entity_id, 0) + 1
-    if _registered_entity_ids[entity_id] > 1:
-        log_warning(
-            f"{_log_prefix} entity_id '{entity_id}' is already registered. "
-            "Multiple routers sharing the same entity_id will collide on session namespaces."
-        )
+    # Detect duplicate entity_id by checking existing operation_ids on this router
+    _expected_op = f"whatsapp_webhook_{op_suffix}"
+    for route in getattr(router, "routes", []):
+        if getattr(route, "operation_id", None) == _expected_op:
+            log_warning(
+                f"{_log_prefix} entity_id '{entity_id}' is already registered on this router. "
+                "Multiple routers sharing the same entity_id will collide on session namespaces."
+            )
+            break
 
     # Used by /new handler (create sessions) and process_message (find latest)
     session_config = _resolve_session_config(entity, entity_type)
