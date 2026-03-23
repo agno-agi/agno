@@ -14,6 +14,7 @@ from rich.panel import Panel
 from starlette.requests import Request
 
 from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentLike
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -195,7 +196,7 @@ class AgentOS:
         description: Optional[str] = None,
         version: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent, AgentLike]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
@@ -259,7 +260,7 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
+        self.agents: Optional[List[Union[Agent, RemoteAgent, AgentLike]]] = agents
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
         self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
         self.a2a_interface = a2a_interface
@@ -394,7 +395,11 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_eval_router(
+                dbs=self.dbs,
+                agents=[a for a in (self.agents or []) if isinstance(a, (Agent, RemoteAgent))],  # type: ignore[arg-type]
+                teams=self.teams,
+            ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
@@ -509,7 +514,8 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
-            if isinstance(agent, RemoteAgent):
+            if not isinstance(agent, Agent):
+                # Skip RemoteAgent and external framework agents
                 continue
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -628,7 +634,7 @@ class AgentOS:
         db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
         for agent in self.agents or []:
-            if agent.db:
+            if hasattr(agent, "db") and agent.db:
                 db = agent.db
                 break
 
@@ -737,7 +743,11 @@ class AgentOS:
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_eval_router(
+                dbs=self.dbs,
+                agents=[a for a in (self.agents or []) if isinstance(a, (Agent, RemoteAgent))],  # type: ignore[arg-type]
+                teams=self.teams,
+            ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
@@ -977,9 +987,11 @@ class AgentOS:
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
-            if agent.db:
-                self._register_db_with_validation(dbs, agent.db)
-            agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+            agent_db = getattr(agent, "db", None)
+            if agent_db:
+                self._register_db_with_validation(dbs, agent_db)
+            agent_knowledge = getattr(agent, "knowledge", None)
+            agent_contents_db = getattr(agent_knowledge, "contents_db", None) if agent_knowledge else None
             if agent_contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent_contents_db)
 
@@ -1131,8 +1143,9 @@ class AgentOS:
                 knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
-            if agent.knowledge:
-                _add_knowledge_if_not_duplicate(agent.knowledge)
+            agent_knowledge = getattr(agent, "knowledge", None)
+            if agent_knowledge:
+                _add_knowledge_if_not_duplicate(agent_knowledge)
 
         for team in self.teams or []:
             if team.knowledge:
