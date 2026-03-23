@@ -1,8 +1,7 @@
 import asyncio
 from typing import List, Optional
 
-from agno.knowledge.chunking.recursive import RecursiveChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -19,7 +18,11 @@ except ImportError:
 class YouTubeReader(Reader):
     """Reader for YouTube video transcripts"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RecursiveChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.RECURSIVE_CHUNKER, **kwargs
+            )
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
