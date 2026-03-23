@@ -23,10 +23,6 @@ except importlib.metadata.PackageNotFoundError:
     pass
 
 
-def _raise_not_installed():
-    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
-
-
 if _mistral_available:
     if _mistral_version >= 2:
         # v2: mistralai >= 2.0.0
@@ -72,6 +68,14 @@ if _mistral_available:
     from mistralai.extra.struct_chat import ParsedChatCompletionResponse
 
 MISTRAL_SDK_VERSION = _mistral_version
+
+if not _mistral_available:
+
+    def __getattr__(name: str):  # noqa: ANN001, ANN202
+        raise ImportError(
+            f"`mistralai` not installed. Cannot import '{name}'. Please install using `pip install mistralai`"
+        )
+
 
 __all__ = [
     "AssistantMessage",
