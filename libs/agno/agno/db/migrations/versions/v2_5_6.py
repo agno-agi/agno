@@ -451,6 +451,8 @@ def _migrate_singlestore(db: BaseDb, table_name: str) -> bool:
 
 def _migrate_sqlite(db: BaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for SQLite."""
+    index_name = f"ix_{table_name}_run_status"
+
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
@@ -462,27 +464,35 @@ def _migrate_sqlite(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} does not exist, skipping migration")
             return False
 
+        applied = False
+
         # Check if run_status column already exists
         columns_info = sess.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
         existing_columns = {col[1] for col in columns_info}
 
-        if "run_status" in existing_columns:
+        if "run_status" not in existing_columns:
+            log_info(f"-- Adding run_status column to {table_name}")
+            sess.execute(text(f"ALTER TABLE {table_name} ADD COLUMN run_status TEXT"))
+            applied = True
+        else:
             log_info(f"Column run_status already exists in {table_name}, skipping")
-            return False
 
-        log_info(f"-- Adding run_status column to {table_name}")
-        sess.execute(text(f"ALTER TABLE {table_name} ADD COLUMN run_status TEXT"))
+        # Check if index exists
+        indexes = sess.execute(text(f"PRAGMA index_list({table_name})")).fetchall()
+        index_names = {idx[1] for idx in indexes}
 
-        # Create index on run_status
-        index_name = f"ix_{table_name}_run_status"
-        log_info(f"-- Adding index {index_name} on {table_name}")
-        sess.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} (run_status)"))
+        if index_name not in index_names:
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            sess.execute(text(f"CREATE INDEX {index_name} ON {table_name} (run_status)"))
+            applied = True
 
-        return True
+        return applied
 
 
 async def _migrate_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for async SQLite."""
+    index_name = f"ix_{table_name}_run_status"
+
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
         result = await sess.execute(
@@ -495,24 +505,31 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} does not exist, skipping migration")
             return False
 
+        applied = False
+
         # Check if run_status column already exists
         result = await sess.execute(text(f"PRAGMA table_info({table_name})"))
         columns_info = result.fetchall()
         existing_columns = {col[1] for col in columns_info}
 
-        if "run_status" in existing_columns:
+        if "run_status" not in existing_columns:
+            log_info(f"-- Adding run_status column to {table_name}")
+            await sess.execute(text(f"ALTER TABLE {table_name} ADD COLUMN run_status TEXT"))
+            applied = True
+        else:
             log_info(f"Column run_status already exists in {table_name}, skipping")
-            return False
 
-        log_info(f"-- Adding run_status column to {table_name}")
-        await sess.execute(text(f"ALTER TABLE {table_name} ADD COLUMN run_status TEXT"))
+        # Check if index exists
+        result = await sess.execute(text(f"PRAGMA index_list({table_name})"))
+        indexes = result.fetchall()
+        index_names = {idx[1] for idx in indexes}
 
-        # Create index on run_status
-        index_name = f"ix_{table_name}_run_status"
-        log_info(f"-- Adding index {index_name} on {table_name}")
-        await sess.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} (run_status)"))
+        if index_name not in index_names:
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            await sess.execute(text(f"CREATE INDEX {index_name} ON {table_name} (run_status)"))
+            applied = True
 
-        return True
+        return applied
 
 
 # ---------------------------------------------------------------------------
