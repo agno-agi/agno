@@ -116,10 +116,10 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 
 | File | Description |
 |------|-------------|
-| `drive_tools.py` | Core examples: read-only agent and full-access agent with all five tools |
-| `drive_file_search.py` | Structured file search with metadata inspection |
-| `drive_document_reader.py` | Large document reader with summarization |
-| `drive_folder_organizer.py` | Folder browsing, upload, and download |
+| `drive_tools.py` | Read-only and full-access agents: search, read, upload, and download files |
+| `drive_file_search.py` | Search files with structured output schema and pagination |
+| `drive_document_reader.py` | Read and summarize Google Docs, Sheets, and Slides as text |
+| `drive_folder_organizer.py` | Browse folder structure, upload local files, and download from Drive |
 
 ### Slides
 
