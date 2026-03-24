@@ -152,6 +152,39 @@ def test_read_file_regular(drive_tools):
     assert result["exportMimeType"] is None
 
 
+def test_read_file_max_read_size_rejected(drive_tools):
+    drive_tools.max_read_size = 100
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "big1",
+        "name": "huge.bin",
+        "mimeType": "application/octet-stream",
+        "size": "50000",
+    }
+    result = json.loads(drive_tools.read_file("big1"))
+    assert "error" in result
+    assert "exceeds max_read_size" in result["error"]
+
+
+def test_read_file_max_read_size_allowed(drive_tools):
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "small1",
+        "name": "tiny.txt",
+        "mimeType": "text/plain",
+        "size": "5",
+    }
+    mock_downloader = MagicMock()
+    mock_downloader.next_chunk.return_value = (MagicMock(), True)
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
+
+        def capture_buffer(buf, req):
+            buf.write(b"hello")
+            return mock_downloader
+
+        mock_dl.side_effect = capture_buffer
+        result = json.loads(drive_tools.read_file("small1"))
+    assert result["content"] == "hello"
+
+
 def test_read_file_unsupported_workspace(drive_tools):
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "d1",
@@ -421,6 +454,15 @@ def test_search_files_next_page_token(drive_tools):
     assert result["nextPageToken"] == "token123"
 
 
+def test_search_files_page_token_passed(drive_tools):
+    drive_tools.service.files.return_value.list.return_value.execute.return_value = {
+        "files": [{"id": "2"}],
+    }
+    drive_tools.search_files(query="name='x'", page_token="abc123")
+    call_kwargs = drive_tools.service.files.return_value.list.call_args
+    assert call_kwargs[1]["pageToken"] == "abc123"
+
+
 # ---------------------------------------------------------------------------
 # read_file: Slides export + no truncation
 # ---------------------------------------------------------------------------
@@ -452,6 +494,31 @@ def test_read_file_google_slides(drive_tools):
 # ---------------------------------------------------------------------------
 # upload_file: directory path rejection
 # ---------------------------------------------------------------------------
+
+
+def test_upload_file_mime_auto_detected(tmp_path, drive_tools):
+    file_path = tmp_path / "data.csv"
+    file_path.write_text("a,b,c")
+    drive_tools.service.files.return_value.create.return_value.execute.return_value = {
+        "id": "csv1",
+        "name": "data.csv",
+        "mimeType": "text/csv",
+    }
+    with patch("agno.tools.google.drive.MediaFileUpload") as mock_upload:
+        drive_tools.upload_file(file_path)
+        assert mock_upload.call_args[1]["mimetype"] == "text/csv"
+
+
+def test_upload_file_unknown_extension_fallback(tmp_path, drive_tools):
+    file_path = tmp_path / "data.xyz123"
+    file_path.write_text("unknown")
+    drive_tools.service.files.return_value.create.return_value.execute.return_value = {
+        "id": "unk1",
+        "name": "data.xyz123",
+    }
+    with patch("agno.tools.google.drive.MediaFileUpload") as mock_upload:
+        drive_tools.upload_file(file_path)
+        assert mock_upload.call_args[1]["mimetype"] == "application/octet-stream"
 
 
 def test_upload_file_directory_rejected(tmp_path, drive_tools):
