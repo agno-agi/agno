@@ -241,54 +241,78 @@ def test_hash_with_only_description():
 
 
 def test_file_data_hash_with_filename():
-    """Test that file_data hash uses filename when available."""
+    """Test that file_data hash uses filename when available.
+
+    After fix for #6952: content always contributes to the hash, so same filename
+    + different content → different hash.
+    """
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content", filename="file1.pdf"))
     content2 = Content(file_data=FileData(content="test content", filename="file2.pdf"))
     content3 = Content(file_data=FileData(content="different content", filename="file1.pdf"))
+    content4 = Content(file_data=FileData(content="test content", filename="file1.pdf"))
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
     hash3 = knowledge._build_content_hash(content3)
+    hash4 = knowledge._build_content_hash(content4)
 
     # Different filenames should produce different hashes
     assert hash1 != hash2
-    # Same filename should produce same hash (even with different content)
-    assert hash1 == hash3
+    # Same filename + different content → different hash (fix for #6952)
+    assert hash1 != hash3
+    # Identical entries should produce the same hash
+    assert hash1 == hash4
 
 
 def test_file_data_hash_with_type():
-    """Test that file_data hash uses type when filename is not available."""
+    """Test that file_data hash includes type.
+
+    After fix for #6952: content always contributes to the hash, so same type
+    + different content → different hash.
+    """
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content", type="application/pdf"))
     content2 = Content(file_data=FileData(content="test content", type="text/plain"))
     content3 = Content(file_data=FileData(content="different content", type="application/pdf"))
+    content4 = Content(file_data=FileData(content="test content", type="application/pdf"))
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
     hash3 = knowledge._build_content_hash(content3)
+    hash4 = knowledge._build_content_hash(content4)
 
     # Different types should produce different hashes
     assert hash1 != hash2
-    # Same type should produce same hash (even with different content)
-    assert hash1 == hash3
+    # Same type + different content → different hash (fix for #6952)
+    assert hash1 != hash3
+    # Identical entries should produce the same hash
+    assert hash1 == hash4
 
 
 def test_file_data_hash_with_size():
-    """Test that file_data hash uses size when filename and type are not available."""
+    """Test that file_data hash includes size.
+
+    After fix for #6952: content always contributes to the hash, so same size
+    + different content → different hash.
+    """
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content", size=1024))
     content2 = Content(file_data=FileData(content="test content", size=2048))
     content3 = Content(file_data=FileData(content="different content", size=1024))
+    content4 = Content(file_data=FileData(content="test content", size=1024))
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
     hash3 = knowledge._build_content_hash(content3)
+    hash4 = knowledge._build_content_hash(content4)
 
     # Different sizes should produce different hashes
     assert hash1 != hash2
-    # Same size should produce same hash (even with different content)
-    assert hash1 == hash3
+    # Same size + different content → different hash (fix for #6952)
+    assert hash1 != hash3
+    # Identical entries should produce the same hash
+    assert hash1 == hash4
 
 
 def test_file_data_hash_with_content_fallback():
@@ -309,7 +333,10 @@ def test_file_data_hash_with_content_fallback():
 
 
 def test_file_data_hash_with_name_and_description():
-    """Test that file_data hash includes both name/description and file_data fields."""
+    """Test that file_data hash includes both name/description and file_data fields.
+
+    After fix for #6952: content always contributes to the hash.
+    """
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(
         name="Document 1",
@@ -331,44 +358,52 @@ def test_file_data_hash_with_name_and_description():
         description="Description 1",
         file_data=FileData(content="test content", filename="file1.pdf", type="application/pdf", size=1024),
     )
+    # Identical entry to content1
+    content5 = Content(
+        name="Document 1",
+        description="Description 1",
+        file_data=FileData(content="test content", filename="file1.pdf", type="application/pdf", size=1024),
+    )
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+    hash3 = knowledge._build_content_hash(content3)
+    hash4 = knowledge._build_content_hash(content4)
+    hash5 = knowledge._build_content_hash(content5)
+
+    # Identical entry should produce same hash
+    assert hash1 == hash5
+    # Different content → different hash (fix for #6952: content always contributes)
+    assert hash1 != hash2
+    # Different filename → different hash
+    assert hash1 != hash3
+    # Different name → different hash
+    assert hash1 != hash4
+
+
+def test_file_data_hash_all_fields_contribute():
+    """Test that all file_data fields contribute to the hash (fix for #6952).
+
+    Previously an if-elif chain meant only one field was used; now all fields are
+    combined so entries with the same type but different content get unique hashes.
+    """
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    # Same filename, different type → different hash
+    content1 = Content(file_data=FileData(content="test", filename="file.pdf", type="application/pdf"))
+    content2 = Content(file_data=FileData(content="test", filename="file.pdf", type="text/plain"))
+    # Same type, different size → different hash
+    content3 = Content(file_data=FileData(content="test", type="application/pdf", size=1024))
+    content4 = Content(file_data=FileData(content="test", type="application/pdf", size=2048))
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
     hash3 = knowledge._build_content_hash(content3)
     hash4 = knowledge._build_content_hash(content4)
 
-    # Same name/description/filename should produce same hash (content difference ignored when filename present)
-    assert hash1 == hash2
-    # Different filename should produce different hash
-    assert hash1 != hash3
-    # Different name should produce different hash
-    assert hash1 != hash4
-
-
-def test_file_data_hash_priority_filename_over_type():
-    """Test that filename takes priority over type."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
-    content1 = Content(file_data=FileData(content="test", filename="file.pdf", type="application/pdf"))
-    content2 = Content(file_data=FileData(content="test", filename="file.pdf", type="text/plain"))
-
-    hash1 = knowledge._build_content_hash(content1)
-    hash2 = knowledge._build_content_hash(content2)
-
-    # Same filename should produce same hash regardless of type
-    assert hash1 == hash2
-
-
-def test_file_data_hash_priority_type_over_size():
-    """Test that type takes priority over size."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
-    content1 = Content(file_data=FileData(content="test", type="application/pdf", size=1024))
-    content2 = Content(file_data=FileData(content="test", type="application/pdf", size=2048))
-
-    hash1 = knowledge._build_content_hash(content1)
-    hash2 = knowledge._build_content_hash(content2)
-
-    # Same type should produce same hash regardless of size
-    assert hash1 == hash2
+    # Same filename but different type → different hash (all fields contribute)
+    assert hash1 != hash2
+    # Same type but different size → different hash (all fields contribute)
+    assert hash3 != hash4
 
 
 def test_file_data_hash_with_name_only():
@@ -436,7 +471,10 @@ def test_file_data_hash_string_vs_bytes_same_content():
 
 
 def test_file_data_hash_all_fields_present():
-    """Test file_data hash when all fields are present."""
+    """Test file_data hash when all fields are present.
+
+    After fix for #6952: all fields (including content) contribute to the hash.
+    """
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(
         name="Doc 1",
@@ -453,14 +491,23 @@ def test_file_data_hash_all_fields_present():
         description="Desc 1",
         file_data=FileData(content="content", filename="other.pdf", type="application/pdf", size=1024),
     )
+    # Identical to content1
+    content4 = Content(
+        name="Doc 1",
+        description="Desc 1",
+        file_data=FileData(content="content", filename="file.pdf", type="application/pdf", size=1024),
+    )
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
     hash3 = knowledge._build_content_hash(content3)
+    hash4 = knowledge._build_content_hash(content4)
 
-    # Same name/description/filename should produce same hash (content/type/size differences ignored when filename present)
-    assert hash1 == hash2
-    # Different filename should produce different hash
+    # Identical entry should produce same hash
+    assert hash1 == hash4
+    # Same filename/type/size but different content → different hash (fix for #6952)
+    assert hash1 != hash2
+    # Different filename → different hash
     assert hash1 != hash3
 
 
@@ -584,3 +631,41 @@ def test_document_content_hash_fallback_to_content_hash():
     assert hash1 != hash2
     # Same content should produce same hash
     assert hash1 == hash3
+
+
+def test_unique_content_hashes_for_different_text():
+    """Different text_content values should produce different content hashes.
+
+    Regression test for #6952: knowledge.ainsert() with different text_content
+    was generating the same content_hash, causing new data to overwrite old data.
+    The root cause was an if-elif chain that stopped after the first matching field,
+    meaning entries sharing the same filename/type/size but different actual content
+    produced identical hashes.
+    """
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    # Simulate file_data entries with the same type but different actual content
+    contents = [
+        Content(file_data=FileData(content=f"unique text content number {i}", type="text/plain"))
+        for i in range(5)
+    ]
+
+    hashes = [knowledge._build_content_hash(c) for c in contents]
+
+    # Every hash must be unique — same type should NOT cause hash collision
+    assert len(set(hashes)) == len(hashes), (
+        "Duplicate content hashes detected! Entries with different content but the same "
+        "file_data.type must not share the same hash (regression for issue #6952)."
+    )
+
+
+def test_content_hash_deterministic_for_same_file_data():
+    """Same file_data content always produces the same hash (determinism check)."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content = Content(file_data=FileData(content="fixed text", type="text/plain", size=10, filename="doc.txt"))
+    hash1 = knowledge._build_content_hash(content)
+    hash2 = knowledge._build_content_hash(content)
+    hash3 = knowledge._build_content_hash(content)
+
+    assert hash1 == hash2 == hash3
