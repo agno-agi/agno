@@ -1,11 +1,8 @@
 """Unit tests for Crawl4aiTools class."""
 
-import pytest
-
-# Skip entire module if crawl4ai is not installed (temporarily unavailable due to litellm supply chain attack)
-pytest.importorskip("crawl4ai", reason="crawl4ai unavailable - depends on litellm which is compromised on PyPI")
-
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from agno.tools.crawl4ai import Crawl4aiTools
 
