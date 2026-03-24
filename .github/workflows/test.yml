@@ -123,14 +123,13 @@ jobs:
       - name: Install uv
         run: |
           set -e
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/0.10.12/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Run test setup
         working-directory: .
         run: |
           set -e
-          uv venv .venv --python 3.12
-          VIRTUAL_ENV=.venv uv pip install --refresh -e "./libs/agno[tests]"
+          ./scripts/test_setup.sh
       - name: Run tests for Agno
         working-directory: .
         env:
