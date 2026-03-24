@@ -426,15 +426,23 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             if "description" not in input_properties[param_name]:
                 input_properties[param_name]["description"] = ""
 
+        input_schema: Dict[str, Any] = {
+            "type": parameters.get("type", "object"),
+            "properties": input_properties,
+            "required": required_params,
+            "additionalProperties": False,
+        }
+
+        # MCP tools pass raw JSON Schemas that may use $defs/$ref for nested types
+        if "$defs" in parameters:
+            input_schema["$defs"] = parameters["$defs"]
+        if "definitions" in parameters:
+            input_schema["definitions"] = parameters["definitions"]
+
         tool = {
             "name": func_def.get("name") or "",
             "description": func_def.get("description") or "",
-            "input_schema": {
-                "type": parameters.get("type", "object"),
-                "properties": input_properties,
-                "required": required_params,
-                "additionalProperties": False,
-            },
+            "input_schema": input_schema,
         }
 
         # Add strict mode if specified (check both function dict and tool_def top level)
