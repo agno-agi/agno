@@ -314,7 +314,7 @@ class Function(BaseModel):
                 not in [
                     "agent",
                     "team",
-                    "run_context",
+                    "run_context", "fc",
                     "self",
                     "images",
                     "videos",
@@ -353,7 +353,7 @@ class Function(BaseModel):
                     not in [
                         "agent",
                         "team",
-                        "run_context",
+                        "run_context", "fc",
                         "self",
                         "images",
                         "videos",
@@ -371,7 +371,7 @@ class Function(BaseModel):
                     not in [
                         "agent",
                         "team",
-                        "run_context",
+                        "run_context", "fc",
                         "self",
                         "images",
                         "videos",
@@ -442,7 +442,7 @@ class Function(BaseModel):
                 "return",
                 "agent",
                 "team",
-                "run_context",
+                "run_context", "fc",
                 "self",
                 "images",
                 "videos",
@@ -647,7 +647,7 @@ class Function(BaseModel):
             not in [
                 "agent",
                 "team",
-                "run_context",
+                "run_context", "fc",
                 "images",
                 "videos",
                 "audios",
