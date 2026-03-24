@@ -166,7 +166,7 @@ class GoogleDriveTools(Toolkit):
         upload_file: bool = False,
         download_file: bool = False,
         # Save location for download_file; defaults to cwd, sandboxes writes to this directory
-        download_dir: Optional[Path] = Path("."),
+        download_dir: Path = Path("."),
         # When False, trashed files are excluded from search/list results automatically
         include_trashed: bool = False,
         # Maximum file size (bytes) read_file will load into memory for non-Workspace files
@@ -183,7 +183,7 @@ class GoogleDriveTools(Toolkit):
 
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
-        self.download_dir = Path(download_dir).resolve() if download_dir else None
+        self.download_dir = Path(download_dir).resolve()
 
         # Pre-built credentials skip the OAuth/service account flow entirely
         self.creds = creds
@@ -582,10 +582,9 @@ class GoogleDriveTools(Toolkit):
             if use_default_dir:
                 path = path / metadata.get("name", file_id)
 
-            if self.download_dir:
-                is_safe, path = self._check_path(str(path), self.download_dir)
-                if not is_safe:
-                    return json.dumps({"error": f"Path escapes download_dir: {dest_path}"})
+            is_safe, path = self._check_path(str(path), self.download_dir)
+            if not is_safe:
+                return json.dumps({"error": f"Path escapes download_dir: {dest_path}"})
 
             # Resolve export target — user override > auto-detect > None for regular files
             if export_format:
