@@ -155,8 +155,10 @@ class TestFormatMessagesEmptyParts:
         ]
         formatted, system_msg = model._format_messages(messages)
         # System message is extracted separately, not in formatted list.
-        # The assistant message with None content should be filtered out.
-        assert len(formatted) == 2
+        # The assistant message with None content is filtered out, and the two
+        # consecutive user messages are merged into one (Gemini requires alternating roles).
+        assert len(formatted) == 1
+        assert len(formatted[0].parts) == 2
         assert all(msg.parts for msg in formatted)
 
     def test_filters_message_with_empty_list_content(self):
@@ -170,7 +172,9 @@ class TestFormatMessagesEmptyParts:
         formatted, system_msg = model._format_messages(messages)
         # The assistant message with list content (no tool_calls) falls through
         # the text content branch without adding parts, so it should be filtered.
-        assert len(formatted) == 2
+        # The two consecutive user messages are merged (Gemini requires alternating roles).
+        assert len(formatted) == 1
+        assert len(formatted[0].parts) == 2
         for msg in formatted:
             assert msg.parts is not None
             assert len(msg.parts) > 0
@@ -212,7 +216,7 @@ class TestFormatMessagesEmptyParts:
         assert len(formatted) == 0
 
     def test_mixed_valid_and_empty_messages(self):
-        """Only empty-parts messages are filtered; valid ones are kept."""
+        """Only empty-parts messages are filtered; valid ones are kept and consecutive same-role merged."""
         model = self._make_model()
         messages = [
             Message(role="user", content="First"),
@@ -223,9 +227,11 @@ class TestFormatMessagesEmptyParts:
             Message(role="user", content="Third"),
         ]
         formatted, system_msg = model._format_messages(messages)
-        assert len(formatted) == 4
+        # After filtering empty assistants: user("First"), user("Second"), model("Response"), user("Third")
+        # After merging consecutive same-role: user("First"+"Second"), model("Response"), user("Third")
+        assert len(formatted) == 3
         roles = [msg.role for msg in formatted]
-        assert roles == ["user", "user", "model", "user"]
+        assert roles == ["user", "model", "user"]
 
 
 class TestGeminiTimeout:
