@@ -63,7 +63,7 @@ class GoogleAuth(Toolkit):
     def register_service(self, service: str, scopes: List[str]) -> None:
         self._services[service] = scopes
 
-    def authenticate_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets"]]) -> str:
+    def authenticate_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets", "slides"]]) -> str:
         """
         Get the Google OAuth URL for the user to authenticate their Google account.
 
