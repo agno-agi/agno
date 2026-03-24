@@ -60,9 +60,9 @@ class WorkspaceType:
     VID = "application/vnd.google-apps.vid"
     FOLDER = "application/vnd.google-apps.folder"
 
-    @classmethod
-    def is_workspace(cls, mime_type: str) -> bool:
-        return mime_type.startswith("application/vnd.google-apps.")
+    # Catch-all for Workspace types not in TEXT_EXPORT_TYPES/DOWNLOAD_EXPORT_TYPES
+    # Google can add new types (e.g. Vids) — prefix check prevents silent failures
+    WORKSPACE_PREFIX = "application/vnd.google-apps."
 
 
 DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
@@ -139,8 +139,7 @@ class GoogleDriveTools(Toolkit):
     }
 
     # Partial response fields — only fetch what each tool needs
-    METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,owners,shared,webViewLink"
-    SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, owners(displayName, emailAddress))"
+    SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
 
     service: Optional[Resource]
@@ -162,7 +161,6 @@ class GoogleDriveTools(Toolkit):
         # Reading tools — enabled by default
         list_files: bool = True,
         search_files: bool = True,
-        get_file_metadata: bool = True,
         read_file: bool = True,
         # Writing tools — disabled by default for safety
         upload_file: bool = False,
@@ -200,7 +198,7 @@ class GoogleDriveTools(Toolkit):
 
         self.auth_port = auth_port
 
-        read_tools_enabled = any([list_files, search_files, get_file_metadata, read_file, download_file])
+        read_tools_enabled = any([list_files, search_files, read_file, download_file])
 
         # Auto-infer minimal scopes from enabled tools
         if scopes is None:
@@ -234,9 +232,6 @@ class GoogleDriveTools(Toolkit):
         if search_files:
             tools.append(self.search_files)
             async_tools.append((self.asearch_files, "search_files"))
-        if get_file_metadata:
-            tools.append(self.get_file_metadata)
-            async_tools.append((self.aget_file_metadata, "get_file_metadata"))
         if read_file:
             tools.append(self.read_file)
             async_tools.append((self.aread_file, "read_file"))
@@ -358,14 +353,16 @@ class GoogleDriveTools(Toolkit):
         return await asyncio.to_thread(self.list_files, query=query, page_size=page_size)
 
     @authenticate
-    def search_files(self, query: Optional[str] = None, max_results: int = 10) -> str:
+    def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:
         """
         Search Google Drive using a Drive query expression. Use for precise filtering
         such as ``name contains 'budget'`` or ``mimeType = 'application/pdf'``.
+        When results include a nextPageToken, pass it as page_token to fetch the next page.
 
         Args:
             query (str): Drive query expression (see instructions for syntax)
             max_results (int): Maximum number of files to return
+            page_token (str): Token from a previous response to fetch the next page of results
 
         Returns:
             str: JSON string with matching files and metadata
@@ -381,16 +378,15 @@ class GoogleDriveTools(Toolkit):
                 effective_query = f"({query}) and trashed=false"
             else:
                 effective_query = "trashed=false"
-            results = (
-                service.files()
-                .list(
-                    q=effective_query,
-                    pageSize=max_results,
-                    orderBy="modifiedTime desc",
-                    fields=self.SEARCH_FIELDS,
-                )
-                .execute()
-            )
+            list_kwargs: dict = {
+                "q": effective_query,
+                "pageSize": max_results,
+                "orderBy": "modifiedTime desc",
+                "fields": self.SEARCH_FIELDS,
+            }
+            if page_token:
+                list_kwargs["pageToken"] = page_token
+            results = service.files().list(**list_kwargs).execute()
             files = results.get("files", [])
             return json.dumps(
                 {
@@ -406,50 +402,22 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not search Google Drive files: {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def asearch_files(self, query: Optional[str] = None, max_results: int = 10) -> str:
+    async def asearch_files(
+        self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
+    ) -> str:
         """
         Search Google Drive using a Drive query expression (async).
+        When results include a nextPageToken, pass it as page_token to fetch the next page.
 
         Args:
             query (str): Drive query expression (see instructions for syntax)
             max_results (int): Maximum number of files to return
+            page_token (str): Token from a previous response to fetch the next page of results
 
         Returns:
             str: JSON string with matching files and metadata
         """
-        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results)
-
-    @authenticate
-    def get_file_metadata(self, file_id: str) -> str:
-        """
-        Get detailed metadata for a Drive file by ID without reading or downloading its contents.
-
-        Args:
-            file_id (str): The Drive file ID
-
-        Returns:
-            str: JSON string with name, mimeType, size, owners, shared status, webViewLink
-        """
-        try:
-            metadata = self._get_file_metadata(file_id, self.METADATA_FIELDS)
-            return json.dumps(metadata)
-        except HttpError as e:
-            return json.dumps({"error": f"Google Drive API error: {e}"})
-        except Exception as e:
-            log_error(f"Could not get Google Drive metadata for {file_id}: {e}")
-            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
-
-    async def aget_file_metadata(self, file_id: str) -> str:
-        """
-        Get detailed metadata for a Drive file by ID (async).
-
-        Args:
-            file_id (str): The Drive file ID
-
-        Returns:
-            str: JSON string with name, mimeType, size, owners, shared status, webViewLink
-        """
-        return await asyncio.to_thread(self.get_file_metadata, file_id)
+        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
 
     @authenticate
     def read_file(self, file_id: str) -> str:
@@ -472,7 +440,7 @@ class GoogleDriveTools(Toolkit):
             # Resolve text export format — known Workspace > unsupported Workspace > regular file
             if mime_type in self.TEXT_EXPORT_TYPES:
                 export_mime = self.TEXT_EXPORT_TYPES[mime_type]
-            elif WorkspaceType.is_workspace(mime_type):
+            elif mime_type.startswith(WorkspaceType.WORKSPACE_PREFIX):
                 # Drawings, Vids, etc. have no text export — get_media() would crash
                 return json.dumps(
                     {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
@@ -607,7 +575,7 @@ class GoogleDriveTools(Toolkit):
                 ext = mimetypes.guess_extension(export_format) or ""
             elif mime_type in self.DOWNLOAD_EXPORT_TYPES:
                 target_mime, ext = self.DOWNLOAD_EXPORT_TYPES[mime_type]
-            elif WorkspaceType.is_workspace(mime_type):
+            elif mime_type.startswith(WorkspaceType.WORKSPACE_PREFIX):
                 # Future-proofing: catch new Workspace types Google may add
                 return json.dumps({"error": f"Unsupported Workspace file type for download: {mime_type}"})
             else:

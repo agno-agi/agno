@@ -80,14 +80,6 @@ def test_list_files_success(drive_tools):
     assert result["files"][0]["name"] == "TestFile"
 
 
-def test_get_file_metadata(drive_tools):
-    metadata = {"id": "abc", "name": "doc.txt", "mimeType": "text/plain"}
-    drive_tools.service.files.return_value.get.return_value.execute.return_value = metadata
-    result = json.loads(drive_tools.get_file_metadata("abc"))
-    assert result["id"] == "abc"
-    assert result["name"] == "doc.txt"
-
-
 def test_read_file_google_doc(drive_tools):
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "doc1",
@@ -367,12 +359,6 @@ def test_search_files_http_error(drive_tools):
     assert "Google Drive API error" in result["error"]
 
 
-def test_get_file_metadata_http_error(drive_tools):
-    drive_tools.service.files.return_value.get.side_effect = _make_http_error(404, "Not Found")
-    result = json.loads(drive_tools.get_file_metadata("bad_id"))
-    assert "error" in result
-
-
 def test_read_file_http_error_export_limit(drive_tools):
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "doc1",
@@ -509,16 +495,6 @@ async def test_async_search_files(drive_tools):
 async def test_async_list_files(drive_tools):
     result = json.loads(await drive_tools.alist_files())
     assert "files" in result
-
-
-@pytest.mark.asyncio
-async def test_async_get_file_metadata(drive_tools):
-    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
-        "id": "abc",
-        "name": "doc.txt",
-    }
-    result = json.loads(await drive_tools.aget_file_metadata("abc"))
-    assert result["id"] == "abc"
 
 
 @pytest.mark.asyncio

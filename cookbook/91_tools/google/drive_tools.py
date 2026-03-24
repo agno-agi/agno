@@ -4,7 +4,7 @@ Google Drive Tools
 Core examples: read-only agent, full-access agent with upload and download.
 
 All six Drive tools are demonstrated: list_files, search_files,
-get_file_metadata, read_file, upload_file, download_file.
+read_file, upload_file, download_file.
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -63,12 +63,6 @@ if __name__ == "__main__":
         "Search my Google Drive for spreadsheets",
         stream=True,
     )
-
-    # get_file_metadata
-    # read_only_agent.print_response(
-    #     "Get metadata for Google Drive file ID <FILE_ID>",
-    #     stream=True,
-    # )
 
     # read_file
     # read_only_agent.print_response(

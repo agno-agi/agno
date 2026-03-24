@@ -7,7 +7,7 @@ The agent searches Drive, fetches metadata, and returns a structured report.
 
 Key concepts:
 - output_schema: Forces structured JSON matching FileSearchResult
-- search_files + get_file_metadata: Two-step search-then-inspect pattern
+- search_files: Returns full metadata including parents, description, and links
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
