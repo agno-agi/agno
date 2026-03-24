@@ -8,6 +8,8 @@
 # Usage: ./scripts/dev_setup.sh
 ############################################################################
 
+set -e
+
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${CURR_DIR}")"
 AGNO_DIR="${REPO_ROOT}/libs/agno"
