@@ -168,11 +168,21 @@ def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRou
     """Return a stub router that returns 503 for a feature that requires a missing dependency."""
     detail = f"{tag} not available: pass a `{requires}` to AgentOS to enable this feature."
     router = APIRouter(tags=[tag])
-    for path in [prefix, f"{prefix}/{{path:path}}"]:
+    feature = prefix.strip("/").replace("/", "_")
 
-        @router.api_route(path, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    # Register each method separately with a unique operation_id to avoid duplicates
+    for method in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
+
+        @router.api_route(prefix, methods=[method], operation_id=f"disabled_{feature}_{method.lower()}")
         async def _disabled() -> None:
             raise HTTPException(status_code=503, detail=detail)
+
+    # Catch-all sub-path route — hidden from schema
+    @router.api_route(
+        f"{prefix}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
+    )
+    async def _disabled_subpath() -> None:
+        raise HTTPException(status_code=503, detail=detail)
 
     return router
 
@@ -399,7 +409,11 @@ class AgentOS:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
         # Registry router
         if self.registry is not None:
@@ -738,8 +752,14 @@ class AgentOS:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            log_debug("Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS")
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            log_debug(
+                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
+            )
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 routers.append(_get_disabled_feature_router(prefix, tag, "db"))
 
         # Registry router
@@ -1358,6 +1378,11 @@ class AgentOS:
         **kwargs,
     ):
         import uvicorn
+
+        host = getenv("AGENT_OS_HOST", host)
+        env_port = getenv("AGENT_OS_PORT")
+        if env_port is not None:
+            port = int(env_port)
 
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"

@@ -90,6 +90,9 @@ class OpenAIResponses(Model):
         }
     )
 
+    def get_provider(self) -> str:
+        return f"{super().get_provider()} Responses"
+
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
@@ -477,6 +480,26 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
+    def _build_fc_id_to_call_id_map(self, messages: List[Message]) -> Dict[str, str]:
+        """Build a mapping from function_call id (fc_*) to call_id (call_*) from assistant tool_calls.
+
+        The OpenAI Responses API uses two ID systems:
+        - `id` (e.g. "fc_xxx"): internal function call identifier
+        - `call_id` (e.g. "call_xxx"): the ID expected by the API for function_call_output
+
+        This mapping is needed to translate between the two when formatting tool results.
+        """
+        fc_id_to_call_id: Dict[str, str] = {}
+        for msg in messages:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    fc_id = tc.get("id")
+                    call_id = tc.get("call_id") or fc_id
+                    if isinstance(fc_id, str) and isinstance(call_id, str):
+                        fc_id_to_call_id[fc_id] = call_id
+        return fc_id_to_call_id
+
     def _format_messages(
         self,
         messages: List[Message],
@@ -494,6 +517,13 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+        # Remap foreign tool call IDs (e.g. call_*, toolu_*) to fc_* prefix for Responses API
+        messages = reformat_tool_call_ids(messages, provider="openai_responses")
+
         formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
         messages_to_format = messages
@@ -519,16 +549,7 @@ class OpenAIResponses(Model):
 
                     break
 
-        # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
-        fc_id_to_call_id: Dict[str, str] = {}
-        for msg in messages:
-            tool_calls = getattr(msg, "tool_calls", None)
-            if tool_calls:
-                for tc in tool_calls:
-                    fc_id = tc.get("id")
-                    call_id = tc.get("call_id") or fc_id
-                    if isinstance(fc_id, str) and isinstance(call_id, str):
-                        fc_id_to_call_id[fc_id] = call_id
+        fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
             if message.role in ["user", "system"]:
@@ -943,22 +964,18 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        tool_call_ids: List[str],
         compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
-        Handle the results of function calls.
+        Format function call results for Responses API.
 
-        Args:
-            messages (List[Message]): The list of conversation messages.
-            function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
-            compress_tool_results (bool): Whether to compress tool results.
+        Stores tool results with the canonical fc_* tool_call_id (matching the assistant's
+        tool_calls[].id). The fc_* to call_* translation needed by the API happens at
+        runtime in _format_messages via _build_fc_id_to_call_id_map.
         """
         if len(function_call_results) > 0:
-            for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
-                messages.append(_fc_message)
+            messages.extend(function_call_results)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """

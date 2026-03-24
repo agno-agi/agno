@@ -221,13 +221,19 @@ def get_agent_router(
         agent_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
-        version: Optional[str] = Form(None),
-        background: bool = Form(False),
+        message: str = Form(..., description="The input message or prompt to send to the agent"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        files: Optional[List[UploadFile]] = File(
+            None, description="Files to upload (images, audio, video, or documents)"
+        ),
+        version: Optional[str] = Form(None, description="Agent version to use for this run"),
+        background: bool = Form(
+            False, description="Run in background and return immediately with run metadata (requires database)"
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -505,10 +511,12 @@ def get_agent_router(
         run_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        tools: str = Form(""),  # JSON string of tools (optional when admin approval resolved)
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        stream: bool = Form(True),
+        tools: str = Form(
+            "", description="JSON string of tool call results to continue the paused run"
+        ),  # optional when admin approval resolved
+        session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
