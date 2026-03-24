@@ -252,7 +252,7 @@ class TestDoclingToolsPdfPipeline:
             mock_converter_cls.return_value = Mock()
 
             DoclingTools(
-                pdf_do_ocr=True,
+                pdf_enable_ocr=True,
                 pdf_ocr_engine="auto",
                 pdf_ocr_lang=["en"],
                 pdf_force_full_page_ocr=True,

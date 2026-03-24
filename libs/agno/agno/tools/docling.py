@@ -29,13 +29,13 @@ class DoclingTools(Toolkit):
     Advanced pipeline/OCR options can be configured via init params.
 
     PDF/OCR options (init args):
-    - pdf_do_ocr: bool
+    - pdf_enable_ocr: bool
     - pdf_ocr_engine: "auto" | "easyocr" | "tesseract" | "tesseract_cli" | "ocrmac" | "rapidocr"
     - pdf_ocr_lang: list of language codes
     - pdf_force_full_page_ocr: bool
-    - pdf_do_table_structure: bool
-    - pdf_do_picture_description: bool
-    - pdf_do_picture_classification: bool
+    - pdf_enable_table_structure: bool
+    - pdf_enable_picture_description: bool
+    - pdf_enable_picture_classification: bool
     - pdf_document_timeout: float (seconds)
     - pdf_enable_remote_services: bool
 
@@ -52,13 +52,13 @@ class DoclingTools(Toolkit):
         allowed_input_formats: Optional[List[str]] = None,
         format_options: Optional[Dict[Any, Any]] = None,
         pdf_pipeline_options: Optional[PdfPipelineOptions] = None,
-        pdf_do_ocr: Optional[bool] = None,
+        pdf_enable_ocr: Optional[bool] = None,
         pdf_ocr_engine: Optional[str] = None,
         pdf_ocr_lang: Optional[List[str]] = None,
         pdf_force_full_page_ocr: Optional[bool] = None,
-        pdf_do_table_structure: Optional[bool] = None,
-        pdf_do_picture_description: Optional[bool] = None,
-        pdf_do_picture_classification: Optional[bool] = None,
+        pdf_enable_table_structure: Optional[bool] = None,
+        pdf_enable_picture_description: Optional[bool] = None,
+        pdf_enable_picture_classification: Optional[bool] = None,
         pdf_document_timeout: Optional[float] = None,
         pdf_enable_remote_services: Optional[bool] = None,
         enable_convert_to_markdown: bool = True,
@@ -78,13 +78,13 @@ class DoclingTools(Toolkit):
             allowed_input_formats=allowed_input_formats,
             format_options=format_options,
             pdf_pipeline_options=pdf_pipeline_options,
-            pdf_do_ocr=pdf_do_ocr,
+            pdf_enable_ocr=pdf_enable_ocr,
             pdf_ocr_engine=pdf_ocr_engine,
             pdf_ocr_lang=pdf_ocr_lang,
             pdf_force_full_page_ocr=pdf_force_full_page_ocr,
-            pdf_do_table_structure=pdf_do_table_structure,
-            pdf_do_picture_description=pdf_do_picture_description,
-            pdf_do_picture_classification=pdf_do_picture_classification,
+            pdf_enable_table_structure=pdf_enable_table_structure,
+            pdf_enable_picture_description=pdf_enable_picture_description,
+            pdf_enable_picture_classification=pdf_enable_picture_classification,
             pdf_document_timeout=pdf_document_timeout,
             pdf_enable_remote_services=pdf_enable_remote_services,
         )
@@ -122,7 +122,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to Markdown."""
+        """Convert a local file or URL to Markdown format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted Markdown content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="markdown",
@@ -140,7 +151,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to plain text."""
+        """Convert a local file or URL to plain text format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted plain text content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="text",
@@ -158,7 +180,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to HTML."""
+        """Convert a local file or URL to HTML format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted HTML content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="html",
@@ -176,7 +209,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to HTML with split page view enabled."""
+        """Convert a local file or URL to split-page HTML format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted split-page HTML content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="html_split_page",
@@ -194,7 +238,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to a JSON representation."""
+        """Convert a local file or URL to JSON format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted JSON content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="json",
@@ -212,7 +267,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to a YAML representation."""
+        """Convert a local file or URL to YAML format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted YAML content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="yaml",
@@ -230,7 +296,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to DocTags representation."""
+        """Convert a local file or URL to DocTags format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted DocTags content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="doctags",
@@ -248,7 +325,18 @@ class DoclingTools(Toolkit):
         max_num_pages: Optional[int] = None,
         max_file_size: Optional[int] = None,
     ) -> str:
-        """Convert a local file or URL to VTT representation."""
+        """Convert a local file or URL to VTT format using Docling.
+
+        Args:
+            source (str): Local file path or URL to the document.
+            headers (Optional[Dict[str, str]]): Optional HTTP headers used for URL fetching.
+            raises_on_error (bool): If True, raises conversion exceptions in Docling internals.
+            max_num_pages (Optional[int]): Maximum number of pages to process from the source.
+            max_file_size (Optional[int]): Maximum file size in bytes allowed for processing.
+
+        Returns:
+            str: The converted VTT content, or an error message if conversion fails.
+        """
         return self._convert_and_export(
             source,
             export_format="vtt",
@@ -265,7 +353,17 @@ class DoclingTools(Toolkit):
         output_format: str = "markdown",
         name: Optional[str] = None,
     ) -> str:
-        """Convert raw Markdown/HTML string content using Docling convert_string."""
+        """Convert raw markdown or HTML string content using Docling convert_string.
+
+        Args:
+            content (str): Raw source content to convert.
+            source_format (str): Input content format, one of markdown, md, or html.
+            output_format (str): Export format used after conversion.
+            name (Optional[str]): Optional document name associated with this in-memory source.
+
+        Returns:
+            str: Converted content in the selected output format, or an error message if conversion fails.
+        """
         if not content:
             return "Error: No content provided"
 
@@ -279,7 +377,11 @@ class DoclingTools(Toolkit):
             return f"Error converting string content: {e}"
 
     def list_supported_parsers(self) -> str:
-        """List all supported input parsers and currently active allowed formats."""
+        """List all Docling-supported input parsers and active converter parser restrictions.
+
+        Returns:
+            str: A JSON payload with supported_input_parsers and active_allowed_parsers fields.
+        """
         all_supported = sorted([input_format.name.lower() for input_format in InputFormat])
         converter_allowed_formats = getattr(self.converter, "allowed_formats", None)
         if isinstance(converter_allowed_formats, list):
@@ -363,13 +465,13 @@ class DoclingTools(Toolkit):
         allowed_input_formats: Optional[List[str]],
         format_options: Optional[Dict[Any, Any]],
         pdf_pipeline_options: Optional[PdfPipelineOptions],
-        pdf_do_ocr: Optional[bool],
+        pdf_enable_ocr: Optional[bool],
         pdf_ocr_engine: Optional[str],
         pdf_ocr_lang: Optional[List[str]],
         pdf_force_full_page_ocr: Optional[bool],
-        pdf_do_table_structure: Optional[bool],
-        pdf_do_picture_description: Optional[bool],
-        pdf_do_picture_classification: Optional[bool],
+        pdf_enable_table_structure: Optional[bool],
+        pdf_enable_picture_description: Optional[bool],
+        pdf_enable_picture_classification: Optional[bool],
         pdf_document_timeout: Optional[float],
         pdf_enable_remote_services: Optional[bool],
     ) -> DocumentConverter:
@@ -378,13 +480,13 @@ class DoclingTools(Toolkit):
 
         pdf_options = self._build_pdf_pipeline_options(
             pdf_pipeline_options=pdf_pipeline_options,
-            pdf_do_ocr=pdf_do_ocr,
+            pdf_enable_ocr=pdf_enable_ocr,
             pdf_ocr_engine=pdf_ocr_engine,
             pdf_ocr_lang=pdf_ocr_lang,
             pdf_force_full_page_ocr=pdf_force_full_page_ocr,
-            pdf_do_table_structure=pdf_do_table_structure,
-            pdf_do_picture_description=pdf_do_picture_description,
-            pdf_do_picture_classification=pdf_do_picture_classification,
+            pdf_enable_table_structure=pdf_enable_table_structure,
+            pdf_enable_picture_description=pdf_enable_picture_description,
+            pdf_enable_picture_classification=pdf_enable_picture_classification,
             pdf_document_timeout=pdf_document_timeout,
             pdf_enable_remote_services=pdf_enable_remote_services,
         )
@@ -417,9 +519,7 @@ class DoclingTools(Toolkit):
             if normalized_name == "xml":
                 xml_variants = [name for name in valid_names if name.startswith("xml_")]
                 variants_message = ", ".join(xml_variants) if xml_variants else "explicit xml_* parser"
-                raise ValueError(
-                    f"Ambiguous input parser 'xml'. Use one of: {variants_message}."
-                )
+                raise ValueError(f"Ambiguous input parser 'xml'. Use one of: {variants_message}.")
 
             normalized_name = alias_map.get(normalized_name, normalized_name)
 
@@ -441,13 +541,13 @@ class DoclingTools(Toolkit):
     def _build_pdf_pipeline_options(
         self,
         pdf_pipeline_options: Optional[PdfPipelineOptions],
-        pdf_do_ocr: Optional[bool],
+        pdf_enable_ocr: Optional[bool],
         pdf_ocr_engine: Optional[str],
         pdf_ocr_lang: Optional[List[str]],
         pdf_force_full_page_ocr: Optional[bool],
-        pdf_do_table_structure: Optional[bool],
-        pdf_do_picture_description: Optional[bool],
-        pdf_do_picture_classification: Optional[bool],
+        pdf_enable_table_structure: Optional[bool],
+        pdf_enable_picture_description: Optional[bool],
+        pdf_enable_picture_classification: Optional[bool],
         pdf_document_timeout: Optional[float],
         pdf_enable_remote_services: Optional[bool],
     ) -> Optional[PdfPipelineOptions]:
@@ -455,27 +555,27 @@ class DoclingTools(Toolkit):
             return pdf_pipeline_options
 
         if (
-            pdf_do_ocr is None
+            pdf_enable_ocr is None
             and pdf_ocr_engine is None
             and pdf_ocr_lang is None
             and pdf_force_full_page_ocr is None
-            and pdf_do_table_structure is None
-            and pdf_do_picture_description is None
-            and pdf_do_picture_classification is None
+            and pdf_enable_table_structure is None
+            and pdf_enable_picture_description is None
+            and pdf_enable_picture_classification is None
             and pdf_document_timeout is None
             and pdf_enable_remote_services is None
         ):
             return None
 
         options = PdfPipelineOptions()
-        if pdf_do_ocr is not None:
-            options.do_ocr = pdf_do_ocr
-        if pdf_do_table_structure is not None:
-            options.do_table_structure = pdf_do_table_structure
-        if pdf_do_picture_description is not None:
-            options.do_picture_description = pdf_do_picture_description
-        if pdf_do_picture_classification is not None:
-            options.do_picture_classification = pdf_do_picture_classification
+        if pdf_enable_ocr is not None:
+            options.do_ocr = pdf_enable_ocr
+        if pdf_enable_table_structure is not None:
+            options.do_table_structure = pdf_enable_table_structure
+        if pdf_enable_picture_description is not None:
+            options.do_picture_description = pdf_enable_picture_description
+        if pdf_enable_picture_classification is not None:
+            options.do_picture_classification = pdf_enable_picture_classification
         if pdf_document_timeout is not None:
             options.document_timeout = pdf_document_timeout
         if pdf_enable_remote_services is not None:
@@ -488,7 +588,7 @@ class DoclingTools(Toolkit):
         )
         if ocr_options is not None:
             options.ocr_options = ocr_options
-            if pdf_do_ocr is None:
+            if pdf_enable_ocr is None:
                 options.do_ocr = True
 
         return options
