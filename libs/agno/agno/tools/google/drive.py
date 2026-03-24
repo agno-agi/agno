@@ -165,8 +165,8 @@ class GoogleDriveTools(Toolkit):
         # Writing tools — disabled by default for safety
         upload_file: bool = False,
         download_file: bool = False,
-        # Restricts download_file writes to this directory; None = no restriction
-        allowed_download_dir: Optional[Path] = None,
+        # Default save location for download_file; also sandboxes writes to this directory
+        download_dir: Optional[Path] = None,
         # When False, trashed files are excluded from search/list results automatically
         include_trashed: bool = False,
         # Maximum file size (bytes) read_file will load into memory for non-Workspace files
@@ -183,7 +183,7 @@ class GoogleDriveTools(Toolkit):
 
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
-        self.allowed_download_dir = Path(allowed_download_dir).resolve() if allowed_download_dir else None
+        self.download_dir = Path(download_dir).resolve() if download_dir else None
 
         # Pre-built credentials skip the OAuth/service account flow entirely
         self.creds = creds
@@ -549,15 +549,18 @@ class GoogleDriveTools(Toolkit):
         return await asyncio.to_thread(self.upload_file, file_path)
 
     @authenticate
-    def download_file(self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None) -> str:
+    def download_file(
+        self, file_id: str, dest_path: Optional[Union[str, Path]] = None, export_format: Optional[str] = None
+    ) -> str:
         """
         Download a Drive file and save it to a local path on disk.
         Use when the user wants a local copy or a binary file (image, video, PDF).
         Workspace files are auto-exported to native formats (docx, xlsx, pptx, png).
+        If dest_path is omitted, the file is saved to the configured download directory.
 
         Args:
             file_id (str): The Drive file ID
-            dest_path (str): Local destination path to save the file
+            dest_path (str): Local destination path. If omitted, uses the configured download directory
             export_format (str): Optional MIME type to override the default export format
 
         Returns:
@@ -565,15 +568,26 @@ class GoogleDriveTools(Toolkit):
         """
         try:
             service = cast(Resource, self.service)
-            path = Path(dest_path)
+            use_default_dir = dest_path is None
 
-            if self.allowed_download_dir:
-                is_safe, path = self._check_path(str(path), self.allowed_download_dir)
-                if not is_safe:
-                    return json.dumps({"error": f"Path escapes allowed_download_dir: {dest_path}"})
+            if dest_path:
+                path = Path(dest_path)
+            elif self.download_dir:
+                path = self.download_dir
+            else:
+                return json.dumps({"error": "dest_path is required when download_dir is not configured"})
 
             metadata = self._get_file_metadata(file_id, "id,name,mimeType")
             mime_type = metadata.get("mimeType", "")
+
+            # When dest_path was omitted, save to download_dir using the Drive filename
+            if use_default_dir:
+                path = path / metadata.get("name", file_id)
+
+            if self.download_dir:
+                is_safe, path = self._check_path(str(path), self.download_dir)
+                if not is_safe:
+                    return json.dumps({"error": f"Path escapes download_dir: {dest_path}"})
 
             # Resolve export target — user override > auto-detect > None for regular files
             if export_format:
@@ -621,15 +635,16 @@ class GoogleDriveTools(Toolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def adownload_file(
-        self, file_id: str, dest_path: Union[str, Path], export_format: Optional[str] = None
+        self, file_id: str, dest_path: Optional[Union[str, Path]] = None, export_format: Optional[str] = None
     ) -> str:
         """
         Download a Drive file and save it to a local path on disk (async).
         Workspace files are auto-exported to native formats.
+        If dest_path is omitted, the file is saved to the configured download directory.
 
         Args:
             file_id (str): The Drive file ID
-            dest_path (str): Local destination path to save the file
+            dest_path (str): Local destination path. If omitted, uses the configured download directory
             export_format (str): Optional MIME type to override the default export format
 
         Returns:
