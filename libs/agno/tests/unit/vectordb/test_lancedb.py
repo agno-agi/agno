@@ -527,3 +527,30 @@ def test_get_table_names_old(lance_db):
 
     mock_conn.table_names.assert_called_once()
     assert result == ["old_table1", "old_table2"]
+
+def test_search_deduplicates_results(lance_db):
+    """Test that search results do not contain duplicate documents"""
+
+
+    docs = [
+        Document(
+            content="Duplicate content example",
+            meta_data={"id": 1},
+            name="doc1",
+        ),
+        Document(
+            content="Duplicate content example",
+            meta_data={"id": 2},
+            name="doc2",
+        ),
+    ]
+
+    lance_db.insert(documents=docs, content_hash="test_hash")
+
+    results = lance_db.search("duplicate content", limit=5)
+
+    contents = [doc.content for doc in results]
+
+    assert len(contents) == len(set(contents))
+
+
