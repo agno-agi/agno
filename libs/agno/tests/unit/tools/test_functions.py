@@ -175,7 +175,13 @@ def test_function_process_entrypoint():
 
 
 def test_function_process_entrypoint_with_user_input():
-    """Test processing the entrypoint with user input fields."""
+    """Test processing the entrypoint with user input fields.
+
+    When user_input_fields is set, only fields listed there (plus required fields
+    without defaults) should appear in user_input_schema.  Parameters that have a
+    default value and are NOT in user_input_fields are agent-owned and must be
+    excluded so they don't surface as None during continue_run (see #6870).
+    """
 
     def test_func(param1: str, param2: int = 42) -> str:
         """Test function with parameters."""
@@ -186,12 +192,11 @@ def test_function_process_entrypoint_with_user_input():
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
-    assert len(func.user_input_schema) == 2
+    # param2 has a default and is NOT in user_input_fields → excluded
+    assert len(func.user_input_schema) == 1
 
     assert func.user_input_schema[0].name == "param1"
     assert func.user_input_schema[0].field_type is str
-    assert func.user_input_schema[1].name == "param2"
-    assert func.user_input_schema[1].field_type is int
 
 
 def test_function_process_entrypoint_skip_processing():
@@ -588,7 +593,11 @@ def test_tool_decorator_with_config():
 
 
 def test_tool_decorator_with_user_input():
-    """Test @tool decorator with user input configuration."""
+    """Test @tool decorator with user input configuration.
+
+    Parameters with defaults that are NOT in user_input_fields must be excluded
+    from user_input_schema (see #6870).
+    """
 
     @tool(requires_user_input=True, user_input_fields=["param1"])
     def user_input_func(param1: str, param2: int = 42) -> str:
@@ -600,11 +609,10 @@ def test_tool_decorator_with_user_input():
     assert user_input_func.user_input_fields == ["param1"]
     user_input_func.process_entrypoint()
     assert user_input_func.user_input_schema is not None
-    assert len(user_input_func.user_input_schema) == 2
+    # param2 has a default and is NOT in user_input_fields → excluded
+    assert len(user_input_func.user_input_schema) == 1
     assert user_input_func.user_input_schema[0].name == "param1"
     assert user_input_func.user_input_schema[0].field_type is str
-    assert user_input_func.user_input_schema[1].name == "param2"
-    assert user_input_func.user_input_schema[1].field_type is int
 
 
 def test_tool_decorator_with_hooks():
@@ -1017,3 +1025,69 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+def test_user_input_fields_excludes_defaulted_params():
+    """Params with defaults that are NOT in user_input_fields must not appear in user_input_schema.
+
+    Regression test for #6870: when HITL is configured with user_input_fields, tool parameters
+    that have a default value and were omitted by the agent appeared in user_input_schema with
+    value=None, causing validation errors during continue_run.
+    """
+    from agno.tools.decorator import tool
+    from agno.tools.function import Function
+
+    @tool(
+        requires_user_input=True,
+        user_input_fields=["to_address"],
+    )
+    def send_email(
+        subject: str,
+        body: str,
+        to_address: str,
+        priority: str = "normal",
+        cc: str | None = None,
+    ) -> str:
+        """Send an email."""
+        return f"Sent to {to_address}"
+
+    assert isinstance(send_email, Function)
+    send_email.process_entrypoint()
+
+    assert send_email.user_input_schema is not None
+    schema_names = [f.name for f in send_email.user_input_schema]
+
+    # User-facing field must be present
+    assert "to_address" in schema_names
+
+    # Required fields without defaults that the agent must supply are also present
+    assert "subject" in schema_names
+    assert "body" in schema_names
+
+    # Parameters with defaults NOT in user_input_fields must be excluded
+    assert "priority" not in schema_names, "priority has a default and should be excluded"
+    assert "cc" not in schema_names, "cc has a default and should be excluded"
+
+
+def test_user_input_fields_no_filter_when_unset():
+    """When user_input_fields is not set, all params appear in user_input_schema (existing behaviour)."""
+    from agno.tools.function import Function
+
+    def all_fields_func(param1: str, param2: int = 42) -> str:
+        """Function with mixed params."""
+        return f"{param1}-{param2}"
+
+    func = Function(
+        name="all_fields_func",
+        entrypoint=all_fields_func,
+        requires_user_input=True,
+        # user_input_fields intentionally not set
+    )
+    func.process_entrypoint()
+
+    assert func.user_input_schema is not None
+    schema_names = [f.name for f in func.user_input_schema]
+
+    # Without user_input_fields, all params must be present (legacy behaviour unchanged)
+    assert "param1" in schema_names
+    assert "param2" in schema_names

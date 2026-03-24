@@ -492,6 +492,11 @@ class Function(BaseModel):
 
             # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
             if self.requires_user_input:
+                # When user_input_fields is configured, only include fields that need user input.
+                # Parameters with default values that are NOT in user_input_fields are agent-owned
+                # and should be excluded from user_input_schema to avoid them appearing as None
+                # (which causes validation errors during continue_run). See: #6870
+                user_input_fields_set = set(self.user_input_fields) if self.user_input_fields else None
                 self.user_input_schema = [
                     UserInputField(
                         name=name,
@@ -499,6 +504,9 @@ class Function(BaseModel):
                         field_type=type_hints.get(name, str),
                     )
                     for name in sig.parameters
+                    if user_input_fields_set is None
+                    or name in user_input_fields_set
+                    or sig.parameters[name].default is sig.parameters[name].empty
                 ]
 
             # Get JSON schema for parameters only
