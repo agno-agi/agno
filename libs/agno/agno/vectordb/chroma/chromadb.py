@@ -212,7 +212,7 @@ class ChromaDb(VectorDb):
 
         Note:
             - The value is cached after first calculation
-            - Falls back to 500 if query fails
+            - Falls back to 100 if query fails
             - Typical values: ~4,915 on standard systems, ~37,499 on systems with higher limits
         """
         if self._batch_size is None:
@@ -223,8 +223,8 @@ class ChromaDb(VectorDb):
                 log_debug(f"ChromaDB max batch size: {max_size}, using {self._batch_size} (90%)")
             except Exception as e:
                 # Fallback to conservative value if query fails
-                log_warning(f"Could not query ChromaDB max batch size: {e}. Using fallback: 500")
-                self._batch_size = 500
+                log_warning(f"Could not query ChromaDB max batch size: {e}. Using fallback: 100")
+                self._batch_size = 100
         return self._batch_size
 
     def _batch_operation(

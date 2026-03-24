@@ -1353,6 +1353,9 @@ async def test_async_insert_large_batch_exceeds_limit(chroma_db):
         for i in range(num_documents)
     ]
 
+    for doc in documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
     await chroma_db.async_insert(content_hash="test_hash_async", documents=documents)
 
     assert chroma_db.get_count() == num_documents
@@ -1373,6 +1376,9 @@ async def test_async_upsert_large_batch_exceeds_limit(chroma_db):
         )
         for i in range(num_documents)
     ]
+
+    for doc in documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
 
     await chroma_db.async_upsert(content_hash="test_hash_async_upsert", documents=documents)
 
