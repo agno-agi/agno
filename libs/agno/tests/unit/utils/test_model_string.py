@@ -164,3 +164,76 @@ def test_agentic_chunking_with_model_instance():
     """Test AgenticChunking accepts Model instance."""
     chunking = AgenticChunking(model=OpenAIChat(id="gpt-4o"))
     assert isinstance(chunking.model, OpenAIChat)
+
+
+# ---------------------------------------------------------------------------
+# normalize_provider tests (issue #7093)
+# ---------------------------------------------------------------------------
+
+def test_normalize_provider_openai():
+    """OpenAI runtime provider string resolves to canonical 'openai'."""
+    from agno.utils.model import normalize_provider
+
+    assert normalize_provider("OpenAI") == "openai"
+
+
+def test_normalize_provider_azure():
+    """Azure runtime provider string resolves to canonical 'azure-openai'."""
+    from agno.utils.model import normalize_provider
+
+    assert normalize_provider("Azure") == "azure-openai"
+    assert normalize_provider("azure") == "azure-openai"
+    assert normalize_provider("AzureOpenAI") == "azure-openai"
+    assert normalize_provider("azure-openai") == "azure-openai"
+
+
+def test_normalize_provider_lmstudio():
+    """LMStudio runtime provider string resolves to canonical 'lmstudio'."""
+    from agno.utils.model import normalize_provider
+
+    assert normalize_provider("LMStudio") == "lmstudio"
+    assert normalize_provider("lmstudio") == "lmstudio"
+
+
+def test_normalize_provider_siliconflow():
+    """Siliconflow runtime provider string resolves to canonical 'siliconflow'."""
+    from agno.utils.model import normalize_provider
+
+    assert normalize_provider("Siliconflow") == "siliconflow"
+    assert normalize_provider("SILICONFLOW") == "siliconflow"
+
+
+def test_normalize_provider_aws_bedrock():
+    """AwsBedrock runtime provider string resolves to canonical 'aws-bedrock'."""
+    from agno.utils.model import normalize_provider
+
+    assert normalize_provider("AwsBedrock") == "aws-bedrock"
+    assert normalize_provider("aws-bedrock") == "aws-bedrock"
+    assert normalize_provider("awsbedrock") == "aws-bedrock"
+
+
+def test_normalize_provider_unknown_passthrough():
+    """Unknown provider strings are returned lowercased (no silent drop)."""
+    from agno.utils.model import normalize_provider
+
+    assert normalize_provider("UnknownProvider") == "unknownprovider"
+
+
+def test_get_model_azure_runtime_provider():
+    """get_model() should parse 'Azure:gpt-4' into AzureOpenAI (issue #7093)."""
+    from agno.models.azure import AzureOpenAI
+    from agno.models.utils import get_model
+
+    model = get_model("Azure:gpt-4")
+    assert isinstance(model, AzureOpenAI)
+    assert model.id == "gpt-4"
+
+
+def test_get_model_provider_case_insensitive():
+    """Provider string lookup is case-insensitive."""
+    from agno.models.openai import OpenAIChat
+    from agno.models.utils import get_model
+
+    model = get_model("OpenAI:gpt-4o")
+    assert isinstance(model, OpenAIChat)
+    assert model.id == "gpt-4o"

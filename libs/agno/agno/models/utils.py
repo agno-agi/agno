@@ -1,6 +1,7 @@
 from typing import Optional, Union
 
 from agno.models.base import Model
+from agno.utils.model import normalize_provider
 
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:
@@ -254,7 +255,7 @@ def _parse_model_string(model_string: str) -> Model:
         )
 
     model_provider, model_id = parts
-    model_provider = model_provider.strip().lower()
+    model_provider = normalize_provider(model_provider.strip())
     model_id = model_id.strip()
 
     if not model_provider or not model_id:
