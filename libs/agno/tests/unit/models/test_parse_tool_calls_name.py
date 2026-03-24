@@ -200,7 +200,7 @@ PROVIDERS = [
     "huggingface",
     "cerebras",
     "watsonx",
-    "litellm",
+    # "litellm",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
 ]
 
 
