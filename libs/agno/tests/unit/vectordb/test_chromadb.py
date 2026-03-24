@@ -1286,3 +1286,77 @@ def test_sync_async_id_consistency(mock_embedder):
     finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
+
+
+
+# =============================================================================
+# Tests for SQLite "too many SQL variables" fix (issue #7040)
+# =============================================================================
+
+
+def test_chromadb_large_batch_insert_no_sql_error(chroma_db):
+    """Insert > 999 documents without triggering SQLite too many SQL variables.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7040
+    """
+    n = 1200
+    documents = [
+        Document(content=f"document content number {i}", name=f"doc_{i}")
+        for i in range(n)
+    ]
+    chroma_db.insert(content_hash="large_batch_hash", documents=documents)
+    assert chroma_db.get_count() == n
+
+
+def test_chromadb_large_batch_upsert_no_sql_error(chroma_db):
+    """Upsert > 999 documents without triggering SQLite too many SQL variables."""
+    n = 1200
+    documents = [
+        Document(content=f"upsert content number {i}", name=f"udoc_{i}")
+        for i in range(n)
+    ]
+    chroma_db._upsert(content_hash="large_upsert_hash", documents=documents)
+    assert chroma_db.get_count() == n
+
+
+def test_chromadb_large_delete_no_sql_error(chroma_db):
+    """Delete > 999 documents without triggering SQLite too many SQL variables."""
+    n = 1200
+    documents = [
+        Document(content=f"delete content number {i}", name=f"ddoc_{i}")
+        for i in range(n)
+    ]
+    chroma_db.insert(content_hash="large_delete_hash", documents=documents)
+    assert chroma_db.get_count() == n
+
+    new_documents = [
+        Document(content=f"replacement {i}", name=f"rdoc_{i}")
+        for i in range(10)
+    ]
+    chroma_db.upsert(content_hash="large_delete_hash", documents=new_documents)
+    assert chroma_db.get_count() == 10
+
+
+def test_add_in_batches_splits_correctly():
+    """Verify _add_in_batches splits calls into correct chunk sizes."""
+    mock_collection = MagicMock()
+    ids = [str(i) for i in range(2500)]
+    embeddings = [[0.1] * 3] * 2500
+    documents = ["doc"] * 2500
+    metadatas = [{}] * 2500
+
+    ChromaDb._add_in_batches(mock_collection, ids, embeddings, documents, metadatas, batch_size=900)
+
+    assert mock_collection.add.call_count == 3
+    sizes = [len(c[1]["ids"]) for c in mock_collection.add.call_args_list]
+    assert sizes == [900, 900, 700]
+
+
+def test_delete_ids_in_batches_splits_correctly():
+    """Verify _delete_ids_in_batches splits calls into correct chunk sizes."""
+    mock_collection = MagicMock()
+    ids = [str(i) for i in range(1950)]
+
+    ChromaDb._delete_ids_in_batches(mock_collection, ids, batch_size=900)
+
+    assert mock_collection.delete.call_count == 3

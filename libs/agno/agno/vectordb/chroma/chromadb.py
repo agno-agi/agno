@@ -15,6 +15,11 @@ try:
 except ImportError:
     raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")
 
+# SQLite limits the number of bound parameters in IN() clauses.
+# Exceeding this causes: (code: 1) too many SQL variables
+# We use a conservative limit to stay well within the default (999).
+_SQLITE_MAX_VARIABLE_NUMBER = 900
+
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
@@ -291,7 +296,7 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                self._add_in_batches(self._collection, ids, docs_embeddings, docs, docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
     async def async_insert(
@@ -390,7 +395,7 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                self._add_in_batches(self._collection, ids, docs_embeddings, docs, docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
@@ -470,7 +475,7 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                self._upsert_in_batches(self._collection, ids, docs_embeddings, docs, docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
     async def _async_upsert(
@@ -571,7 +576,7 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                self._upsert_in_batches(self._collection, ids, docs_embeddings, docs, docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
     async def async_upsert(
@@ -1264,8 +1269,8 @@ class ChromaDb(VectorDb):
                 log_info(f"No documents found with content_hash '{content_hash}'")
                 return False
 
-            # Delete all matching documents
-            collection.delete(ids=ids_to_delete)
+            # Delete all matching documents in batches to avoid SQLite variable limit
+            self._delete_ids_in_batches(collection, ids_to_delete)
             log_info(f"Deleted {len(ids_to_delete)} documents with content_hash '{content_hash}'")
             return True
         except Exception as e:
@@ -1408,6 +1413,58 @@ class ChromaDb(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    # ------------------------------------------------------------------
+    # Batch helpers - avoid SQLite "too many SQL variables" (issue #7040)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _add_in_batches(
+        collection: "Collection",
+        ids: List[str],
+        embeddings: List,
+        documents: List[str],
+        metadatas: List,
+        batch_size: int = _SQLITE_MAX_VARIABLE_NUMBER,
+    ) -> None:
+        """Add documents to ChromaDB in batches to avoid SQLite variable limit."""
+        for i in range(0, len(ids), batch_size):
+            s = slice(i, i + batch_size)
+            collection.add(
+                ids=ids[s],
+                embeddings=embeddings[s],
+                documents=documents[s],
+                metadatas=metadatas[s],
+            )
+
+    @staticmethod
+    def _upsert_in_batches(
+        collection: "Collection",
+        ids: List[str],
+        embeddings: List,
+        documents: List[str],
+        metadatas: List,
+        batch_size: int = _SQLITE_MAX_VARIABLE_NUMBER,
+    ) -> None:
+        """Upsert documents into ChromaDB in batches to avoid SQLite variable limit."""
+        for i in range(0, len(ids), batch_size):
+            s = slice(i, i + batch_size)
+            collection.upsert(
+                ids=ids[s],
+                embeddings=embeddings[s],
+                documents=documents[s],
+                metadatas=metadatas[s],
+            )
+
+    @staticmethod
+    def _delete_ids_in_batches(
+        collection: "Collection",
+        ids: List[str],
+        batch_size: int = _SQLITE_MAX_VARIABLE_NUMBER,
+    ) -> None:
+        """Delete documents from ChromaDB in batches to avoid SQLite variable limit."""
+        for i in range(0, len(ids), batch_size):
+            collection.delete(ids=ids[i : i + batch_size])
 
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""
