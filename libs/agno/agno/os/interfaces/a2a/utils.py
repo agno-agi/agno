@@ -301,6 +301,33 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     )
 
 
+def _serialize_content(content: Any) -> str:
+    """Serialize content to a string, handling Pydantic models and other types.
+
+    When an Agent uses ``output_schema`` (a Pydantic BaseModel subclass), the
+    ``RunContentEvent.content`` field may hold a model *instance* rather than a
+    plain string.  Concatenating such an object with ``str`` raises::
+
+        TypeError: can only concatenate str (not "<ModelClass>") to str
+
+    This helper converts any Pydantic model to its JSON representation and falls
+    back to ``str()`` for all other non-string types.
+    """
+    if isinstance(content, str):
+        return content
+    if hasattr(content, "model_dump_json"):
+        # Pydantic v2
+        return content.model_dump_json()
+    if hasattr(content, "model_dump"):
+        # Pydantic v2 fallback (shouldn't normally be reached)
+        return json.dumps(content.model_dump())
+    if hasattr(content, "json"):
+        # Pydantic v1
+        return content.json()
+    return str(content)
+
+
+
 async def stream_a2a_response(
     event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
     request_id: Union[str, int],
@@ -348,11 +375,12 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            serialized_content = _serialize_content(event.content)
+            accumulated_content += serialized_content
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=serialized_content))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
