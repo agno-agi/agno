@@ -1286,3 +1286,94 @@ def test_sync_async_id_consistency(mock_embedder):
     finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
+
+
+# =============================================================================
+# Tests for ChromaDB Batch Size Limit
+# =============================================================================
+
+
+def test_insert_large_batch_exceeds_limit(chroma_db):
+    """Test inserting more than 5461 documents (ChromaDB's batch size limit).
+
+    This test ensures that large document batches are automatically split into
+    smaller batches to respect this limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Section {i}: This is a test document with unique content for batch size testing. "
+            f"The content is generated to simulate a real-world scenario where large documents "
+            f"are chunked into many pieces, exceeding ChromaDB's batch size limit.",
+            meta_data={"section": i, "test": "batch_size"},
+            name=f"doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    # Insert all documents - should succeed with batching
+    chroma_db.insert(content_hash="test_hash_large_batch", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+def test_upsert_large_batch_exceeds_limit(chroma_db):
+    """Test upserting more than 5461 documents.
+
+    Tests the upsert method with a large batch that exceeds the limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Upsert test document {i}",
+            meta_data={"index": i},
+            name=f"upsert_doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    chroma_db.upsert(content_hash="test_hash_upsert", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.asyncio
+async def test_async_insert_large_batch_exceeds_limit(chroma_db):
+    """Test async inserting more than 5461 documents.
+
+    Tests the async_insert method with a large batch that exceeds the limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Async test document {i}",
+            meta_data={"index": i},
+            name=f"async_doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    await chroma_db.async_insert(content_hash="test_hash_async", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_large_batch_exceeds_limit(chroma_db):
+    """Test async upserting more than 5,461 documents.
+
+    Tests the async_upsert method with a large batch that exceeds the limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Async upsert test document {i}",
+            meta_data={"index": i},
+            name=f"async_upsert_doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    await chroma_db.async_upsert(content_hash="test_hash_async_upsert", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
