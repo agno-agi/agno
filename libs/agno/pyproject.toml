@@ -244,7 +244,7 @@ tools = [
   "agno[youtube]",
   "agno[firecrawl]",
   "agno[tavily]",
-  "agno[crawl4ai]",
+  # "agno[crawl4ai]",  # Temporarily disabled - depends on litellm which is compromised on PyPI (March 24, 2026)
   "agno[github]",
   "agno[gitlab]",
   "agno[gmail]",
