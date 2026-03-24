@@ -1,7 +1,7 @@
 """Unit tests for PerplexitySearch class."""
 
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -68,6 +68,12 @@ def test_tool_registration():
     """Test that the search tool is registered correctly."""
     tools = PerplexitySearch(api_key="test_key")
     assert "search" in [func.name for func in tools.functions.values()]
+
+
+def test_async_tool_registration():
+    """Test that the async search tool is registered correctly."""
+    tools = PerplexitySearch(api_key="test_key")
+    assert "search" in [func.name for func in tools.async_functions.values()]
 
 
 # ============================================================================
@@ -222,3 +228,126 @@ def test_search_request_url():
 
         call_args = mock_post.call_args
         assert call_args[0][0] == "https://api.perplexity.ai/search"
+
+
+# ============================================================================
+# ASYNC SEARCH TESTS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_asearch_success():
+    """Test a successful async search returns parsed results."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {
+        "id": "test-id",
+        "results": [
+            {
+                "title": "AI Agents Overview",
+                "url": "https://example.com/ai-agents",
+                "snippet": "AI agents are autonomous systems...",
+                "date": "2024-12-15",
+            },
+            {
+                "title": "Building AI Agents",
+                "url": "https://example.com/building-agents",
+                "snippet": "How to build AI agents...",
+                "date": "2024-12-10",
+            },
+        ],
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    tools = PerplexitySearch(api_key="test_key")
+
+    with patch("agno.tools.perplexity.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tools.asearch("AI agents")
+        result_data = json.loads(result)
+
+        assert len(result_data) == 2
+        assert result_data[0]["url"] == "https://example.com/ai-agents"
+        assert result_data[0]["title"] == "AI Agents Overview"
+        assert result_data[1]["url"] == "https://example.com/building-agents"
+
+        mock_client.post.assert_called_once()
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs[1]["json"]["query"] == "AI agents"
+        assert call_kwargs[1]["json"]["max_results"] == 5
+
+
+@pytest.mark.asyncio
+async def test_asearch_with_filters():
+    """Test async search includes configured filters in the request body."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"results": []}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    tools = PerplexitySearch(
+        api_key="test_key",
+        search_recency_filter="day",
+        search_domain_filter=["example.com"],
+        search_language_filter=["en"],
+    )
+
+    with patch("agno.tools.perplexity.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await tools.asearch("test query")
+
+        call_kwargs = mock_client.post.call_args
+        body = call_kwargs[1]["json"]
+        assert body["search_recency_filter"] == "day"
+        assert body["search_domain_filter"] == ["example.com"]
+        assert body["search_language_filter"] == ["en"]
+
+
+@pytest.mark.asyncio
+async def test_asearch_api_error():
+    """Test async search handles API errors gracefully."""
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = Exception("API connection failed")
+
+    tools = PerplexitySearch(api_key="test_key")
+
+    with patch("agno.tools.perplexity.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tools.asearch("test query")
+        result_data = json.loads(result)
+        assert "error" in result_data
+        assert "API connection failed" in result_data["error"]
+
+
+@pytest.mark.asyncio
+async def test_asearch_empty_results():
+    """Test async search with empty results."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"results": []}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    tools = PerplexitySearch(api_key="test_key")
+
+    with patch("agno.tools.perplexity.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tools.asearch("test query")
+        result_data = json.loads(result)
+        assert result_data == []
