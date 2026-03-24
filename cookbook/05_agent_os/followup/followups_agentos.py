@@ -1,8 +1,8 @@
 from agno.agent import Agent
-from agno.team.team import Team
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.db.postgres import PostgresDb
+from agno.team.team import Team
 
 db = PostgresDb(db_url="postgresql://ai:ai@localhost:5532/ai")
 
@@ -37,7 +37,13 @@ team = Team(
     db=db,
 )
 
-agno_os = AgentOS(id="followups-agentos", name="Followups AgentOS", agents=[agent], teams=[team], db=db)
+agno_os = AgentOS(
+    id="followups-agentos",
+    name="Followups AgentOS",
+    agents=[agent],
+    teams=[team],
+    db=db,
+)
 app = agno_os.get_app()
 if __name__ == "__main__":
     agno_os.serve(app="followups_agentos:app", reload=True)
