@@ -61,7 +61,7 @@ except ImportError:
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Google Slides tools for creating and managing presentations.
