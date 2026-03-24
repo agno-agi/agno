@@ -389,9 +389,7 @@ class GoogleSlidesTools(Toolkit):
             if not presentation_id.strip():
                 return json.dumps({"error": "presentation_id cannot be empty."})
 
-            result = self.slides_service.presentations().get(
-                presentationId=presentation_id, fields=fields
-            ).execute()
+            result = self.slides_service.presentations().get(presentationId=presentation_id, fields=fields).execute()
             return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": str(e)})
@@ -411,12 +409,16 @@ class GoogleSlidesTools(Toolkit):
         try:
             if page_size <= 0:
                 return json.dumps({"error": "page_size must be a positive integer."})
-            response = self.drive_service.files().list(
-                q="mimeType='application/vnd.google-apps.presentation'",
-                pageSize=page_size,
-                pageToken=page_token,
-                fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
-            ).execute()
+            response = (
+                self.drive_service.files()
+                .list(
+                    q="mimeType='application/vnd.google-apps.presentation'",
+                    pageSize=page_size,
+                    pageToken=page_token,
+                    fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
+                )
+                .execute()
+            )
             files = response.get("files", [])
             next_token = response.get("nextPageToken")
             return json.dumps({"presentations": files, "next_page_token": next_token})
@@ -490,7 +492,9 @@ class GoogleSlidesTools(Toolkit):
                 "TITLE_AND_TWO_COLUMNS",
             }
             if layout not in valid_layouts:
-                return json.dumps({"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"})
+                return json.dumps(
+                    {"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"}
+                )
 
             slide_id = self._generate_id("slide")
 
@@ -955,12 +959,8 @@ class GoogleSlidesTools(Toolkit):
                         el_info["y_inches"] = round(transform.get("translateY", 0) / 914400, 2)
                     size = el.get("size", {})
                     if size:
-                        el_info["width_inches"] = round(
-                            size.get("width", {}).get("magnitude", 0) / 914400, 2
-                        )
-                        el_info["height_inches"] = round(
-                            size.get("height", {}).get("magnitude", 0) / 914400, 2
-                        )
+                        el_info["width_inches"] = round(size.get("width", {}).get("magnitude", 0) / 914400, 2)
+                        el_info["height_inches"] = round(size.get("height", {}).get("magnitude", 0) / 914400, 2)
                     elements.append(el_info)
                 slides_info.append(
                     {
