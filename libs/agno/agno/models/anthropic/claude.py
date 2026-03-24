@@ -553,7 +553,7 @@ class Claude(Model):
         if self.skills and messages:
             container_id = self._extract_container_id_from_messages(messages)
             if container_id:
-                request_kwargs["container"]["id"] = container_id
+                request_kwargs["container"] = {**request_kwargs["container"], "id": container_id}
         if system_message:
             if self.cache_system_prompt:
                 cache_control = (
