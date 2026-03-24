@@ -329,7 +329,7 @@ class GoogleDriveTools(Toolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
-    @authenticate
+    # No @authenticate — delegates to search_files which handles auth
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> str:
         """
         Browse Google Drive files and folders. Returns metadata only, not file contents.
