@@ -6,12 +6,32 @@ from agno.models.base import Model
 from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message
 from agno.models.utils import get_model
+from agno.utils.log import log_debug
+
+MAX_CHUNK_SIZE = 5000
+
+DEFAULT_INSTRUCTIONS = """Determine where to split this text following the user instructions below.
+
+User Instructions:
+{custom_instructions}
+
+Constraint: Never exceed {max_chunk_size} characters.
+
+Text:
+{text}
+
+Output: Return ONLY the character position number (integer) where to split the above text."""
 
 
 class AgenticChunking(ChunkingStrategy):
     """Chunking strategy that uses an LLM to determine natural breakpoints in the text"""
 
-    def __init__(self, model: Optional[Union[Model, str]] = None, max_chunk_size: int = 5000):
+    def __init__(
+        self,
+        model: Optional[Union[Model, str]] = None,
+        max_chunk_size: Optional[int] = None,
+        custom_prompt: Optional[str] = None,
+    ):
         # Convert model string to Model instance
         model = get_model(model)
         if model is None:
@@ -20,11 +40,22 @@ class AgenticChunking(ChunkingStrategy):
             except Exception:
                 raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
             model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
+
+        if max_chunk_size is None:
+            max_chunk_size = MAX_CHUNK_SIZE
+            if custom_prompt:
+                log_debug(
+                    f"Using default chunk size of {max_chunk_size} characters. "
+                    "Consider specifying `max_chunk_size` explicitly when using `custom_prompt`."
+                )
+
         self.chunk_size = max_chunk_size
+        self.custom_prompt = custom_prompt
         self.model = model
 
     def chunk(self, document: Document) -> List[Document]:
         """Split text into chunks using LLM to determine natural breakpoints based on context"""
+        # Skip chunking if content is already within chunk_size
         if len(document.content) <= self.chunk_size:
             return [document]
 
@@ -35,11 +66,20 @@ class AgenticChunking(ChunkingStrategy):
 
         while remaining_text:
             # Ask model to find a good breakpoint within chunk_size
-            prompt = f"""Analyze this text and determine a natural breakpoint within the first {self.chunk_size} characters.
-            Consider semantic completeness, paragraph boundaries, and topic transitions.
-            Return only the character position number of where to break the text:
+            if self.custom_prompt:
+                # Use custom prompt with DEFAULT_INSTRUCTIONS
+                prompt = DEFAULT_INSTRUCTIONS.format(
+                    custom_instructions=self.custom_prompt,
+                    max_chunk_size=self.chunk_size,
+                    text=remaining_text[: self.chunk_size],
+                )
+            else:
+                # Use default prompt
+                prompt = f"""Analyze this text and determine a natural breakpoint within the first {self.chunk_size} characters.
+                Consider semantic completeness, paragraph boundaries, and topic transitions.
+                Return only the character position number of where to break the text:
 
-            {remaining_text[: self.chunk_size]}"""
+                {remaining_text[: self.chunk_size]}"""
 
             try:
                 response = self.model.response([Message(role="user", content=prompt)])
