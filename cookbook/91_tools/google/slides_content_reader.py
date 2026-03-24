@@ -31,14 +31,18 @@ class SlideSummary(BaseModel):
     slide_id: str = Field(..., description="The slide object ID")
     slide_number: int = Field(..., description="1-based slide position")
     title: str = Field(..., description="Inferred slide title or first text element")
-    key_points: List[str] = Field(default_factory=list, description="Key points from the slide")
+    key_points: List[str] = Field(
+        default_factory=list, description="Key points from the slide"
+    )
 
 
 class PresentationSummary(BaseModel):
     title: str = Field(..., description="Presentation title")
     slide_count: int = Field(..., description="Total number of slides")
     slides: List[SlideSummary] = Field(..., description="Summary of each slide")
-    overall_summary: str = Field(..., description="One-paragraph summary of the entire presentation")
+    overall_summary: str = Field(
+        ..., description="One-paragraph summary of the entire presentation"
+    )
 
 
 agent = Agent(

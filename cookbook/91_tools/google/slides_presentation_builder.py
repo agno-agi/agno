@@ -29,7 +29,9 @@ from pydantic import BaseModel, Field
 
 
 class SlideSpec(BaseModel):
-    layout: str = Field(..., description="Slide layout: TITLE, TITLE_AND_BODY, BLANK, etc.")
+    layout: str = Field(
+        ..., description="Slide layout: TITLE, TITLE_AND_BODY, BLANK, etc."
+    )
     title: Optional[str] = Field(None, description="Slide title text")
     body: Optional[str] = Field(None, description="Slide body content")
 

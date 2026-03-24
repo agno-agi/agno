@@ -120,8 +120,6 @@ def tools(mock_credentials, mock_slides_service, mock_drive_service):
         return toolkit
 
 
-
-
 def ok(response: str) -> dict:
     """Parse a JSON response and assert it has no 'error' key."""
     data = json.loads(response)
@@ -134,8 +132,6 @@ def err(response: str) -> str:
     data = json.loads(response)
     assert "error" in data, f"Expected error but got: {data}"
     return data["error"]
-
-
 
 
 class TestInitialization:
@@ -162,8 +158,6 @@ class TestInitialization:
             assert toolkit._to_emu(0, "raw") == 0
 
 
-
-
 class TestCreatePresentation:
     def test_success(self, tools):
         data = ok(tools.create_presentation("My Deck"))
@@ -182,8 +176,6 @@ class TestCreatePresentation:
             "quota exceeded"
         )
         assert "quota exceeded" in err(tools.create_presentation("Valid Title"))
-
-
 
 
 class TestGetPresentation:
@@ -211,8 +203,6 @@ class TestGetPresentation:
     def test_api_error(self, tools):
         tools.slides_service.presentations.return_value.get.return_value.execute.side_effect = Exception("not found")
         assert "not found" in err(tools.get_presentation("bad-id"))
-
-
 
 
 class TestListPresentations:
@@ -243,8 +233,6 @@ class TestListPresentations:
         assert call_kwargs.kwargs["pageToken"] == "test-token"
 
 
-
-
 class TestDeletePresentation:
     def test_success(self, tools):
         data = ok(tools.delete_presentation("pres-id"))
@@ -259,8 +247,6 @@ class TestDeletePresentation:
     def test_api_error(self, tools):
         tools.drive_service.files.return_value.delete.return_value.execute.side_effect = Exception("forbidden")
         assert "forbidden" in err(tools.delete_presentation("pres-id"))
-
-
 
 
 class TestAddSlide:
@@ -357,8 +343,6 @@ class TestAddSlide:
         assert data["body"] == "Body"
 
 
-
-
 class TestDeleteSlide:
     def test_success(self, tools):
         data = ok(tools.delete_slide("pres-id", "slide-1"))
@@ -380,8 +364,6 @@ class TestDeleteSlide:
         assert "not found" in err(tools.delete_slide("pres-id", "slide-1"))
 
 
-
-
 class TestDuplicateSlide:
     def test_success(self, tools):
         data = ok(tools.duplicate_slide("pres-id", "slide-1"))
@@ -398,8 +380,6 @@ class TestDuplicateSlide:
             "dup error"
         )
         assert "dup error" in err(tools.duplicate_slide("pres-id", "slide-1"))
-
-
 
 
 class TestMoveSlides:
@@ -422,8 +402,6 @@ class TestMoveSlides:
             "move error"
         )
         assert "move error" in err(tools.move_slides("pres-id", ["slide-1"], insertion_index=0))
-
-
 
 
 class TestAddTextBox:
@@ -467,8 +445,6 @@ class TestAddTextBox:
             "textbox error"
         )
         assert "textbox error" in err(tools.add_text_box("pres-id", "slide-1", "Hi"))
-
-
 
 
 class TestAddTable:
@@ -529,8 +505,6 @@ class TestAddTable:
         assert "table error" in err(tools.add_table("pres-id", "slide-1", rows=2, columns=2))
 
 
-
-
 class TestSetBackgroundImage:
     def test_success(self, tools):
         data = ok(tools.set_background_image("pres-id", "slide-1", "https://example.com/bg.png"))
@@ -566,8 +540,6 @@ class TestSetBackgroundImage:
             "bg error"
         )
         assert "bg error" in err(tools.set_background_image("pres-id", "slide-1", "https://x.com/img.png"))
-
-
 
 
 class TestReadAllText:
@@ -646,8 +618,6 @@ class TestReadAllText:
         assert "Slide 1 of 5" in data["slide_auto"]
 
 
-
-
 class TestGetThumbnailUrl:
     def test_success(self, tools):
         data = ok(tools.get_slide_thumbnail("pres-id", "slide-1"))
@@ -668,8 +638,6 @@ class TestGetThumbnailUrl:
             "thumb error"
         )
         assert "thumb error" in err(tools.get_slide_thumbnail("pres-id", "slide-1"))
-
-
 
 
 class TestGetPresentationMetadata:
@@ -712,8 +680,6 @@ class TestGetPresentationMetadata:
         assert "meta error" in err(tools.get_presentation_metadata("pres-id"))
 
 
-
-
 class TestGetPage:
     def test_success(self, tools):
         data = ok(tools.get_page("pres-id", "slide-1"))
@@ -733,8 +699,6 @@ class TestGetPage:
             Exception("page error")
         )
         assert "page error" in err(tools.get_page("pres-id", "slide-1"))
-
-
 
 
 class TestGetSlideText:
@@ -781,11 +745,6 @@ class TestGetSlideText:
         assert data["text"] == []
 
 
-
-
-
-
-
 class TestInsertYoutubeVideo:
     def test_success(self, tools):
         data = ok(tools.insert_youtube_video("pres-id", "slide-1", "dQw4w9WgXcQ", x=1, y=1, width=4, height=3))
@@ -821,8 +780,6 @@ class TestInsertYoutubeVideo:
             "yt error"
         )
         assert "yt error" in err(tools.insert_youtube_video("pres-id", "slide-1", "abc"))
-
-
 
 
 class TestInsertDriveVideo:
@@ -862,11 +819,6 @@ class TestInsertDriveVideo:
         assert "drive video error" in err(tools.insert_drive_video("pres-id", "slide-1", "file-id"))
 
 
-
-
-
-
-
 class TestIdUniqueness:
     def test_slide_ids_are_unique(self, tools):
         """Each add_slide call should produce a different slideId."""
@@ -891,8 +843,6 @@ class TestIdUniqueness:
         assert len(ids) == 10
 
 
-
-
 class TestToolFiltering:
     def test_include_tools(self):
         with patch("agno.tools.google.slides.authenticate", lambda func: func):
@@ -904,9 +854,7 @@ class TestToolFiltering:
 
     def test_exclude_tools(self):
         with patch("agno.tools.google.slides.authenticate", lambda func: func):
-            toolkit = GoogleSlidesTools(
-                delete_presentation=True, exclude_tools=["delete_presentation", "add_slide"]
-            )
+            toolkit = GoogleSlidesTools(delete_presentation=True, exclude_tools=["delete_presentation", "add_slide"])
         assert "delete_presentation" not in toolkit.functions
         assert "add_slide" not in toolkit.functions
         assert "create_presentation" in toolkit.functions
