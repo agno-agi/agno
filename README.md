@@ -30,7 +30,7 @@ Agno is the runtime for agentic software. Build agents, teams, and workflows. Ru
 |-------|--------------|
 | **Framework** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations. |
 | **Runtime** | Serve your system in production with a stateless, session-scoped FastAPI backend. |
-| **Control Plane** | Test, monitor, run and manage your system using the [AgentOS UI](https://os.agno.com). |
+| **Control Plane** | Test, monitor, and manage your system using the [AgentOS UI](https://os.agno.com). |
 
 ## Quick Start
 
