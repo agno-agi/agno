@@ -4,6 +4,11 @@ Tests for LiteLLM client preservation across deepcopy.
 This test verifies that custom client objects are preserved when the model is deep copied for background tasks.
 """
 
+import pytest
+
+# Skip entire module if litellm is not installed (temporarily unavailable due to supply chain attack)
+pytest.importorskip("litellm", reason="litellm unavailable - compromised on PyPI (March 24, 2026)")
+
 from copy import deepcopy
 from unittest.mock import MagicMock
 
