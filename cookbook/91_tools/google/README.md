@@ -1,6 +1,6 @@
 # Google Tools Cookbooks
 
-Agents for Gmail, Google Calendar, and Google Drive using OAuth or service account authentication.
+Agents for Gmail, Google Calendar, Google Drive, and Google Slides using OAuth or service account authentication.
 
 ## Quick Start
 
@@ -17,6 +17,20 @@ agent = Agent(
 )
 
 agent.print_response("What meetings do I have tomorrow?", stream=True)
+```
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.google.slides import GoogleSlidesTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GoogleSlidesTools()],
+    markdown=True,
+)
+
+agent.print_response("Create a presentation titled 'Q3 Review'", stream=True)
 ```
 
 ## Setup
@@ -36,6 +50,7 @@ Go to **APIs & Services > Enable APIs and Services** and enable:
 | `GoogleCalendarTools` | Google Calendar API |
 | `GmailTools` | Gmail API |
 | `GoogleDriveTools` | Google Drive API |
+| `GoogleSlidesTools` | Google Slides API + Google Drive API |
 
 ### 3. Create OAuth Credentials
 
@@ -73,7 +88,7 @@ For server/bot deployments with no browser:
 
 ```bash
 export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
-export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional for Calendar
+export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional for Calendar/Slides
 ```
 
 ## Cookbooks
@@ -105,6 +120,15 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | `drive_file_search.py` | Structured file search with metadata inspection |
 | `drive_document_reader.py` | Large document reader with summarization |
 | `drive_folder_organizer.py` | Folder browsing, upload, and download |
+
+### Slides
+
+| File | Description |
+|------|-------------|
+| `slide_tools.py` | Core examples: create presentation, add slides, read content, list, delete |
+| `slides_presentation_builder.py` | Multi-slide deck builder with tables, layouts, and text annotations |
+| `slides_content_reader.py` | Read and summarize existing presentations with structured output |
+| `slides_media_slides.py` | Background images, YouTube embeds, and Drive video integration |
 
 ### Combined
 
