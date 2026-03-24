@@ -70,7 +70,10 @@ import textwrap
 from datetime import datetime, timedelta
 from os import getenv
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from agno.tools.google.oauth.token_store import BaseGoogleTokenStore
 
 from agno.tools import Toolkit
 from agno.tools.google._auth import google_authenticate
@@ -137,6 +140,7 @@ class GmailTools(Toolkit):
         scopes: Optional[List[str]] = None,
         port: Optional[int] = None,
         login_hint: Optional[str] = None,
+        token_store: Optional["BaseGoogleTokenStore"] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
         attachment_dir: Optional[str] = None,
@@ -215,6 +219,9 @@ class GmailTools(Toolkit):
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.port = port
         self.login_hint = login_hint
+        self.token_store = token_store
+        self.oauth_base_url: Optional[str] = kwargs.pop("oauth_base_url", None)
+        self._current_user_key: Optional[Tuple[str, str]] = None
         self.include_html = include_html
         self.max_body_length = max_body_length
         self.attachment_dir = attachment_dir
@@ -357,8 +364,17 @@ class GmailTools(Toolkit):
     def _build_service(self):
         return build("gmail", "v1", credentials=self.creds)
 
-    def _auth(self) -> None:
-        """Authenticate with Gmail API using service account (priority) or OAuth flow."""
+    def _auth(self, workspace_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+        # Per-user mode: load from DB token store
+        if self.token_store and workspace_id and user_id:
+            from agno.tools.google.oauth.token_store import load_user_credentials
+
+            self.creds = load_user_credentials(
+                self.token_store, workspace_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
+            )
+            self._current_user_key = (workspace_id, user_id)
+            return
+
         if self.creds and self.creds.valid:
             return
 

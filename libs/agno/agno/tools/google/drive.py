@@ -139,7 +139,7 @@ class GoogleDriveTools(Toolkit):
             creds_to_use = creds_to_use.with_quota_project(self.quota_project_id)
         return build("drive", "v3", credentials=creds_to_use)
 
-    def _auth(self):
+    def _auth(self, **kwargs):
         """
         Authenticate and set up the Google Drive API client.
         This method checks if credentials are valid and refreshes or requests them if needed.

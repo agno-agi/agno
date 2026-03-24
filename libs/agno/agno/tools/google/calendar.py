@@ -4,7 +4,10 @@ import textwrap
 import uuid
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+
+if TYPE_CHECKING:
+    from agno.tools.google.oauth.token_store import BaseGoogleTokenStore
 
 from agno.tools import Toolkit
 from agno.tools.google._auth import google_authenticate
@@ -58,6 +61,7 @@ class GoogleCalendarTools(Toolkit):
         scopes: Optional[List[str]] = None,
         oauth_port: int = 8080,
         login_hint: Optional[str] = None,
+        token_store: Optional["BaseGoogleTokenStore"] = None,
         calendar_id: str = "primary",
         allow_update: Optional[bool] = None,
         list_events: bool = True,
@@ -113,6 +117,9 @@ class GoogleCalendarTools(Toolkit):
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.oauth_port = oauth_port
         self.login_hint = login_hint
+        self.token_store = token_store
+        self.oauth_base_url: Optional[str] = kwargs.pop("oauth_base_url", None)
+        self._current_user_key: Optional[tuple] = None
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
         tools: List[Any] = []
@@ -188,8 +195,17 @@ class GoogleCalendarTools(Toolkit):
     def _build_service(self):
         return build("calendar", "v3", credentials=self.creds)
 
-    def _auth(self) -> None:
-        """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
+    def _auth(self, workspace_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+        # Per-user mode: load from DB token store
+        if self.token_store and workspace_id and user_id:
+            from agno.tools.google.oauth.token_store import load_user_credentials
+
+            self.creds = load_user_credentials(
+                self.token_store, workspace_id, user_id, self.scopes, oauth_base_url=self.oauth_base_url
+            )
+            self._current_user_key = (workspace_id, user_id)
+            return
+
         if self.creds and self.creds.valid:
             return
 

@@ -13,12 +13,14 @@ class AgentRunException(Exception):
         agent_message: Optional[Union[str, Message]] = None,
         messages: Optional[List[Union[dict, Message]]] = None,
         stop_execution: bool = False,
+        additional_data: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(exc)
         self.user_message = user_message
         self.agent_message = agent_message
         self.messages = messages
         self.stop_execution = stop_execution
+        self.additional_data = additional_data
         self.type = "agent_run_error"
         self.error_id = "agent_run_error"
 
@@ -48,9 +50,15 @@ class StopAgentRun(AgentRunException):
         user_message: Optional[Union[str, Message]] = None,
         agent_message: Optional[Union[str, Message]] = None,
         messages: Optional[List[Union[dict, Message]]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=True
+            exc,
+            user_message=user_message,
+            agent_message=agent_message,
+            messages=messages,
+            stop_execution=True,
+            additional_data=additional_data,
         )
         self.error_id = "stop_agent_run_error"
 
