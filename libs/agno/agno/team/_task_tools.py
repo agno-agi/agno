@@ -528,7 +528,7 @@ def _get_task_management_tools(
 
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found. Available members:\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
+            yield f"Member with ID {member_id} not found. Available members:\n{team.get_members_system_message_content(indent=0, run_context=run_context, async_mode=True)}"
             return
 
         _, member_agent = result
