@@ -1017,3 +1017,37 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+def test_fc_excluded_from_schema():
+    """Test that FunctionCall parameter is excluded from tool schema sent to the LLM.
+
+    Regression test for: fc (FunctionCall) parameter was not excluded from the JSON schema,
+    causing the LLM to attempt passing it as an argument.
+    """
+
+    def my_tool(query: str, fc: FunctionCall) -> str:
+        return query
+
+    func = Function(entrypoint=my_tool)
+    func.process_entrypoint()
+
+    params = func.parameters.get("properties", {})
+    assert "fc" not in params, "fc should be excluded from schema sent to LLM"
+    assert "query" in params, "query should be present in schema"
+    assert "fc" not in func.parameters.get("required", []), "fc should not be in required list"
+
+
+def test_run_context_and_fc_both_excluded_from_schema():
+    """Test that both run_context and fc are excluded from the tool schema."""
+
+    def my_tool(query: str, run_context: RunContext, fc: FunctionCall) -> str:
+        return query
+
+    func = Function(entrypoint=my_tool)
+    func.process_entrypoint()
+
+    params = func.parameters.get("properties", {})
+    assert "fc" not in params, "fc should be excluded from schema"
+    assert "run_context" not in params, "run_context should be excluded from schema"
+    assert "query" in params, "query should be present in schema"
