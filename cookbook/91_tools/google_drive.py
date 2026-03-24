@@ -62,13 +62,7 @@ if __name__ == "__main__":
     #     stream=True,
     # )
 
-    # Example 4: Get file metadata
-    # read_only_agent.print_response(
-    #     "Get metadata for Google Drive file ID <FILE_ID>",
-    #     stream=True,
-    # )
-
-    # Example 5: Search files in a specific folder
+    # Example 4: Search files in a specific folder
     # read_only_agent.print_response(
     #     "What files are inside the folder called 'Projects'?",
     #     stream=True,

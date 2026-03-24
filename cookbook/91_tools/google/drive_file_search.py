@@ -30,7 +30,12 @@ class FileInfo(BaseModel):
     mime_type: str = Field(..., description="MIME type")
     modified: str = Field(..., description="Last modified timestamp")
     owner: Optional[str] = Field(None, description="File owner name or email")
+    parents: Optional[List[str]] = Field(None, description="Parent folder IDs")
+    description: Optional[str] = Field(
+        None, description="File description set by the owner"
+    )
     web_link: Optional[str] = Field(None, description="Web view link")
+    download_link: Optional[str] = Field(None, description="Direct download link")
 
 
 class FileSearchResult(BaseModel):

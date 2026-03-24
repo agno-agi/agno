@@ -3,7 +3,7 @@ Google Drive Tools
 ==================
 Core examples: read-only agent, full-access agent with upload and download.
 
-All six Drive tools are demonstrated: list_files, search_files,
+All five Drive tools are demonstrated: list_files, search_files,
 read_file, upload_file, download_file.
 
 Setup:

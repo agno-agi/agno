@@ -9,7 +9,7 @@ to give the agent a complete view of Drive structure.
 Key concepts:
 - list_files with folder queries: Browse Drive like a file system
 - upload_file: Upload local files to Drive (disabled by default, enabled here)
-- Drive query syntax: 'parents in "<FOLDER_ID>"' to scope to a folder
+- Drive query syntax: "'<FOLDER_ID>' in parents" to scope to a folder
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
