@@ -123,7 +123,7 @@ jobs:
       - name: Install uv
         run: |
           set -e
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/0.10.12/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Run test setup
         working-directory: .
