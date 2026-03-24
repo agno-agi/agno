@@ -549,18 +549,14 @@ class GoogleDriveTools(Toolkit):
         return await asyncio.to_thread(self.upload_file, file_path)
 
     @authenticate
-    def download_file(
-        self, file_id: str, dest_path: Optional[Union[str, Path]] = None, export_format: Optional[str] = None
-    ) -> str:
+    def download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
-        Download a Drive file and save it to a local path on disk.
+        Download a Drive file to the configured download directory.
         Use when the user wants a local copy or a binary file (image, video, PDF).
         Workspace files are auto-exported to native formats (docx, xlsx, pptx, png).
-        If dest_path is omitted, the file is saved to the configured download directory.
 
         Args:
             file_id (str): The Drive file ID
-            dest_path (str): Local destination path. If omitted, uses the configured download directory
             export_format (str): Optional MIME type to override the default export format
 
         Returns:
@@ -568,23 +564,9 @@ class GoogleDriveTools(Toolkit):
         """
         try:
             service = cast(Resource, self.service)
-            use_default_dir = dest_path is None
-
-            if dest_path:
-                path = Path(dest_path)
-            else:
-                path = self.download_dir
-
             metadata = self._get_file_metadata(file_id, "id,name,mimeType")
             mime_type = metadata.get("mimeType", "")
-
-            # When dest_path was omitted, save to download_dir using the Drive filename
-            if use_default_dir:
-                path = path / metadata.get("name", file_id)
-
-            is_safe, path = self._check_path(str(path), self.download_dir)
-            if not is_safe:
-                return json.dumps({"error": f"Path escapes download_dir: {dest_path}"})
+            path = self.download_dir / metadata.get("name", file_id)
 
             # Resolve export target — user override > auto-detect > None for regular files
             if export_format:
@@ -631,20 +613,16 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not download file '{file_id}': {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(
-        self, file_id: str, dest_path: Optional[Union[str, Path]] = None, export_format: Optional[str] = None
-    ) -> str:
+    async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
-        Download a Drive file and save it to a local path on disk (async).
+        Download a Drive file to the configured download directory (async).
         Workspace files are auto-exported to native formats.
-        If dest_path is omitted, the file is saved to the configured download directory.
 
         Args:
             file_id (str): The Drive file ID
-            dest_path (str): Local destination path. If omitted, uses the configured download directory
             export_format (str): Optional MIME type to override the default export format
 
         Returns:
             str: JSON string with saved file path and download status
         """
-        return await asyncio.to_thread(self.download_file, file_id, dest_path, export_format=export_format)
+        return await asyncio.to_thread(self.download_file, file_id, export_format=export_format)

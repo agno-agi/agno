@@ -217,7 +217,6 @@ def test_upload_file_missing(drive_tools):
 
 def test_download_file_success(tmp_path, drive_tools):
     drive_tools.download_dir = tmp_path
-    dest_path = tmp_path / "downloaded.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc123",
         "name": "file.txt",
@@ -229,14 +228,14 @@ def test_download_file_success(tmp_path, drive_tools):
         (MagicMock(progress=lambda: 1.0), True),
     ]
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(drive_tools.download_file("abc123", dest_path))
+        result = json.loads(drive_tools.download_file("abc123"))
     assert result["status"] == "downloaded"
     assert result["fileId"] == "abc123"
+    assert "file.txt" in result["path"]
 
 
 def test_download_file_error(tmp_path, drive_tools):
     drive_tools.download_dir = tmp_path
-    dest_path = tmp_path / "downloaded.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc123",
         "name": "file.txt",
@@ -244,7 +243,7 @@ def test_download_file_error(tmp_path, drive_tools):
     }
     drive_tools.service.files.return_value.get_media.side_effect = Exception("Download error")
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=MagicMock()):
-        result = json.loads(drive_tools.download_file("abc123", dest_path))
+        result = json.loads(drive_tools.download_file("abc123"))
     assert "error" in result
 
 
@@ -391,7 +390,7 @@ def test_download_file_http_error(tmp_path, drive_tools):
         "mimeType": "text/plain",
     }
     drive_tools.service.files.return_value.get_media.side_effect = _make_http_error(404)
-    result = json.loads(drive_tools.download_file("bad", tmp_path / "out.txt"))
+    result = json.loads(drive_tools.download_file("bad"))
     assert "Google Drive API error" in result["error"]
 
 
@@ -466,20 +465,19 @@ def test_upload_file_directory_rejected(tmp_path, drive_tools):
 # ---------------------------------------------------------------------------
 
 
-def test_download_file_creates_parent_dirs(tmp_path, drive_tools):
+def test_download_file_uses_download_dir(tmp_path, drive_tools):
     drive_tools.download_dir = tmp_path
-    dest_path = tmp_path / "sub" / "deep" / "downloaded.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc123",
-        "name": "file.txt",
-        "mimeType": "text/plain",
+        "name": "report.pdf",
+        "mimeType": "application/pdf",
     }
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(drive_tools.download_file("abc123", dest_path))
+        result = json.loads(drive_tools.download_file("abc123"))
     assert result["status"] == "downloaded"
-    assert dest_path.parent.exists()
+    assert result["path"] == str(tmp_path / "report.pdf")
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +533,6 @@ async def test_async_upload_file(tmp_path, drive_tools):
 @pytest.mark.asyncio
 async def test_async_download_file(tmp_path, drive_tools):
     drive_tools.download_dir = tmp_path
-    dest_path = tmp_path / "async_dl.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc",
         "name": "file.txt",
@@ -544,8 +541,9 @@ async def test_async_download_file(tmp_path, drive_tools):
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(await drive_tools.adownload_file("abc", dest_path))
+        result = json.loads(await drive_tools.adownload_file("abc"))
     assert result["status"] == "downloaded"
+    assert "file.txt" in result["path"]
 
 
 # ---------------------------------------------------------------------------
