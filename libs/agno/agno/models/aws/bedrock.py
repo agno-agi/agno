@@ -282,6 +282,10 @@ class AwsBedrock(Model):
         Returns:
             Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
 
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
