@@ -161,7 +161,7 @@ class Agent:
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
 
     # Maximum number of tool calls allowed.
-    tool_call_limit: Optional[int] = None
+    tool_call_limit: Optional[int] = 20
     # Controls which (if any) tool is called by the model.
     # "none" means the model will not call a tool and instead generates a message.
     # "auto" means the model can pick between generating a message or calling a tool.
@@ -416,7 +416,7 @@ class Agent:
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
-        tool_call_limit: Optional[int] = None,
+        tool_call_limit: Optional[int] = 20,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
