@@ -42,7 +42,6 @@ Alternatively, for Server-to-Server use cases you can use a Service Account:
 import json
 import textwrap
 import uuid
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -61,6 +60,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
+from agno.tools.google.auth import google_authenticate
 from agno.utils.log import log_debug, log_error
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
@@ -78,24 +78,7 @@ SLIDES_INSTRUCTIONS = textwrap.dedent("""\
     - Destructive tools (delete_presentation, delete_slide) are disabled by default""")
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.slides_service:
-                self.slides_service = build("slides", "v1", credentials=self.creds)
-            if not self.drive_service:
-                self.drive_service = build("drive", "v3", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Google Slides authentication failed: {e}")
-            return json.dumps({"error": f"Google Slides authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("slides")
 
 
 class GoogleSlidesTools(Toolkit):
@@ -146,6 +129,7 @@ class GoogleSlidesTools(Toolkit):
         self.login_hint = login_hint
         self.scopes = scopes or self.DEFAULT_SCOPES
 
+        self.service: Any = None
         self.slides_service: Any = None
         self.drive_service: Any = None
 
@@ -198,6 +182,12 @@ class GoogleSlidesTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+    def _build_service(self):
+        self.slides_service = build("slides", "v1", credentials=self.creds)
+        self.drive_service = build("drive", "v3", credentials=self.creds)
+        # Returned value stored as self.service by decorator (sentinel for "services built")
+        return self.slides_service
 
     def _auth(self) -> None:
         """Authenticate with Google Slides API"""

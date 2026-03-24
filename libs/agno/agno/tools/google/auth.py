@@ -64,12 +64,14 @@ class GoogleAuth(Toolkit):
         self._services[service] = scopes
 
     def authenticate_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets"]]) -> str:
-        """Get the Google OAuth URL for the user to authenticate their Google account.
-        Call this immediately when any Google tool returns an authentication error.
-        Send the returned URL to the user — they must visit it to grant access.
+        """
+        Get the Google OAuth URL for the user to authenticate their Google account.
 
         Args:
-            services: Which Google services failed authentication (e.g. ["gmail"], ["calendar"], ["gmail", "calendar"]).
+            services (List[str]): Google services to authenticate.
+
+        Returns:
+            str: JSON string containing the OAuth URL or error message
         """
         scopes: Set[str] = set()
         for service in services:

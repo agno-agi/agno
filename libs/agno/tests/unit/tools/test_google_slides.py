@@ -117,6 +117,7 @@ def tools(mock_credentials, mock_slides_service, mock_drive_service):
         toolkit = GoogleSlidesTools(creds=mock_credentials)
         toolkit.slides_service = mock_slides_service
         toolkit.drive_service = mock_drive_service
+        toolkit.service = mock_slides_service
         return toolkit
 
 
