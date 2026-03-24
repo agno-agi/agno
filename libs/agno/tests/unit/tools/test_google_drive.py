@@ -216,6 +216,7 @@ def test_upload_file_missing(drive_tools):
 
 
 def test_download_file_success(tmp_path, drive_tools):
+    drive_tools.download_dir = tmp_path
     dest_path = tmp_path / "downloaded.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc123",
@@ -234,6 +235,7 @@ def test_download_file_success(tmp_path, drive_tools):
 
 
 def test_download_file_error(tmp_path, drive_tools):
+    drive_tools.download_dir = tmp_path
     dest_path = tmp_path / "downloaded.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc123",
@@ -382,6 +384,7 @@ def test_upload_file_http_error(tmp_path, drive_tools):
 
 
 def test_download_file_http_error(tmp_path, drive_tools):
+    drive_tools.download_dir = tmp_path
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "bad",
         "name": "file.txt",
@@ -464,6 +467,7 @@ def test_upload_file_directory_rejected(tmp_path, drive_tools):
 
 
 def test_download_file_creates_parent_dirs(tmp_path, drive_tools):
+    drive_tools.download_dir = tmp_path
     dest_path = tmp_path / "sub" / "deep" / "downloaded.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc123",
@@ -530,6 +534,7 @@ async def test_async_upload_file(tmp_path, drive_tools):
 
 @pytest.mark.asyncio
 async def test_async_download_file(tmp_path, drive_tools):
+    drive_tools.download_dir = tmp_path
     dest_path = tmp_path / "async_dl.txt"
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "abc",

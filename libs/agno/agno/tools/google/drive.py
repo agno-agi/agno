@@ -165,8 +165,8 @@ class GoogleDriveTools(Toolkit):
         # Writing tools — disabled by default for safety
         upload_file: bool = False,
         download_file: bool = False,
-        # Default save location for download_file; also sandboxes writes to this directory
-        download_dir: Optional[Path] = None,
+        # Save location for download_file; defaults to cwd, sandboxes writes to this directory
+        download_dir: Optional[Path] = Path("."),
         # When False, trashed files are excluded from search/list results automatically
         include_trashed: bool = False,
         # Maximum file size (bytes) read_file will load into memory for non-Workspace files
@@ -572,10 +572,8 @@ class GoogleDriveTools(Toolkit):
 
             if dest_path:
                 path = Path(dest_path)
-            elif self.download_dir:
-                path = self.download_dir
             else:
-                return json.dumps({"error": "dest_path is required when download_dir is not configured"})
+                path = self.download_dir
 
             metadata = self._get_file_metadata(file_id, "id,name,mimeType")
             mime_type = metadata.get("mimeType", "")
