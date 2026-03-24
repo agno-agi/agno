@@ -1627,6 +1627,168 @@ class Agent:
             **kwargs,
         )
 
+    @overload
+    def regenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> RunOutput: ...
+
+    @overload
+    def regenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    def regenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
+        """Regenerate the last run's response in the current session.
+
+        The previous run is preserved with a ``regenerated`` status for audit purposes.
+        A new run is created using the same message context (minus the final assistant
+        response) so the model produces a fresh answer.
+
+        Args:
+            additional_instructions: Optional extra guidance appended as a user message
+                before re-generation so the caller can steer the new response.
+            stream: Whether to stream the response.
+            stream_events: Whether to stream all events.
+            user_id: The user id for the session.
+            session_id: The session id to regenerate in. Defaults to the agent's current session.
+            knowledge_filters: Knowledge filters for the new run.
+            dependencies: Dependencies for the new run.
+            metadata: Metadata for the new run.
+            debug_mode: Whether to enable debug mode.
+            yield_run_output: Whether to yield the run output.
+        """
+        return _run.regenerate_dispatch(
+            self,
+            additional_instructions=additional_instructions,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    @overload
+    async def aregenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> RunOutput: ...
+
+    @overload
+    async def aregenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    async def aregenerate(  # type: ignore
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
+        """Async variant of regenerate.
+
+        Regenerate the last run's response in the current session.
+
+        The previous run is preserved with a ``regenerated`` status for audit purposes.
+        A new run is created using the same message context (minus the final assistant
+        response) so the model produces a fresh answer.
+
+        Args:
+            additional_instructions: Optional extra guidance appended as a user message
+                before re-generation so the caller can steer the new response.
+            stream: Whether to stream the response.
+            stream_events: Whether to stream all events.
+            user_id: The user id for the session.
+            session_id: The session id to regenerate in. Defaults to the agent's current session.
+            knowledge_filters: Knowledge filters for the new run.
+            dependencies: Dependencies for the new run.
+            metadata: Metadata for the new run.
+            debug_mode: Whether to enable debug mode.
+            yield_run_output: Whether to yield the run output.
+        """
+        return _run.aregenerate_dispatch(
+            self,
+            additional_instructions=additional_instructions,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
 
 # ---------------------------------------------------------------
 # Module-level functions
