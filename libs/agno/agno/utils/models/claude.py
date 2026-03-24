@@ -38,6 +38,48 @@ ROLE_MAP = {
     "tool": "user",
 }
 
+NO_ASSISTANT_PREFILL_PREFIXES = (
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+)
+
+
+def supports_assistant_prefill(model_id: str) -> bool:
+    """Return True when the Claude model still supports final assistant prefills."""
+    return not model_id.startswith(NO_ASSISTANT_PREFILL_PREFIXES)
+
+
+def validate_messages_for_claude_model(messages: List[Message], model_id: str) -> None:
+    """
+    Validate message ordering against Claude model constraints.
+
+    Claude Sonnet/Opus 4.6 no longer allow conversations to end with an
+    assistant message. This helper raises early with migration guidance rather
+    than sending an invalid request to Anthropic.
+    """
+    if supports_assistant_prefill(model_id):
+        return
+
+    last_conversation_idx: Optional[int] = None
+    for idx in range(len(messages) - 1, -1, -1):
+        if messages[idx].role not in ("system", "developer"):
+            last_conversation_idx = idx
+            break
+
+    if last_conversation_idx is None:
+        return
+
+    last_message = messages[last_conversation_idx]
+    if last_message.role != "assistant":
+        return
+
+    raise ValueError(
+        f"Model '{model_id}' does not support assistant message prefills or a conversation ending with an "
+        "assistant message. End the conversation with a user message instead. "
+        "For JSON output, use Agno output_schema/structured outputs. "
+        "For continuations, move the previous assistant prefix into the user message."
+    )
+
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """

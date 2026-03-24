@@ -6,6 +6,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.models.message import Message
 
 
 def _create_mock_response():
@@ -134,6 +135,22 @@ def test_regular_client_used_without_betas(mock_anthropic_client):
     # Verify that betas parameter was not passed
     call_kwargs = mock_anthropic_client.messages.create.call_args[1]
     assert "betas" not in call_kwargs
+
+
+def test_final_assistant_prefill_is_rejected_for_claude_46(mock_anthropic_client):
+    """Claude 4.6 should fail fast before calling the Anthropic client."""
+    model = Claude(id="claude-sonnet-4-6")
+
+    with pytest.raises(ValueError, match="does not support assistant message prefills"):
+        model.response(
+            messages=[
+                Message(role="system", content="You return compact JSON."),
+                Message(role="user", content="Classify this support ticket."),
+                Message(role="assistant", content='{"priority":'),
+            ]
+        )
+
+    mock_anthropic_client.messages.create.assert_not_called()
 
 
 def test_multiple_betas():

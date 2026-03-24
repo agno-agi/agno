@@ -16,7 +16,12 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.models.claude import (
+    MCPServerConfiguration,
+    format_messages,
+    format_tools_for_model,
+    validate_messages_for_claude_model,
+)
 from agno.utils.tokens import count_schema_tokens
 
 try:
@@ -419,7 +424,7 @@ class Claude(Model):
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_messages, system_prompt = self._format_messages_for_request(messages, compress_tool_results=True)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -440,7 +445,7 @@ class Claude(Model):
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_messages, system_prompt = self._format_messages_for_request(messages, compress_tool_results=True)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -564,6 +569,12 @@ class Claude(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
+    def _format_messages_for_request(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> tuple[List[Dict[str, Union[str, list]]], str]:
+        validate_messages_for_claude_model(messages, self.id)
+        return format_messages(messages, compress_tool_results=compress_tool_results)
+
     def invoke(
         self,
         messages: List[Message],
@@ -577,10 +588,12 @@ class Claude(Model):
         """
         Send a request to the Anthropic API to generate a response.
         """
-        try:
-            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+        chat_messages, system_message = self._format_messages_for_request(
+            messages, compress_tool_results=compress_tool_results
+        )
+        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
+        try:
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
@@ -642,7 +655,9 @@ class Claude(Model):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
-        chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+        chat_messages, system_message = self._format_messages_for_request(
+            messages, compress_tool_results=compress_tool_results
+        )
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
@@ -696,10 +711,12 @@ class Claude(Model):
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
-        try:
-            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+        chat_messages, system_message = self._format_messages_for_request(
+            messages, compress_tool_results=compress_tool_results
+        )
+        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
+        try:
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -759,10 +776,12 @@ class Claude(Model):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
-        try:
-            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+        chat_messages, system_message = self._format_messages_for_request(
+            messages, compress_tool_results=compress_tool_results
+        )
+        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
+        try:
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
