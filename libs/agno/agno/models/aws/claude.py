@@ -73,28 +73,27 @@ class Claude(AnthropicClaude):
         else:
             self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
             if self.api_key:
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
-                client_params = {
-                    "api_key": self.api_key,
-                }
-                if self.aws_region:
-                    client_params["aws_region"] = self.aws_region
-            else:
-                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
-                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
-                self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
+                raise ValueError(
+                    "AWS_BEDROCK_API_KEY authentication is not currently supported by AnthropicBedrock. "
+                    "Use IAM credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY[/AWS_SESSION_TOKEN]) "
+                    "or provide a boto3 session instead."
+                )
 
-                client_params = {
-                    "aws_secret_key": self.aws_secret_key,
-                    "aws_access_key": self.aws_access_key,
-                    "aws_session_token": self.aws_session_token,
-                    "aws_region": self.aws_region,
-                }
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_session_token": self.aws_session_token,
+                "aws_region": self.aws_region,
+            }
+
+            if not (self.aws_access_key and self.aws_secret_key):
                 log_warning(
-                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
         if self.timeout is not None:
@@ -196,6 +195,8 @@ class Claude(AnthropicClaude):
             _request_params["max_tokens"] = self.max_tokens
         if self.thinking:
             _request_params["thinking"] = self.thinking
+        if self.output_config:
+            _request_params["output_config"] = self.output_config
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
