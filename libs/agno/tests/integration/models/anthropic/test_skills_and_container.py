@@ -98,8 +98,8 @@ def test_non_streaming_extracts_file_ids_when_skills_enabled():
     assert result.provider_data["file_ids"] == ["file_abc123"]
 
 
-def test_non_streaming_skips_file_ids_without_skills():
-    """Model without skills should NOT extract file_ids."""
+def test_non_streaming_extracts_file_ids_without_skills():
+    """Model without skills (standalone code_execution) should still extract file_ids."""
     model = Claude(id="claude-sonnet-4-5-20250929")
     response = _create_non_streaming_response(
         [
@@ -110,8 +110,8 @@ def test_non_streaming_skips_file_ids_without_skills():
 
     result = model._parse_provider_response(response)
 
-    if result.provider_data:
-        assert "file_ids" not in result.provider_data
+    assert result.provider_data is not None
+    assert result.provider_data["file_ids"] == ["file_abc123"]
 
 
 # =============================================================================

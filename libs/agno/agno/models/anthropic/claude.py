@@ -955,8 +955,8 @@ class Claude(Model):
                 "expires_at": str(response.container.expires_at),
             }
 
-        # Extract file IDs if skills are enabled
-        if self.skills and response.content:
+        # Extract file IDs from code execution tool results (skills or standalone code_execution)
+        if response.content:
             file_ids: List[str] = []
             for block in response.content:
                 if block.type == "bash_code_execution_tool_result":
@@ -1107,8 +1107,8 @@ class Claude(Model):
                     "expires_at": str(response.message.container.expires_at),  # type: ignore
                 }
 
-            # Extract file IDs from bash_code_execution_tool_result blocks (skills/code execution)
-            if self.skills and hasattr(response.message, "content") and response.message.content:  # type: ignore
+            # Extract file IDs from bash_code_execution_tool_result blocks (skills or standalone code_execution)
+            if hasattr(response.message, "content") and response.message.content:  # type: ignore
                 file_ids: List[str] = []
                 for block in response.message.content:  # type: ignore
                     if block.type == "bash_code_execution_tool_result":
