@@ -1,5 +1,3 @@
-"""Unit tests for GoogleAuth toolkit and shared auth decorator."""
-
 import json
 from unittest.mock import MagicMock, Mock, patch
 from urllib.parse import parse_qs, urlparse
