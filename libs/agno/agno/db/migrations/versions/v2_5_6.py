@@ -3,9 +3,6 @@
 Changes:
 - Add run_status column to agno_approvals table
 - Add index on run_status column for performance
-
-This migration was added to fix #7156 where the run_status column was added
-to the schema in PR #6598 but no migration was created for existing databases.
 """
 
 from agno.db.base import AsyncBaseDb, BaseDb
