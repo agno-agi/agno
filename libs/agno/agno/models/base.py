@@ -218,8 +218,8 @@ class Model(ABC):
         if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
             return error
 
-        # Rate-limit detection
-        if error.status_code == 429:
+        # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
+        if error.status_code in {429, 529}:
             return ModelRateLimitError(
                 message=error.message,
                 status_code=error.status_code,

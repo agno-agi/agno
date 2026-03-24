@@ -165,7 +165,7 @@ def _try_fallback_models(
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
             return getattr(fallback, method_name)(**kwargs)
-        except Exception as e:
+        except ModelProviderError as e:
             log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
             continue
     raise primary_error
@@ -182,7 +182,7 @@ async def _atry_fallback_models(
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
             return await getattr(fallback, method_name)(**kwargs)
-        except Exception as e:
+        except ModelProviderError as e:
             log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
             continue
     raise primary_error
@@ -199,7 +199,7 @@ def _try_fallback_models_stream(
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
             yield from fallback.response_stream(**kwargs)
             return
-        except Exception as e:
+        except ModelProviderError as e:
             log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
             continue
     raise primary_error
@@ -217,7 +217,7 @@ async def _atry_fallback_models_stream(
             async for event in fallback.aresponse_stream(**kwargs):
                 yield event
             return
-        except Exception as e:
+        except ModelProviderError as e:
             log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
             continue
     raise primary_error
