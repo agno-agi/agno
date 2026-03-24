@@ -162,6 +162,46 @@ async def agent_continue_response_streamer(
         return
 
 
+async def agent_regenerate_response_streamer(
+    agent: Agent,
+    session_id: str,
+    additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> AsyncGenerator:
+    try:
+        regenerate_response = agent.aregenerate(  # type: ignore[call-overload]
+            session_id=session_id,
+            additional_instructions=additional_instructions,
+            preserve_original=preserve_original,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background_tasks=background_tasks,
+        )
+        async for run_response_chunk in regenerate_response:
+            yield format_sse_event(run_response_chunk)  # type: ignore
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+
+
 def get_agent_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -613,6 +653,149 @@ def get_agent_router(
 
             except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/agents/{agent_id}/runs/regenerate",
+        tags=["Agents"],
+        operation_id="regenerate_agent_run",
+        response_model_exclude_none=True,
+        summary="Regenerate Agent Run",
+        description=(
+            "Regenerate the last run's response in a session.\n\n"
+            "The model receives the same message context (minus the previous final response) "
+            "and produces a fresh answer. By default the original run is **replaced**; set "
+            "`preserve_original=true` to keep it with a `REGENERATED` status for audit.\n\n"
+            "**Optional:** Pass `additional_instructions` to steer the regenerated response."
+        ),
+        responses={
+            200: {
+                "description": "Regenerated run output",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunContent\ndata: {"created_at": 1757348314, "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {"description": "Bad request (e.g. no runs in session, no messages)", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def regenerate_agent_run(
+        agent_id: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        session_id: str = Form(..., description="Session whose last run should be regenerated"),
+        additional_instructions: Optional[str] = Form(
+            None, description="Optional extra guidance to steer the regenerated response"
+        ),
+        preserve_original: bool = Form(
+            False, description="If true, keep the original run with REGENERATED status instead of replacing it"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            session_id = request.state.session_id
+
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Regeneration is not supported for remote agents")
+
+        if stream:
+            return StreamingResponse(
+                agent_regenerate_response_streamer(
+                    agent,
+                    session_id=session_id,
+                    additional_instructions=additional_instructions,
+                    preserve_original=preserve_original,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            try:
+                run_response_obj = cast(
+                    RunOutput,
+                    await agent.aregenerate(  # type: ignore[call-overload]
+                        session_id=session_id,
+                        additional_instructions=additional_instructions,
+                        preserve_original=preserve_original,
+                        user_id=user_id,
+                        stream=False,
+                        background_tasks=background_tasks,
+                    ),
+                )
+                return run_response_obj.to_dict()
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/fork",
+        tags=["Agents"],
+        operation_id="fork_agent_session",
+        summary="Fork Agent Session",
+        description=(
+            "Fork an existing session into a new independent session.\n\n"
+            "Copies all runs from the source session so the new session can continue "
+            "the conversation independently. The original session is not modified."
+        ),
+        responses={
+            200: {
+                "description": "Session forked successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "session_id": "new-uuid",
+                            "forked_from": "original-session-id",
+                        }
+                    }
+                },
+            },
+            400: {"description": "Bad request (e.g. source session has no runs)", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def fork_agent_session(
+        agent_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = Form(None, description="User identifier for the new session"),
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Session forking is not supported for remote agents")
+
+        try:
+            new_session_id = await agent.afork_session(
+                source_session_id=session_id,
+                user_id=user_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return JSONResponse(
+            content={
+                "session_id": new_session_id,
+                "forked_from": session_id,
+            },
+            status_code=200,
+        )
 
     @router.get(
         "/agents",

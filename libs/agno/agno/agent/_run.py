@@ -4590,6 +4590,7 @@ def regenerate_dispatch(
     agent: Agent,
     *,
     additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     user_id: Optional[str] = None,
@@ -4603,13 +4604,14 @@ def regenerate_dispatch(
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Regenerate the last run's response in the given session.
 
-    The previous run is marked with status ``regenerated`` (preserved for audit)
-    and a brand-new run is created that re-uses the same message context minus the
-    final assistant response.
+    By default the original run is **replaced** by the new one. Set
+    ``preserve_original=True`` to keep it with a ``regenerated`` status instead.
 
     Args:
         additional_instructions: Optional extra guidance appended as a user message
             before re-generation so the caller can steer the new response.
+        preserve_original: If True, keep the original run with status ``regenerated``
+            instead of replacing it.  Defaults to False (replace).
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id for the session.
@@ -4658,11 +4660,16 @@ def regenerate_dispatch(
     if not last_run.messages:
         raise ValueError("Last run has no messages to regenerate from.")
 
-    # Mark the old run as regenerated
-    last_run.status = RunStatus.regenerated
-
     # Build message context: everything except the final assistant response
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+
+    # Handle the original run
+    if preserve_original:
+        # Keep the old run with regenerated status
+        last_run.status = RunStatus.regenerated
+    else:
+        # Replace: remove the old run from the session
+        agent_session.runs.pop()  # type: ignore[union-attr]
 
     # Optionally append additional instructions as a user message
     if additional_instructions is not None:
@@ -4793,6 +4800,7 @@ def aregenerate_dispatch(  # type: ignore
     agent: Agent,
     *,
     additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     user_id: Optional[str] = None,
@@ -4808,13 +4816,14 @@ def aregenerate_dispatch(  # type: ignore
 
     Regenerate the last run's response in the given session.
 
-    The previous run is marked with status ``regenerated`` (preserved for audit)
-    and a brand-new run is created that re-uses the same message context minus the
-    final assistant response.
+    By default the original run is **replaced** by the new one. Set
+    ``preserve_original=True`` to keep it with a ``regenerated`` status instead.
 
     Args:
         additional_instructions: Optional extra guidance appended as a user message
             before re-generation so the caller can steer the new response.
+        preserve_original: If True, keep the original run with status ``regenerated``
+            instead of replacing it.  Defaults to False (replace).
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id for the session.
@@ -4861,11 +4870,14 @@ def aregenerate_dispatch(  # type: ignore
         if not last_run.messages:
             raise ValueError("Last run has no messages to regenerate from.")
 
-        # Mark the old run as regenerated
-        last_run.status = RunStatus.regenerated
-
         # Build message context: everything except the final assistant response
         trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+
+        # Handle the original run
+        if preserve_original:
+            last_run.status = RunStatus.regenerated
+        else:
+            _pre_session.runs.pop()  # type: ignore[union-attr]
 
         # Optionally append additional instructions as a user message
         if additional_instructions is not None:
@@ -4920,7 +4932,7 @@ def aregenerate_dispatch(  # type: ignore
             user_id=user_id,
             agent_name=agent.name,
             input=last_run.input,
-            metadata=metadata,
+            metadata=run_context.metadata,
         )
         new_run_response.model = agent.model.id if agent.model is not None else None
         new_run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -4968,6 +4980,7 @@ def aregenerate_dispatch(  # type: ignore
                 agent,
                 run_context=run_context,
                 additional_instructions=additional_instructions,
+                preserve_original=preserve_original,
                 user_id=user_id,
                 session_id=session_id,
                 response_format=response_format,
@@ -4982,6 +4995,7 @@ def aregenerate_dispatch(  # type: ignore
                 agent,
                 run_context=run_context,
                 additional_instructions=additional_instructions,
+                preserve_original=preserve_original,
                 session_id=session_id,
                 user_id=user_id,
                 response_format=response_format,
@@ -4996,6 +5010,7 @@ async def _aregenerate_run(
     run_context: RunContext,
     session_id: str,
     additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
@@ -5019,9 +5034,11 @@ async def _aregenerate_run(
     if not last_run.messages:
         raise ValueError("Last run has no messages to regenerate from.")
 
-    last_run.status = RunStatus.regenerated
-
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if preserve_original:
+        last_run.status = RunStatus.regenerated
+    else:
+        agent_session.runs.pop()  # type: ignore[union-attr]
     if additional_instructions is not None:
         trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
 
@@ -5068,6 +5085,7 @@ async def _aregenerate_run_stream(
     run_context: RunContext,
     session_id: str,
     additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     stream_events: bool = False,
@@ -5089,9 +5107,11 @@ async def _aregenerate_run_stream(
     if not last_run.messages:
         raise ValueError("Last run has no messages to regenerate from.")
 
-    last_run.status = RunStatus.regenerated
-
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if preserve_original:
+        last_run.status = RunStatus.regenerated
+    else:
+        agent_session.runs.pop()  # type: ignore[union-attr]
     if additional_instructions is not None:
         trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
 
@@ -5134,6 +5154,134 @@ async def _aregenerate_run_stream(
         **kwargs,
     ):
         yield event
+
+
+# ---------------------------------------------------------------------------
+# Fork session — copy a session into a new independent session
+# ---------------------------------------------------------------------------
+
+
+def fork_session_dispatch(
+    agent: Agent,
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Fork the current session into a new independent session.
+
+    Copies all runs from the source session so the new session can continue
+    the conversation independently.
+
+    Args:
+        source_session_id: The session to fork. Defaults to the agent's current session.
+        user_id: The user id for the new session.
+
+    Returns:
+        The new session_id.
+    """
+    import copy
+
+    from agno.agent._init import has_async_db
+    from agno.agent._session import save_session
+    from agno.agent._storage import read_or_create_session
+
+    if has_async_db(agent):
+        raise RuntimeError(
+            "`fork_session` is not supported with an async database. Please use `afork_session` instead."
+        )
+
+    source_session_id = source_session_id or agent.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to fork a session.")
+
+    agent.initialize_agent()
+
+    # Read the source session
+    source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to fork.")
+
+    # Create a new session with a deep copy of the runs
+    new_session_id = str(uuid4())
+    new_session = AgentSession(
+        session_id=new_session_id,
+        agent_id=source_session.agent_id,
+        user_id=user_id or source_session.user_id,
+        team_id=source_session.team_id,
+        workflow_id=source_session.workflow_id,
+        session_data=copy.deepcopy(source_session.session_data),
+        metadata=copy.deepcopy(source_session.metadata),
+        agent_data=copy.deepcopy(source_session.agent_data),
+        runs=copy.deepcopy(source_session.runs),
+        summary=copy.deepcopy(source_session.summary),
+    )
+
+    # Save the new session
+    save_session(agent, session=new_session)
+
+    return new_session_id
+
+
+async def afork_session_dispatch(
+    agent: Agent,
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Async variant of fork_session_dispatch.
+
+    Fork the current session into a new independent session.
+
+    Copies all runs from the source session so the new session can continue
+    the conversation independently.
+
+    Args:
+        source_session_id: The session to fork. Defaults to the agent's current session.
+        user_id: The user id for the new session.
+
+    Returns:
+        The new session_id.
+    """
+    import copy
+
+    from agno.agent._init import has_async_db
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, read_or_create_session
+
+    source_session_id = source_session_id or agent.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to fork a session.")
+
+    agent.initialize_agent()
+
+    # Read the source session
+    if has_async_db(agent):
+        source_session = await aread_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    else:
+        source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to fork.")
+
+    # Create a new session with a deep copy of the runs
+    new_session_id = str(uuid4())
+    new_session = AgentSession(
+        session_id=new_session_id,
+        agent_id=source_session.agent_id,
+        user_id=user_id or source_session.user_id,
+        team_id=source_session.team_id,
+        workflow_id=source_session.workflow_id,
+        session_data=copy.deepcopy(source_session.session_data),
+        metadata=copy.deepcopy(source_session.metadata),
+        agent_data=copy.deepcopy(source_session.agent_data),
+        runs=copy.deepcopy(source_session.runs),
+        summary=copy.deepcopy(source_session.summary),
+    )
+
+    # Save the new session
+    await asave_session(agent, session=new_session)
+
+    return new_session_id
 
 
 # ---------------------------------------------------------------------------

@@ -1632,6 +1632,7 @@ class Agent:
         self,
         *,
         additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1647,6 +1648,7 @@ class Agent:
         self,
         *,
         additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1662,6 +1664,7 @@ class Agent:
         self,
         *,
         additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1675,13 +1678,14 @@ class Agent:
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Regenerate the last run's response in the current session.
 
-        The previous run is preserved with a ``regenerated`` status for audit purposes.
-        A new run is created using the same message context (minus the final assistant
-        response) so the model produces a fresh answer.
+        By default the original run is **replaced**. Set ``preserve_original=True``
+        to keep it with a ``regenerated`` status for audit purposes.
 
         Args:
             additional_instructions: Optional extra guidance appended as a user message
                 before re-generation so the caller can steer the new response.
+            preserve_original: If True, keep the original run with status ``regenerated``
+                instead of replacing it.  Defaults to False (replace).
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id for the session.
@@ -1695,6 +1699,7 @@ class Agent:
         return _run.regenerate_dispatch(
             self,
             additional_instructions=additional_instructions,
+            preserve_original=preserve_original,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,
@@ -1712,6 +1717,7 @@ class Agent:
         self,
         *,
         additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1727,6 +1733,7 @@ class Agent:
         self,
         *,
         additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1742,6 +1749,7 @@ class Agent:
         self,
         *,
         additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1757,13 +1765,14 @@ class Agent:
 
         Regenerate the last run's response in the current session.
 
-        The previous run is preserved with a ``regenerated`` status for audit purposes.
-        A new run is created using the same message context (minus the final assistant
-        response) so the model produces a fresh answer.
+        By default the original run is **replaced**. Set ``preserve_original=True``
+        to keep it with a ``regenerated`` status for audit purposes.
 
         Args:
             additional_instructions: Optional extra guidance appended as a user message
                 before re-generation so the caller can steer the new response.
+            preserve_original: If True, keep the original run with status ``regenerated``
+                instead of replacing it.  Defaults to False (replace).
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id for the session.
@@ -1777,6 +1786,7 @@ class Agent:
         return _run.aregenerate_dispatch(
             self,
             additional_instructions=additional_instructions,
+            preserve_original=preserve_original,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,
@@ -1787,6 +1797,52 @@ class Agent:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             **kwargs,
+        )
+
+    def fork_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Fork the current session into a new independent session.
+
+        Copies all runs so the new session can continue the conversation independently.
+
+        Args:
+            source_session_id: The session to fork.  Defaults to the agent's current session.
+            user_id: The user id for the new session.
+
+        Returns:
+            The new session_id.
+        """
+        return _run.fork_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
+
+    async def afork_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Async variant of fork_session.
+
+        Fork the current session into a new independent session.
+
+        Args:
+            source_session_id: The session to fork.  Defaults to the agent's current session.
+            user_id: The user id for the new session.
+
+        Returns:
+            The new session_id.
+        """
+        return await _run.afork_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
         )
 
 
