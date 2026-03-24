@@ -1,3 +1,5 @@
+"""Unit tests for GoogleAuth toolkit and shared auth decorator."""
+
 import json
 from unittest.mock import MagicMock, Mock, patch
 from urllib.parse import parse_qs, urlparse
@@ -16,16 +18,11 @@ def google_auth():
 
 
 @pytest.fixture
-def mock_creds():
-    creds = Mock(spec=Credentials)
-    creds.valid = True
-    creds.expired = False
-    return creds
-
-
-# ---------------------------------------------------------------------------
-# GoogleAuth initialization
-# ---------------------------------------------------------------------------
+def mock_credentials():
+    mock_creds = Mock(spec=Credentials)
+    mock_creds.valid = True
+    mock_creds.expired = False
+    return mock_creds
 
 
 def test_google_auth_init():
@@ -52,11 +49,6 @@ def test_google_auth_default_redirect_uri_from_env(monkeypatch):
     assert ga.redirect_uri == "https://env.example.com/callback"
 
 
-# ---------------------------------------------------------------------------
-# Service registration
-# ---------------------------------------------------------------------------
-
-
 def test_register_service(google_auth):
     google_auth.register_service("gmail", ["scope1", "scope2"])
     assert google_auth._services["gmail"] == ["scope1", "scope2"]
@@ -68,11 +60,6 @@ def test_register_multiple_services(google_auth):
     assert len(google_auth._services) == 2
     assert "gmail" in google_auth._services
     assert "calendar" in google_auth._services
-
-
-# ---------------------------------------------------------------------------
-# Combined URL generation
-# ---------------------------------------------------------------------------
 
 
 def test_authenticate_google_combined_url(google_auth):
@@ -143,20 +130,15 @@ def test_authenticate_google_partial_unknown(google_auth):
     assert "gmail.readonly" in result["url"]
 
 
-# ---------------------------------------------------------------------------
-# Shared credentials (app-level pattern)
-# ---------------------------------------------------------------------------
-
-
-def test_shared_creds_same_object(mock_creds):
-    gmail = GmailTools(creds=mock_creds)
-    cal = GoogleCalendarTools(creds=mock_creds)
+def test_shared_creds_same_object(mock_credentials):
+    gmail = GmailTools(creds=mock_credentials)
+    cal = GoogleCalendarTools(creds=mock_credentials)
     assert gmail.creds is cal.creds
-    assert gmail.creds is mock_creds
+    assert gmail.creds is mock_credentials
 
 
-def test_shared_creds_skips_auth(mock_creds):
-    gmail = GmailTools(creds=mock_creds)
+def test_shared_creds_skips_auth(mock_credentials):
+    gmail = GmailTools(creds=mock_credentials)
     with patch("agno.tools.google.gmail.build") as mock_build:
         mock_build.return_value = MagicMock()
         with patch.object(gmail, "_auth") as mock_auth:
@@ -164,27 +146,20 @@ def test_shared_creds_skips_auth(mock_creds):
             mock_auth.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Auth decorator
-# ---------------------------------------------------------------------------
-
-
 def test_auth_error_returns_json():
     gmail = GmailTools()
-    result = gmail.get_latest_emails(count=1)
+    gmail.creds = Mock(valid=False)
+    gmail.service = None
+    with patch.object(gmail, "_auth", side_effect=RuntimeError("token expired")):
+        result = gmail.get_latest_emails(count=1)
     data = json.loads(result)
     assert "error" in data
-    assert "Gmail" in data["error"]
+    assert "authentication failed" in data["error"].lower()
 
 
 def test_no_authenticate_google_on_toolkit():
     gmail = GmailTools()
     assert "authenticate_google" not in gmail.functions
-
-
-# ---------------------------------------------------------------------------
-# Backward compatibility
-# ---------------------------------------------------------------------------
 
 
 def test_backward_compat_custom_token_path():
