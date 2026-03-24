@@ -327,17 +327,15 @@ class GoogleDriveTools(Toolkit):
     # No @authenticate — delegates to search_files which handles auth
     def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
         """
-        Browse Google Drive files and folders. Returns metadata only, not file contents.
-        Use for broad listing, recent files, or folder contents.
-        When results include a nextPageToken, pass it as page_token to fetch the next page.
+        List recent files and folders from Google Drive.
 
         Args:
-            query (str): Optional Drive query string to filter results
-            page_size (int): Maximum number of files to return
-            page_token (str): Token from a previous response to fetch the next page of results
+            query (str): Optional Drive query to filter results
+            page_size (int): Number of files to return (default 10)
+            page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string with file metadata (name, type, modified date)
+            str: JSON string containing file metadata or error message
         """
         return self.search_files(query=query, max_results=page_size, page_token=page_token)
 
@@ -345,33 +343,31 @@ class GoogleDriveTools(Toolkit):
         self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
     ) -> str:
         """
-        Browse Google Drive files and folders (async). Returns metadata only, not file contents.
-        When results include a nextPageToken, pass it as page_token to fetch the next page.
+        List recent files and folders from Google Drive (async).
 
         Args:
-            query (str): Optional Drive query string to filter results
-            page_size (int): Maximum number of files to return
-            page_token (str): Token from a previous response to fetch the next page of results
+            query (str): Optional Drive query to filter results
+            page_size (int): Number of files to return (default 10)
+            page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string with file metadata (name, type, modified date)
+            str: JSON string containing file metadata or error message
         """
         return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
 
     @authenticate
     def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:
         """
-        Search Google Drive using a Drive query expression. Use for precise filtering
-        such as ``name contains 'budget'`` or ``mimeType = 'application/pdf'``.
-        When results include a nextPageToken, pass it as page_token to fetch the next page.
+        Search Google Drive using a query expression.
+        Searches in file name, type, folder, owner, and modification date.
 
         Args:
             query (str): Drive query expression (see instructions for syntax)
-            max_results (int): Maximum number of files to return
-            page_token (str): Token from a previous response to fetch the next page of results
+            max_results (int): Number of files to return (default 10)
+            page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string with matching files and metadata
+            str: JSON string containing matching files and metadata or error message
         """
         if max_results < 1:
             return json.dumps({"error": "max_results must be greater than 0"})
@@ -412,31 +408,28 @@ class GoogleDriveTools(Toolkit):
         self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
     ) -> str:
         """
-        Search Google Drive using a Drive query expression (async).
-        When results include a nextPageToken, pass it as page_token to fetch the next page.
+        Search Google Drive using a query expression (async).
 
         Args:
             query (str): Drive query expression (see instructions for syntax)
-            max_results (int): Maximum number of files to return
-            page_token (str): Token from a previous response to fetch the next page of results
+            max_results (int): Number of files to return (default 10)
+            page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string with matching files and metadata
+            str: JSON string containing matching files and metadata or error message
         """
         return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
 
     @authenticate
     def read_file(self, file_id: str) -> str:
         """
-        Read a Drive file and return its text content in JSON for analysis or summarization.
-        Docs and Slides are exported as plain text, Sheets as CSV, Scripts as JSON.
-        For binary files (images, videos), use download_file instead.
+        Read a Drive file and return its text content.
 
         Args:
             file_id (str): The Drive file ID
 
         Returns:
-            str: JSON string with file metadata and text content
+            str: JSON string containing file metadata and text content or error message
         """
         try:
             service = cast(Resource, self.service)
@@ -488,27 +481,26 @@ class GoogleDriveTools(Toolkit):
 
     async def aread_file(self, file_id: str) -> str:
         """
-        Read a Drive file and return its text content in JSON (async).
-        For binary files (images, videos), use download_file instead.
+        Read a Drive file and return its text content (async).
 
         Args:
             file_id (str): The Drive file ID
 
         Returns:
-            str: JSON string with file metadata and text content
+            str: JSON string containing file metadata and text content or error message
         """
         return await asyncio.to_thread(self.read_file, file_id)
 
     @authenticate
     def upload_file(self, file_path: Union[str, Path]) -> str:
         """
-        Upload a local file from disk to Google Drive as a new file.
+        Upload a local file to Google Drive.
 
         Args:
-            file_path (str): Local filesystem path to the file to upload
+            file_path (str): Path to the local file to upload
 
         Returns:
-            str: JSON string with uploaded file metadata (id, name, webViewLink)
+            str: JSON string containing uploaded file metadata or error message
         """
         path = Path(file_path)
         if not path.exists() or not path.is_file():
@@ -538,7 +530,7 @@ class GoogleDriveTools(Toolkit):
 
     async def aupload_file(self, file_path: Union[str, Path]) -> str:
         """
-        Upload a local file from disk to Google Drive (async).
+        Upload a local file to Google Drive (async).
 
         Args:
             file_path (str): Local filesystem path to the file to upload
@@ -551,16 +543,14 @@ class GoogleDriveTools(Toolkit):
     @authenticate
     def download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
-        Download a Drive file to the configured download directory.
-        Use when the user wants a local copy or a binary file (image, video, PDF).
-        Workspace files are auto-exported to native formats (docx, xlsx, pptx, png).
+        Download a Drive file and save it locally.
 
         Args:
             file_id (str): The Drive file ID
             export_format (str): Optional MIME type to override the default export format
 
         Returns:
-            str: JSON string with saved file path and download status
+            str: JSON string containing saved file path and status or error message
         """
         try:
             service = cast(Resource, self.service)
@@ -615,14 +605,13 @@ class GoogleDriveTools(Toolkit):
 
     async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
-        Download a Drive file to the configured download directory (async).
-        Workspace files are auto-exported to native formats.
+        Download a Drive file and save it locally (async).
 
         Args:
             file_id (str): The Drive file ID
             export_format (str): Optional MIME type to override the default export format
 
         Returns:
-            str: JSON string with saved file path and download status
+            str: JSON string containing saved file path and status or error message
         """
         return await asyncio.to_thread(self.download_file, file_id, export_format=export_format)
