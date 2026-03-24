@@ -462,8 +462,22 @@ class Model(ABC):
             "response_format": kwargs.get("response_format"),
             "stream": stream,
         }
+        def normalize_for_cache(obj):
+            # Handle Pydantic models (like Followups)
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
 
-        cache_str = json.dumps(cache_data, sort_keys=True)
+            # Handle class types (ModelMetaclass issue)
+            if isinstance(obj, type):
+                return obj.__name__
+
+            return obj
+        normalized_cache_data = {
+            k: normalize_for_cache(v)
+            for k, v in cache_data.items()
+        }
+
+        cache_str = json.dumps(normalized_cache_data, sort_keys=True)
         return md5(cache_str.encode()).hexdigest()
 
     def _get_model_cache_file_path(self, cache_key: str) -> Path:
