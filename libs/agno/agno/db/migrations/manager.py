@@ -63,7 +63,7 @@ class MigrationManager:
             tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
 
         # Handle migrations for each table separately (extend in future if needed):
-        for _table_type, table_name in tables:
+        for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
                 current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
             else:
@@ -92,7 +92,7 @@ class MigrationManager:
                         break
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
-                    migration_executed = await self._up_migration(version, _table_type, table_name)
+                    migration_executed = await self._up_migration(version, table_type, table_name)
                     latest_version = normalised_version.public
                     if migration_executed:
                         latest_version = normalised_version.public
@@ -155,7 +155,7 @@ class MigrationManager:
         else:
             tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
 
-        for _table_type, table_name in tables:
+        for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
                 current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
             else:
@@ -173,7 +173,7 @@ class MigrationManager:
             for version, normalised_version in reversed(self.available_versions):
                 if normalised_version > _target_version:
                     log_info(f"Reverting migration {normalised_version} on table {table_name}")
-                    migration_executed = await self._down_migration(version, _table_type, table_name)
+                    migration_executed = await self._down_migration(version, table_type, table_name)
                     if migration_executed:
                         any_migration_executed = True
                         log_info(f"Successfully reverted migration {normalised_version} on table {table_name}")
