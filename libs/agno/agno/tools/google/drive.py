@@ -325,32 +325,38 @@ class GoogleDriveTools(Toolkit):
         return buffer.getvalue()
 
     # No @authenticate — delegates to search_files which handles auth
-    def list_files(self, query: Optional[str] = None, page_size: int = 10) -> str:
+    def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
         """
         Browse Google Drive files and folders. Returns metadata only, not file contents.
         Use for broad listing, recent files, or folder contents.
+        When results include a nextPageToken, pass it as page_token to fetch the next page.
 
         Args:
             query (str): Optional Drive query string to filter results
             page_size (int): Maximum number of files to return
+            page_token (str): Token from a previous response to fetch the next page of results
 
         Returns:
             str: JSON string with file metadata (name, type, modified date)
         """
-        return self.search_files(query=query, max_results=page_size)
+        return self.search_files(query=query, max_results=page_size, page_token=page_token)
 
-    async def alist_files(self, query: Optional[str] = None, page_size: int = 10) -> str:
+    async def alist_files(
+        self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
+    ) -> str:
         """
         Browse Google Drive files and folders (async). Returns metadata only, not file contents.
+        When results include a nextPageToken, pass it as page_token to fetch the next page.
 
         Args:
             query (str): Optional Drive query string to filter results
             page_size (int): Maximum number of files to return
+            page_token (str): Token from a previous response to fetch the next page of results
 
         Returns:
             str: JSON string with file metadata (name, type, modified date)
         """
-        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size)
+        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
 
     @authenticate
     def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:

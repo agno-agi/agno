@@ -316,7 +316,6 @@ def test_init_write_scope_mismatch(mock_creds):
             upload_file=True,
             list_files=False,
             search_files=False,
-            get_file_metadata=False,
             read_file=False,
         )
 
