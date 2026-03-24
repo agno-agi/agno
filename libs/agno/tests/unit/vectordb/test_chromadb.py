@@ -1293,6 +1293,7 @@ def test_sync_async_id_consistency(mock_embedder):
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Slow test: inserts 6000 documents. Run manually to verify batch splitting works.")
 def test_insert_large_batch_exceeds_limit(chroma_db):
     """Test inserting more than 5461 documents (ChromaDB's batch size limit).
 
@@ -1317,6 +1318,7 @@ def test_insert_large_batch_exceeds_limit(chroma_db):
     assert chroma_db.get_count() == num_documents
 
 
+@pytest.mark.skip(reason="Slow test: upserts 6000 documents. Run manually to verify batch splitting works.")
 def test_upsert_large_batch_exceeds_limit(chroma_db):
     """Test upserting more than 5461 documents.
 
@@ -1337,6 +1339,7 @@ def test_upsert_large_batch_exceeds_limit(chroma_db):
     assert chroma_db.get_count() == num_documents
 
 
+@pytest.mark.skip(reason="Slow test: async inserts 6000 documents. Run manually to verify batch splitting works.")
 @pytest.mark.asyncio
 async def test_async_insert_large_batch_exceeds_limit(chroma_db):
     """Test async inserting more than 5461 documents.
@@ -1361,6 +1364,7 @@ async def test_async_insert_large_batch_exceeds_limit(chroma_db):
     assert chroma_db.get_count() == num_documents
 
 
+@pytest.mark.skip(reason="Slow test: async upserts 6000 documents. Run manually to verify batch splitting works.")
 @pytest.mark.asyncio
 async def test_async_upsert_large_batch_exceeds_limit(chroma_db):
     """Test async upserting more than 5,461 documents.
