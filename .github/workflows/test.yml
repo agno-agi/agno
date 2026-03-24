@@ -129,7 +129,8 @@ jobs:
         working-directory: .
         run: |
           set -e
-          ./scripts/test_setup.sh
+          uv venv .venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install --refresh -e "./libs/agno[dev]"
       - name: Run tests for Agno
         working-directory: .
         env:
