@@ -24,7 +24,7 @@ from agno.tools.google.drive import GoogleDriveTools
 agent = Agent(
     name="Document Reader",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleDriveTools()],
+    tools=[GoogleDriveTools(max_read_size=50 * 1024 * 1024)],
     instructions=[
         "When reading documents, provide a structured summary with sections and key points.",
         "For spreadsheets (returned as CSV), describe the columns and highlight notable data.",
