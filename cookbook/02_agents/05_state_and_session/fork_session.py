@@ -1,0 +1,72 @@
+"""
+Fork Session
+=============
+Fork an agent session to branch the conversation into a new independent session.
+
+This is useful when you want to explore a different direction without
+losing the original conversation, or let multiple users continue from
+the same checkpoint.
+"""
+
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+db = SqliteDb(db_file="tmp/agents.db")
+
+agent = Agent(
+    model=OpenAIResponses(id="gpt-5-mini"),
+    db=db,
+    add_history_to_context=True,
+    markdown=True,
+)
+
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    original_session = "fork-demo-original"
+    user_id = "demo-user"
+
+    # 1. Build up a conversation
+    print("\n--- Building original conversation ---\n")
+    agent.print_response(
+        "I'm planning a trip to Japan. What are the top 3 cities to visit?",
+        session_id=original_session,
+        user_id=user_id,
+        stream=True,
+    )
+    agent.print_response(
+        "Tell me more about Kyoto. What should I see there?",
+        session_id=original_session,
+        user_id=user_id,
+        stream=True,
+    )
+
+    # 2. Fork the session
+    new_session_id = agent.fork_session(
+        source_session_id=original_session,
+        user_id=user_id,
+    )
+    print(f"\nForked session: {original_session} -> {new_session_id}\n")
+
+    # 3. Continue the forked session in a different direction
+    print("\n--- Continuing forked session (different direction) ---\n")
+    agent.print_response(
+        "Actually, I changed my mind. Tell me about Osaka's street food scene instead.",
+        session_id=new_session_id,
+        user_id=user_id,
+        stream=True,
+    )
+
+    # 4. Original session is untouched -- continue it separately
+    print("\n--- Continuing original session (unaffected) ---\n")
+    agent.print_response(
+        "What about the temples in Kyoto? Which ones are must-see?",
+        session_id=original_session,
+        user_id=user_id,
+        stream=True,
+    )
