@@ -63,7 +63,6 @@ except ImportError as e:
     ) from e
 
 
-
 @dataclass
 class Claude(Model):
     """
@@ -836,7 +835,6 @@ class Claude(Model):
             tool_call_prompt = "Do not reflect on the quality of the returned search results in your response\n\n"
             return tool_call_prompt
         return None
-
 
     def _parse_provider_response(
         self,

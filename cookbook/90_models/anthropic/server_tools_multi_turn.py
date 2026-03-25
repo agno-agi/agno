@@ -34,7 +34,9 @@ if __name__ == "__main__":
     agent.print_response("Search the web for the latest Python 3.14 release notes")
 
     # Turn 2: Fetch a link from the search results (depends on search history)
-    agent.print_response("Fetch the official Python docs link from those results and summarize the key changes")
+    agent.print_response(
+        "Fetch the official Python docs link from those results and summarize the key changes"
+    )
 
     # Turn 3: Code execution building on fetched content (depends on fetch history)
     agent.print_response(
