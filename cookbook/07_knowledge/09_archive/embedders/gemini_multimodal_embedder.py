@@ -49,16 +49,16 @@ async def main() -> None:
 
     # Image embedding (local file)
     image = Image(filepath=RESOURCES / "sample.png", mime_type="image/png")
-    img_emb = embedder.get_image_embedding(image)
+    img_emb = embedder.get_embedding(image)
     print(f"Image embedding: {len(img_emb)} dims, first 5: {img_emb[:5]}")
 
     # Audio embedding (local file)
     audio = Audio(filepath=RESOURCES / "sample.wav", mime_type="audio/wav")
-    audio_emb = embedder.get_audio_embedding(audio)
+    audio_emb = embedder.get_embedding(audio)
     print(f"Audio embedding: {len(audio_emb)} dims, first 5: {audio_emb[:5]}")
 
     # Mixed multimodal embedding (text + image in one call)
-    mixed_emb = embedder.get_multimodal_embedding(["A red square image", image])
+    mixed_emb = embedder.get_embedding(["A red square image", image])
     print(f"Multimodal embedding: {len(mixed_emb)} dims, first 5: {mixed_emb[:5]}")
 
     # Knowledge base insertion

@@ -515,7 +515,10 @@ class SingleStore(VectorDb):
 
         # Individually embed media docs (they use different embedding methods)
         for doc in media_docs:
-            await doc.async_embed(embedder=self.embedder)
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -610,7 +613,10 @@ class SingleStore(VectorDb):
 
         # Individually embed media docs (they use different embedding methods)
         for doc in media_docs:
-            await doc.async_embed(embedder=self.embedder)
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported

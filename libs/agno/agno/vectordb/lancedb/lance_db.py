@@ -14,7 +14,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -385,7 +385,10 @@ class LanceDb(VectorDb):
 
         # Individually embed media docs (they use different embedding methods)
         for doc in media_docs:
-            await doc.async_embed(embedder=self.embedder)
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
 
         # Still do async embedding for performance
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -458,7 +461,10 @@ class LanceDb(VectorDb):
 
             # Individually embed media docs (they use different embedding methods)
             for doc in media_docs:
-                await doc.async_embed(embedder=self.embedder)
+                try:
+                    await doc.async_embed(embedder=self.embedder)
+                except Exception as e:
+                    log_error(f"Error embedding media document '{doc.name}': {e}")
 
             # Do async embedding for performance
             if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):

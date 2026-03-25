@@ -8,23 +8,6 @@ from agno.knowledge.embedder import Embedder
 if TYPE_CHECKING:
     from agno.media import Audio, Image, Video
 
-# Registry: maps media class -> (sync_embed_method, async_embed_method)
-# Lazy-initialized on first use to avoid import cycles.
-_MEDIA_EMBEDDER_METHODS: Optional[Dict[type, tuple]] = None
-
-
-def _get_media_embedder_methods() -> Dict[type, tuple]:
-    global _MEDIA_EMBEDDER_METHODS
-    if _MEDIA_EMBEDDER_METHODS is None:
-        from agno.media import Audio, Image, Video
-
-        _MEDIA_EMBEDDER_METHODS = {
-            Image: ("get_image_embedding_and_usage", "async_get_image_embedding_and_usage"),
-            Audio: ("get_audio_embedding_and_usage", "async_get_audio_embedding_and_usage"),
-            Video: ("get_video_embedding_and_usage", "async_get_video_embedding_and_usage"),
-        }
-    return _MEDIA_EMBEDDER_METHODS
-
 
 @dataclass
 class Document:
@@ -51,42 +34,28 @@ class Document:
     def embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder.
 
-        If the document has media attached, dispatches to the appropriate
-        media embedding method. Otherwise, embeds the text content.
+        If the document has media attached, embeds the media object.
+        Otherwise, embeds the text content.
         """
         _embedder = embedder or self.embedder
         if _embedder is None:
             raise ValueError("No embedder provided")
 
-        if self.media is not None:
-            registry = _get_media_embedder_methods()
-            media_type = type(self.media)
-            if media_type not in registry:
-                raise TypeError(f"Unsupported media type: {media_type.__name__}")
-            method_name = registry[media_type][0]  # sync method
-            self.embedding, self.usage = getattr(_embedder, method_name)(self.media)
-        else:
-            self.embedding, self.usage = _embedder.get_embedding_and_usage(self.content)
+        content = self.media if self.media is not None else self.content
+        self.embedding, self.usage = _embedder.get_embedding_and_usage(content)
 
     async def async_embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder.
 
-        If the document has media attached, dispatches to the appropriate
-        media embedding method. Otherwise, embeds the text content.
+        If the document has media attached, embeds the media object.
+        Otherwise, embeds the text content.
         """
         _embedder = embedder or self.embedder
         if _embedder is None:
             raise ValueError("No embedder provided")
 
-        if self.media is not None:
-            registry = _get_media_embedder_methods()
-            media_type = type(self.media)
-            if media_type not in registry:
-                raise TypeError(f"Unsupported media type: {media_type.__name__}")
-            method_name = registry[media_type][1]  # async method
-            self.embedding, self.usage = await getattr(_embedder, method_name)(self.media)
-        else:
-            self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(self.content)
+        content = self.media if self.media is not None else self.content
+        self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(content)
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns a dictionary representation of the document"""

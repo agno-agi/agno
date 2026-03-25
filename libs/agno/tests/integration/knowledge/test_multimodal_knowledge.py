@@ -32,7 +32,10 @@ pytestmark = pytest.mark.skipif(
 
 MULTIMODAL_MODEL = "gemini-embedding-2-preview"
 RESOURCES = (
-    Path(__file__).resolve().parent.parent.parent.parent.parent / "cookbook" / "07_knowledge" / "testing_resources"
+    Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+    / "cookbook"
+    / "07_knowledge"
+    / "testing_resources"
 )
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"

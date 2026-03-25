@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from agno.knowledge.embedder.base import Embedder, EmbeddingInput
+from agno.knowledge.embedder.base import ContentInput, Embedder, EmbeddingInput
 from agno.media import Audio, Image, Video
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -140,8 +140,8 @@ class GeminiEmbedder(Embedder):
         """Convert agno media types to Gemini Part objects."""
         if isinstance(content, str):
             raise TypeError(
-                "get_multimodal_embedding() expects a list of inputs, not a plain string. "
-                "Use get_embedding() for text-only embedding, or wrap in a list: [text]"
+                "Expected a list of inputs, not a plain string. "
+                "Use get_embedding('text') for text-only embedding, or wrap in a list: ['text']"
             )
         parts: list = []
         for item in content:
@@ -192,167 +192,91 @@ class GeminiEmbedder(Embedder):
             return {"billable_character_count": response.metadata.billable_character_count}
         return None
 
+    def _is_media(self, content: ContentInput) -> bool:
+        """Return True if content is a media object or a sequence of inputs."""
+        return isinstance(content, (Image, Audio, Video, list, tuple))
+
     # ------------------------------------------------------------------
-    # Text embedding (existing methods)
+    # Unified embedding methods
     # ------------------------------------------------------------------
 
     def _response(self, text: str) -> EmbedContentResponse:
         return self.client.models.embed_content(**self._build_request_params(text))
 
-    def get_embedding(self, text: str) -> List[float]:
-        response = self._response(text=text)
-        try:
-            return self._extract_embedding(response)
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return []
+    def get_embedding(self, content: ContentInput) -> List[float]:
+        if isinstance(content, str):
+            response = self._response(text=content)
+            try:
+                return self._extract_embedding(response)
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return []
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        response = self._response(text=text)
-        usage = self._extract_usage(response)
-        try:
-            return self._extract_embedding(response), usage
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return [], usage
+        self._require_multimodal()
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
+        response = self._embed_parts(parts)
+        return self._extract_embedding(response)
 
-    async def async_get_embedding(self, text: str) -> List[float]:
-        """Async version of get_embedding using client.aio."""
-        try:
-            response = await self.aclient.aio.models.embed_content(**self._build_request_params(text))
-            return self._extract_embedding(response)
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return []
-
-    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        """Async version of get_embedding_and_usage using client.aio."""
-        try:
-            response = await self.aclient.aio.models.embed_content(**self._build_request_params(text))
+    def get_embedding_and_usage(self, content: ContentInput) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        if isinstance(content, str):
+            response = self._response(text=content)
             usage = self._extract_usage(response)
-            return self._extract_embedding(response), usage
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return [], None
+            try:
+                return self._extract_embedding(response), usage
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return [], usage
 
-    # ------------------------------------------------------------------
-    # Image embedding
-    # ------------------------------------------------------------------
-
-    def get_image_embedding(self, image: Image) -> List[float]:
         self._require_multimodal()
-        parts = self._build_contents([image])
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response)
-
-    def get_image_embedding_and_usage(self, image: Image) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents([image])
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
         response = self._embed_parts(parts)
         return self._extract_embedding(response), self._extract_usage(response)
 
-    async def async_get_image_embedding(self, image: Image) -> List[float]:
+    async def async_get_embedding(self, content: ContentInput) -> List[float]:
+        if isinstance(content, str):
+            try:
+                response = await self.aclient.aio.models.embed_content(**self._build_request_params(content))
+                return self._extract_embedding(response)
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return []
+
         self._require_multimodal()
-        parts = self._build_contents([image])
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
         response = await self._async_embed_parts(parts)
         return self._extract_embedding(response)
 
-    async def async_get_image_embedding_and_usage(self, image: Image) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents([image])
-        response = await self._async_embed_parts(parts)
-        return self._extract_embedding(response), self._extract_usage(response)
+    async def async_get_embedding_and_usage(
+        self, content: ContentInput
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        if isinstance(content, str):
+            try:
+                response = await self.aclient.aio.models.embed_content(**self._build_request_params(content))
+                usage = self._extract_usage(response)
+                return self._extract_embedding(response), usage
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return [], None
 
-    # ------------------------------------------------------------------
-    # Audio embedding
-    # ------------------------------------------------------------------
-
-    def get_audio_embedding(self, audio: Audio) -> List[float]:
         self._require_multimodal()
-        parts = self._build_contents([audio])
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response)
-
-    def get_audio_embedding_and_usage(self, audio: Audio) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents([audio])
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response), self._extract_usage(response)
-
-    async def async_get_audio_embedding(self, audio: Audio) -> List[float]:
-        self._require_multimodal()
-        parts = self._build_contents([audio])
-        response = await self._async_embed_parts(parts)
-        return self._extract_embedding(response)
-
-    async def async_get_audio_embedding_and_usage(self, audio: Audio) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents([audio])
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
         response = await self._async_embed_parts(parts)
         return self._extract_embedding(response), self._extract_usage(response)
 
     # ------------------------------------------------------------------
-    # Video embedding
-    # ------------------------------------------------------------------
-
-    def get_video_embedding(self, video: Video) -> List[float]:
-        self._require_multimodal()
-        parts = self._build_contents([video])
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response)
-
-    def get_video_embedding_and_usage(self, video: Video) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents([video])
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response), self._extract_usage(response)
-
-    async def async_get_video_embedding(self, video: Video) -> List[float]:
-        self._require_multimodal()
-        parts = self._build_contents([video])
-        response = await self._async_embed_parts(parts)
-        return self._extract_embedding(response)
-
-    async def async_get_video_embedding_and_usage(self, video: Video) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents([video])
-        response = await self._async_embed_parts(parts)
-        return self._extract_embedding(response), self._extract_usage(response)
-
-    # ------------------------------------------------------------------
-    # Multimodal embedding
-    # ------------------------------------------------------------------
-
-    def get_multimodal_embedding(self, content: Sequence[EmbeddingInput]) -> List[float]:
-        self._require_multimodal()
-        parts = self._build_contents(content)
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response)
-
-    def get_multimodal_embedding_and_usage(
-        self, content: Sequence[EmbeddingInput]
-    ) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents(content)
-        response = self._embed_parts(parts)
-        return self._extract_embedding(response), self._extract_usage(response)
-
-    async def async_get_multimodal_embedding(self, content: Sequence[EmbeddingInput]) -> List[float]:
-        self._require_multimodal()
-        parts = self._build_contents(content)
-        response = await self._async_embed_parts(parts)
-        return self._extract_embedding(response)
-
-    async def async_get_multimodal_embedding_and_usage(
-        self, content: Sequence[EmbeddingInput]
-    ) -> Tuple[List[float], Optional[Dict]]:
-        self._require_multimodal()
-        parts = self._build_contents(content)
-        response = await self._async_embed_parts(parts)
-        return self._extract_embedding(response), self._extract_usage(response)
-
-    # ------------------------------------------------------------------
-    # Batch embedding (existing)
+    # Batch embedding (text-only)
     # ------------------------------------------------------------------
 
     async def async_get_embeddings_batch_and_usage(

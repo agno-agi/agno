@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -894,7 +894,10 @@ class CouchbaseSearch(VectorDb):
 
         # Individually embed media docs (they use different embedding methods)
         for doc in media_docs:
-            await doc.async_embed(embedder=self.embedder)
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -1005,7 +1008,10 @@ class CouchbaseSearch(VectorDb):
 
         # Individually embed media docs (they use different embedding methods)
         for doc in media_docs:
-            await doc.async_embed(embedder=self.embedder)
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported

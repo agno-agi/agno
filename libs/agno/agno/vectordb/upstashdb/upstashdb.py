@@ -13,7 +13,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_info, log_warning, logger
+from agno.utils.log import log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -534,7 +534,10 @@ class UpstashVectorDb(VectorDb):
 
         # Individually embed media docs (they use different embedding methods)
         for doc in media_docs:
-            await doc.async_embed(embedder=self.embedder)
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
 
         if (
             self.embedder
