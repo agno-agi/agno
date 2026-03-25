@@ -11,44 +11,27 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
-_OPENAI_LIKE_REASONING_PATTERNS = (
-    "deepseek-r1",
-    "qwq",
-    "qwen3",
-    "openthinker",
-)
-
-
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
-    class_name = reasoning_model.__class__.__name__
-
-    if class_name in ("OpenAIChat", "OpenAIResponses", "AzureOpenAI") and (
-        ("o4" in reasoning_model.id)
-        or ("o3" in reasoning_model.id)
-        or ("o1" in reasoning_model.id)
-        or ("4.1" in reasoning_model.id)
-        or ("4.5" in reasoning_model.id)
-        or ("5.1" in reasoning_model.id)
-        or ("5.2" in reasoning_model.id)
-    ):
-        return True
-
-    # Handled by reasoning/vllm.py
-    if class_name == "VLLM":
+    # VLLM has its own handler in reasoning/vllm.py
+    if reasoning_model.__class__.__name__ == "VLLM":
         return False
 
-    # OpenAIChat requires base_url to distinguish self-hosted from api.openai.com
-    is_openai_like = isinstance(reasoning_model, OpenAILike)
-    is_self_hosted_openai = class_name == "OpenAIChat" and getattr(reasoning_model, "base_url", None) is not None
-
-    if is_openai_like or is_self_hosted_openai:
-        if getattr(reasoning_model, "enable_thinking", None) is True:
-            return True
-        model_id = reasoning_model.id.lower()
-        if any(pattern in model_id for pattern in _OPENAI_LIKE_REASONING_PATTERNS):
-            return True
-
-    return False
+    return (
+        (
+            reasoning_model.__class__.__name__ == "OpenAIChat"
+            or reasoning_model.__class__.__name__ == "OpenAIResponses"
+            or reasoning_model.__class__.__name__ == "AzureOpenAI"
+        )
+        and (
+            ("o4" in reasoning_model.id)
+            or ("o3" in reasoning_model.id)
+            or ("o1" in reasoning_model.id)
+            or ("4.1" in reasoning_model.id)
+            or ("4.5" in reasoning_model.id)
+            or ("5.1" in reasoning_model.id)
+            or ("5.2" in reasoning_model.id)
+        )
+    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
 def get_openai_reasoning(
