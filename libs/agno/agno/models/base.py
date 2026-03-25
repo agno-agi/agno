@@ -463,7 +463,14 @@ class Model(ABC):
             "stream": stream,
         }
 
-        cache_str = json.dumps(cache_data, sort_keys=True)
+        def _cache_default(obj: Any) -> Any:
+            if isinstance(obj, type):
+                return obj.__name__
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        cache_str = json.dumps(cache_data, sort_keys=True, default=_cache_default)
         return md5(cache_str.encode()).hexdigest()
 
     def _get_model_cache_file_path(self, cache_key: str) -> Path:
