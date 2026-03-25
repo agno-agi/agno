@@ -84,7 +84,7 @@ infinity = ["infinity_client"]
 google = ["google-genai>=1.52.0"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
-litellm = ["litellm"]
+litellm = ["litellm<=1.82.6"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
 mistral = ["mistralai"]
@@ -120,6 +120,7 @@ github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
+google_slides = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp>=1.9.2"]
@@ -222,7 +223,7 @@ models = [
   "agno[google]",
   "agno[groq]",
   "agno[ibm]",
-  "agno[litellm]",
+  # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
   "agno[meta]",
   "agno[mistral]",
   "agno[ollama]",
@@ -244,10 +245,11 @@ tools = [
   "agno[youtube]",
   "agno[firecrawl]",
   "agno[tavily]",
-  "agno[crawl4ai]",
+  # "agno[crawl4ai]",  # Temporarily disabled - depends on litellm which is compromised on PyPI (March 24, 2026)
   "agno[github]",
   "agno[gitlab]",
   "agno[gmail]",
+  "agno[google_slides]",
   "agno[googlemaps]",
   "agno[todoist]",
   "agno[matplotlib]",
