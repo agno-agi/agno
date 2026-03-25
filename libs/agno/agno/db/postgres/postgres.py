@@ -79,6 +79,7 @@ class PostgresDb(BaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        oauth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -155,6 +156,7 @@ class PostgresDb(BaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            oauth_tokens_table=oauth_tokens_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -238,6 +240,7 @@ class PostgresDb(BaseDb):
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
+            (self.oauth_tokens_table_name, "oauth_tokens"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -580,6 +583,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        if table_type == "oauth_tokens":
+            self.oauth_tokens_table = self._get_or_create_table(
+                table_name=self.oauth_tokens_table_name,
+                table_type="oauth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.oauth_tokens_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -4984,3 +4995,66 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- OAuth Tokens ---
+
+    def get_oauth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="oauth_tokens")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == user_id,
+                        table.c.service == service,
+                    )
+                ).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting oauth token: {e}")
+            return None
+
+    def upsert_oauth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="oauth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create oauth_tokens table")
+            data = {**token}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(**data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["provider", "user_id", "service"],
+                    set_={
+                        "token_data": stmt.excluded.token_data,
+                        "granted_scopes": stmt.excluded.granted_scopes,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
+                )
+                sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_error(f"Error upserting oauth token: {e}")
+            raise
+
+    def delete_oauth_token(self, provider: str, user_id: str, service: str) -> bool:
+        try:
+            table = self._get_table(table_type="oauth_tokens")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.provider == provider,
+                        table.c.user_id == user_id,
+                        table.c.service == service,
+                    )
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting oauth token: {e}")
+            return False

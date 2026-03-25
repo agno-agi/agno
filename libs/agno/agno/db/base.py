@@ -51,6 +51,7 @@ class BaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        oauth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -70,6 +71,7 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.oauth_tokens_table_name = oauth_tokens_table or "agno_oauth_tokens"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -93,6 +95,7 @@ class BaseDb(ABC):
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
+            "oauth_tokens_table": self.oauth_tokens_table_name,
         }
 
     @classmethod
@@ -117,6 +120,7 @@ class BaseDb(ABC):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            oauth_tokens_table=data.get("oauth_tokens_table"),
             id=data.get("id"),
         )
 
@@ -1097,6 +1101,17 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- OAuth Tokens (Optional) ---
+
+    def get_oauth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def upsert_oauth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def delete_oauth_token(self, provider: str, user_id: str, service: str) -> bool:
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1117,6 +1132,7 @@ class AsyncBaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        oauth_tokens_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1132,6 +1148,7 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.oauth_tokens_table_name = oauth_tokens_table or "agno_oauth_tokens"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1811,4 +1828,15 @@ class AsyncBaseDb(ABC):
         Returns:
             Number of approvals updated.
         """
+        raise NotImplementedError
+
+    # --- OAuth Tokens (Optional) ---
+
+    async def get_oauth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    async def upsert_oauth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    async def delete_oauth_token(self, provider: str, user_id: str, service: str) -> bool:
         raise NotImplementedError
