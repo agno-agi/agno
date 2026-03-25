@@ -2,7 +2,7 @@ import asyncio
 import json
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 try:
     import lancedb
@@ -543,23 +543,17 @@ class LanceDb(VectorDb):
         if self.reranker and search_results:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
-        seen = set()
-        unique_results = []
-
+        # Deduplicate results that hybrid search may return from both vector and FTS branches
+        seen_hashes: Set[str] = set()
+        unique_results: List[Document] = []
         for doc in search_results:
-            # Use content_id if exists, else fallback to content
-            key = getattr(doc, "content_id", None)
-
-            if key is None:
-                key = doc.content[:100]
-
-            if key not in seen:
-                seen.add(key)
+            doc_hash = md5(doc.content.encode()).hexdigest()
+            if doc_hash not in seen_hashes:
+                seen_hashes.add(doc_hash)
                 unique_results.append(doc)
-
         search_results = unique_results
 
-        log_info(f"Found {len(search_results)} documents after deduplication")
+        log_info(f"Found {len(search_results)} documents")
         return search_results
 
     async def async_search(
