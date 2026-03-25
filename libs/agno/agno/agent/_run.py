@@ -5202,6 +5202,9 @@ def fork_session_dispatch(
         raise ValueError("Source session has no runs to fork.")
 
     # Create a new session with a deep copy of the runs
+    import time
+
+    now = int(time.time())
     new_session_id = str(uuid4())
     new_session = AgentSession(
         session_id=new_session_id,
@@ -5214,6 +5217,8 @@ def fork_session_dispatch(
         agent_data=copy.deepcopy(source_session.agent_data),
         runs=copy.deepcopy(source_session.runs),
         summary=copy.deepcopy(source_session.summary),
+        created_at=now,
+        updated_at=now,
     )
 
     # Save the new session
@@ -5264,6 +5269,9 @@ async def afork_session_dispatch(
         raise ValueError("Source session has no runs to fork.")
 
     # Create a new session with a deep copy of the runs
+    import time
+
+    now = int(time.time())
     new_session_id = str(uuid4())
     new_session = AgentSession(
         session_id=new_session_id,
@@ -5276,6 +5284,8 @@ async def afork_session_dispatch(
         agent_data=copy.deepcopy(source_session.agent_data),
         runs=copy.deepcopy(source_session.runs),
         summary=copy.deepcopy(source_session.summary),
+        created_at=now,
+        updated_at=now,
     )
 
     # Save the new session

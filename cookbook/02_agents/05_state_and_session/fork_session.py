@@ -10,7 +10,7 @@ the same checkpoint.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIResponses
+from agno.models.anthropic import Claude
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -18,7 +18,7 @@ from agno.models.openai import OpenAIResponses
 db = SqliteDb(db_file="tmp/agents.db")
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     db=db,
     add_history_to_context=True,
     markdown=True,

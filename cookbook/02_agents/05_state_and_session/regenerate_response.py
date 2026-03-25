@@ -10,7 +10,7 @@ set ``preserve_original=True`` to keep it with a ``regenerated`` status.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIResponses
+from agno.models.anthropic import Claude
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -18,7 +18,7 @@ from agno.models.openai import OpenAIResponses
 db = SqliteDb(db_file="tmp/agents.db")
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     db=db,
     add_history_to_context=True,
     markdown=True,
@@ -68,4 +68,6 @@ if __name__ == "__main__":
         stream=False,
     )
     print(response.content)
-    print(f"\nTotal runs in session: {len(agent.agent_session.runs)}")
+    session = agent.get_session(session_id=session_id)
+    if session:
+        print(f"\nTotal runs in session: {len(session.runs)}")
