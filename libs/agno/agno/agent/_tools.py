@@ -102,6 +102,24 @@ def _raise_if_async_tools_in_list(tools: list) -> None:
                 )
 
 
+def _wire_google_auth(agent: Agent, user_id: Optional[str] = None) -> None:
+    """Auto-wire GoogleAuth._db and user_id from agent context."""
+    if not agent.tools or not isinstance(agent.tools, list):
+        return
+    try:
+        from agno.tools.google.auth import GoogleAuth
+    except ImportError:
+        return
+    for tool in agent.tools:
+        if not isinstance(tool, GoogleAuth):
+            continue
+        if tool._db is None and agent.db is not None:
+            tool._db = agent.db
+        # Per-request user_id takes precedence for multi-user isolation
+        tool.user_id = user_id or tool.user_id or agent.user_id
+        break
+
+
 def get_tools(
     agent: Agent,
     run_response: RunOutput,
@@ -128,6 +146,9 @@ def get_tools(
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
+
+    # Wire GoogleAuth to agent's DB if available
+    _wire_google_auth(agent, user_id)
 
     # Add provided tools
     if resolved_tools is not None:
@@ -232,6 +253,9 @@ async def aget_tools(
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
+
+    # Wire GoogleAuth to agent's DB if available
+    _wire_google_auth(agent, user_id)
 
     # Connect MCP tools
     await _init.connect_mcp_tools(agent)
