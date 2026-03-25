@@ -115,15 +115,32 @@ def sanitize_response_schema(schema: dict):
                 # Convert True to False for strict mode, but preserve schema objects
                 schema["additionalProperties"] = False
 
-            # Ensure all properties are required, EXCEPT Dict fields
+            # Ensure all properties are required, EXCEPT:
+            # 1. Dict[str, T] fields (additionalProperties-based schemas)
+            # 2. Optional fields that have default=None
+            #    OpenAI strict mode requires every listed property to always be
+            #    present.  Fields with default=None are modelled as nullable
+            #    (anyOf with {"type":"null"}) — they must remain outside
+            #    "required" so the LLM can omit them rather than being forced
+            #    to output an explicit null, which can confuse some models and
+            #    cause downstream Pydantic validation failures (#7066).
             if "properties" in schema:
                 from agno.utils.models.schema_utils import is_dict_field
 
+                # Build a set of already-required fields from the original schema
+                # so we can augment rather than fully replace them.
+                originally_required = set(schema.get("required", []))
                 required_fields = []
                 for prop_name, prop_schema in schema["properties"].items():
-                    # Use the utility function to check if this is a Dict field
-                    if not is_dict_field(prop_schema):
-                        required_fields.append(prop_name)
+                    # Skip Dict fields
+                    if is_dict_field(prop_schema):
+                        continue
+                    # Skip optional fields (those with default: null).
+                    # "default" being None means the field has a default of None,
+                    # i.e. it is Optional[T] with no explicit value required.
+                    if "default" in prop_schema and prop_schema["default"] is None:
+                        continue
+                    required_fields.append(prop_name)
 
                 schema["required"] = required_fields
 

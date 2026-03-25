@@ -53,6 +53,7 @@ class MCPTools(Toolkit):
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        load_server_instructions: bool = True,
         **kwargs,
     ):
         """
@@ -74,6 +75,9 @@ class MCPTools(Toolkit):
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
+            load_server_instructions: If True (default), capture the ``instructions`` field from the
+                MCP ``InitializeResult`` handshake and store it as the toolkit's instructions so the
+                agent is aware of server-provided usage guidelines.  Set to False to disable.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -106,6 +110,7 @@ class MCPTools(Toolkit):
         self.show_result_tools = show_result_tools or []
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
+        self.load_server_instructions = load_server_instructions
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -651,8 +656,16 @@ class MCPTools(Toolkit):
             if self.session is None:
                 raise ValueError("Session is not initialized")
 
-            # Initialize the session if not already initialized
-            await self.session.initialize()
+            # Initialize the session if not already initialized.
+            # Capture the InitializeResult so we can expose the server's
+            # instructions to the agent (MCP spec §3.1).
+            init_result = await self.session.initialize()
+            if (
+                self.load_server_instructions
+                and init_result is not None
+                and getattr(init_result, "instructions", None)
+            ):
+                self.instructions = init_result.instructions
 
             await self.build_tools()
 
