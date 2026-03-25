@@ -45,6 +45,7 @@ def get_default_sync_client() -> httpx.Client:
         if _global_sync_client is None or _global_sync_client.is_closed:
             _global_sync_client = httpx.Client(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200),
+                timeout=httpx.Timeout(60.0),
                 http2=False,  # Disabled for thread safety in multi-threaded contexts
                 follow_redirects=True,
             )
@@ -71,6 +72,7 @@ def get_default_async_client() -> httpx.AsyncClient:
         if _global_async_client is None or _global_async_client.is_closed:
             _global_async_client = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200),
+                timeout=httpx.Timeout(60.0),
                 http2=True,  # Safe in async context (single-threaded event loop)
                 follow_redirects=True,
             )

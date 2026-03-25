@@ -53,14 +53,15 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
-def _get_tool_names(member: Any) -> List[str]:
+def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
     if member.tools is None or not isinstance(member.tools, list):
         return tool_names
     for _tool in member.tools:
         if isinstance(_tool, Toolkit):
-            for _func in _tool.functions.values():
+            toolkit_functions = _tool.get_async_functions() if async_mode else _tool.get_functions()
+            for _func in toolkit_functions.values():
                 if _func.entrypoint:
                     tool_names.append(_func.name)
         elif isinstance(_tool, Function) and _tool.entrypoint:
@@ -75,7 +76,7 @@ def _get_tool_names(member: Any) -> List[str]:
 
 
 def get_members_system_message_content(
-    team: Union["Team", "RemoteTeam"], indent: int = 0, run_context: Optional["RunContext"] = None
+    team: Union["Team", "RemoteTeam"], indent: int = 0, run_context: Optional["RunContext"] = None, async_mode: bool = False
 ) -> str:
     from agno.team.team import Team
     from agno.team.remote import RemoteTeam
@@ -96,7 +97,9 @@ def get_members_system_message_content(
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
-                content += member.get_members_system_message_content(indent=indent + 2, run_context=run_context)
+                content += member.get_members_system_message_content(
+                    indent=indent + 2, run_context=run_context, async_mode=async_mode
+                )
             content += f"{pad}</member>\n"
         else:
             content += f'{pad}<member id="{member_id}" name="{member.name}">\n'
@@ -105,7 +108,7 @@ def get_members_system_message_content(
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if getattr(team, 'add_member_tools_to_context', None):
-                tool_names = _get_tool_names(member)
+                tool_names = _get_tool_names(member, async_mode=async_mode)
                 if tool_names:
                     content += f"{pad}  Tools: {', '.join(tool_names)}\n"
             content += f"{pad}</member>\n"
@@ -202,6 +205,7 @@ def _get_mode_instructions(team: "Team") -> str:
 def _build_team_context(
     team: "Team",
     run_context: Optional["RunContext"] = None,
+    async_mode: bool = False,
 ) -> str:
     """Build the opening + team_members + how_to_respond blocks.
 
@@ -214,7 +218,7 @@ def _build_team_context(
     if resolved_members is not None and len(resolved_members) > 0:
         content += _get_opening_prompt()
         content += "\n<team_members>\n"
-        content += team.get_members_system_message_content(run_context=run_context)
+        content += team.get_members_system_message_content(run_context=run_context, async_mode=async_mode)
         if team.get_member_information_tool:
             content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         content += "</team_members>\n"
@@ -680,7 +684,7 @@ async def aget_system_message(
     system_message_content: str = ""
 
     # 2.1 Opening + team members + mode instructions
-    system_message_content += _build_team_context(team, run_context=run_context)
+    system_message_content += _build_team_context(team, run_context=run_context, async_mode=True)
 
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
