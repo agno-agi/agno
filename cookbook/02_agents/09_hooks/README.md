@@ -3,6 +3,7 @@
 Examples for pre-hooks, post-hooks, tool hooks, and stream lifecycle hooks.
 
 ## Files
+- `model_hook_context_inspection.py` - Read-only inspection of context before model call.
 - `post_hook_output.py` - Run a hook after the agent responds.
 - `pre_hook_input.py` - Run a hook before the agent processes input.
 - `session_state_hooks.py` - Hooks that read and modify session state.

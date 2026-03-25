@@ -1,4 +1,4 @@
-"""Pre/post hooks for Agent."""
+"""Pre/model/post hooks for Agent."""
 
 from __future__ import annotations
 
@@ -19,8 +19,11 @@ if TYPE_CHECKING:
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.run import RunContext
 from agno.run.agent import RunInput, RunOutput, RunOutputEvent
+from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.utils.events import (
+    create_model_hook_completed_event,
+    create_model_hook_started_event,
     create_post_hook_completed_event,
     create_post_hook_started_event,
     create_pre_hook_completed_event,
@@ -467,3 +470,134 @@ async def aexecute_post_hooks(
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
+
+
+def execute_model_hooks(
+    agent: Agent,
+    hooks: Optional[List[Callable[..., Any]]],
+    run_messages: RunMessages,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    tools: Optional[Any] = None,
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    stream_events: bool = False,
+    **kwargs: Any,
+) -> Iterator[RunOutputEvent]:
+    """Execute multiple model-hook functions in succession."""
+    if hooks is None:
+        return
+
+    all_args = {
+        "run_messages": run_messages,
+        "tools": tools,
+        "agent": agent,
+        "session": session,
+        "run_context": run_context,
+        "user_id": user_id,
+        "debug_mode": debug_mode or agent.debug_mode,
+    }
+    all_args.update(kwargs)
+
+    for i, hook in enumerate(hooks):
+        if stream_events:
+            yield handle_event(  # type: ignore
+                run_response=run_response,
+                event=create_model_hook_started_event(
+                    from_run_response=run_response,
+                    model_hook_name=hook.__name__,
+                ),
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
+        try:
+            filtered_args = filter_hook_args(hook, all_args)
+
+            if iscoroutinefunction(hook):
+                log_warning(
+                    f"Async hook '{hook.__name__}' cannot be used with sync run(). Use arun() instead. Skipping hook."
+                )
+                continue
+
+            hook(**filtered_args)
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_model_hook_completed_event(
+                        from_run_response=run_response,
+                        model_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+        except (InputCheckError, OutputCheckError) as e:
+            raise e
+        except Exception as e:
+            log_error(f"Model-hook #{i + 1} execution failed: {str(e)}")
+            log_exception(e)
+
+
+async def aexecute_model_hooks(
+    agent: Agent,
+    hooks: Optional[List[Callable[..., Any]]],
+    run_messages: RunMessages,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    tools: Optional[Any] = None,
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    stream_events: bool = False,
+    **kwargs: Any,
+) -> AsyncIterator[RunOutputEvent]:
+    """Execute multiple model-hook functions asynchronously."""
+    if hooks is None:
+        return
+
+    all_args = {
+        "run_messages": run_messages,
+        "tools": tools,
+        "agent": agent,
+        "session": session,
+        "run_context": run_context,
+        "user_id": user_id,
+        "debug_mode": debug_mode or agent.debug_mode,
+    }
+    all_args.update(kwargs)
+
+    for i, hook in enumerate(hooks):
+        if stream_events:
+            yield handle_event(  # type: ignore
+                run_response=run_response,
+                event=create_model_hook_started_event(
+                    from_run_response=run_response,
+                    model_hook_name=hook.__name__,
+                ),
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
+        try:
+            filtered_args = filter_hook_args(hook, all_args)
+
+            if iscoroutinefunction(hook):
+                await hook(**filtered_args)
+            else:
+                hook(**filtered_args)
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_model_hook_completed_event(
+                        from_run_response=run_response,
+                        model_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+        except (InputCheckError, OutputCheckError) as e:
+            raise e
+        except Exception as e:
+            log_error(f"Model-hook #{i + 1} execution failed: {str(e)}")
+            log_exception(e)

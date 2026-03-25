@@ -20,6 +20,7 @@ from agno.exceptions import (
 )
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutputEvent
+from agno.run.messages import RunMessages
 from agno.run.team import (
     TeamRunInput,
     TeamRunOutput,
@@ -27,6 +28,8 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.utils.events import (
+    create_team_model_hook_completed_event,
+    create_team_model_hook_started_event,
     create_team_post_hook_completed_event,
     create_team_post_hook_started_event,
     create_team_pre_hook_completed_event,
@@ -621,3 +624,136 @@ async def _aexecute_post_hooks(
         finally:
             # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
+
+
+# ---------------------------------------------------------------------------
+# Model hooks
+# ---------------------------------------------------------------------------
+
+
+def _execute_model_hooks(
+    team: "Team",
+    hooks: Optional[List[Callable[..., Any]]],
+    run_messages: RunMessages,
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: RunContext,
+    tools: Optional[Any] = None,
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    stream_events: bool = False,
+    **kwargs: Any,
+) -> Iterator[TeamRunOutputEvent]:
+    """Execute multiple model-hook functions in succession."""
+    if hooks is None:
+        return
+
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
+    all_args = {
+        "run_messages": run_messages,
+        "tools": tools,
+        "team": team,
+        "session": session,
+        "run_context": run_context,
+        "user_id": user_id,
+        "debug_mode": effective_debug_mode,
+    }
+    all_args.update(kwargs)
+
+    for i, hook in enumerate(hooks):
+        if stream_events:
+            yield handle_event(  # type: ignore
+                run_response=run_response,
+                event=create_team_model_hook_started_event(
+                    from_run_response=run_response,
+                    model_hook_name=hook.__name__,
+                ),
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
+        try:
+            filtered_args = filter_hook_args(hook, all_args)
+            hook(**filtered_args)
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_team_model_hook_completed_event(
+                        from_run_response=run_response,
+                        model_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+        except (InputCheckError, OutputCheckError) as e:
+            raise e
+        except Exception as e:
+            log_error(f"Model-hook #{i + 1} execution failed: {str(e)}")
+            log_exception(e)
+
+
+async def _aexecute_model_hooks(
+    team: "Team",
+    hooks: Optional[List[Callable[..., Any]]],
+    run_messages: RunMessages,
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: RunContext,
+    tools: Optional[Any] = None,
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    stream_events: bool = False,
+    **kwargs: Any,
+) -> AsyncIterator[TeamRunOutputEvent]:
+    """Execute multiple model-hook functions asynchronously."""
+    if hooks is None:
+        return
+
+    effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
+    all_args = {
+        "run_messages": run_messages,
+        "tools": tools,
+        "team": team,
+        "session": session,
+        "run_context": run_context,
+        "user_id": user_id,
+        "debug_mode": effective_debug_mode,
+    }
+    all_args.update(kwargs)
+
+    for i, hook in enumerate(hooks):
+        if stream_events:
+            yield handle_event(  # type: ignore
+                run_response=run_response,
+                event=create_team_model_hook_started_event(
+                    from_run_response=run_response,
+                    model_hook_name=hook.__name__,
+                ),
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
+        try:
+            filtered_args = filter_hook_args(hook, all_args)
+
+            from inspect import iscoroutinefunction
+
+            if iscoroutinefunction(hook):
+                await hook(**filtered_args)
+            else:
+                hook(**filtered_args)
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_team_model_hook_completed_event(
+                        from_run_response=run_response,
+                        model_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+        except (InputCheckError, OutputCheckError) as e:
+            raise e
+        except Exception as e:
+            log_error(f"Model-hook #{i + 1} execution failed: {str(e)}")
+            log_exception(e)

@@ -54,6 +54,7 @@ class RunInput:
     videos: Optional[Sequence[Video]] = None
     audios: Optional[Sequence[Audio]] = None
     files: Optional[Sequence[File]] = None
+    extra_data: Optional[Dict[str, Any]] = None
 
     def input_content_string(self) -> str:
         import json
@@ -125,6 +126,9 @@ class RunInput:
         if self.files:
             result["files"] = [file.to_dict() for file in self.files]
 
+        if self.extra_data:
+            result["extra_data"] = self.extra_data
+
         return result
 
     @classmethod
@@ -136,7 +140,12 @@ class RunInput:
         files = reconstruct_files(data.get("files"))
 
         return cls(
-            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
+            input_content=data.get("input_content", ""),
+            images=images,
+            videos=videos,
+            audios=audios,
+            files=files,
+            extra_data=data.get("extra_data"),
         )
 
 
@@ -156,6 +165,9 @@ class RunEvent(str, Enum):
 
     pre_hook_started = "PreHookStarted"
     pre_hook_completed = "PreHookCompleted"
+
+    model_hook_started = "ModelHookStarted"
+    model_hook_completed = "ModelHookCompleted"
 
     post_hook_started = "PostHookStarted"
     post_hook_completed = "PostHookCompleted"
@@ -348,6 +360,18 @@ class PreHookCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ModelHookStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.model_hook_started.value
+    model_hook_name: Optional[str] = None
+
+
+@dataclass
+class ModelHookCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.model_hook_completed.value
+    model_hook_name: Optional[str] = None
+
+
+@dataclass
 class PostHookStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.post_hook_started.value
     post_hook_name: Optional[str] = None
@@ -529,6 +553,8 @@ RunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    ModelHookStartedEvent,
+    ModelHookCompletedEvent,
     PostHookStartedEvent,
     PostHookCompletedEvent,
     ReasoningStartedEvent,
@@ -569,6 +595,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_continued.value: RunContinuedEvent,
     RunEvent.pre_hook_started.value: PreHookStartedEvent,
     RunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    RunEvent.model_hook_started.value: ModelHookStartedEvent,
+    RunEvent.model_hook_completed.value: ModelHookCompletedEvent,
     RunEvent.post_hook_started.value: PostHookStartedEvent,
     RunEvent.post_hook_completed.value: PostHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,

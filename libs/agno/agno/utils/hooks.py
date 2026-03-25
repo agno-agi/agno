@@ -82,10 +82,12 @@ def normalize_pre_hooks(
     if hooks is not None:
         for hook in hooks:
             if isinstance(hook, BaseGuardrail):
-                if async_mode:
-                    result_hooks.append(hook.async_check)
+                # Old API: subclass overrides check() but not pre_check()
+                if type(hook).check is not BaseGuardrail.check and type(hook).pre_check is BaseGuardrail.pre_check:
+                    method = hook.async_check if async_mode else hook.check
                 else:
-                    result_hooks.append(hook.check)
+                    method = hook.async_pre_check if async_mode else hook.pre_check
+                result_hooks.append(method)
             elif isinstance(hook, BaseEval):
                 # Extract pre_check method
                 method = hook.async_pre_check if async_mode else hook.pre_check
@@ -126,9 +128,9 @@ def normalize_post_hooks(
         for hook in hooks:
             if isinstance(hook, BaseGuardrail):
                 if async_mode:
-                    result_hooks.append(hook.async_check)
+                    result_hooks.append(hook.async_post_check)
                 else:
-                    result_hooks.append(hook.check)
+                    result_hooks.append(hook.post_check)
             elif isinstance(hook, BaseEval):
                 # Extract post_check method
                 method = hook.async_post_check if async_mode else hook.post_check  # type: ignore[assignment]
@@ -139,6 +141,39 @@ def normalize_post_hooks(
                 wrapped.__name__ = method.__name__  # type: ignore
                 setattr(wrapped, HOOK_RUN_IN_BACKGROUND_ATTR, getattr(hook, "run_in_background", False))
                 result_hooks.append(wrapped)
+            else:
+                # Check if the hook is async and used within sync methods
+                if not async_mode:
+                    import asyncio
+
+                    if asyncio.iscoroutinefunction(hook):
+                        raise ValueError(
+                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                        )
+
+                result_hooks.append(hook)
+    return result_hooks if result_hooks else None
+
+
+def normalize_model_hooks(
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
+    async_mode: bool = False,
+) -> Optional[List[Callable[..., Any]]]:
+    """Normalize model-hooks to a list format.
+
+    Args:
+        hooks: List of hook functions or guardrails
+        async_mode: Whether to use async versions of methods
+    """
+    result_hooks: List[Callable[..., Any]] = []
+
+    if hooks is not None:
+        for hook in hooks:
+            if isinstance(hook, BaseGuardrail):
+                if async_mode:
+                    result_hooks.append(hook.async_model_check)
+                else:
+                    result_hooks.append(hook.model_check)
             else:
                 # Check if the hook is async and used within sync methods
                 if not async_mode:

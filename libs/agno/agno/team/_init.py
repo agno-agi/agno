@@ -129,6 +129,7 @@ def __init__(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     tool_hooks: Optional[List[Callable]] = None,
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+    model_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     input_schema: Optional[Type[BaseModel]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
@@ -300,6 +301,7 @@ def __init__(
 
     # Initialize hooks
     team.pre_hooks = pre_hooks
+    team.model_hooks = model_hooks
     team.post_hooks = post_hooks
 
     team.input_schema = input_schema

@@ -256,6 +256,8 @@ class Team:
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
+    # Functions called after context is built but before model is called
+    model_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
@@ -401,6 +403,10 @@ class Team:
     _formatter: Optional[Any] = None
     # Hooks normalised flag
     _hooks_normalised: bool = False
+    _original_pre_hooks: Optional[List[Any]] = None
+    _original_model_hooks: Optional[List[Any]] = None
+    _original_post_hooks: Optional[List[Any]] = None
+    _hooks_normalised_mode: Optional[str] = None
     # MCP tools initialized on the last run
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
@@ -487,6 +493,7 @@ class Team:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+        model_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
@@ -606,6 +613,7 @@ class Team:
             tool_choice=tool_choice,
             tool_hooks=tool_hooks,
             pre_hooks=pre_hooks,
+            model_hooks=model_hooks,
             post_hooks=post_hooks,
             input_schema=input_schema,
             output_schema=output_schema,

@@ -11,6 +11,8 @@ from agno.run.agent import (
     FollowupsStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ModelHookCompletedEvent,
+    ModelHookStartedEvent,
     ModelRequestCompletedEvent,
     ModelRequestStartedEvent,
     OutputModelResponseCompletedEvent,
@@ -50,6 +52,8 @@ from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
 from agno.run.team import FollowupsStartedEvent as TeamFollowupsStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ModelHookCompletedEvent as TeamModelHookCompletedEvent
+from agno.run.team import ModelHookStartedEvent as TeamModelHookStartedEvent
 from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
 from agno.run.team import ModelRequestStartedEvent as TeamModelRequestStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
@@ -328,6 +332,30 @@ def create_team_pre_hook_completed_event(
     )
 
 
+def create_model_hook_started_event(
+    from_run_response: RunOutput, model_hook_name: Optional[str] = None
+) -> ModelHookStartedEvent:
+    return ModelHookStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model_hook_name=model_hook_name,
+    )
+
+
+def create_model_hook_completed_event(
+    from_run_response: RunOutput, model_hook_name: Optional[str] = None
+) -> ModelHookCompletedEvent:
+    return ModelHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model_hook_name=model_hook_name,
+    )
+
+
 def create_post_hook_started_event(
     from_run_response: RunOutput, post_hook_name: Optional[str] = None
 ) -> PostHookStartedEvent:
@@ -373,6 +401,30 @@ def create_team_post_hook_completed_event(
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         post_hook_name=post_hook_name,
+    )
+
+
+def create_team_model_hook_started_event(
+    from_run_response: TeamRunOutput, model_hook_name: Optional[str] = None
+) -> TeamModelHookStartedEvent:
+    return TeamModelHookStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model_hook_name=model_hook_name,
+    )
+
+
+def create_team_model_hook_completed_event(
+    from_run_response: TeamRunOutput, model_hook_name: Optional[str] = None
+) -> TeamModelHookCompletedEvent:
+    return TeamModelHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model_hook_name=model_hook_name,
     )
 
 
