@@ -37,16 +37,14 @@ def get_vllm_reasoning(
         logger.warning(f"Reasoning error: {e}")
         return None
 
-    # Accumulate reasoning agent metrics into the parent run_metrics
+    # Accumulate reasoning metrics into parent run
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
         accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
-    # We use the normal content as no reasoning content is returned
     if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
         content = reasoning_agent_response.content
         if "<think>" in content and "</think>" in content:
             start_idx = content.find("<think>") + len("<think>")
@@ -71,7 +69,7 @@ async def aget_vllm_reasoning(
         logger.warning(f"Reasoning error: {e}")
         return None
 
-    # Accumulate reasoning agent metrics into the parent run_metrics
+    # Accumulate reasoning metrics into parent run
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
@@ -79,7 +77,6 @@ async def aget_vllm_reasoning(
 
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
         content = reasoning_agent_response.content
         if "<think>" in content and "</think>" in content:
             start_idx = content.find("<think>") + len("<think>")
@@ -105,11 +102,11 @@ def get_vllm_reasoning_stream(
         for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
-                    # Check for reasoning_content attribute first (native reasoning)
+                    # Native reasoning field takes priority over main content
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
-                    # Use the main content as reasoning content
+                    # Fallback: treat main content as reasoning
                     elif hasattr(event, "content") and event.content:
                         reasoning_content += event.content
                         yield (event.content, None)
@@ -141,11 +138,11 @@ async def aget_vllm_reasoning_stream(
         async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
-                    # Check for reasoning_content attribute first (native reasoning)
+                    # Native reasoning field takes priority over main content
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
-                    # Use the main content as reasoning content
+                    # Fallback: treat main content as reasoning
                     elif hasattr(event, "content") and event.content:
                         reasoning_content += event.content
                         yield (event.content, None)
