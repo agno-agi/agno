@@ -38,23 +38,6 @@ print("---" * 5, "Web Search Metrics", "---" * 5)
 pprint(run_output.metrics)
 print("---" * 20)
 
-# Show preserved server tool blocks
-print("---" * 5, "Server Tool Blocks", "---" * 5)
-for msg in run_output.messages or []:
-    if msg.role != "assistant" or not msg.provider_data:
-        continue
-    for block in msg.provider_data.get("server_tool_blocks", []):
-        block_type = block.get("type", "unknown")
-        if block_type == "server_tool_use":
-            print(f"  {block_type}: name={block.get('name')}, input={block.get('input')}")
-        elif block_type == "web_search_tool_result":
-            content = block.get("content", [])
-            count = len(content) if isinstance(content, list) else 0
-            print(f"  {block_type}: {count} search results")
-        else:
-            print(f"  {block_type}")
-print("---" * 20)
-
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------

@@ -63,16 +63,6 @@ except ImportError as e:
     ) from e
 
 
-# Fields the API accepts on input for server tool blocks, per SDK *Param types.
-# Blocks not in this map use fallback stripping of known response-only fields.
-_SERVER_TOOL_BLOCK_ALLOWED_KEYS: Dict[str, set] = {
-    "server_tool_use": {"id", "input", "name", "type", "cache_control", "caller"},
-    "web_fetch_tool_result": {"content", "tool_use_id", "type", "cache_control", "caller"},
-    "web_search_tool_result": {"content", "tool_use_id", "type", "cache_control"},
-}
-# Response-only fields that no *Param type accepts
-_RESPONSE_ONLY_FIELDS = {"citations", "text", "parsed_output"}
-
 
 @dataclass
 class Claude(Model):
@@ -847,14 +837,6 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    @staticmethod
-    def _sanitize_server_tool_block(block_dict: Dict[str, Any]) -> Dict[str, Any]:
-        allowed = _SERVER_TOOL_BLOCK_ALLOWED_KEYS.get(block_dict.get("type", ""))
-        if allowed:
-            # Known type: whitelist only accepted fields
-            return {k: v for k, v in block_dict.items() if k in allowed}
-        # Unknown type: strip known response-only fields, keep the rest
-        return {k: v for k, v in block_dict.items() if k not in _RESPONSE_ONLY_FIELDS}
 
     def _parse_provider_response(
         self,
@@ -941,7 +923,7 @@ class Claude(Model):
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
-                    server_blocks.append(self._sanitize_server_tool_block(block.model_dump()))
+                    server_blocks.append(block.model_dump())
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -1084,7 +1066,7 @@ class Claude(Model):
                     accumulated_text += block.text  # type: ignore
                 elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
                     # Preserve all non-text/thinking/tool_use blocks for history
-                    server_tool_blocks.append(self._sanitize_server_tool_block(block.model_dump()))
+                    server_tool_blocks.append(block.model_dump())
 
                 # Handle citations
                 citations = getattr(block, "citations", None)

@@ -29,26 +29,6 @@ agent.print_response(
     stream=True,
 )
 
-# Show preserved server tool blocks
-run_output = agent.get_last_run_output()
-print("---" * 5, "Server Tool Blocks", "---" * 5)
-for msg in run_output.messages or []:
-    if msg.role != "assistant" or not msg.provider_data:
-        continue
-    for block in msg.provider_data.get("server_tool_blocks", []):
-        block_type = block.get("type", "unknown")
-        if block_type == "server_tool_use":
-            print(f"  {block_type}: name={block.get('name')}, input={block.get('input')}")
-        elif block_type == "web_fetch_tool_result":
-            content = block.get("content", {})
-            if isinstance(content, dict):
-                print(f"  {block_type}: url={content.get('url', 'N/A')}")
-            else:
-                print(f"  {block_type}")
-        else:
-            print(f"  {block_type}")
-print("---" * 20)
-
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
