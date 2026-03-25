@@ -163,14 +163,20 @@ def get_team_router(
         team_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        monitor: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
-        version: Optional[int] = Form(None),
-        background: bool = Form(False),
+        message: str = Form(..., description="The input message or prompt to send to the team"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        monitor: bool = Form(True, description="Enable monitoring and logging for this run"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        files: Optional[List[UploadFile]] = File(
+            None, description="Files to upload (images, audio, video, or documents)"
+        ),
+        version: Optional[int] = Form(None, description="Team version to use for this run"),
+        background: bool = Form(
+            False, description="Run in background and return immediately with run metadata (requires database)"
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
