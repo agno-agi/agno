@@ -256,6 +256,7 @@ class ScheduleExecutor:
 
         match = _RUN_ENDPOINT_RE.match(endpoint)
         is_run_endpoint = match is not None and method == "POST"
+        explicit_content_type = schedule.content_type
 
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
@@ -264,25 +265,48 @@ class ScheduleExecutor:
         client = await self._get_client()
 
         if is_run_endpoint and match is not None:
-            form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
-            form_payload["stream"] = "false"
-            form_payload["background"] = "true"
-
             resource_type = match.group(1)
             resource_id = match.group(2)
 
-            return await self._background_run(
-                client,
-                url,
-                headers,
-                form_payload,
-                resource_type,
-                resource_id,
-                timeout_seconds,
-            )
+            # If explicitly set to application/json, send JSON instead of form-data
+            if explicit_content_type == "application/json":
+                headers["Content-Type"] = "application/json"
+                json_payload = dict(payload)
+                json_payload["stream"] = False
+                json_payload["background"] = True
+
+                return await self._background_run(
+                    client,
+                    url,
+                    headers,
+                    json_payload,
+                    resource_type,
+                    resource_id,
+                    timeout_seconds,
+                )
+            else:
+                # Default: multipart/form-data for run endpoints
+                form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
+                form_payload["stream"] = "false"
+                form_payload["background"] = "true"
+
+                return await self._background_run(
+                    client,
+                    url,
+                    headers,
+                    form_payload,
+                    resource_type,
+                    resource_id,
+                    timeout_seconds,
+                )
         else:
-            headers["Content-Type"] = "application/json"
-            return await self._simple_request(client, method, url, headers, payload if payload else None)
+            # For non-run endpoints, use explicit content_type or default to JSON
+            if explicit_content_type == "multipart/form-data":
+                form_payload = {k: _to_form_value(v) for k, v in payload.items()} if payload else {}
+                return await self._simple_request(client, method, url, headers, form_payload)
+            else:
+                headers["Content-Type"] = "application/json"
+                return await self._simple_request(client, method, url, headers, payload if payload else None)
 
     async def _simple_request(
         self,
@@ -295,7 +319,10 @@ class ScheduleExecutor:
         """Non-streaming request/response."""
         kwargs: Dict[str, Any] = {"headers": headers}
         if payload is not None:
-            kwargs["json"] = payload
+            if headers.get("Content-Type") == "application/json":
+                kwargs["json"] = payload
+            else:
+                kwargs["data"] = payload
 
         resp = await client.request(method, url, **kwargs)
 
@@ -317,7 +344,7 @@ class ScheduleExecutor:
         client: Any,
         url: str,
         headers: Dict[str, str],
-        payload: Dict[str, str],
+        payload: Union[Dict[str, str], Dict[str, Any]],
         resource_type: str,
         resource_id: str,
         timeout_seconds: int,
@@ -325,7 +352,10 @@ class ScheduleExecutor:
         """Submit a background run and poll until completion."""
         kwargs: Dict[str, Any] = {"headers": headers}
         if payload is not None:
-            kwargs["data"] = payload
+            if headers.get("Content-Type") == "application/json":
+                kwargs["json"] = payload
+            else:
+                kwargs["data"] = payload
 
         resp = await client.request("POST", url, **kwargs)
 
