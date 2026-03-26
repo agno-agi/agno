@@ -2,7 +2,7 @@
 
 import asyncio
 import copy
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union, cast
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -10,7 +10,7 @@ import pytest
 from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
 from agno.agent.agent import Agent
 from agno.models.message import Message
-from agno.run.agent import RunOutput
+from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
@@ -30,12 +30,13 @@ def _make_run(
     run = RunOutput(run_id=run_id, session_id="sess-1")
     run.messages = messages or []
     run.status = status
-    run.input = input
+    if input is not None:
+        run.input = RunInput(input_content=input)
     return run
 
 
 def _make_session(runs: Optional[List[RunOutput]] = None, session_id: str = "sess-1") -> AgentSession:
-    return AgentSession(session_id=session_id, runs=runs or [])
+    return AgentSession(session_id=session_id, runs=cast(Any, runs or []))
 
 
 def _patch_regenerate_deps(
@@ -183,7 +184,7 @@ class TestRegenerateDispatch:
         # Old run should have been popped (replaced)
         # Session started with 1 run, popped it, then _continue_run adds the new one
         # (in the real code, cleanup_and_store adds it; we mocked _continue_run)
-        assert old_run not in session.runs
+        assert old_run not in (session.runs or [])
 
     def test_regenerate_preserves_original_when_flagged(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
@@ -429,7 +430,7 @@ class TestRegenerateSessionPersistence:
         # Run the async dispatch
         result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=False)
         # aregenerate_dispatch returns a coroutine for non-streaming
-        result = asyncio.new_event_loop().run_until_complete(result)
+        asyncio.new_event_loop().run_until_complete(result)  # type: ignore[arg-type]
 
         # save_session must come before _acontinue_run
         assert call_order == ["save_session", "_acontinue_run"]
@@ -497,7 +498,7 @@ class TestRegenerateSessionPersistence:
         # Consume the async iterator
         async def consume():
             results = []
-            async for item in async_iter:
+            async for item in async_iter:  # type: ignore[union-attr]
                 results.append(item)
             return results
 
@@ -564,7 +565,7 @@ class TestRegenerateSessionPersistence:
         monkeypatch.setattr(_run, "_acontinue_run", mock_acontinue_run)
 
         result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=True, stream=False)
-        asyncio.new_event_loop().run_until_complete(result)
+        asyncio.new_event_loop().run_until_complete(result)  # type: ignore[arg-type]
 
         # First save should have the old run with regenerated status
         assert len(saved_statuses) >= 1
