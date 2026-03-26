@@ -1062,8 +1062,14 @@ class Claude(Model):
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
-                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
-                    # Preserve all non-text/thinking/tool_use blocks for history
+                elif block.type in ("thinking", "redacted_thinking"):
+                    # Already captured via ContentBlockDeltaEvent during streaming
+                    pass
+                elif block.type not in ("tool_use",):
+                    # Preserve all non-text/thinking blocks for conversation history reconstruction.
+                    # Covers server_tool_use, web_fetch_tool_result, web_search_tool_result,
+                    # code_execution_tool_result, mcp_tool_use/result, container_upload, etc.
+                    # tool_use is handled separately below via stop_reason check.
                     server_tool_blocks.append(block.model_dump())
 
                 # Handle citations
@@ -1083,8 +1089,9 @@ class Claude(Model):
 
             # Preserve server tool blocks for conversation history reconstruction
             if server_tool_blocks:
-                model_response.provider_data = model_response.provider_data or {}
-                model_response.provider_data["server_tool_blocks"] = server_tool_blocks
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data.setdefault("server_tool_blocks", []).extend(server_tool_blocks)
 
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication
