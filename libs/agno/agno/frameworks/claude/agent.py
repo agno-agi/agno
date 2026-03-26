@@ -10,8 +10,6 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.utils.log import logger
-
 
 @dataclass
 class ClaudeAgentSDK(BaseExternalAgent):
