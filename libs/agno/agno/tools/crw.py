@@ -99,10 +99,21 @@ class CrwTools(Toolkit):
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _truncate(self, content: str) -> str:
-        if len(content) > self.max_content_length:
-            return content[: self.max_content_length] + "\n... (content truncated)"
-        return content
+    def _truncate_data(self, data: Any) -> Any:
+        """Truncate large text fields in data before JSON serialization.
+
+        Instead of truncating the final JSON string (which produces invalid JSON),
+        this method truncates individual text fields that exceed max_content_length.
+        """
+        if isinstance(data, str):
+            if len(data) > self.max_content_length:
+                return data[: self.max_content_length] + "\n... (content truncated)"
+            return data
+        if isinstance(data, list):
+            return [self._truncate_data(item) for item in data]
+        if isinstance(data, dict):
+            return {key: self._truncate_data(value) for key, value in data.items()}
+        return data
 
     def scrape_url(self, url: str) -> str:
         """Scrape a single URL and return its content as markdown.
@@ -137,7 +148,7 @@ class CrwTools(Toolkit):
             if not result.get("success"):
                 return json.dumps({"error": result.get("error", "Unknown error")})
 
-            return self._truncate(json.dumps(result["data"], ensure_ascii=False))
+            return json.dumps(self._truncate_data(result["data"]), ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Error scraping {url}: {str(e)}"
@@ -184,8 +195,11 @@ class CrwTools(Toolkit):
 
             job_id = result["id"]
 
-            # Poll for completion
-            while True:
+            # Poll for completion with a deadline to avoid infinite loops
+            max_wait = self.crawl_max_pages * self.timeout
+            deadline = time.monotonic() + max_wait
+
+            while time.monotonic() < deadline:
                 time.sleep(self.crawl_poll_interval)
                 status_response = httpx.get(
                     f"{self.api_url}/v1/crawl/{job_id}",
@@ -196,11 +210,17 @@ class CrwTools(Toolkit):
                 status = status_response.json()
 
                 if status["status"] == "completed":
-                    return self._truncate(
-                        json.dumps(status["data"], ensure_ascii=False)
+                    return json.dumps(
+                        self._truncate_data(status["data"]), ensure_ascii=False
                     )
                 elif status["status"] == "failed":
                     return json.dumps({"error": "Crawl job failed", "job_id": job_id})
+
+            return json.dumps({
+                "error": f"Crawl timed out after {max_wait}s",
+                "job_id": job_id,
+                "status": "timeout",
+            })
 
         except Exception as e:
             error_msg = f"Error crawling {url}: {str(e)}"
