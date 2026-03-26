@@ -333,6 +333,12 @@ def format_messages(
                     RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
                 )
 
+            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data
+            # Inserted between thinking and text blocks to match Anthropic's native ordering
+            if message.provider_data and message.provider_data.get("server_tool_blocks"):
+                for block_dict in message.provider_data["server_tool_blocks"]:
+                    content.append(block_dict)
+
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
