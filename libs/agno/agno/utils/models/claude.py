@@ -343,6 +343,27 @@ def format_messages(
                             type="tool_use",
                         )
                     )
+
+            # Restore server-side tool blocks that must be preserved verbatim in
+            # the conversation history so Claude remembers its code-execution actions.
+            # These blocks are stored in provider_data["extra_content_blocks"] by
+            # _parse_provider_response() in the Anthropic model class.
+            # We pass them as plain dicts; the Anthropic SDK accepts both typed
+            # objects and raw dicts in the content list.
+            if message.provider_data and "extra_content_blocks" in message.provider_data:
+                for raw_block in message.provider_data["extra_content_blocks"]:
+                    if isinstance(raw_block, dict):
+                        block_type = raw_block.get("type")
+                    else:
+                        block_type = getattr(raw_block, "type", None)
+                        raw_block = raw_block.model_dump() if hasattr(raw_block, "model_dump") else vars(raw_block)
+                    if block_type in (
+                        "server_tool_use",
+                        "bash_code_execution_tool_result",
+                        "text_editor_code_execution_tool_result",
+                    ):
+                        content.append(raw_block)
+
         elif message.role == "tool":
             content = []
 

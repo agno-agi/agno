@@ -897,6 +897,18 @@ class Claude(Model):
                     }
                 elif block.type == "redacted_thinking":
                     model_response.redacted_reasoning_content = block.data
+                elif block.type in (
+                    "server_tool_use",
+                    "bash_code_execution_tool_result",
+                    "text_editor_code_execution_tool_result",
+                ):
+                    # Preserve server-side tool blocks verbatim so they can be
+                    # re-sent in subsequent turns. Without them Claude has no
+                    # memory of having executed code and loops indefinitely.
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    extra_blocks = model_response.provider_data.setdefault("extra_content_blocks", [])
+                    extra_blocks.append(block.model_dump())
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
