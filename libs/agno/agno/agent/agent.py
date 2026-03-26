@@ -1713,7 +1713,7 @@ class Agent:
         )
 
     @overload
-    async def aregenerate(
+    def aregenerate(
         self,
         *,
         additional_instructions: Optional[str] = None,
@@ -1729,7 +1729,7 @@ class Agent:
     ) -> RunOutput: ...
 
     @overload
-    async def aregenerate(
+    def aregenerate(
         self,
         *,
         additional_instructions: Optional[str] = None,
@@ -1745,7 +1745,7 @@ class Agent:
         yield_run_output: bool = False,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
-    async def aregenerate(  # type: ignore
+    def aregenerate(  # type: ignore
         self,
         *,
         additional_instructions: Optional[str] = None,
