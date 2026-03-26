@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Iterator, List, Optional, Union
 
 from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.utils.log import log_warning
@@ -128,6 +128,7 @@ def call_model_stream_with_fallback(
         if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
+        yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         yield from _try_fallback_models_stream(fallbacks, primary_error, kwargs)
 
 
@@ -145,6 +146,7 @@ async def acall_model_stream_with_fallback(
         if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
+        yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         async for event in _atry_fallback_models_stream(fallbacks, primary_error, kwargs):
             yield event
 

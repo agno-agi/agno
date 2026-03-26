@@ -1373,6 +1373,13 @@ def handle_model_response_chunk(
         )
     else:
         model_response_event = cast(ModelResponse, model_response_event)
+        # If a fallback model was activated, reset accumulated content
+        if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+            model_response.content = None
+            model_response.reasoning_content = None
+            run_response.content = None
+            run_response.reasoning_content = None
+            return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"

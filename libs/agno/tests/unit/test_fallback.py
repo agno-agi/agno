@@ -20,7 +20,7 @@ from agno.fallback import (
 )
 from agno.models.base import Model
 from agno.models.openai.chat import OpenAIChat
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 
 
 def _make_model(model_id="test-model", retries=0):
@@ -284,7 +284,7 @@ class TestCallModelStreamWithFallback:
             assert result[1].content == "chunk2"
 
     def test_stream_primary_fails_fallback_succeeds(self):
-        """Primary raises, fallback stream yields events."""
+        """Primary raises, fallback stream yields events with reset sentinel."""
         primary = _make_model("primary")
         fallback = _make_model("fallback")
         config = FallbackConfig(models=[fallback])
@@ -293,8 +293,10 @@ class TestCallModelStreamWithFallback:
         with patch.object(primary, "response_stream", side_effect=ModelProviderError("fail", status_code=500)):
             with patch.object(fallback, "response_stream", return_value=iter(fallback_events)):
                 result = list(call_model_stream_with_fallback(primary, config, messages=[]))
-                assert len(result) == 1
-                assert result[0].content == "fb-chunk"
+                # First event is the fallback sentinel, then fallback content
+                assert len(result) == 2
+                assert result[0].event == ModelResponseEvent.fallback_model_activated.value
+                assert result[1].content == "fb-chunk"
 
 
 # =============================================================================
@@ -323,7 +325,7 @@ class TestAsyncCallModelStreamWithFallback:
 
     @pytest.mark.asyncio
     async def test_async_stream_primary_fails_fallback_succeeds(self):
-        """Async primary raises, fallback yields events."""
+        """Async primary raises, fallback yields events with reset sentinel."""
         primary = _make_model("primary")
         fallback = _make_model("fallback")
         config = FallbackConfig(models=[fallback])
@@ -340,8 +342,10 @@ class TestAsyncCallModelStreamWithFallback:
                 result = []
                 async for event in acall_model_stream_with_fallback(primary, config, messages=[]):
                     result.append(event)
-                assert len(result) == 1
-                assert result[0].content == "fb-chunk"
+                # First event is the fallback sentinel, then fallback content
+                assert len(result) == 2
+                assert result[0].event == ModelResponseEvent.fallback_model_activated.value
+                assert result[1].content == "fb-chunk"
 
 
 # =============================================================================
