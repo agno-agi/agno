@@ -146,9 +146,9 @@ class ClaudeAgentSDK(BaseExternalAgent):
                 ResultMessage,
                 SystemMessage,
                 TextBlock,
-                ThinkingBlock,
                 ToolResultBlock,
                 ToolUseBlock,
+                UserMessage,
                 query,
             )
         except ImportError:
@@ -203,26 +203,31 @@ class ClaudeAgentSDK(BaseExternalAgent):
                             ),
                         )
 
-                    elif isinstance(block, ToolResultBlock):
-                        tool_use_id = getattr(block, "tool_use_id", str(uuid4()))
-                        result_content = getattr(block, "content", "")
-                        if isinstance(result_content, list):
-                            result_str = " ".join(
-                                getattr(item, "text", str(item))
-                                for item in result_content
+            elif isinstance(message, UserMessage):
+                # Tool results arrive as ToolResultBlock inside UserMessage
+                content = message.content
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, ToolResultBlock):
+                            tool_use_id = getattr(block, "tool_use_id", str(uuid4()))
+                            result_content = getattr(block, "content", "")
+                            if isinstance(result_content, list):
+                                result_str = " ".join(
+                                    getattr(item, "text", str(item))
+                                    for item in result_content
+                                )
+                            else:
+                                result_str = str(result_content) if result_content else ""
+                            yield ToolCallCompletedEvent(
+                                run_id=run_id,
+                                agent_id=self.id,
+                                agent_name=self.name or "",
+                                tool=ToolExecution(
+                                    tool_call_id=tool_use_id,
+                                    tool_name="",
+                                    result=result_str,
+                                ),
                             )
-                        else:
-                            result_str = str(result_content) if result_content else ""
-                        yield ToolCallCompletedEvent(
-                            run_id=run_id,
-                            agent_id=self.id,
-                            agent_name=self.name or "",
-                            tool=ToolExecution(
-                                tool_call_id=tool_use_id,
-                                tool_name="",
-                                result=result_str,
-                            ),
-                        )
 
             elif isinstance(message, ResultMessage):
                 if hasattr(message, "session_id") and message.session_id:

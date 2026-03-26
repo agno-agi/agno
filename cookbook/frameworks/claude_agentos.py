@@ -1,8 +1,12 @@
 """
-Run a Claude Agent SDK agent through AgentOS endpoints.
+Claude Agent SDK on AgentOS
+===========================
+Serve a Claude Agent SDK agent through AgentOS -- the same runtime
+used for native Agno agents.
 
-This shows how to register a Claude Agent SDK agent alongside native Agno agents
-and serve them all through the same AgentOS runtime.
+The agent is available at the standard /agents/{agent_id}/runs endpoint,
+supports streaming (SSE) and non-streaming responses, and appears in
+the AgentOS UI alongside any native agents.
 
 Requirements:
     pip install claude-agent-sdk
@@ -11,6 +15,9 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/claude_agentos.py
 
 Then call the API:
+    # List agents
+    curl http://localhost:7777/agents
+
     # Streaming
     curl -X POST http://localhost:7777/agents/claude-assistant/runs \
         -F "message=What is quantum computing?" \
@@ -21,15 +28,14 @@ Then call the API:
     curl -X POST http://localhost:7777/agents/claude-assistant/runs \
         -F "message=What is quantum computing?" \
         -F "stream=false"
-
-    # List agents
-    curl http://localhost:7777/agents
 """
 
 from agno.frameworks.claude import ClaudeAgentSDK
 from agno.os.app import AgentOS
 
-# ----- Wrap Claude Agent SDK for AgentOS -----
+# ---------------------------------------------------------------------------
+# Create the Claude Agent SDK agent
+# ---------------------------------------------------------------------------
 claude_agent = ClaudeAgentSDK(
     agent_id="claude-assistant",
     agent_name="Claude Assistant",
@@ -40,6 +46,18 @@ claude_agent = ClaudeAgentSDK(
     max_turns=10,
 )
 
-# ----- Serve through AgentOS -----
-app = AgentOS(agents=[claude_agent])
-app.serve(app.get_app())
+# ---------------------------------------------------------------------------
+# Setup AgentOS
+# ---------------------------------------------------------------------------
+agent_os = AgentOS(
+    name="Claude Agent SDK Example",
+    description="AgentOS serving a Claude Agent SDK agent",
+    agents=[claude_agent],
+)
+app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent_os.serve(app="claude_agentos:app", reload=True)
