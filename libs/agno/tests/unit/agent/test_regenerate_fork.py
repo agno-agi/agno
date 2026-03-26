@@ -1,8 +1,9 @@
 """Unit tests for regenerate and branch_session dispatch functions."""
 
+import asyncio
 import copy
 from typing import Any, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -286,6 +287,289 @@ class TestRegenerateDispatch:
         assert len(msgs) == 2
         assert msgs[0].content == "question"
         assert msgs[1].content == "Be more concise"
+
+
+# ---------------------------------------------------------------------------
+# Regenerate session persistence tests
+# ---------------------------------------------------------------------------
+
+
+class TestRegenerateSessionPersistence:
+    """Verify that regenerate saves session to DB before async continue re-reads it.
+
+    The async _acontinue_run / _acontinue_run_stream functions re-read the session
+    from DB.  If regenerate doesn't persist the session (with the old run removed or
+    marked) *before* that re-read, the old run reappears and both runs end up stored.
+    """
+
+    def test_sync_regenerate_passes_session_with_old_run_removed(self, monkeypatch: pytest.MonkeyPatch):
+        """regenerate_dispatch (sync) passes session with old run removed to _continue_run."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+        _patch_regenerate_deps(agent, monkeypatch, session)
+
+        # Capture the session object passed to _continue_run
+        captured_sessions: list = []
+
+        def capture_continue(agent_arg, run_response=None, run_messages=None, run_context=None, session=None, **kw):
+            captured_sessions.append((list(session.runs) if session and session.runs else [], session))
+            result = RunOutput(run_id="new-run", session_id="sess-1")
+            result.content = "regenerated"
+            result.status = RunStatus.completed
+            return result
+
+        monkeypatch.setattr(_run, "_continue_run", capture_continue)
+
+        _run.regenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=False)
+
+        # _continue_run should receive session with old run already removed
+        assert len(captured_sessions) == 1
+        assert len(captured_sessions[0][0]) == 0
+
+    def test_sync_regenerate_passes_session_with_old_run_marked_regenerated(self, monkeypatch: pytest.MonkeyPatch):
+        """regenerate_dispatch (sync) passes session with old run marked as regenerated."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+        _patch_regenerate_deps(agent, monkeypatch, session)
+
+        captured_sessions: list = []
+
+        def capture_continue(agent_arg, run_response=None, run_messages=None, run_context=None, session=None, **kw):
+            if session and session.runs:
+                captured_sessions.append([(r.run_id, r.status) for r in session.runs])
+            result = RunOutput(run_id="new-run", session_id="sess-1")
+            result.content = "regenerated"
+            result.status = RunStatus.completed
+            return result
+
+        monkeypatch.setattr(_run, "_continue_run", capture_continue)
+
+        _run.regenerate_dispatch(agent, session_id="sess-1", preserve_original=True, stream=False)
+
+        # _continue_run should receive session with old run marked as regenerated
+        assert len(captured_sessions) == 1
+        assert len(captured_sessions[0]) == 1
+        assert captured_sessions[0][0][1] == RunStatus.regenerated
+
+    def test_async_regenerate_saves_session_before_continue(self, monkeypatch: pytest.MonkeyPatch):
+        """aregenerate_dispatch (sync DB path) must persist session before _acontinue_run re-reads."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+
+        # Patch deps for aregenerate_dispatch
+        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
+        monkeypatch.setattr(_init, "set_default_model", lambda a: None)
+        monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
+        )
+        monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
+        monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
+        monkeypatch.setattr(
+            _run,
+            "resolve_run_options",
+            lambda a, **kw: MagicMock(
+                stream=False,
+                stream_events=False,
+                yield_run_output=False,
+                dependencies=None,
+                knowledge_filters=None,
+                metadata=None,
+                apply_to_context=MagicMock(),
+            ),
+        )
+
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_model.provider = "test"
+        agent.model = mock_model
+
+        # Track the order of operations: save_session then _acontinue_run
+        call_order: list = []
+        saved_run_counts: list = []
+
+        def tracking_save(agent_arg, session=None):
+            call_order.append("save_session")
+            saved_run_counts.append(len(session.runs) if session and session.runs else 0)
+
+        monkeypatch.setattr(_session, "save_session", tracking_save)
+
+        # Mock _acontinue_run as an async function
+        result_run = RunOutput(run_id="new-run", session_id="sess-1")
+        result_run.content = "regenerated"
+        result_run.status = RunStatus.completed
+
+        async def mock_acontinue_run(*args, **kwargs):
+            call_order.append("_acontinue_run")
+            return result_run
+
+        monkeypatch.setattr(_run, "_acontinue_run", mock_acontinue_run)
+
+        # Run the async dispatch
+        result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=False)
+        # aregenerate_dispatch returns a coroutine for non-streaming
+        result = asyncio.new_event_loop().run_until_complete(result)
+
+        # save_session must come before _acontinue_run
+        assert call_order == ["save_session", "_acontinue_run"]
+        # At save time, old run should be gone
+        assert saved_run_counts[0] == 0
+
+    def test_async_regenerate_stream_saves_session_before_continue(self, monkeypatch: pytest.MonkeyPatch):
+        """aregenerate_dispatch (sync DB, stream=True) must persist session before _acontinue_run_stream re-reads."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+
+        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
+        monkeypatch.setattr(_init, "set_default_model", lambda a: None)
+        monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
+        )
+        monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
+        monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
+        monkeypatch.setattr(
+            _run,
+            "resolve_run_options",
+            lambda a, **kw: MagicMock(
+                stream=True,
+                stream_events=False,
+                yield_run_output=False,
+                dependencies=None,
+                knowledge_filters=None,
+                metadata=None,
+                apply_to_context=MagicMock(),
+            ),
+        )
+
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_model.provider = "test"
+        agent.model = mock_model
+
+        call_order: list = []
+        saved_run_counts: list = []
+
+        def tracking_save(agent_arg, session=None):
+            call_order.append("save_session")
+            saved_run_counts.append(len(session.runs) if session and session.runs else 0)
+
+        monkeypatch.setattr(_session, "save_session", tracking_save)
+
+        # Mock _acontinue_run_stream as an async generator
+        async def mock_acontinue_run_stream(*args, **kwargs):
+            call_order.append("_acontinue_run_stream")
+            yield RunOutput(run_id="new-run", session_id="sess-1")
+
+        monkeypatch.setattr(_run, "_acontinue_run_stream", mock_acontinue_run_stream)
+
+        # aregenerate_dispatch with stream=True returns an async iterator directly
+        async_iter = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=True)
+
+        # Consume the async iterator
+        async def consume():
+            results = []
+            async for item in async_iter:
+                results.append(item)
+            return results
+
+        asyncio.new_event_loop().run_until_complete(consume())
+
+        # save_session must come before _acontinue_run_stream
+        assert call_order == ["save_session", "_acontinue_run_stream"]
+        assert saved_run_counts[0] == 0
+
+    def test_async_regenerate_preserve_original_saves_both_statuses(self, monkeypatch: pytest.MonkeyPatch):
+        """aregenerate_dispatch with preserve_original=True saves the old run as regenerated before continue."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+
+        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
+        monkeypatch.setattr(_init, "set_default_model", lambda a: None)
+        monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
+        )
+        monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
+        monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
+        monkeypatch.setattr(
+            _run,
+            "resolve_run_options",
+            lambda a, **kw: MagicMock(
+                stream=False,
+                stream_events=False,
+                yield_run_output=False,
+                dependencies=None,
+                knowledge_filters=None,
+                metadata=None,
+                apply_to_context=MagicMock(),
+            ),
+        )
+
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_model.provider = "test"
+        agent.model = mock_model
+
+        saved_statuses: list = []
+
+        def tracking_save(agent_arg, session=None):
+            if session and session.runs:
+                saved_statuses.append([(r.run_id, r.status) for r in session.runs])
+
+        monkeypatch.setattr(_session, "save_session", tracking_save)
+
+        result_run = RunOutput(run_id="new-run", session_id="sess-1")
+        result_run.content = "regenerated"
+        result_run.status = RunStatus.completed
+
+        async def mock_acontinue_run(*args, **kwargs):
+            return result_run
+
+        monkeypatch.setattr(_run, "_acontinue_run", mock_acontinue_run)
+
+        result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=True, stream=False)
+        asyncio.new_event_loop().run_until_complete(result)
+
+        # First save should have the old run with regenerated status
+        assert len(saved_statuses) >= 1
+        assert len(saved_statuses[0]) == 1
+        assert saved_statuses[0][0][1] == RunStatus.regenerated
 
 
 # ---------------------------------------------------------------------------
