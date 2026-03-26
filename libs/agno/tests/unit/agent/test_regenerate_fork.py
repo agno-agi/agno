@@ -1,4 +1,4 @@
-"""Unit tests for regenerate and fork_session dispatch functions."""
+"""Unit tests for regenerate and branch_session dispatch functions."""
 
 import copy
 from typing import Any, List, Optional
@@ -90,12 +90,12 @@ def _patch_regenerate_deps(
     return mock_continue
 
 
-def _patch_fork_deps(
+def _patch_branch_deps(
     agent: Agent,
     monkeypatch: pytest.MonkeyPatch,
     session: AgentSession,
 ) -> MagicMock:
-    """Patch storage/init so fork_session_dispatch can run without real infra."""
+    """Patch storage/init so branch_session_dispatch can run without real infra."""
     monkeypatch.setattr(_init, "has_async_db", lambda a: False)
     monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
 
@@ -289,19 +289,19 @@ class TestRegenerateDispatch:
 
 
 # ---------------------------------------------------------------------------
-# fork_session_dispatch tests
+# branch_session_dispatch tests
 # ---------------------------------------------------------------------------
 
 
-class TestForkSessionDispatch:
-    def test_fork_creates_new_session_with_copied_runs(self, monkeypatch: pytest.MonkeyPatch):
+class TestBranchSessionDispatch:
+    def test_branch_creates_new_session_with_copied_runs(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
         run2 = _make_run(run_id="r2", messages=[Message(role="user", content="hello")])
         session = _make_session(runs=[run1, run2], session_id="original")
-        mock_save = _patch_fork_deps(agent, monkeypatch, session)
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
 
-        new_id = _run.fork_session_dispatch(agent, source_session_id="original")
+        new_id = _run.branch_session_dispatch(agent, source_session_id="original")
 
         assert new_id != "original"
         mock_save.assert_called_once()
@@ -309,41 +309,41 @@ class TestForkSessionDispatch:
         assert saved_session.session_id == new_id
         assert len(saved_session.runs) == 2
 
-    def test_fork_deep_copies_runs(self, monkeypatch: pytest.MonkeyPatch):
+    def test_branch_deep_copies_runs(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
         session = _make_session(runs=[run1], session_id="original")
-        mock_save = _patch_fork_deps(agent, monkeypatch, session)
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
 
-        _run.fork_session_dispatch(agent, source_session_id="original")
+        _run.branch_session_dispatch(agent, source_session_id="original")
 
         saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
         # Ensure it's a deep copy, not the same object
         assert saved_session.runs[0] is not run1
 
-    def test_fork_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
+    def test_branch_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         session = _make_session(runs=[], session_id="empty")
-        _patch_fork_deps(agent, monkeypatch, session)
+        _patch_branch_deps(agent, monkeypatch, session)
 
-        with pytest.raises(ValueError, match="no runs to fork"):
-            _run.fork_session_dispatch(agent, source_session_id="empty")
+        with pytest.raises(ValueError, match="no runs to branch"):
+            _run.branch_session_dispatch(agent, source_session_id="empty")
 
-    def test_fork_raises_without_session_id(self, monkeypatch: pytest.MonkeyPatch):
+    def test_branch_raises_without_session_id(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         agent.session_id = None
 
         with pytest.raises(ValueError, match="source_session_id is required"):
-            _run.fork_session_dispatch(agent)
+            _run.branch_session_dispatch(agent)
 
-    def test_fork_preserves_user_id(self, monkeypatch: pytest.MonkeyPatch):
+    def test_branch_preserves_user_id(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
         session = _make_session(runs=[run1], session_id="original")
         session.user_id = "alice"
-        mock_save = _patch_fork_deps(agent, monkeypatch, session)
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
 
-        _run.fork_session_dispatch(agent, source_session_id="original", user_id="bob")
+        _run.branch_session_dispatch(agent, source_session_id="original", user_id="bob")
 
         saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
         assert saved_session.user_id == "bob"

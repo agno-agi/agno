@@ -1799,47 +1799,47 @@ class Agent:
             **kwargs,
         )
 
-    def fork_session(
+    def branch_session(
         self,
         *,
         source_session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> str:
-        """Fork the current session into a new independent session.
+        """Branch the current session into a new independent session.
 
         Copies all runs so the new session can continue the conversation independently.
 
         Args:
-            source_session_id: The session to fork.  Defaults to the agent's current session.
+            source_session_id: The session to branch.  Defaults to the agent's current session.
             user_id: The user id for the new session.
 
         Returns:
             The new session_id.
         """
-        return _run.fork_session_dispatch(
+        return _run.branch_session_dispatch(
             self,
             source_session_id=source_session_id,
             user_id=user_id,
         )
 
-    async def afork_session(
+    async def abranch_session(
         self,
         *,
         source_session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> str:
-        """Async variant of fork_session.
+        """Async variant of branch_session.
 
-        Fork the current session into a new independent session.
+        Branch the current session into a new independent session.
 
         Args:
-            source_session_id: The session to fork.  Defaults to the agent's current session.
+            source_session_id: The session to branch.  Defaults to the agent's current session.
             user_id: The user id for the new session.
 
         Returns:
             The new session_id.
         """
-        return await _run.afork_session_dispatch(
+        return await _run.abranch_session_dispatch(
             self,
             source_session_id=source_session_id,
             user_id=user_id,

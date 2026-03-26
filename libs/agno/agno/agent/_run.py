@@ -5157,23 +5157,23 @@ async def _aregenerate_run_stream(
 
 
 # ---------------------------------------------------------------------------
-# Fork session — copy a session into a new independent session
+# Branch session — copy a session into a new independent session
 # ---------------------------------------------------------------------------
 
 
-def fork_session_dispatch(
+def branch_session_dispatch(
     agent: Agent,
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Fork the current session into a new independent session.
+    """Branch the current session into a new independent session.
 
     Copies all runs from the source session so the new session can continue
     the conversation independently.
 
     Args:
-        source_session_id: The session to fork. Defaults to the agent's current session.
+        source_session_id: The session to branch. Defaults to the agent's current session.
         user_id: The user id for the new session.
 
     Returns:
@@ -5187,19 +5187,19 @@ def fork_session_dispatch(
 
     if has_async_db(agent):
         raise RuntimeError(
-            "`fork_session` is not supported with an async database. Please use `afork_session` instead."
+            "`branch_session` is not supported with an async database. Please use `abranch_session` instead."
         )
 
     source_session_id = source_session_id or agent.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to fork a session.")
+        raise ValueError("source_session_id is required to branch a session.")
 
     agent.initialize_agent()
 
     # Read the source session
     source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
     if not source_session.runs:
-        raise ValueError("Source session has no runs to fork.")
+        raise ValueError("Source session has no runs to branch.")
 
     # Create a new session with a deep copy of the runs
     import time
@@ -5227,21 +5227,21 @@ def fork_session_dispatch(
     return new_session_id
 
 
-async def afork_session_dispatch(
+async def abranch_session_dispatch(
     agent: Agent,
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Async variant of fork_session_dispatch.
+    """Async variant of branch_session_dispatch.
 
-    Fork the current session into a new independent session.
+    Branch the current session into a new independent session.
 
     Copies all runs from the source session so the new session can continue
     the conversation independently.
 
     Args:
-        source_session_id: The session to fork. Defaults to the agent's current session.
+        source_session_id: The session to branch. Defaults to the agent's current session.
         user_id: The user id for the new session.
 
     Returns:
@@ -5255,7 +5255,7 @@ async def afork_session_dispatch(
 
     source_session_id = source_session_id or agent.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to fork a session.")
+        raise ValueError("source_session_id is required to branch a session.")
 
     agent.initialize_agent()
 
@@ -5266,7 +5266,7 @@ async def afork_session_dispatch(
         source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
 
     if not source_session.runs:
-        raise ValueError("Source session has no runs to fork.")
+        raise ValueError("Source session has no runs to branch.")
 
     # Create a new session with a deep copy of the runs
     import time
