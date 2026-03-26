@@ -42,7 +42,6 @@ Alternatively, for Server-to-Server use cases you can use a Service Account:
 import json
 import textwrap
 import uuid
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -61,7 +60,8 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.tools.google.auth import google_authenticate
+from agno.utils.log import log_debug
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Google Slides tools for creating and managing presentations.
@@ -78,24 +78,7 @@ SLIDES_INSTRUCTIONS = textwrap.dedent("""\
     - Destructive tools (delete_presentation, delete_slide) are disabled by default""")
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.slides_service:
-                self.slides_service = build("slides", "v1", credentials=self.creds)
-            if not self.drive_service:
-                self.drive_service = build("drive", "v3", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Google Slides authentication failed: {e}")
-            return json.dumps({"error": f"Google Slides authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("slides")
 
 
 class GoogleSlidesTools(Toolkit):
@@ -146,6 +129,7 @@ class GoogleSlidesTools(Toolkit):
         self.login_hint = login_hint
         self.scopes = scopes or self.DEFAULT_SCOPES
 
+        self.service: Any = None
         self.slides_service: Any = None
         self.drive_service: Any = None
 
@@ -198,6 +182,12 @@ class GoogleSlidesTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+    def _build_service(self):
+        self.slides_service = build("slides", "v1", credentials=self.creds)
+        self.drive_service = build("drive", "v3", credentials=self.creds)
+        # Returned value stored as self.service by decorator (sentinel for "services built")
+        return self.slides_service
 
     def _auth(self) -> None:
         """Authenticate with Google Slides API"""
@@ -389,9 +379,7 @@ class GoogleSlidesTools(Toolkit):
             if not presentation_id.strip():
                 return json.dumps({"error": "presentation_id cannot be empty."})
 
-            result = self.slides_service.presentations().get(
-                presentationId=presentation_id, fields=fields
-            ).execute()
+            result = self.slides_service.presentations().get(presentationId=presentation_id, fields=fields).execute()
             return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": str(e)})
@@ -411,12 +399,16 @@ class GoogleSlidesTools(Toolkit):
         try:
             if page_size <= 0:
                 return json.dumps({"error": "page_size must be a positive integer."})
-            response = self.drive_service.files().list(
-                q="mimeType='application/vnd.google-apps.presentation'",
-                pageSize=page_size,
-                pageToken=page_token,
-                fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
-            ).execute()
+            response = (
+                self.drive_service.files()
+                .list(
+                    q="mimeType='application/vnd.google-apps.presentation'",
+                    pageSize=page_size,
+                    pageToken=page_token,
+                    fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
+                )
+                .execute()
+            )
             files = response.get("files", [])
             next_token = response.get("nextPageToken")
             return json.dumps({"presentations": files, "next_page_token": next_token})
@@ -490,7 +482,9 @@ class GoogleSlidesTools(Toolkit):
                 "TITLE_AND_TWO_COLUMNS",
             }
             if layout not in valid_layouts:
-                return json.dumps({"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"})
+                return json.dumps(
+                    {"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"}
+                )
 
             slide_id = self._generate_id("slide")
 
@@ -955,12 +949,8 @@ class GoogleSlidesTools(Toolkit):
                         el_info["y_inches"] = round(transform.get("translateY", 0) / 914400, 2)
                     size = el.get("size", {})
                     if size:
-                        el_info["width_inches"] = round(
-                            size.get("width", {}).get("magnitude", 0) / 914400, 2
-                        )
-                        el_info["height_inches"] = round(
-                            size.get("height", {}).get("magnitude", 0) / 914400, 2
-                        )
+                        el_info["width_inches"] = round(size.get("width", {}).get("magnitude", 0) / 914400, 2)
+                        el_info["height_inches"] = round(size.get("height", {}).get("magnitude", 0) / 914400, 2)
                     elements.append(el_info)
                 slides_info.append(
                     {

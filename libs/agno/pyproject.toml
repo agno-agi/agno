@@ -111,7 +111,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
-seltz = ["seltz"]
+seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -347,7 +347,7 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
-    "grpcio==1.74.0",
+    "grpcio>=1.76.0",
 ]
 
 # Models integration test dependencies

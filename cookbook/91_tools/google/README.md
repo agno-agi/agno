@@ -1,6 +1,6 @@
 # Google Tools Cookbooks
 
-Agents for Gmail, Google Calendar, and Google Slides using OAuth or service account authentication.
+Agents for Gmail, Google Calendar, Google Drive, and Google Slides using OAuth or service account authentication.
 
 ## Quick Start
 
@@ -49,6 +49,7 @@ Go to **APIs & Services > Enable APIs and Services** and enable:
 |---------|--------------|
 | `GoogleCalendarTools` | Google Calendar API |
 | `GmailTools` | Gmail API |
+| `GoogleDriveTools` | Google Drive API |
 | `GoogleSlidesTools` | Google Slides API + Google Drive API |
 
 ### 3. Create OAuth Credentials
@@ -110,6 +111,15 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | `calendar_event_creator.py` | Event creation with attendees, Google Meet, and timezone handling |
 | `calendar_daily_briefing.py` | Structured daily briefing with conflict detection and prep notes |
 | `calendar_meeting_scheduler.py` | Multi-person scheduling with availability checking |
+
+### Drive
+
+| File | Description |
+|------|-------------|
+| `drive_tools.py` | Read-only and full-access agents: search, read, upload, and download files |
+| `drive_file_search.py` | Search files with structured output schema and pagination |
+| `drive_document_reader.py` | Read and summarize Google Docs, Sheets, and Slides as text |
+| `drive_folder_organizer.py` | Browse folder structure, upload local files, and download from Drive |
 
 ### Slides
 
