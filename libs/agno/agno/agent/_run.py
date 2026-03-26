@@ -4751,12 +4751,15 @@ def regenerate_dispatch(
 
     log_debug(f"Agent Regenerate Run Start: {new_run_id}", center=True)
 
-    # Build run messages from the trimmed context
+    # Build run messages from the trimmed context.
+    # Respect the agent's add_history_to_context setting so that prior turns
+    # are included when store_history_messages=False (the default) strips them
+    # from stored runs.
     run_messages = get_continue_run_messages(
         agent,
         input=trimmed_messages,
         session=agent_session,
-        add_history_to_context=False,  # History is already embedded in trimmed_messages
+        add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
     )
 
@@ -4908,6 +4911,9 @@ def aregenerate_dispatch(  # type: ignore
     # Create a new run id
     new_run_id = str(uuid4())
 
+    from agno.agent._init import set_default_model
+
+    set_default_model(agent)
     agent.model = cast(Model, agent.model)
 
     # Initialize run context
@@ -5212,8 +5218,10 @@ def branch_session_dispatch(
 
     agent.initialize_agent()
 
-    # Read the source session
-    source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    # Read the source session using its original user_id (not the destination user_id).
+    # Passing the destination user_id would miss the source session if it belongs to
+    # a different user, and silently create a new empty session instead.
+    source_session = read_or_create_session(agent, session_id=source_session_id)
     if not source_session.runs:
         raise ValueError("Source session has no runs to branch.")
 
@@ -5222,16 +5230,24 @@ def branch_session_dispatch(
 
     now = int(time.time())
     new_session_id = str(uuid4())
+    new_user_id = user_id or source_session.user_id
+    branched_runs = copy.deepcopy(source_session.runs)
+
+    # Rewrite session_id on each copied run so the new session's run metadata
+    # is internally consistent (runs should reference their owning session).
+    for run in branched_runs or []:
+        run.session_id = new_session_id
+
     new_session = AgentSession(
         session_id=new_session_id,
         agent_id=source_session.agent_id,
-        user_id=user_id or source_session.user_id,
+        user_id=new_user_id,
         team_id=source_session.team_id,
         workflow_id=source_session.workflow_id,
         session_data=copy.deepcopy(source_session.session_data),
         metadata=copy.deepcopy(source_session.metadata),
         agent_data=copy.deepcopy(source_session.agent_data),
-        runs=copy.deepcopy(source_session.runs),
+        runs=branched_runs,
         summary=copy.deepcopy(source_session.summary),
         created_at=now,
         updated_at=now,
@@ -5275,11 +5291,11 @@ async def abranch_session_dispatch(
 
     agent.initialize_agent()
 
-    # Read the source session
+    # Read the source session using its original user_id (not the destination user_id).
     if has_async_db(agent):
-        source_session = await aread_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+        source_session = await aread_or_create_session(agent, session_id=source_session_id)
     else:
-        source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+        source_session = read_or_create_session(agent, session_id=source_session_id)
 
     if not source_session.runs:
         raise ValueError("Source session has no runs to branch.")
@@ -5289,16 +5305,23 @@ async def abranch_session_dispatch(
 
     now = int(time.time())
     new_session_id = str(uuid4())
+    new_user_id = user_id or source_session.user_id
+    branched_runs = copy.deepcopy(source_session.runs)
+
+    # Rewrite session_id on each copied run so run metadata is consistent.
+    for run in branched_runs or []:
+        run.session_id = new_session_id
+
     new_session = AgentSession(
         session_id=new_session_id,
         agent_id=source_session.agent_id,
-        user_id=user_id or source_session.user_id,
+        user_id=new_user_id,
         team_id=source_session.team_id,
         workflow_id=source_session.workflow_id,
         session_data=copy.deepcopy(source_session.session_data),
         metadata=copy.deepcopy(source_session.metadata),
         agent_data=copy.deepcopy(source_session.agent_data),
-        runs=copy.deepcopy(source_session.runs),
+        runs=branched_runs,
         summary=copy.deepcopy(source_session.summary),
         created_at=now,
         updated_at=now,

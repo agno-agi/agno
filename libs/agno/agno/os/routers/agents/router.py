@@ -733,7 +733,7 @@ def get_agent_router(
                     ),
                 )
                 return run_response_obj.to_dict()
-            except ValueError as e:
+            except (ValueError, RuntimeError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
             except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))

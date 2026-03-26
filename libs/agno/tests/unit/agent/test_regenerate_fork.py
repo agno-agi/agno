@@ -632,3 +632,48 @@ class TestBranchSessionDispatch:
 
         saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
         assert saved_session.user_id == "bob"
+
+    def test_branch_rewrites_session_id_on_copied_runs(self, monkeypatch: pytest.MonkeyPatch):
+        """Branched runs must reference the new session_id, not the source."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        run1.session_id = "original"
+        run2 = _make_run(run_id="r2", messages=[Message(role="user", content="hello")])
+        run2.session_id = "original"
+        session = _make_session(runs=[run1, run2], session_id="original")
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
+
+        new_id = _run.branch_session_dispatch(agent, source_session_id="original")
+
+        saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
+        for run in saved_session.runs:
+            assert run.session_id == new_id, f"Run {run.run_id} still has old session_id"
+        # Source runs must be unchanged
+        assert run1.session_id == "original"
+        assert run2.session_id == "original"
+
+    def test_branch_reads_source_session_without_user_id(self, monkeypatch: pytest.MonkeyPatch):
+        """Branch must read the source session without filtering by the destination user_id."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        session = _make_session(runs=[run1], session_id="original")
+        session.user_id = "alice"
+
+        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
+
+        # Track what user_id is passed to read_or_create_session
+        read_calls: list = []
+
+        def tracking_read(agent_arg, session_id=None, user_id=None):
+            read_calls.append({"session_id": session_id, "user_id": user_id})
+            return session
+
+        monkeypatch.setattr(_storage, "read_or_create_session", tracking_read)
+        monkeypatch.setattr(_session, "save_session", MagicMock())
+
+        _run.branch_session_dispatch(agent, source_session_id="original", user_id="bob")
+
+        # Source session should be read without user_id filtering
+        assert len(read_calls) == 1
+        assert read_calls[0]["session_id"] == "original"
+        assert read_calls[0]["user_id"] is None
