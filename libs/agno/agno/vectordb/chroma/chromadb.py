@@ -73,6 +73,8 @@ class ChromaDb(VectorDb):
             Controls ranking smoothness - higher values give more weight to lower-ranked
             results, lower values make top results more dominant. Default is 60
             (per original RRF paper by Cormack et al.).
+        batch_size: Maximum number of documents per batch operation. If not provided,
+            automatically detects ChromaDB's maximum batch size limit.
         reranker: The reranker to use when reranking documents.
         **kwargs: Additional arguments to pass to the ChromaDB client.
     """
@@ -89,6 +91,7 @@ class ChromaDb(VectorDb):
         persistent_client: bool = False,
         search_type: SearchType = SearchType.vector,
         hybrid_rrf_k: int = 60,
+        batch_size: Optional[int] = None,
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
@@ -142,8 +145,8 @@ class ChromaDb(VectorDb):
         # Chroma client kwargs
         self.kwargs = kwargs
 
-        # Cached batch size for ChromaDB operations
-        self._batch_size: Optional[int] = None
+        # Batch size for ChromaDB operations
+        self._batch_size: Optional[int] = batch_size
 
     def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
         """
@@ -201,26 +204,25 @@ class ChromaDb(VectorDb):
 
     @property
     def batch_size(self) -> int:
-        """Get the safe batch size for ChromaDB operations.
+        """Get the batch size for ChromaDB operations.
 
-        ChromaDB has a maximum batch size limit due to SQLite's MAX_VARIABLE_NUMBER
-        constraint. This property dynamically queries ChromaDB's actual limit and
-        returns 90% of that value to provide a safety margin.
+        Returns user-provided batch_size if set, otherwise auto-detects ChromaDB's
+        maximum batch size limit based on SQLite's MAX_VARIABLE_NUMBER constraint.
 
         Returns:
-            int: Safe batch size (90% of ChromaDB's max_batch_size)
+            int: Batch size for operations
 
         Note:
-            - The value is cached after first calculation
-            - Falls back to 100 if query fails
-            - Typical values: ~4,915 on standard systems, ~37,499 on systems with higher limits
+            - User-provided value takes precedence over auto-detection
+            - Auto-detected value is cached after first calculation
+            - Falls back to 100 if auto-detection fails
+            - Eg: typical values: ~5461 on standard systems, ~41666 on systems with higher limits
         """
         if self._batch_size is None:
             try:
                 max_size = self.client.get_max_batch_size()
-                # Use 90% of max for safety margin
-                self._batch_size = int(max_size * 0.9)
-                log_debug(f"ChromaDB max batch size: {max_size}, using {self._batch_size} (90%)")
+                self._batch_size = max_size
+                log_debug(f"ChromaDB max batch size: {max_size}")
             except Exception as e:
                 # Fallback to conservative value if query fails
                 log_warning(f"Could not query ChromaDB max batch size: {e}. Using fallback: 100")
