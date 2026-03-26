@@ -914,8 +914,8 @@ class Claude(Model):
                     model_response.redacted_reasoning_content = block.data
                 elif block.type not in ("tool_use",):
                     # Preserve all non-text/thinking blocks for conversation history reconstruction.
-                    # Covers server_tool_use, web_fetch_tool_result, web_search_tool_result,
-                    # code_execution_tool_result, mcp_tool_use/result, container_upload, etc.
+                    # thinking/redacted_thinking already handled by elif branches above;
+                    # streaming path uses ("thinking", "redacted_thinking", "tool_use") tuple instead.
                     # tool_use is handled separately below via stop_reason check.
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
