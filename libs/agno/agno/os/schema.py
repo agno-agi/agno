@@ -16,6 +16,7 @@ from agno.os.config import (
     SessionConfig,
     TracesConfig,
 )
+from agno.agent.protocol import AgentLike
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.remote import RemoteTeam
@@ -103,8 +104,14 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+    def from_agent(cls, agent: Union[Agent, AgentLike, RemoteAgent]) -> "AgentSummaryResponse":
+        agent_db = getattr(agent, "db", None)
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            description=getattr(agent, "description", None),
+            db_id=agent_db.id if agent_db else None,
+        )
 
 
 class TeamSummaryResponse(BaseModel):
