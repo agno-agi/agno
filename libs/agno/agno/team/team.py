@@ -332,6 +332,14 @@ class Team:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
+    # --- Team Followups ---
+    # If True, generate followup prompts after the main response
+    followups: bool = False
+    # Number of followup prompts to generate (default 3)
+    num_followups: int = 3
+    # Optional model to use for generating followups (defaults to team's model)
+    followup_model: Optional[Model] = None
+
     # --- Team Streaming ---
     # Stream the response from the Team
     stream: Optional[bool] = None
@@ -507,6 +515,9 @@ class Team:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        followups: bool = False,
+        num_followups: int = 3,
+        followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -623,6 +634,9 @@ class Team:
             reasoning_agent=reasoning_agent,
             reasoning_min_steps=reasoning_min_steps,
             reasoning_max_steps=reasoning_max_steps,
+            followups=followups,
+            num_followups=num_followups,
+            followup_model=followup_model,
             stream=stream,
             stream_events=stream_events,
             store_events=store_events,
@@ -1332,8 +1346,12 @@ class Team:
             check_mcp_tools=check_mcp_tools,
         )
 
-    def get_members_system_message_content(self, indent: int = 0, run_context: Optional[RunContext] = None) -> str:
-        return _messages.get_members_system_message_content(self, indent=indent, run_context=run_context)
+    def get_members_system_message_content(
+        self, indent: int = 0, run_context: Optional[RunContext] = None, async_mode: bool = False
+    ) -> str:
+        return _messages.get_members_system_message_content(
+            self, indent=indent, run_context=run_context, async_mode=async_mode
+        )
 
     def get_system_message(
         self,
