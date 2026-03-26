@@ -5196,7 +5196,8 @@ def branch_session_dispatch(
 
     Args:
         source_session_id: The session to branch. Defaults to the agent's current session.
-        user_id: The user id for the new session.
+        user_id: The user performing the branch. Must own the source session.
+            The new session inherits the same user_id.
 
     Returns:
         The new session_id.
@@ -5273,7 +5274,8 @@ async def abranch_session_dispatch(
 
     Args:
         source_session_id: The session to branch. Defaults to the agent's current session.
-        user_id: The user id for the new session.
+        user_id: The user performing the branch. Must own the source session.
+            The new session inherits the same user_id.
 
     Returns:
         The new session_id.
