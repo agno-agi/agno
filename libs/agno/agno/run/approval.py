@@ -196,8 +196,8 @@ def create_approval_from_pause(
         return approval_id
     except NotImplementedError:
         pass
-    except Exception as e:
-        log_warning(f"Error creating approval record (sync): {e}")
+    except Exception:
+        log_warning("Error creating approval record (sync)", exc_info=True)
     return None
 
 
@@ -256,8 +256,8 @@ async def acreate_approval_from_pause(
         return approval_id
     except NotImplementedError:
         pass
-    except Exception as e:
-        log_warning(f"Error creating approval record (async): {e}")
+    except Exception:
+        log_warning("Error creating approval record (async)", exc_info=True)
     return None
 
 
@@ -320,8 +320,8 @@ def create_audit_approval(
         log_debug(f"Audit approval {approval_data['id']} for tool {tool_name}")
     except NotImplementedError:
         pass
-    except Exception as e:
-        log_warning(f"Error creating audit approval record (sync): {e}")
+    except Exception:
+        log_warning("Error creating audit approval record (sync)", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -501,8 +501,8 @@ async def acreate_audit_approval(
         log_debug(f"Audit approval {approval_data['id']} for tool {tool_name}")
     except NotImplementedError:
         pass
-    except Exception as e:
-        log_warning(f"Error creating audit approval record (async): {e}")
+    except Exception:
+        log_warning("Error creating audit approval record (async)", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -533,8 +533,8 @@ def update_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> N
             log_debug(f"Updated run_status to {run_status} for {count} approval(s) on run {run_id}")
     except NotImplementedError:
         pass
-    except Exception as e:
-        log_warning(f"Error updating approval run_status (sync): {e}")
+    except Exception:
+        log_warning("Error updating approval run_status (sync)", exc_info=True)
 
 
 async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> None:
@@ -565,5 +565,5 @@ async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatu
             log_debug(f"Updated run_status to {run_status} for {count} approval(s) on run {run_id}")
     except NotImplementedError:
         pass
-    except Exception as e:
-        log_warning(f"Error updating approval run_status (async): {e}")
+    except Exception:
+        log_warning("Error updating approval run_status (async)", exc_info=True)

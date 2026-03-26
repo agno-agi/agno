@@ -111,7 +111,7 @@ class BrowserbaseTools(Toolkit):
                 self._connect_url = self._session.connect_url if self._session else ""  # type: ignore
                 if self._session:
                     log_debug(f"Created new session with ID: {self._session.id}")
-            except Exception as e:
+            except Exception:
                 logger.error("Failed to create session", exc_info=True)
                 raise
 

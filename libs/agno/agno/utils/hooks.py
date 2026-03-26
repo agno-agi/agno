@@ -172,7 +172,7 @@ def filter_hook_args(hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict
 
         return filtered_args
 
-    except Exception as e:
-        log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
+    except Exception:
+        log_warning("Could not inspect hook signature, passing all arguments", exc_info=True)
         # If signature inspection fails, pass all arguments as fallback
         return all_args

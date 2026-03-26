@@ -113,7 +113,7 @@ class SlackTools(Toolkit):
             response = self.client.chat_postMessage(channel=channel, text=text, mrkdwn=self.markdown)
             return json.dumps(response.data)
         except SlackApiError as e:
-            logger.error(f"Error sending message: {e}")
+            logger.error("Error sending message", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
@@ -133,7 +133,7 @@ class SlackTools(Toolkit):
             )
             return json.dumps(response.data)
         except SlackApiError as e:
-            logger.error(f"Error sending message: {e}")
+            logger.error("Error sending message", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def list_channels(self) -> str:
@@ -147,7 +147,7 @@ class SlackTools(Toolkit):
             channels = [{"id": channel["id"], "name": channel["name"]} for channel in response["channels"]]
             return json.dumps(channels)
         except SlackApiError as e:
-            logger.error(f"Error listing channels: {e}")
+            logger.error("Error listing channels", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_channel_history(self, channel: str, limit: int = 100) -> str:
@@ -174,7 +174,7 @@ class SlackTools(Toolkit):
             ]
             return json.dumps(messages)
         except SlackApiError as e:
-            logger.error(f"Error getting channel history: {e}")
+            logger.error("Error getting channel history", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
@@ -187,8 +187,8 @@ class SlackTools(Toolkit):
             file_path.write_bytes(content)
             log_debug(f"File saved to: {file_path}")
             return str(file_path)
-        except OSError as e:
-            logger.warning(f"Failed to save file locally: {e}")
+        except OSError:
+            logger.warning("Failed to save file locally", exc_info=True)
             return None
 
     def upload_file(
@@ -246,7 +246,7 @@ class SlackTools(Toolkit):
 
             return json.dumps(result)
         except SlackApiError as e:
-            logger.error(f"Error uploading file: {e}")
+            logger.error("Error uploading file", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
@@ -306,8 +306,8 @@ class SlackTools(Toolkit):
                     save_path.write_bytes(content)
                     log_debug(f"File downloaded to: {save_path}")
                     result["path"] = str(save_path)
-                except OSError as e:
-                    logger.warning(f"Failed to save file locally: {e}")
+                except OSError:
+                    logger.warning("Failed to save file locally", exc_info=True)
                     # Fall through to return base64
                     result["content_base64"] = base64.b64encode(content).decode("utf-8")
             else:
@@ -316,10 +316,10 @@ class SlackTools(Toolkit):
             return json.dumps(result)
 
         except SlackApiError as e:
-            logger.error(f"Error downloading file: {e}")
+            logger.error("Error downloading file", exc_info=True)
             return json.dumps({"error": str(e)})
         except httpx.HTTPError as e:
-            logger.error(f"Error downloading file content: {e}")
+            logger.error("Error downloading file content", exc_info=True)
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
     def download_file_bytes(self, file_id: str) -> Optional[bytes]:
@@ -345,8 +345,8 @@ class SlackTools(Toolkit):
             download_response.raise_for_status()
             return download_response.content
 
-        except (SlackApiError, httpx.HTTPError) as e:
-            logger.error(f"Error downloading file bytes: {e}")
+        except (SlackApiError, httpx.HTTPError):
+            logger.error("Error downloading file bytes", exc_info=True)
             return None
 
     def search_messages(self, query: str, limit: int = 20) -> str:
@@ -375,7 +375,7 @@ class SlackTools(Toolkit):
             ]
             return json.dumps({"count": len(messages), "messages": messages})
         except SlackApiError as e:
-            logger.error(f"Error searching messages: {e}")
+            logger.error("Error searching messages", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
@@ -411,7 +411,7 @@ class SlackTools(Toolkit):
                 }
             )
         except SlackApiError as e:
-            logger.error(f"Error getting thread: {e}")
+            logger.error("Error getting thread", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def list_users(self, limit: int = 100) -> str:
@@ -438,7 +438,7 @@ class SlackTools(Toolkit):
             ]
             return json.dumps({"count": len(users), "users": users})
         except SlackApiError as e:
-            logger.error(f"Error listing users: {e}")
+            logger.error("Error listing users", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_user_info(self, user_id: str) -> str:
@@ -466,5 +466,5 @@ class SlackTools(Toolkit):
                 }
             )
         except SlackApiError as e:
-            logger.error(f"Error getting user info: {e}")
+            logger.error("Error getting user info", exc_info=True)
             return json.dumps({"error": str(e)})

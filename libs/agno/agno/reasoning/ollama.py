@@ -26,7 +26,7 @@ def get_ollama_reasoning(
 ) -> Optional[Message]:
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return None
 
@@ -60,7 +60,7 @@ async def aget_ollama_reasoning(
 ) -> Optional[Message]:
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return None
 
@@ -118,7 +118,7 @@ def get_ollama_reasoning_stream(
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return
 
@@ -164,7 +164,7 @@ async def aget_ollama_reasoning_stream(
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return
 

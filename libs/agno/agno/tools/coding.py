@@ -365,7 +365,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error("Error reading file", exc_info=True)
             return f"Error reading file: {e}"
 
     def edit_file(self, file_path: str, old_text: str, new_text: str) -> str:
@@ -449,7 +449,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error editing file: {e}")
+            log_error("Error editing file", exc_info=True)
             return f"Error editing file: {e}"
 
     def write_file(self, file_path: str, contents: str) -> str:
@@ -479,7 +479,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error writing file: {e}")
+            log_error("Error writing file", exc_info=True)
             return f"Error writing file: {e}"
 
     def run_shell(self, command: str, timeout: Optional[int] = None) -> str:
@@ -543,7 +543,7 @@ class CodingTools(Toolkit):
             effective_timeout = timeout if timeout is not None else self.shell_timeout
             return f"Error: Command timed out after {effective_timeout} seconds"
         except Exception as e:
-            log_error(f"Error running shell command: {e}")
+            log_error("Error running shell command", exc_info=True)
             return f"Error running shell command: {e}"
 
     def grep(
@@ -633,7 +633,7 @@ class CodingTools(Toolkit):
         except FileNotFoundError:
             return "Error: grep command not found. Install grep to use this tool."
         except Exception as e:
-            log_error(f"Error running grep: {e}")
+            log_error("Error running grep", exc_info=True)
             return f"Error running grep: {e}"
 
     def find(self, pattern: str, path: Optional[str] = None, limit: int = 500) -> str:
@@ -689,7 +689,7 @@ class CodingTools(Toolkit):
             return result + footer
 
         except Exception as e:
-            log_error(f"Error finding files: {e}")
+            log_error("Error finding files", exc_info=True)
             return f"Error finding files: {e}"
 
     def ls(self, path: Optional[str] = None, limit: int = 500) -> str:
@@ -737,5 +737,5 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {path or '.'}"
         except Exception as e:
-            log_error(f"Error listing directory: {e}")
+            log_error("Error listing directory", exc_info=True)
             return f"Error listing directory: {e}"

@@ -93,7 +93,7 @@ class ElevenLabsTools(Toolkit):
             return str(response)
 
         except Exception as e:
-            log_error(f"Failed to fetch voices: {e}")
+            log_error("Failed to fetch voices", exc_info=True)
             return f"Error: {e}"
 
     def _process_audio(self, audio_generator: Iterator[bytes]) -> bytes:
@@ -157,7 +157,7 @@ class ElevenLabsTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Failed to generate sound effect: {e}")
+            log_error("Failed to generate sound effect", exc_info=True)
             return ToolResult(content=f"Error: {e}")
 
     def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
@@ -192,5 +192,5 @@ class ElevenLabsTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Failed to generate audio: {e}")
+            log_error("Failed to generate audio", exc_info=True)
             return ToolResult(content=f"Error: {e}")

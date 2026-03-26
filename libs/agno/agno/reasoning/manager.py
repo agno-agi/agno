@@ -874,7 +874,7 @@ class ReasoningManager:
                 if next_action == NextAction.FINAL_ANSWER:
                     break
 
-            except Exception as e:
+            except Exception:
                 log_error("Reasoning error", exc_info=True)
                 break
 
@@ -986,7 +986,7 @@ class ReasoningManager:
                 if next_action == NextAction.FINAL_ANSWER:
                     break
 
-            except Exception as e:
+            except Exception:
                 log_error("Reasoning error", exc_info=True)
                 break
 

@@ -89,5 +89,5 @@ class GiphyTools(Toolkit):
             logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
             return ToolResult(content=f"HTTP error occurred: {e.response.status_code}")
         except Exception as e:
-            logger.error(f"An error occurred: {e}")
+            logger.error("An error occurred", exc_info=True)
             return ToolResult(content=f"An error occurred: {e}")

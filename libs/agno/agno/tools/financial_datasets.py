@@ -77,7 +77,7 @@ class FinancialDatasetsTools(Toolkit):
             response.raise_for_status()
             return response.text
         except requests.exceptions.RequestException as e:
-            log_error(f"Error making request to {url}: {str(e)}")
+            log_error(f"Error making request to {url}", exc_info=True)
             return f"Error making request to {url}: {str(e)}"
 
     # Financial Statements

@@ -178,8 +178,8 @@ class CohereEmbedder(Embedder):
             else:
                 log_warning("No embeddings found")
                 return []
-        except Exception as e:
-            log_warning(e)
+        except Exception:
+            log_warning("Error getting embedding", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -219,8 +219,8 @@ class CohereEmbedder(Embedder):
             else:
                 log_warning("No embeddings found")
                 return []
-        except Exception as e:
-            log_warning(e)
+        except Exception:
+            log_warning("Error getting embedding", exc_info=True)
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -276,7 +276,7 @@ class CohereEmbedder(Embedder):
                 all_usage.extend(batch_usage)
 
             except Exception as e:
-                log_warning(f"Async batch embedding failed after retries: {e}")
+                log_warning("Async batch embedding failed after retries", exc_info=True)
 
                 # Check if this is a rate limit error and backoff is disabled
                 if self._is_rate_limit_error(e) and not self.exponential_backoff:
@@ -297,8 +297,8 @@ class CohereEmbedder(Embedder):
                                 small_embeddings, small_usage = await self._async_batch_with_retry(small_batch)
                                 all_embeddings.extend(small_embeddings)
                                 all_usage.extend(small_usage)
-                            except Exception as e3:
-                                log_error(f"Failed even with reduced batch size: {e3}")
+                            except Exception:
+                                log_error("Failed even with reduced batch size", exc_info=True)
                                 # Fall back to empty results for this batch
                                 all_embeddings.extend([[] for _ in small_batch])
                                 all_usage.extend([None for _ in small_batch])
@@ -315,8 +315,8 @@ class CohereEmbedder(Embedder):
                             embedding, usage = await self.async_get_embedding_and_usage(text)
                             all_embeddings.append(embedding)
                             all_usage.append(usage)
-                        except Exception as e2:
-                            log_warning(f"Error in individual async embedding fallback: {e2}")
+                        except Exception:
+                            log_warning("Error in individual async embedding fallback", exc_info=True)
                             all_embeddings.append([])
                             all_usage.append(None)
 

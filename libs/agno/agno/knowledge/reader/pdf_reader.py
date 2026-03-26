@@ -269,8 +269,8 @@ class BasePDFReader(Reader):
             else:
                 log_error(f'Failed to decrypt PDF file "{doc_name}": incorrect password')
                 return False
-        except Exception as e:
-            log_error(f'Error decrypting PDF file "{doc_name}": {e}')
+        except Exception:
+            log_error(f'Error decrypting PDF file "{doc_name}"', exc_info=True)
             return False
 
     def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
@@ -385,8 +385,8 @@ class PDFReader(BasePDFReader):
 
         try:
             pdf_reader = DocumentReader(pdf)
-        except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+        except PdfStreamError:
+            log_error("Error reading PDF", exc_info=True)
             return []
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
@@ -409,8 +409,8 @@ class PDFReader(BasePDFReader):
 
         try:
             pdf_reader = DocumentReader(pdf)
-        except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+        except PdfStreamError:
+            log_error("Error reading PDF", exc_info=True)
             return []
 
         # Handle PDF decryption
@@ -434,8 +434,8 @@ class PDFImageReader(BasePDFReader):
         log_debug(f"Reading: {doc_name}")
         try:
             pdf_reader = DocumentReader(pdf)
-        except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+        except PdfStreamError:
+            log_error("Error reading PDF", exc_info=True)
             return []
 
         # Handle PDF decryption
@@ -456,8 +456,8 @@ class PDFImageReader(BasePDFReader):
 
         try:
             pdf_reader = DocumentReader(pdf)
-        except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+        except PdfStreamError:
+            log_error("Error reading PDF", exc_info=True)
             return []
 
         # Handle PDF decryption

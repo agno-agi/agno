@@ -468,7 +468,7 @@ class DecisionLogStore(LearningStore):
                 return f"Decision logged: {decision_id}"
 
             except Exception as e:
-                log_warning(f"Error logging decision: {e}")
+                log_warning("Error logging decision", exc_info=True)
                 return f"Error: {e}"
 
         return log_decision
@@ -516,7 +516,7 @@ class DecisionLogStore(LearningStore):
                 return f"Decision logged: {decision_id}"
 
             except Exception as e:
-                log_warning(f"Error logging decision: {e}")
+                log_warning("Error logging decision", exc_info=True)
                 return f"Error: {e}"
 
         return log_decision
@@ -559,7 +559,7 @@ class DecisionLogStore(LearningStore):
                     return f"Decision {decision_id} not found"
 
             except Exception as e:
-                log_warning(f"Error recording outcome: {e}")
+                log_warning("Error recording outcome", exc_info=True)
                 return f"Error: {e}"
 
         return record_outcome
@@ -590,7 +590,7 @@ class DecisionLogStore(LearningStore):
                     return f"Decision {decision_id} not found"
 
             except Exception as e:
-                log_warning(f"Error recording outcome: {e}")
+                log_warning("Error recording outcome", exc_info=True)
                 return f"Error: {e}"
 
         return record_outcome
@@ -646,7 +646,7 @@ class DecisionLogStore(LearningStore):
                 return "\n".join(output)
 
             except Exception as e:
-                log_warning(f"Error searching decisions: {e}")
+                log_warning("Error searching decisions", exc_info=True)
                 return f"Error: {e}"
 
         return search_decisions
@@ -690,7 +690,7 @@ class DecisionLogStore(LearningStore):
                 return "\n".join(output)
 
             except Exception as e:
-                log_warning(f"Error searching decisions: {e}")
+                log_warning("Error searching decisions", exc_info=True)
                 return f"Error: {e}"
 
         return search_decisions

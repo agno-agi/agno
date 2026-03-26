@@ -67,8 +67,8 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
             sort_by="created_at",
             sort_order="desc",
         )
-    except Exception as e:
-        logger.error(f"Error fetching sessions: {e}")
+    except Exception:
+        logger.error("Error fetching sessions", exc_info=True)
         st.sidebar.error("Could not load sessions")
         return
 
@@ -187,7 +187,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                             st.sidebar.success("Session renamed!")
                             st.rerun()
                         except Exception as e:
-                            logger.error(f"Error renaming session: {e}")
+                            logger.error("Error renaming session", exc_info=True)
                             st.sidebar.error(f"Error: {str(e)}")
                     else:
                         st.sidebar.error("Please enter a valid name")
@@ -254,13 +254,13 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: Calla
             else:
                 logger.warning(f"No session found in database for session_id: {session_id}")
 
-        except Exception as e:
-            logger.warning(f"Could not load chat history: {e}")
+        except Exception:
+            logger.warning("Could not load chat history", exc_info=True)
 
         st.rerun()
 
     except Exception as e:
-        logger.error(f"Error loading session: {e}")
+        logger.error("Error loading session", exc_info=True)
         st.sidebar.error(f"Error loading session: {str(e)}")
 
 
@@ -279,8 +279,8 @@ def display_response(agent: Agent, question: str) -> None:
                         # Display tool calls if available
                         if hasattr(resp_chunk, "tool") and resp_chunk.tool:
                             display_tool_calls(tool_calls_container, [resp_chunk.tool])
-                    except Exception as tool_error:
-                        logger.warning(f"Error displaying tool calls: {tool_error}")
+                    except Exception:
+                        logger.warning("Error displaying tool calls", exc_info=True)
 
                     if resp_chunk.content is not None:
                         content = str(resp_chunk.content)
@@ -296,8 +296,8 @@ def display_response(agent: Agent, question: str) -> None:
                         add_message("assistant", response, agent.run_response.tools)
                     else:
                         add_message("assistant", response)
-                except Exception as add_msg_error:
-                    logger.warning(f"Error adding message with tools: {add_msg_error}")
+                except Exception:
+                    logger.warning("Error adding message with tools", exc_info=True)
                     add_message("assistant", response)
 
             except Exception as e:
@@ -362,8 +362,8 @@ def knowledge_base_info_widget(agent: Agent) -> None:
             st.sidebar.info("💡 Upload documents to populate the knowledge base")
         else:
             st.sidebar.metric("Documents Loaded", doc_count)
-    except Exception as e:
-        logger.error(f"Error getting knowledge base info: {e}")
+    except Exception:
+        logger.error("Error getting knowledge base info", exc_info=True)
         st.sidebar.warning("Could not retrieve knowledge base information")
 
 

@@ -113,8 +113,8 @@ class VLLMEmbedder(Embedder):
         try:
             outputs = self._get_vllm_client().embed([text])
             return outputs[0] if outputs else None
-        except Exception as e:
-            logger.warning(f"Error creating local embedding: {e}")
+        except Exception:
+            logger.warning("Error creating local embedding", exc_info=True)
             return None
 
     def _create_embedding_remote(self, text: str) -> "CreateEmbeddingResponse":
@@ -142,8 +142,8 @@ class VLLMEmbedder(Embedder):
                         logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                     return embedding
                 return []
-        except Exception as e:
-            logger.warning(f"Error extracting embedding: {e}")
+        except Exception:
+            logger.warning("Error extracting embedding", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -155,8 +155,8 @@ class VLLMEmbedder(Embedder):
                 if usage:
                     return embedding, usage.model_dump()
                 return embedding, None
-            except Exception as e:
-                logger.warning(f"Error in remote embedding: {e}")
+            except Exception:
+                logger.warning("Error in remote embedding", exc_info=True)
                 return [], None
         else:
             embedding = self.get_embedding(text=text)
@@ -176,8 +176,8 @@ class VLLMEmbedder(Embedder):
                     req.update(self.request_params)
                 response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
                 return response.data[0].embedding
-            except Exception as e:
-                logger.warning(f"Error in async remote embedding: {e}")
+            except Exception:
+                logger.warning("Error in async remote embedding", exc_info=True)
                 return []
         else:
             # Local mode: use thread executor for CPU-bound operations
@@ -198,16 +198,16 @@ class VLLMEmbedder(Embedder):
                 embedding = response.data[0].embedding
                 usage = response.usage
                 return embedding, usage.model_dump() if usage else None
-            except Exception as e:
-                logger.warning(f"Error in async remote embedding: {e}")
+            except Exception:
+                logger.warning("Error in async remote embedding", exc_info=True)
                 return [], None
         else:
             # Local mode: use thread executor for CPU-bound operations
             try:
                 loop = asyncio.get_event_loop()
                 return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
-            except Exception as e:
-                logger.warning(f"Error in async local embedding: {e}")
+            except Exception:
+                logger.warning("Error in async local embedding", exc_info=True)
                 return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -252,8 +252,8 @@ class VLLMEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
 
-            except Exception as e:
-                logger.warning(f"Error in async batch embedding: {e}")
+            except Exception:
+                logger.warning("Error in async batch embedding", exc_info=True)
                 # Fallback: add empty results for failed batch
                 for _ in batch_texts:
                     all_embeddings.append([])

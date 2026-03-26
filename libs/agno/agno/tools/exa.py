@@ -182,7 +182,7 @@ class ExaTools(Toolkit):
             logger.error(f"Search timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to search exa {e}")
+            logger.error("Failed to search exa", exc_info=True)
             return f"Error: {e}"
 
     def get_contents(self, urls: list[str]) -> str:
@@ -217,7 +217,7 @@ class ExaTools(Toolkit):
             logger.error(f"Get contents timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to get contents from Exa: {e}")
+            logger.error("Failed to get contents from Exa", exc_info=True)
             return f"Error: {e}"
 
     def find_similar(self, url: str, num_results: int = 5) -> str:
@@ -260,7 +260,7 @@ class ExaTools(Toolkit):
             logger.error(f"Find similar timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to get similar links from Exa: {e}")
+            logger.error("Failed to get similar links from Exa", exc_info=True)
             return f"Error: {e}"
 
     def exa_answer(self, query: str, text: bool = False) -> str:
@@ -311,7 +311,7 @@ class ExaTools(Toolkit):
             logger.error(f"Answer generation timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to get answer from Exa: {e}")
+            logger.error("Failed to get answer from Exa", exc_info=True)
             return f"Error: {e}"
 
     def research(

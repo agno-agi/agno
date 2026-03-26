@@ -140,8 +140,8 @@ class Cassandra(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -152,25 +152,25 @@ class Cassandra(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    log_error("Rate limit detected during batch embedding.", exc_info=True)
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_error("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
                     # Fall back to individual embedding
                     for doc in documents:
                         try:
                             embed_tasks = [doc.async_embed(embedder=self.embedder)]
                             await asyncio.gather(*embed_tasks, return_exceptions=True)
                         except Exception as e:
-                            log_error(f"Error processing document '{doc.name}': {e}")
+                            log_error(f"Error processing document '{doc.name}'", exc_info=True)
         else:
             # Use individual embedding (original behavior)
             for doc in documents:
                 try:
                     embed_tasks = [doc.async_embed(embedder=self.embedder)]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
-                except Exception as e:
-                    log_error(f"Error processing document '{doc.name}': {e}")
+                except Exception:
+                    log_error(f"Error processing document '{doc.name}'", exc_info=True)
 
         futures = []
         for doc in documents:
@@ -492,8 +492,8 @@ class Cassandra(VectorDb):
             else:
                 log_debug(f"Updated metadata for {updated_count} documents with content_id {content_id}")
 
-        except Exception as e:
-            log_error(f"Error updating metadata for content_id {content_id}: {e}")
+        except Exception:
+            log_error(f"Error updating metadata for content_id {content_id}", exc_info=True)
             raise
 
     def get_supported_search_types(self) -> List[str]:

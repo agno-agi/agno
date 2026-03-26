@@ -196,7 +196,7 @@ class TavilyTools(Toolkit):
                 return json.dumps(results, indent=2)
 
         except Exception as e:
-            logger.error(f"Error extracting content from URLs: {e}")
+            logger.error("Error extracting content from URLs", exc_info=True)
             return f"Error extracting content: {str(e)}"
 
     def _format_extract_markdown(self, results: List[Dict[str, Any]]) -> str:

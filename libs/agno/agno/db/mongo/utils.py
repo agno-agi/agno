@@ -30,8 +30,8 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
             else:
                 collection.create_index([(key, 1)], unique=unique)
 
-    except Exception as e:
-        log_warning(f"Error creating indexes for {collection_type} collection: {e}")
+    except Exception:
+        log_warning(f"Error creating indexes for {collection_type} collection", exc_info=True)
 
 
 async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
@@ -47,8 +47,8 @@ async def create_collection_indexes_async(collection: Any, collection_type: str)
             else:
                 await collection.create_index([(key, 1)], unique=unique)
 
-    except Exception as e:
-        log_warning(f"Error creating indexes for {collection_type} collection: {e}")
+    except Exception:
+        log_warning(f"Error creating indexes for {collection_type} collection", exc_info=True)
 
 
 def apply_sorting(
@@ -211,8 +211,8 @@ def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, 
 
             results.append(record)
 
-        except Exception as e:
-            log_error(f"Error upserting metrics record: {e}")
+        except Exception:
+            log_error("Error upserting metrics record", exc_info=True)
             continue
 
     return results

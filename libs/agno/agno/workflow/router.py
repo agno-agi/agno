@@ -468,8 +468,8 @@ class Router:
                     self.selector, step_input, session_state, step_choices=step_names
                 )
                 return self._resolve_selector_result(step_name)
-            except Exception as e:
-                logger.error(f"Router CEL evaluation failed: {e}")
+            except Exception:
+                logger.error("Router CEL evaluation failed", exc_info=True)
                 return []
 
         # Handle callable selector
@@ -505,8 +505,8 @@ class Router:
                     self.selector, step_input, session_state, step_choices=step_names
                 )
                 return self._resolve_selector_result(step_name)
-            except Exception as e:
-                logger.error(f"Router CEL evaluation failed: {e}")
+            except Exception:
+                logger.error("Router CEL evaluation failed", exc_info=True)
                 return []
 
         # Handle callable selector
@@ -627,7 +627,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} failed: {e}")
+                logger.error(f"Router step {step_name} failed", exc_info=True)
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -777,7 +777,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} streaming failed: {e}")
+                logger.error(f"Router step {step_name} streaming failed", exc_info=True)
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -904,7 +904,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} async failed: {e}")
+                logger.error(f"Router step {step_name} async failed", exc_info=True)
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1056,7 +1056,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} async streaming failed: {e}")
+                logger.error(f"Router step {step_name} async streaming failed", exc_info=True)
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",

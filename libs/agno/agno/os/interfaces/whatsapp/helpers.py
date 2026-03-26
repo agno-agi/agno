@@ -251,7 +251,7 @@ async def _send_text(recipient: str, text: str, config: WhatsAppConfig, preview_
     except httpx.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp text message. Error response: {e.response.text}", exc_info=True)
         raise
-    except Exception as e:
+    except Exception:
         log_error("Unexpected error sending WhatsApp text message", exc_info=True)
         raise
 
@@ -288,7 +288,7 @@ async def _send_media(
     except httpx.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp {media_type} message. Error response: {e.response.text}", exc_info=True)
         raise
-    except Exception as e:
+    except Exception:
         log_error(f"Unexpected error sending WhatsApp {media_type} message", exc_info=True)
         raise
 

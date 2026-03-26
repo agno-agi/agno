@@ -505,8 +505,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return collection
 
-        except Exception as e:
-            log_error(f"Error getting collection {collection_name}: {e}")
+        except Exception:
+            log_error(f"Error getting collection {collection_name}", exc_info=True)
             raise
 
     def get_latest_schema_version(self):
@@ -549,7 +549,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error("Error deleting session", exc_info=True)
             raise e
 
     async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -571,7 +571,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error("Error deleting sessions", exc_info=True)
             raise e
 
     async def get_session(
@@ -626,7 +626,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading session: {e}")
+            log_error("Exception reading session", exc_info=True)
             raise e
 
     async def get_sessions(
@@ -737,7 +737,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return sessions
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_error("Exception reading sessions", exc_info=True)
             raise e
 
     async def rename_session(
@@ -804,7 +804,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error("Exception renaming session", exc_info=True)
             raise e
 
     async def upsert_session(
@@ -946,7 +946,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 return WorkflowSession.from_dict(session)  # type: ignore
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_error("Exception upserting session", exc_info=True)
             raise e
 
     async def upsert_sessions(
@@ -1079,8 +1079,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_error("Exception during bulk session upsert, falling back to individual upserts", exc_info=True)
 
             # Fallback to individual upserts
             return [
@@ -1124,7 +1124,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_error("Error deleting memory", exc_info=True)
             raise e
 
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1152,7 +1152,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"No memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_error("Error deleting memories", exc_info=True)
             raise e
 
     async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
@@ -1180,7 +1180,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [topic for topic in topics if topic]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error("Exception reading from collection", exc_info=True)
             raise e
 
     async def get_user_memory(
@@ -1219,7 +1219,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return UserMemory.from_dict(result_filtered)
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error("Exception reading from collection", exc_info=True)
             raise e
 
     async def get_user_memories(
@@ -1299,7 +1299,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [UserMemory.from_dict({k: v for k, v in record.items() if k != "_id"}) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error("Exception reading from collection", exc_info=True)
             raise e
 
     async def get_user_memory_stats(
@@ -1367,7 +1367,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return formatted_results, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error("Exception getting user memory stats", exc_info=True)
             raise e
 
     async def upsert_user_memory(
@@ -1418,7 +1418,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return UserMemory.from_dict(update_doc_filtered)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error("Exception upserting user memory", exc_info=True)
             raise e
 
     async def upsert_memories(
@@ -1502,8 +1502,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_error("Exception during bulk memory upsert, falling back to individual upserts", exc_info=True)
 
             # Fallback to individual upserts
             return [
@@ -1528,7 +1528,7 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_error("Exception deleting all memories", exc_info=True)
             raise e
 
     # -- Cultural Knowledge methods --
@@ -1546,7 +1546,7 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_error("Exception deleting all cultural knowledge", exc_info=True)
             raise e
 
     async def delete_cultural_knowledge(self, id: str) -> None:
@@ -1567,7 +1567,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Deleted cultural knowledge with ID: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error("Error deleting cultural knowledge", exc_info=True)
             raise e
 
     async def get_cultural_knowledge(
@@ -1603,7 +1603,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(result_filtered)
 
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_error("Error getting cultural knowledge", exc_info=True)
             raise e
 
     async def get_all_cultural_knowledge(
@@ -1679,7 +1679,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
 
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_error("Error getting all cultural knowledge", exc_info=True)
             raise e
 
     async def upsert_cultural_knowledge(
@@ -1733,7 +1733,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(doc_filtered)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error("Error upserting cultural knowledge", exc_info=True)
             raise e
 
     # -- Metrics methods --
@@ -1767,8 +1767,8 @@ class AsyncMongoDb(AsyncBaseDb):
             results = await collection.find(query, projection).to_list(length=None)
             return results
 
-        except Exception as e:
-            log_error(f"Exception reading from sessions collection: {e}")
+        except Exception:
+            log_error("Exception reading from sessions collection", exc_info=True)
             return []
 
     async def _get_metrics_calculation_starting_date(self, collection: AsyncMongoCollectionType) -> Optional[date]:
@@ -1794,8 +1794,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
-        except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {e}")
+        except Exception:
+            log_error("Exception getting metrics calculation starting date", exc_info=True)
             return None
 
     async def calculate_metrics(self) -> Optional[list[dict]]:
@@ -1854,7 +1854,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error calculating metrics: {e}")
+            log_error("Error calculating metrics", exc_info=True)
             raise e
 
     async def get_metrics(
@@ -1887,7 +1887,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return records, latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error("Error getting metrics", exc_info=True)
             raise e
 
     # -- Knowledge methods --
@@ -1911,7 +1911,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Deleted knowledge content with id '{id}'")
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error("Error deleting knowledge content", exc_info=True)
             raise e
 
     async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1938,7 +1938,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error("Error getting knowledge content", exc_info=True)
             raise e
 
     async def get_knowledge_contents(
@@ -1998,7 +1998,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error("Error getting knowledge contents", exc_info=True)
             raise e
 
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2024,7 +2024,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error("Error upserting knowledge content", exc_info=True)
             raise e
 
     # -- Eval methods --
@@ -2048,7 +2048,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error("Error creating eval run", exc_info=True)
             raise e
 
     async def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2066,7 +2066,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}", exc_info=True)
             raise e
 
     async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2084,7 +2084,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"Deleted {result.deleted_count} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}", exc_info=True)
             raise e
 
     async def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
@@ -2098,7 +2098,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}", exc_info=True)
             raise e
 
     async def get_eval_run(
@@ -2134,7 +2134,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}", exc_info=True)
             raise e
 
     async def get_eval_runs(
@@ -2228,7 +2228,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [EvalRunRecord.model_validate(row) for row in records]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error("Exception getting eval runs", exc_info=True)
             raise e
 
     async def rename_eval_run(
@@ -2266,7 +2266,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error updating eval run name {eval_run_id}: {e}")
+            log_error(f"Error updating eval run name {eval_run_id}", exc_info=True)
             raise e
 
     # --- Traces ---
@@ -2453,8 +2453,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 upsert=True,
             )
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_error("Error creating trace", exc_info=True)
             # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
@@ -2514,8 +2514,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 return TraceSchema.from_dict(result)
             return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_error("Error getting trace", exc_info=True)
             return None
 
     async def get_traces(
@@ -2613,8 +2613,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_error("Error getting traces", exc_info=True)
             return [], 0
 
     async def get_trace_stats(
@@ -2725,8 +2725,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return stats_list, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_error("Error getting trace stats", exc_info=True)
             return [], 0
 
     # --- Spans ---
@@ -2743,8 +2743,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             await collection.insert_one(span.to_dict())
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_error("Error creating span", exc_info=True)
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2763,8 +2763,8 @@ class AsyncMongoDb(AsyncBaseDb):
             span_dicts = [span.to_dict() for span in spans]
             await collection.insert_many(span_dicts)
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_error("Error creating spans batch", exc_info=True)
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2789,8 +2789,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 return SpanSchema.from_dict(result)
             return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_error("Error getting span", exc_info=True)
             return None
 
     async def get_spans(
@@ -2834,8 +2834,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             return spans
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_error("Error getting spans", exc_info=True)
             return []
 
     # -- Learning methods --

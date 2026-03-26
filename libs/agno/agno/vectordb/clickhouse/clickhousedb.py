@@ -112,8 +112,8 @@ class Clickhouse(VectorDb):
                     parameters=parameters,
                 )
             )
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.error("Unexpected error", exc_info=True)
             return False
 
     async def async_table_exists(self) -> bool:
@@ -128,8 +128,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
             return bool(result)
-        except Exception as e:
-            logger.error(f"Async error checking if table exists: {e}")
+        except Exception:
+            logger.error("Async error checking if table exists", exc_info=True)
             return False
 
     def create(self) -> None:
@@ -329,8 +329,8 @@ class Clickhouse(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -341,10 +341,10 @@ class Clickhouse(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.error("Rate limit detected during batch embedding.", exc_info=True)
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -483,8 +483,8 @@ class Clickhouse(VectorDb):
                 clickhouse_query,
                 parameters=parameters,
             )
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.error("Error searching for documents", exc_info=True)
             logger.error("Table might not exist, creating for future use")
             self.create()
             return []
@@ -544,8 +544,8 @@ class Clickhouse(VectorDb):
                 clickhouse_query,
                 parameters=parameters,
             )
-        except Exception as e:
-            logger.error(f"Async error searching for documents: {e}")
+        except Exception:
+            logger.error("Async error searching for documents", exc_info=True)
             logger.error("Table might not exist, creating for future use")
             await self.async_create()
             return []
@@ -826,8 +826,8 @@ class Clickhouse(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
     def get_supported_search_types(self) -> List[str]:

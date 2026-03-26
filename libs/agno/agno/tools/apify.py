@@ -120,8 +120,8 @@ Returns:
             self.functions[tool_name].parameters = props_to_json_schema(properties, required)
             log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")
 
-        except Exception as e:
-            logger.error(f"Failed to register Apify Actor '{actor_id}': {str(e)}")
+        except Exception:
+            logger.error(f"Failed to register Apify Actor '{actor_id}'", exc_info=True)
 
 
 # Constants

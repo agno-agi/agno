@@ -303,7 +303,7 @@ class Weaviate(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
+                    except Exception:
                         logger.error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
@@ -362,7 +362,7 @@ class Weaviate(VectorDb):
 
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
-                except Exception as e:
+                except Exception:
                     logger.error(f"Error inserting document {document.name}", exc_info=True)
         finally:
             await client.close()
@@ -480,7 +480,7 @@ class Weaviate(VectorDb):
 
             return search_results
 
-        except Exception as e:
+        except Exception:
             logger.error("Error searching for documents", exc_info=True)
             return []
 
@@ -529,7 +529,7 @@ class Weaviate(VectorDb):
             await client.close()
             return search_results
 
-        except Exception as e:
+        except Exception:
             logger.error("Error searching for documents", exc_info=True)
             return []
 
@@ -558,7 +558,7 @@ class Weaviate(VectorDb):
 
             return search_results
 
-        except Exception as e:
+        except Exception:
             logger.error("Error searching for documents", exc_info=True)
             return []
 
@@ -603,7 +603,7 @@ class Weaviate(VectorDb):
             await client.close()
             return search_results
 
-        except Exception as e:
+        except Exception:
             logger.error("Error searching for documents", exc_info=True)
             return []
 
@@ -639,7 +639,7 @@ class Weaviate(VectorDb):
 
             return search_results
 
-        except Exception as e:
+        except Exception:
             logger.error("Error searching for documents", exc_info=True)
             return []
 
@@ -691,7 +691,7 @@ class Weaviate(VectorDb):
             await client.close()
             return search_results
 
-        except Exception as e:
+        except Exception:
             logger.error("Error searching for documents", exc_info=True)
             return []
 
@@ -750,7 +750,7 @@ class Weaviate(VectorDb):
             collection.data.delete_by_id(doc_uuid)
             log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting document by ID '{id}'", exc_info=True)
             return False
 
@@ -764,7 +764,7 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by name '{name}'", exc_info=True)
             return False
 
@@ -784,7 +784,7 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by metadata '{metadata}'", exc_info=True)
             return False
 
@@ -798,7 +798,7 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by content_id '{content_id}'", exc_info=True)
             return False
 
@@ -808,7 +808,7 @@ class Weaviate(VectorDb):
             collection = self.get_client().collections.get(self.collection)
             collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by content_hash '{content_hash}'", exc_info=True)
             return False
 
@@ -908,7 +908,7 @@ class Weaviate(VectorDb):
             elif filter_conditions:
                 return filter_conditions[0]
 
-        except Exception as e:
+        except Exception:
             logger.error("Error building filter expression", exc_info=True)
             return None
 
@@ -930,7 +930,7 @@ class Weaviate(VectorDb):
         except ValueError:
             log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
             return False
-        except Exception as e:
+        except Exception:
             logger.error(f"Error checking if ID '{id}' exists", exc_info=True)
             return False
 
@@ -983,7 +983,7 @@ class Weaviate(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
@@ -1000,7 +1000,7 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by content_hash '{content_hash}'", exc_info=True)
             return False
 

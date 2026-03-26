@@ -97,8 +97,8 @@ async def download_event_files_async(
                     # Pass None for unsupported types to avoid File validation errors
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
-            except Exception as e:
-                log_error(f"Failed to download file {file_id}: {e}")
+            except Exception:
+                log_error(f"Failed to download file {file_id}", exc_info=True)
 
     return files, images, videos, audio, skipped
 
@@ -124,8 +124,8 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                         filename=getattr(item, "filename", None) or default_name,
                         thread_ts=thread_ts,
                     )
-                except Exception as e:
-                    log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
+                except Exception:
+                    log_error(f"Failed to upload {attr.rstrip('s')}", exc_info=True)
 
 
 async def send_slack_message_async(

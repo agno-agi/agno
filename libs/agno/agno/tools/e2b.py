@@ -48,7 +48,7 @@ class E2BTools(Toolkit):
         try:
             self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
         except Exception as e:
-            logger.error(f"Warning: Could not create sandbox: {e}")
+            logger.error("Warning: Could not create sandbox", exc_info=True)
             raise e
 
         # Last execution result for reference

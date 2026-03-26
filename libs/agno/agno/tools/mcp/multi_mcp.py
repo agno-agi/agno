@@ -110,8 +110,8 @@ class MultiMCPTools(Toolkit):
             try:
                 # Just verify we can inspect the signature - no parameter requirements
                 inspect.signature(header_provider)
-            except Exception as e:
-                log_warning(f"Could not validate header_provider signature: {e}")
+            except Exception:
+                log_warning("Could not validate header_provider signature", exc_info=True)
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -252,8 +252,8 @@ class MultiMCPTools(Toolkit):
                 else:
                     # Function takes no parameters
                     return header_provider()
-        except Exception as e:
-            log_warning(f"Error calling header_provider: {e}")
+        except Exception:
+            log_warning("Error calling header_provider", exc_info=True)
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:
@@ -437,8 +437,8 @@ class MultiMCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}", exc_info=True)
 
     @classmethod
     async def create_and_connect(
@@ -519,7 +519,7 @@ class MultiMCPTools(Toolkit):
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
 
-                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                log_error(f"Failed to initialize MCP server with params {server_params}", exc_info=True)
                 server_connection_errors.append(str(e))
                 continue
 
@@ -564,8 +564,8 @@ class MultiMCPTools(Toolkit):
         """Enter the async context manager."""
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}", exc_info=True)
         return self
 
     async def __aexit__(
@@ -616,8 +616,8 @@ class MultiMCPTools(Toolkit):
                     # Register the Function with the toolkit
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
-                except Exception as e:
-                    log_error(f"Failed to register tool {tool.name}: {e}")
+                except Exception:
+                    log_error(f"Failed to register tool {tool.name}", exc_info=True)
                     raise
 
     async def initialize(self, session: ClientSession, server_idx: int = 0) -> None:
@@ -633,6 +633,6 @@ class MultiMCPTools(Toolkit):
             self._session_to_server_idx[session_list_idx] = server_idx
 
             self._initialized = True
-        except Exception as e:
-            log_error(f"Failed to get MCP tools: {e}")
+        except Exception:
+            log_error("Failed to get MCP tools", exc_info=True)
             raise

@@ -50,12 +50,12 @@ class LinearTools(Toolkit):
             log_info("GraphQL query executed successfully.")
             return data.get("data")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error: {e}")
+        except requests.exceptions.RequestException:
+            logger.error("Request error", exc_info=True)
             raise
 
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
+        except Exception:
+            logger.error("Unexpected error", exc_info=True)
             raise
 
     def get_user_details(self) -> Optional[str]:
@@ -93,8 +93,8 @@ class LinearTools(Toolkit):
                 logger.error("Failed to retrieve the current user details")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error fetching authenticated user details: {e}")
+        except Exception:
+            logger.error("Error fetching authenticated user details", exc_info=True)
             raise
 
     def get_teams_details(self) -> Optional[str]:
@@ -131,8 +131,8 @@ class LinearTools(Toolkit):
                 logger.error("Failed to retrieve the current user details")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error fetching authenticated user details: {e}")
+        except Exception:
+            logger.error("Error fetching authenticated user details", exc_info=True)
             raise
 
     def get_issue_details(self, issue_id: str) -> Optional[str]:
@@ -171,8 +171,8 @@ class LinearTools(Toolkit):
                 logger.error(f"Failed to retrieve issue with ID {issue_id}.")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error retrieving issue with ID {issue_id}: {e}")
+        except Exception:
+            logger.error(f"Error retrieving issue with ID {issue_id}", exc_info=True)
             raise
 
     def create_issue(
@@ -238,8 +238,8 @@ class LinearTools(Toolkit):
                 logger.error("Issue creation failed.")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error creating issue '{title}' for team ID {team_id}: {e}")
+        except Exception:
+            logger.error(f"Error creating issue '{title}' for team ID {team_id}", exc_info=True)
             raise
 
     def update_issue(self, issue_id: str, title: Optional[str]) -> Optional[str]:
@@ -289,8 +289,8 @@ class LinearTools(Toolkit):
                 logger.error(f"Failed to update issue ID {issue_id}. Success flag was false.")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error updating issue ID {issue_id}: {e}")
+        except Exception:
+            logger.error(f"Error updating issue ID {issue_id}", exc_info=True)
             raise
 
     def get_user_assigned_issues(self, user_id: str) -> Optional[str]:
@@ -337,8 +337,8 @@ class LinearTools(Toolkit):
                 logger.error("Failed to retrieve user or issues.")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error retrieving issues for user ID {user_id}: {e}")
+        except Exception:
+            logger.error(f"Error retrieving issues for user ID {user_id}", exc_info=True)
             raise
 
     def get_workflow_issues(self, workflow_id: str) -> Optional[str]:
@@ -380,8 +380,8 @@ class LinearTools(Toolkit):
                 logger.error("Failed to retrieve issues for the specified workflow state.")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error retrieving issues for workflow state ID {workflow_id}: {e}")
+        except Exception:
+            logger.error(f"Error retrieving issues for workflow state ID {workflow_id}", exc_info=True)
             raise
 
     def get_high_priority_issues(self) -> Optional[str]:
@@ -421,6 +421,6 @@ class LinearTools(Toolkit):
                 logger.error("Failed to retrieve high-priority issues.")
                 return None
 
-        except Exception as e:
-            logger.error(f"Error retrieving high-priority issues: {e}")
+        except Exception:
+            logger.error("Error retrieving high-priority issues", exc_info=True)
             raise

@@ -246,7 +246,7 @@ def get_json_schema(
 
             else:
                 logger.warning(f"Could not parse argument {parameter_name} of type {type_hint}")
-        except Exception as e:
+        except Exception:
             logger.error(f"Error processing argument {parameter_name}", exc_info=True)
             continue
 

@@ -1589,8 +1589,8 @@ def _convert_response_to_structured_format(
                             run_response.content_type = output_schema.__name__
                     else:
                         log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                except Exception:
+                    log_warning("Failed to convert response to output model", exc_info=True)
             else:
                 log_warning("Something went wrong. Team run response content is not a string")
     elif team._member_response_model is not None:
@@ -1622,8 +1622,8 @@ def _convert_response_to_structured_format(
                             run_response.content_type = team._member_response_model.__name__
                     else:
                         log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                except Exception:
+                    log_warning("Failed to convert response to output model", exc_info=True)
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
 
@@ -1659,8 +1659,8 @@ def generate_team_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
 
 async def agenerate_team_followups(
@@ -1689,8 +1689,8 @@ async def agenerate_team_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
 
 def generate_team_followups_stream(
@@ -1728,8 +1728,8 @@ def generate_team_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
     if stream_events:
         yield handle_event(
@@ -1775,8 +1775,8 @@ async def agenerate_team_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
     if stream_events:
         yield handle_event(

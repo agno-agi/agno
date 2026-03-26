@@ -95,7 +95,7 @@ class OpenAITools(Toolkit):
                 response_format="text",
             )
         except Exception as e:  # type: ignore[return]
-            log_error(f"Failed to transcribe audio: {str(e)}")
+            log_error("Failed to transcribe audio", exc_info=True)
             return f"Failed to transcribe audio: {str(e)}"
 
         log_debug(f"Transcript: {transcript}")
@@ -163,7 +163,7 @@ class OpenAITools(Toolkit):
 
             return ToolResult(content="Failed to generate image: No content received from API.")
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            log_error(f"Failed to generate image using {self.image_model}", exc_info=True)
             return ToolResult(content=f"Failed to generate image: {e}")
 
     def generate_speech(

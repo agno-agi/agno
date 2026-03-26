@@ -126,7 +126,7 @@ class UpstashVectorDb(VectorDb):
         try:
             self.index.info()
             return True
-        except Exception as e:
+        except Exception:
             logger.error("Error checking index existence", exc_info=True)
             return False
 
@@ -205,7 +205,7 @@ class UpstashVectorDb(VectorDb):
                 )
 
             return response is not None and len(response) > 0
-        except Exception as e:
+        except Exception:
             logger.error(f"Error checking if content_hash {content_hash} exists", exc_info=True)
             return False
 
@@ -431,7 +431,7 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with ID: {id}")
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting document by ID {id}", exc_info=True)
             return False
 
@@ -450,7 +450,7 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with name: {name}")
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by name {name}", exc_info=True)
             return False
 
@@ -478,7 +478,7 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) matching metadata: {metadata}")
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by metadata {metadata}", exc_info=True)
             return False
 
@@ -547,7 +547,7 @@ class UpstashVectorDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
+                    except Exception:
                         logger.error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
@@ -642,7 +642,7 @@ class UpstashVectorDb(VectorDb):
         try:
             response = self.index.fetch(ids=[id], namespace=self.namespace)
             return len(response) > 0
-        except Exception as e:
+        except Exception:
             logger.error(f"Error checking if ID {id} exists", exc_info=True)
             return False
 
@@ -660,7 +660,7 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with content_hash: {content_hash}")
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting documents by content_hash {content_hash}", exc_info=True)
             return False
 
@@ -709,7 +709,7 @@ class UpstashVectorDb(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 

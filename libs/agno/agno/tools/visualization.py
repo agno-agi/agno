@@ -161,7 +161,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating bar chart: {str(e)}")
+            logger.error("Error creating bar chart", exc_info=True)
             return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"})
 
     def create_line_chart(
@@ -234,7 +234,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating line chart: {str(e)}")
+            logger.error("Error creating line chart", exc_info=True)
             return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"})
 
     def create_pie_chart(
@@ -299,7 +299,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating pie chart: {str(e)}")
+            logger.error("Error creating pie chart", exc_info=True)
             return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"})
 
     def create_scatter_plot(
@@ -388,7 +388,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating scatter plot: {str(e)}")
+            logger.error("Error creating scatter plot", exc_info=True)
             return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"})
 
     def create_histogram(
@@ -463,5 +463,5 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating histogram: {str(e)}")
+            logger.error("Error creating histogram", exc_info=True)
             return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})

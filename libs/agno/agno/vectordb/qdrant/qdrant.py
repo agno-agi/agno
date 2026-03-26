@@ -404,8 +404,8 @@ class Qdrant(VectorDb):
                             if j < len(embeddings):
                                 doc.embedding = embeddings[j]
                                 doc.usage = usages[j] if j < len(usages) else None
-                        except Exception as e:
-                            log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                        except Exception:
+                            log_error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
                 except Exception as e:
                     # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -416,10 +416,12 @@ class Qdrant(VectorDb):
                     )
 
                     if is_rate_limit:
-                        log_error(f"Rate limit detected during batch embedding. {e}")
+                        log_error("Rate limit detected during batch embedding.", exc_info=True)
                         raise e
                     else:
-                        log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                        log_warning(
+                            "Async batch embedding failed, falling back to individual embeddings", exc_info=True
+                        )
                         # Fall back to individual embedding
                         for doc in documents:
                             if self.search_type in [SearchType.vector, SearchType.hybrid]:
@@ -848,8 +850,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for name {name}. Status: {result.status}")
                 return False
 
-        except Exception as e:
-            log_warning(f"Error deleting points with name {name}: {e}")
+        except Exception:
+            log_warning(f"Error deleting points with name {name}", exc_info=True)
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -892,8 +894,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for metadata {metadata}. Status: {result.status}")
                 return False
 
-        except Exception as e:
-            log_warning(f"Error deleting points with metadata {metadata}: {e}")
+        except Exception:
+            log_warning(f"Error deleting points with metadata {metadata}", exc_info=True)
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -930,8 +932,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for content_id {content_id}. Status: {result.status}")
                 return False
 
-        except Exception as e:
-            log_warning(f"Error deleting points with content_id {content_id}: {e}")
+        except Exception:
+            log_warning(f"Error deleting points with content_id {content_id}", exc_info=True)
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -1015,8 +1017,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for content_hash {content_hash}. Status: {result.status}")
                 return False
 
-        except Exception as e:
-            log_warning(f"Error deleting points with content_hash {content_hash}: {e}")
+        except Exception:
+            log_warning(f"Error deleting points with content_hash {content_hash}", exc_info=True)
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -1080,8 +1082,8 @@ class Qdrant(VectorDb):
 
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
 
-        except Exception as e:
-            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            log_error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
     def close(self) -> None:

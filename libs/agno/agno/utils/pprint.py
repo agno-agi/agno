@@ -46,13 +46,13 @@ def pprint_run_response(
         elif isinstance(run_response.content, BaseModel):
             try:
                 single_response_content = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
-            except Exception as e:
-                logger.warning(f"Failed to convert response to Markdown: {e}")
+            except Exception:
+                logger.warning("Failed to convert response to Markdown", exc_info=True)
         else:
             try:
                 single_response_content = JSON(json.dumps(run_response.content), indent=4)
-            except Exception as e:
-                logger.warning(f"Failed to convert response to string: {e}")
+            except Exception:
+                logger.warning("Failed to convert response to string", exc_info=True)
 
         table = Table(box=ROUNDED, border_style="blue", show_header=False)
         table.add_row(single_response_content)
@@ -77,8 +77,8 @@ def pprint_run_response(
                     if isinstance(resp.content, BaseModel):
                         try:
                             JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
-                        except Exception as e:
-                            logger.warning(f"Failed to convert response to Markdown: {e}")
+                        except Exception:
+                            logger.warning("Failed to convert response to Markdown", exc_info=True)
                     else:
                         if isinstance(streaming_response_content, JSON):
                             streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
@@ -129,13 +129,13 @@ async def apprint_run_response(
         elif isinstance(run_response.content, BaseModel):
             try:
                 single_response_content = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
-            except Exception as e:
-                logger.warning(f"Failed to convert response to Markdown: {e}")
+            except Exception:
+                logger.warning("Failed to convert response to Markdown", exc_info=True)
         else:
             try:
                 single_response_content = JSON(json.dumps(run_response.content), indent=4)
-            except Exception as e:
-                logger.warning(f"Failed to convert response to string: {e}")
+            except Exception:
+                logger.warning("Failed to convert response to string", exc_info=True)
 
         table = Table(box=ROUNDED, border_style="blue", show_header=False)
         table.add_row(single_response_content)
@@ -161,8 +161,8 @@ async def apprint_run_response(
                     if isinstance(resp.content, BaseModel):
                         try:
                             streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
-                        except Exception as e:
-                            logger.warning(f"Failed to convert response to Markdown: {e}")
+                        except Exception:
+                            logger.warning("Failed to convert response to Markdown", exc_info=True)
                     else:
                         if isinstance(streaming_response_content, JSON):
                             streaming_response_content = streaming_response_content.text + "\n"  # type: ignore

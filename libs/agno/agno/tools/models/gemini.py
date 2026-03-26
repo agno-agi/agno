@@ -67,7 +67,7 @@ class GeminiTools(Toolkit):
             self.client = Client(**client_params)
             log_debug("Google GenAI Client created successfully.")
         except Exception as e:
-            log_error(f"Failed to create Google GenAI Client: {e}", exc_info=True)
+            log_error("Failed to create Google GenAI Client", exc_info=True)
             raise ValueError(f"Failed to create Google GenAI Client. Error: {e}")
 
         self.image_model = image_generation_model
@@ -127,7 +127,7 @@ class GeminiTools(Toolkit):
                 return ToolResult(content="Failed to generate image: No valid images were generated.")
 
         except Exception as e:
-            log_error(f"Failed to generate image: Client or method not available ({e})")
+            log_error("Failed to generate image: Client or method not available", exc_info=True)
             return ToolResult(content=f"Failed to generate image: Client or method not available ({e})")
 
     def generate_video(
@@ -199,5 +199,5 @@ class GeminiTools(Toolkit):
                 return ToolResult(content="Failed to generate video: No valid videos were generated.")
 
         except Exception as e:
-            log_error(f"Failed to generate video: {e}")
+            log_error("Failed to generate video", exc_info=True)
             return ToolResult(content=f"Failed to generate video: {e}")

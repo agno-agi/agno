@@ -71,8 +71,8 @@ class S3Reader(Reader):
                 temporary_file.unlink()
                 return documents
 
-        except Exception as e:
-            log_error(f"Error reading: {s3_object.uri}: {e}")
+        except Exception:
+            log_error(f"Error reading: {s3_object.uri}", exc_info=True)
 
         return []
 

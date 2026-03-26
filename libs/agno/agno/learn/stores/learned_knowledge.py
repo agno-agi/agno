@@ -773,8 +773,8 @@ class LearnedKnowledgeStore(LearningStore):
             log_debug(f"LearnedKnowledgeStore.search: found {len(learnings)} learnings for query: {query[:50]}...")
             return learnings[:limit]
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.search failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.search failed", exc_info=True)
             return []
 
     async def asearch(
@@ -816,8 +816,8 @@ class LearnedKnowledgeStore(LearningStore):
             log_debug(f"LearnedKnowledgeStore.asearch: found {len(learnings)} learnings for query: {query[:50]}...")
             return learnings[:limit]
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.asearch failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.asearch failed", exc_info=True)
             return []
 
     def _build_search_filters(
@@ -942,8 +942,8 @@ class LearnedKnowledgeStore(LearningStore):
             log_debug(f"LearnedKnowledgeStore.save: saved learning '{title}' (namespace: {effective_namespace})")
             return True
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.save failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.save failed", exc_info=True)
             return False
 
     async def asave(
@@ -1021,8 +1021,8 @@ class LearnedKnowledgeStore(LearningStore):
             log_debug(f"LearnedKnowledgeStore.asave: saved learning '{title}' (namespace: {effective_namespace})")
             return True
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.asave failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.asave failed", exc_info=True)
             return False
 
     # =========================================================================
@@ -1051,8 +1051,8 @@ class LearnedKnowledgeStore(LearningStore):
                 log_warning("LearnedKnowledgeStore.delete: knowledge base does not support deletion")
                 return False
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.delete failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.delete failed", exc_info=True)
             return False
 
     async def adelete(self, title: str) -> bool:
@@ -1073,8 +1073,8 @@ class LearnedKnowledgeStore(LearningStore):
             log_debug(f"LearnedKnowledgeStore.adelete: deleted learning '{title}'")
             return True
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.adelete failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.adelete failed", exc_info=True)
             return False
 
     # =========================================================================
@@ -1129,8 +1129,8 @@ class LearnedKnowledgeStore(LearningStore):
                 self.learning_saved = True
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.extract_and_save failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.extract_and_save failed", exc_info=True)
 
     async def aextract_and_save(
         self,
@@ -1180,8 +1180,8 @@ class LearnedKnowledgeStore(LearningStore):
                 self.learning_saved = True
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.aextract_and_save failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore.aextract_and_save failed", exc_info=True)
 
     def _build_extraction_messages(
         self,
@@ -1363,8 +1363,8 @@ These insights are already in the knowledge base. Do not save variations of thes
                 func = Function.from_callable(tool, strict=True)
                 func.strict = True
                 functions.append(func)
-            except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+            except Exception:
+                log_warning(f"Could not add function {tool}", exc_info=True)
 
         return functions
 
@@ -1431,8 +1431,8 @@ These insights are already in the knowledge base. Do not save variations of thes
 
             return None
 
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore._parse_result failed: {e}")
+        except Exception:
+            log_warning("LearnedKnowledgeStore._parse_result failed", exc_info=True)
             return None
 
     def _to_text_content(self, learning: Any) -> str:

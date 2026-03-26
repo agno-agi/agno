@@ -1035,8 +1035,8 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
-            except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+            except Exception:
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id})", exc_info=True)
 
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases."""
@@ -1059,8 +1059,8 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
-            except Exception as e:
-                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+            except Exception:
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id})", exc_info=True)
 
     async def _close_databases(self) -> None:
         """Close all database connections and release connection pools."""
@@ -1085,8 +1085,8 @@ class AgentOS:
                         await db.close()
                     else:
                         db.close()
-            except Exception as e:
-                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
+            except Exception:
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id})", exc_info=True)
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""

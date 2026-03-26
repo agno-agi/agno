@@ -715,7 +715,7 @@ class MemoryManager:
                 if memory_search is None:
                     log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []
-            except Exception as e:
+            except Exception:
                 log_warning("Failed to convert memory_search response to MemorySearchResponse", exc_info=True)
                 return []
 
@@ -950,7 +950,7 @@ class MemoryManager:
                 func.strict = True
                 _functions.append(func)
                 log_debug(f"Added function {func.name}")
-            except Exception as e:
+            except Exception:
                 log_warning(f"Could not add function {tool}", exc_info=True)
 
         return _functions

@@ -33,7 +33,7 @@ def get_anthropic_reasoning(
     """Get reasoning from an Anthropic Claude model."""
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return None
 
@@ -89,7 +89,7 @@ def get_anthropic_reasoning_stream(
                         yield (event.reasoning_content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return
 
@@ -112,7 +112,7 @@ async def aget_anthropic_reasoning(
     """Get reasoning from an Anthropic Claude model asynchronously."""
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return None
 
@@ -168,7 +168,7 @@ async def aget_anthropic_reasoning_stream(
                         yield (event.reasoning_content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
-    except Exception as e:
+    except Exception:
         logger.warning("Reasoning error", exc_info=True)
         return
 

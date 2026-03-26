@@ -153,8 +153,8 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
 
             return True
 
-        except Exception as e:
-            log_error(f"Failed to create table {table_name}: {e}")
+        except Exception:
+            log_error(f"Failed to create table {table_name}", exc_info=True)
             return False
 
 
@@ -322,8 +322,8 @@ def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
 
         return Session.from_dict(deserialized)  # type: ignore
 
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {e}")
+    except Exception:
+        log_error("Failed to deserialize session", exc_info=True)
         return None
 
 
@@ -513,8 +513,8 @@ def fetch_all_sessions_data_by_type(
             response = dynamodb_client.query(**query_kwargs)
             items.extend(response.get("Items", []))
 
-    except Exception as e:
-        log_error(f"Failed to fetch sessions: {e}")
+    except Exception:
+        log_error("Failed to fetch sessions", exc_info=True)
 
     return items
 
@@ -535,8 +535,8 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
 
             dynamodb_client.batch_write_item(RequestItems=request_items)
 
-    except Exception as e:
-        log_error(f"Failed to bulk upsert metrics: {e}")
+    except Exception:
+        log_error("Failed to bulk upsert metrics", exc_info=True)
 
 
 # -- Query utils --
@@ -702,8 +702,8 @@ def process_query_results(
             item = deserialize_func(data)
             if item:
                 deserialized_items.append(item)
-        except Exception as e:
-            log_error(f"Failed to deserialize item: {e}")
+        except Exception:
+            log_error("Failed to deserialize item", exc_info=True)
 
     return deserialized_items
 

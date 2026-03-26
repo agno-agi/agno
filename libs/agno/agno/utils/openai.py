@@ -54,9 +54,10 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                                 f"Could not determine audio format from URL path: {parsed_url.path}. Defaulting."
                             )
                             audio_format = "wav"
-                    except Exception as e:
+                    except Exception:
                         log_warning(
-                            f"Could not determine audio format from URL: {audio_snippet.url}. Error: {e}. Defaulting."
+                            f"Could not determine audio format from URL: {audio_snippet.url}. Defaulting.",
+                            exc_info=True,
                         )
                         audio_format = "wav"  # Default if guessing fails
 
@@ -69,8 +70,8 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                         encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
-                except Exception as e:
-                    log_error(f"Failed to read audio file {path}: {e}")
+                except Exception:
+                    log_error(f"Failed to read audio file {path}", exc_info=True)
                     continue  # Skip this audio snippet if file reading fails
             else:
                 log_error(f"Audio file not found or is not a file: {path}")
@@ -129,8 +130,8 @@ def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
             base64_image = base64.b64encode(image_file.read()).decode("utf-8")
             image_url = f"data:{mime_type};base64,{base64_image}"
             return {"type": "image_url", "image_url": {"url": image_url}}
-    except Exception as e:
-        log_error(f"Failed to read image file {path}: {e}")
+    except Exception:
+        log_error(f"Failed to read image file {path}", exc_info=True)
         raise  # Re-raise the exception after logging
 
 
@@ -170,11 +171,11 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
 
         return image_payload
 
-    except (FileNotFoundError, IsADirectoryError, ValueError) as e:
-        log_error(f"Failed to process image due to invalid input: {str(e)}")
+    except (FileNotFoundError, IsADirectoryError, ValueError):
+        log_error("Failed to process image due to invalid input", exc_info=True)
         return None  # Return None for handled validation errors
-    except Exception as e:
-        log_error(f"An unexpected error occurred while processing image: {str(e)}")
+    except Exception:
+        log_error("An unexpected error occurred while processing image", exc_info=True)
         # Depending on policy, you might want to return None or re-raise
         return None  # Return None for unexpected errors as well, preventing crashes
 
@@ -203,8 +204,8 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             image_data = process_image(image)
             if image_data:
                 image_messages.append(image_data)
-        except Exception as e:
-            log_error(f"Failed to process image: {str(e)}")
+        except Exception:
+            log_error("Failed to process image", exc_info=True)
             continue
 
     return image_messages

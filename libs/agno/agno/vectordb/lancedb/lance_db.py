@@ -259,14 +259,14 @@ class LanceDb(VectorDb):
                     self.table_name, schema=schema, mode="overwrite", exist_ok=True
                 )
                 log_debug(f"Successfully created async table: {self.table_name}")
-            except Exception as e:
+            except Exception:
                 logger.error("Error creating async table", exc_info=True)
                 # Try to fall back to sync table creation
                 try:
                     log_debug("Falling back to sync table creation")
                     self.table = self._init_table()
                     log_debug("Sync table created successfully")
-                except Exception as sync_e:
+                except Exception:
                     logger.error("Sync table creation also failed", exc_info=True)
                     raise
 
@@ -666,7 +666,7 @@ class LanceDb(VectorDb):
                     )
                 )
 
-        except Exception as e:
+        except Exception:
             logger.error("Error building search results", exc_info=True)
 
         return search_results
@@ -757,7 +757,7 @@ class LanceDb(VectorDb):
                 if payload.get("name") == name:
                     return True
             return False
-        except Exception as e:
+        except Exception:
             logger.error("Error checking name existence", exc_info=True)
             return False
 
@@ -773,7 +773,7 @@ class LanceDb(VectorDb):
         try:
             result = self.table.search().where(f"{self._id} = '{id}'").to_list()
             return len(result) > 0
-        except Exception as e:
+        except Exception:
             logger.error("Error checking id existence", exc_info=True)
             return False
 
@@ -788,7 +788,7 @@ class LanceDb(VectorDb):
             self.table.delete(f"{self._id} = '{id}'")
             log_info(f"Deleted records with id '{id}' from table '{self.table_name}'.")
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting rows by id '{id}'", exc_info=True)
             return False
 
@@ -817,7 +817,7 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with name '{name}' to delete.")
                 return False
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting rows by name '{name}'", exc_info=True)
             return False
 
@@ -856,7 +856,7 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with metadata '{metadata}' to delete.")
                 return False
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting rows by metadata '{metadata}'", exc_info=True)
             return False
 
@@ -887,7 +887,7 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with content_id '{content_id}' to delete.")
                 return False
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting rows by content_id '{content_id}'", exc_info=True)
             return False
 
@@ -918,7 +918,7 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with content_hash '{content_hash}' to delete.")
                 return False
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error deleting rows by content_hash '{content_hash}'", exc_info=True)
             return False
 
@@ -939,7 +939,7 @@ class LanceDb(VectorDb):
 
             return False
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error checking content_hash existence '{content_hash}'", exc_info=True)
             return False
 
@@ -1016,7 +1016,7 @@ class LanceDb(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 

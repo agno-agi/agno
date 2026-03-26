@@ -48,7 +48,7 @@ class WebexTools(Toolkit):
             response = self.client.messages.create(roomId=room_id, text=text)
             return json.dumps(response.json_data)
         except ApiError as e:
-            logger.error(f"Error sending message: {e} in room: {room_id}")
+            logger.error(f"Error sending message in room: {room_id}", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def list_rooms(self) -> str:
@@ -72,5 +72,5 @@ class WebexTools(Toolkit):
 
             return json.dumps({"rooms": rooms_list}, indent=4)
         except ApiError as e:
-            logger.error(f"Error listing rooms: {e}")
+            logger.error("Error listing rooms", exc_info=True)
             return json.dumps({"error": str(e)})

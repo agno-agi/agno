@@ -1891,7 +1891,7 @@ class Step:
 
                     images.append(Image(**image_kwargs))
 
-                except Exception as e:
+                except Exception:
                     logger.error("Failed to process image content", exc_info=True)
                     # Skip this image if we can't process it
                     continue

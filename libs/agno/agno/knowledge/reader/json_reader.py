@@ -72,8 +72,8 @@ class JSONReader(Reader):
             return documents
         except (FileNotFoundError, ValueError, json.JSONDecodeError):
             raise
-        except Exception as e:
-            log_error(f"Error reading: {path}: {e}")
+        except Exception:
+            log_error(f"Error reading: {path}", exc_info=True)
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:

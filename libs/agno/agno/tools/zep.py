@@ -127,8 +127,8 @@ class ZepTools(Toolkit):
             self._initialized = True
             return True
 
-        except Exception as e:
-            log_error(f"Failed to initialize ZepTools: {e}")
+        except Exception:
+            log_error("Failed to initialize ZepTools", exc_info=True)
             self.zep_client = None
             self._initialized = False
             return False
@@ -198,8 +198,8 @@ class ZepTools(Toolkit):
                 log_warning(warning_msg)
                 return warning_msg
 
-        except Exception as e:
-            log_error(f"Failed to get Zep memory for session {self.session_id}: {e}")
+        except Exception:
+            log_error(f"Failed to get Zep memory for session {self.session_id}", exc_info=True)
             return f"Error getting memory for session {self.session_id}"
 
     def search_zep_memory(self, query: str, search_scope: str = "edges") -> str:
@@ -235,7 +235,7 @@ class ZepTools(Toolkit):
                 return f"No {search_scope} found for query: {query}"
 
         except Exception as e:
-            log_error(f"Failed to search Zep graph for user {self.user_id}: {e}")
+            log_error(f"Failed to search Zep graph for user {self.user_id}", exc_info=True)
             return f"Error searching graph: {e}"
 
 
@@ -333,8 +333,8 @@ class ZepAsyncTools(Toolkit):
             self._initialized = True
             return True
 
-        except Exception as e:
-            log_error(f"Failed to initialize ZepTools: {e}")
+        except Exception:
+            log_error("Failed to initialize ZepTools", exc_info=True)
             self.zep_client = None
             self._initialized = False
             return False
@@ -450,5 +450,5 @@ class ZepAsyncTools(Toolkit):
                 return f"No {scope} found for query: {query}"
 
         except Exception as e:
-            log_error(f"Failed to search Zep graph for user {self.user_id}: {e}")
+            log_error(f"Failed to search Zep graph for user {self.user_id}", exc_info=True)
             return f"Error searching graph: {e}"

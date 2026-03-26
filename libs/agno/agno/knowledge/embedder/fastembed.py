@@ -40,8 +40,8 @@ class FastEmbedEmbedder(Embedder):
 
         try:
             return list(embedding_list)
-        except Exception as e:
-            logger.warning(e)
+        except Exception:
+            logger.warning("Error processing embedding", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

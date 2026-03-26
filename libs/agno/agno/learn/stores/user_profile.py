@@ -470,7 +470,7 @@ class UserProfileStore(LearningStore):
                 return "No fields provided to update"
 
             except Exception as e:
-                log_warning(f"Error updating profile: {e}")
+                log_warning("Error updating profile", exc_info=True)
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
@@ -547,7 +547,7 @@ class UserProfileStore(LearningStore):
                 return "No fields provided to update"
 
             except Exception as e:
-                log_warning(f"Error updating profile: {e}")
+                log_warning("Error updating profile", exc_info=True)
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
@@ -1036,8 +1036,8 @@ class UserProfileStore(LearningStore):
                 func.strict = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
-            except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+            except Exception:
+                log_warning(f"Could not add function {tool}", exc_info=True)
 
         return functions
 

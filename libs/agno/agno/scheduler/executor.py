@@ -234,7 +234,7 @@ class ScheduleExecutor:
                             await db.update_schedule(schedule_id, enabled=False)
                         else:
                             db.update_schedule(schedule_id, enabled=False)
-                    except Exception as exc:
+                    except Exception:
                         log_error(f"Failed to disable schedule {schedule_id} after cron failure", exc_info=True)
 
                 try:
@@ -242,7 +242,7 @@ class ScheduleExecutor:
                         await db.release_schedule(schedule_id, next_run_at=next_run_at)
                     else:
                         db.release_schedule(schedule_id, next_run_at=next_run_at)
-                except Exception as exc:
+                except Exception:
                     log_error(f"Failed to release schedule {schedule_id}", exc_info=True)
 
     # ------------------------------------------------------------------
@@ -414,7 +414,7 @@ class ScheduleExecutor:
                     headers=headers,
                     params={"session_id": session_id},
                 )
-            except Exception as exc:
+            except Exception:
                 log_warning(f"Poll request failed for run {run_id}", exc_info=True)
                 continue
 

@@ -246,8 +246,8 @@ class DoclingReader(Reader):
         except (FileNotFoundError, ValueError):
             raise
 
-        except Exception as e:
-            log_error(f"Error converting document: {file}: {e}")
+        except Exception:
+            log_error(f"Error converting document: {file}", exc_info=True)
             return []
 
     async def async_read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -256,6 +256,6 @@ class DoclingReader(Reader):
             return await asyncio.to_thread(self.read, file, name)
         except (FileNotFoundError, ValueError):
             raise
-        except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+        except Exception:
+            log_error("Error reading file asynchronously", exc_info=True)
             return []

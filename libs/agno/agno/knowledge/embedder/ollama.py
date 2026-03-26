@@ -29,9 +29,9 @@ except ImportError as e:
     else:
         raise ImportError("Missing dependencies. Install with `pip install packaging importlib-metadata`") from e
 
-except Exception as e:
+except Exception:
     # Catch-all for unexpected errors
-    log_error(f"An unexpected error occurred: {e}")
+    log_error("An unexpected error occurred", exc_info=True)
 
 
 @dataclass
@@ -106,8 +106,8 @@ class OllamaEmbedder(Embedder):
                 logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                 return []
             return embedding
-        except Exception as e:
-            logger.warning(e)
+        except Exception:
+            logger.warning("Error getting embedding", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -143,8 +143,8 @@ class OllamaEmbedder(Embedder):
                 logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                 return []
             return embedding
-        except Exception as e:
-            logger.warning(f"Error getting embedding: {e}")
+        except Exception:
+            logger.warning("Error getting embedding", exc_info=True)
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

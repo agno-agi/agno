@@ -87,7 +87,7 @@ class CsvTools(Toolkit):
                     csv_data = [row for row in reader]
             return json.dumps(csv_data)
         except Exception as e:
-            logger.error(f"Error reading csv: {e}")
+            logger.error("Error reading csv", exc_info=True)
             return f"Error reading csv: {e}"
 
     def get_columns(self, csv_name: str) -> str:
@@ -113,7 +113,7 @@ class CsvTools(Toolkit):
 
             return json.dumps(columns)
         except Exception as e:
-            logger.error(f"Error getting columns: {e}")
+            logger.error("Error getting columns", exc_info=True)
             return f"Error getting columns: {e}"
 
     def query_csv_file(self, csv_name: str, sql_query: str) -> str:
@@ -181,5 +181,5 @@ class CsvTools(Toolkit):
             log_debug(f"Query result: {result_output}")
             return result_output
         except Exception as e:
-            logger.error(f"Error querying csv: {e}")
+            logger.error("Error querying csv", exc_info=True)
             return f"Error querying csv: {e}"

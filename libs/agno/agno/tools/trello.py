@@ -28,8 +28,8 @@ class TrelloTools(Toolkit):
 
         try:
             self.client = TrelloClient(api_key=self.api_key, api_secret=self.api_secret, token=self.token)
-        except Exception as e:
-            logger.error(f"Error initializing Trello client: {e}")
+        except Exception:
+            logger.error("Error initializing Trello client", exc_info=True)
             self.client = None
 
         tools: List[Any] = [
