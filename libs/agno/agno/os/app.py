@@ -607,7 +607,7 @@ class AgentOS:
             existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
             for agent in self.agents:
                 agent_id = getattr(agent, "id", None)
-                if not isinstance(agent, RemoteAgent) and agent_id is not None and agent_id not in existing_agent_ids:
+                if isinstance(agent, Agent) and agent_id is not None and agent_id not in existing_agent_ids:
                     self.registry.agents.append(agent)
                     existing_agent_ids.add(agent_id)
 

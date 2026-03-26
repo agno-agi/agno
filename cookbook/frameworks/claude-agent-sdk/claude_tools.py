@@ -24,4 +24,7 @@ agent = ClaudeAgentSDK(
 )
 
 # Streaming with tool calls visible
-agent.print_response("List the Python files in the current directory and summarize what this project does", stream=True)
+agent.print_response(
+    "List the Python files in the current directory and summarize what this project does",
+    stream=True,
+)

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, cast
 from uuid import uuid4
 
 from agno.frameworks.base import BaseExternalAgent
@@ -201,7 +201,7 @@ class LangGraphAgent(BaseExternalAgent):
             result = self.run(None, stream=stream, session_id=session_id, **kwargs)
             if stream:
                 # Consume the iterator before restoring config
-                return list(result)
+                return list(cast(Iterator, result))
             return result
         finally:
             self.config = original_config
@@ -256,7 +256,7 @@ class LangGraphAgent(BaseExternalAgent):
         try:
             result = self.run(None, stream=stream, session_id=session_id, **kwargs)
             if stream:
-                return list(result)
+                return list(cast(Iterator, result))
             return result
         finally:
             self.config = original_config

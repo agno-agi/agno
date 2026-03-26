@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -506,7 +506,7 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
 def get_agent_by_id(
     agent_id: str,
-    agents: Optional[List[Union[Agent, RemoteAgent, AgentLike]]] = None,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentLike]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,

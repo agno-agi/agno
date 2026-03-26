@@ -9,12 +9,12 @@ Usage:
 """
 
 import json
-from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
-from langgraph.graph import MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode
 
 from agno.frameworks.langgraph import LangGraphAgent
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.graph import MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
 
 # ----- Define tools -----
@@ -60,7 +60,9 @@ graph = StateGraph(MessagesState)
 graph.add_node("chatbot", chatbot)
 graph.add_node("tools", ToolNode(tools))
 graph.set_entry_point("chatbot")
-graph.add_conditional_edges("chatbot", should_continue, {"tools": "tools", "__end__": "__end__"})
+graph.add_conditional_edges(
+    "chatbot", should_continue, {"tools": "tools", "__end__": "__end__"}
+)
 graph.add_edge("tools", "chatbot")
 compiled = graph.compile()
 

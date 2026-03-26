@@ -74,7 +74,8 @@ class BaseExternalAgent:
                 **kwargs,
             )
         else:
-            return self._arun_non_stream(
+            # Returns a coroutine that the caller (router) awaits
+            return self._arun_non_stream(  # type: ignore[return-value]
                 input,
                 session_id=session_id,
                 user_id=user_id,
@@ -156,7 +157,7 @@ class BaseExternalAgent:
                     panels.append(message_panel)
                     live_log.update(Group(*panels))
 
-                for event in self.run(input=input, stream=True, session_id=session_id, user_id=user_id, **kwargs):
+                for event in self.run(input=input, stream=True, session_id=session_id, user_id=user_id, **kwargs):  # type: ignore[union-attr]
                     if event.event == RunEvent.run_content.value:  # type: ignore
                         if hasattr(event, "content") and isinstance(event.content, str):
                             _response_content += event.content

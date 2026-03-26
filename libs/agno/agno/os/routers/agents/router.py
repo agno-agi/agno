@@ -94,7 +94,7 @@ async def agent_response_streamer(
             stream_events=stream_events,
             **kwargs,
         )
-        async for run_response_chunk in run_response:
+        async for run_response_chunk in run_response:  # type: ignore[union-attr]
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
@@ -129,7 +129,7 @@ async def agent_continue_response_streamer(
         if auth_token and isinstance(agent, RemoteAgent):
             extra_kwargs["auth_token"] = auth_token
 
-        continue_response = agent.acontinue_run(
+        continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
@@ -473,7 +473,7 @@ def get_agent_router(
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
-        await agent.acancel_run(run_id=run_id)
+        await agent.acancel_run(run_id=run_id)  # type: ignore[union-attr]
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
@@ -797,7 +797,7 @@ def get_agent_router(
         if not hasattr(agent, "aget_run_output"):
             raise HTTPException(status_code=501, detail="This agent does not support run polling")
 
-        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 

@@ -215,7 +215,7 @@ def get_base_router(
         # Collect models from local agents
         if os.agents:
             for agent in os.agents:
-                model = cast(Model, agent.model)
+                model = cast(Model, getattr(agent, "model", None))
                 if model and model.id is not None and model.provider is not None:
                     key = (model.id, model.provider)
                     if key not in unique_models:

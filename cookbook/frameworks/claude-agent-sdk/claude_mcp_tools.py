@@ -54,7 +54,10 @@ try:
         agent_name="Claude City Agent",
         model="claude-sonnet-4-20250514",
         mcp_servers={"city-tools": server},
-        allowed_tools=["mcp__city-tools__get_weather", "mcp__city-tools__get_population"],
+        allowed_tools=[
+            "mcp__city-tools__get_weather",
+            "mcp__city-tools__get_population",
+        ],
         max_turns=5,
     )
 

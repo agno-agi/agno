@@ -19,4 +19,6 @@ agent = ClaudeAgentSDK(
 )
 
 # Use .print_response() just like a native Agno agent
-agent.print_response("What is quantum computing? Explain in 2-3 sentences.", stream=True)
+agent.print_response(
+    "What is quantum computing? Explain in 2-3 sentences.", stream=True
+)

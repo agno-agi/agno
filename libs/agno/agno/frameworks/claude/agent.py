@@ -11,6 +11,7 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 
+
 @dataclass
 class ClaudeAgentSDK(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
@@ -237,10 +238,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
                             tool_use_id = getattr(block, "tool_use_id", str(uuid4()))
                             result_content = getattr(block, "content", "")
                             if isinstance(result_content, list):
-                                result_str = " ".join(
-                                    getattr(item, "text", str(item))
-                                    for item in result_content
-                                )
+                                result_str = " ".join(getattr(item, "text", str(item)) for item in result_content)
                             else:
                                 result_str = str(result_content) if result_content else ""
                             yield ToolCallCompletedEvent(

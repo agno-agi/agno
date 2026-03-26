@@ -14,11 +14,10 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/langgraph_time_travel.py
 """
 
+from agno.frameworks.langgraph import LangGraphAgent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import MessagesState, StateGraph
-
-from agno.frameworks.langgraph import LangGraphAgent
 
 # ----- Build a LangGraph with checkpointer -----
 llm = ChatOpenAI(model="gpt-4o-mini")
@@ -49,7 +48,9 @@ SESSION_ID = "demo-session"
 print("=" * 60)
 print("Step 1: Initial conversation")
 print("=" * 60)
-agent.print_response("What is the capital of France?", stream=True, session_id=SESSION_ID)
+agent.print_response(
+    "What is the capital of France?", stream=True, session_id=SESSION_ID
+)
 
 print("\n")
 agent.print_response("And what about Germany?", stream=True, session_id=SESSION_ID)
@@ -60,7 +61,9 @@ print("Step 2: State history")
 print("=" * 60)
 history = agent.get_state_history(SESSION_ID)
 for i, snapshot in enumerate(history):
-    print(f"  [{i}] next={snapshot.next}, checkpoint_id={snapshot.config['configurable']['checkpoint_id']}")
+    print(
+        f"  [{i}] next={snapshot.next}, checkpoint_id={snapshot.config['configurable']['checkpoint_id']}"
+    )
 
 # ----- Step 3: Replay from first checkpoint -----
 print("\n" + "=" * 60)

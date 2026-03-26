@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.protocol import AgentLike
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
@@ -16,7 +17,6 @@ from agno.os.config import (
     SessionConfig,
     TracesConfig,
 )
-from agno.agent.protocol import AgentLike
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.remote import RemoteTeam
