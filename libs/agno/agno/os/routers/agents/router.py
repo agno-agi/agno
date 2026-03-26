@@ -769,7 +769,7 @@ def get_agent_router(
         agent_id: str,
         session_id: str,
         request: Request,
-        user_id: Optional[str] = Form(None, description="User identifier for the new session"),
+        user_id: Optional[str] = Query(None, description="User identifier for the new session"),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
