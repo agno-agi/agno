@@ -1061,14 +1061,8 @@ class Claude(Model):
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
-                elif block.type in ("thinking", "redacted_thinking"):
-                    # Already captured via ContentBlockDeltaEvent during streaming
-                    pass
-                elif block.type not in ("tool_use",):
-                    # Preserve all non-text/thinking blocks for conversation history reconstruction.
-                    # Covers server_tool_use, web_fetch_tool_result, web_search_tool_result,
-                    # code_execution_tool_result, mcp_tool_use/result, container_upload, etc.
-                    # tool_use is handled separately below via stop_reason check.
+                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
+                    # Preserve all non-text/thinking/tool_use blocks for history
                     server_tool_blocks.append(block.model_dump())
 
                 # Handle citations
