@@ -4879,6 +4879,12 @@ def aregenerate_dispatch(  # type: ignore
         else:
             _pre_session.runs.pop()  # type: ignore[union-attr]
 
+        # Persist session changes (pop/status) so async continue functions
+        # re-read the updated session from DB.
+        from agno.agent._session import save_session as _sync_save_session
+
+        _sync_save_session(agent, session=_pre_session)
+
         # Optionally append additional instructions as a user message
         if additional_instructions is not None:
             trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
@@ -5022,6 +5028,7 @@ async def _aregenerate_run(
     Reads the session asynchronously, extracts and trims messages from the last run,
     then delegates to _acontinue_run for model execution.
     """
+    from agno.agent._session import asave_session as _async_save_session
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -5039,6 +5046,10 @@ async def _aregenerate_run(
         last_run.status = RunStatus.regenerated
     else:
         agent_session.runs.pop()  # type: ignore[union-attr]
+
+    # Persist session changes so _acontinue_run re-reads the updated state.
+    await _async_save_session(agent, session=agent_session)
+
     if additional_instructions is not None:
         trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
 
@@ -5095,6 +5106,7 @@ async def _aregenerate_run_stream(
     **kwargs: Any,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     """Async streaming helper for regeneration when an async DB is used."""
+    from agno.agent._session import asave_session as _async_save_session
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -5112,6 +5124,10 @@ async def _aregenerate_run_stream(
         last_run.status = RunStatus.regenerated
     else:
         agent_session.runs.pop()  # type: ignore[union-attr]
+
+    # Persist session changes so _acontinue_run_stream re-reads the updated state.
+    await _async_save_session(agent, session=agent_session)
+
     if additional_instructions is not None:
         trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
 
