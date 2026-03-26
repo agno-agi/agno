@@ -71,7 +71,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
     # Session tracking: last session_id from the SDK
     _last_session_id: Optional[str] = field(default=None, init=False, repr=False)
 
-    def _build_options(self, **kwargs: Any) -> Any:
+    def _build_options(self, *, streaming: bool = False, **kwargs: Any) -> Any:
         """Build ClaudeAgentOptions from agent config."""
         try:
             from claude_agent_sdk import ClaudeAgentOptions
@@ -98,6 +98,10 @@ class ClaudeAgentSDK(BaseExternalAgent):
             opts["cwd"] = self.cwd
         if self.mcp_servers:
             opts["mcp_servers"] = self.mcp_servers
+
+        # Enable token-level streaming when streaming is requested
+        if streaming:
+            opts["include_partial_messages"] = True
 
         # Resume session if session_id provided
         session_id = kwargs.get("session_id")
@@ -139,11 +143,19 @@ class ClaudeAgentSDK(BaseExternalAgent):
         return result_text
 
     async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
-        """Streaming: yield events as Claude Agent SDK produces messages."""
+        """Streaming: yield token-level events using include_partial_messages.
+
+        With include_partial_messages=True, the SDK yields StreamEvent objects
+        containing raw Anthropic API events (content_block_delta, etc.) alongside
+        the normal complete messages. We use StreamEvent for token-level text
+        streaming and tool call tracking, while still handling complete messages
+        for tool results and session management.
+        """
         try:
             from claude_agent_sdk import (
                 AssistantMessage,
                 ResultMessage,
+                StreamEvent,
                 SystemMessage,
                 TextBlock,
                 ToolResultBlock,
@@ -155,53 +167,68 @@ class ClaudeAgentSDK(BaseExternalAgent):
             raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk")
 
         run_id = kwargs.get("run_id", str(uuid4()))
-        options = self._build_options(**kwargs)
+        options = self._build_options(streaming=True, **kwargs)
 
-        # Track what we've already yielded to avoid duplicates
-        last_text = ""
+        # Track whether we got any StreamEvents (token-level streaming)
+        got_stream_events = False
+        # Track tool call IDs already emitted via AssistantMessage to avoid duplicates
+        emitted_tool_ids: set = set()
 
         async for message in query(prompt=str(input), options=options):
-            if isinstance(message, SystemMessage):
+            if isinstance(message, StreamEvent):
+                got_stream_events = True
+                event = message.event
+                event_type = event.get("type", "")
+
+                if event_type == "content_block_delta":
+                    delta = event.get("delta", {})
+                    delta_type = delta.get("type", "")
+
+                    if delta_type == "text_delta":
+                        # Token-level text streaming
+                        text = delta.get("text", "")
+                        if text:
+                            yield RunContentEvent(
+                                run_id=run_id,
+                                agent_id=self.id,
+                                agent_name=self.name or "",
+                                content=text,
+                            )
+
+            elif isinstance(message, SystemMessage):
                 if hasattr(message, "subtype") and message.subtype == "init":
                     data = getattr(message, "data", {}) or {}
                     if "session_id" in data:
                         self._last_session_id = data["session_id"]
 
             elif isinstance(message, AssistantMessage):
+                # Always extract tool calls from complete AssistantMessage
+                # (has full name + args). For text, only use if no StreamEvents.
                 for block in message.content:
                     if isinstance(block, TextBlock):
-                        # Yield incremental text content
-                        new_text = block.text
-                        if new_text and new_text != last_text:
-                            # The SDK gives us complete text blocks, not deltas.
-                            # Yield the new portion as a content event.
-                            if new_text.startswith(last_text):
-                                delta = new_text[len(last_text):]
-                            else:
-                                delta = new_text
-                            if delta:
-                                yield RunContentEvent(
-                                    run_id=run_id,
-                                    agent_id=self.id,
-                                    agent_name=self.name or "",
-                                    content=delta,
-                                )
-                            last_text = new_text
-
+                        if not got_stream_events and block.text:
+                            yield RunContentEvent(
+                                run_id=run_id,
+                                agent_id=self.id,
+                                agent_name=self.name or "",
+                                content=block.text,
+                            )
                     elif isinstance(block, ToolUseBlock):
                         tool_name = getattr(block, "name", "unknown")
                         tool_input = getattr(block, "input", {})
                         tool_id = getattr(block, "id", str(uuid4()))
-                        yield ToolCallStartedEvent(
-                            run_id=run_id,
-                            agent_id=self.id,
-                            agent_name=self.name or "",
-                            tool=ToolExecution(
-                                tool_call_id=tool_id,
-                                tool_name=tool_name,
-                                tool_args=tool_input if isinstance(tool_input, dict) else {"input": tool_input},
-                            ),
-                        )
+                        if tool_id not in emitted_tool_ids:
+                            emitted_tool_ids.add(tool_id)
+                            yield ToolCallStartedEvent(
+                                run_id=run_id,
+                                agent_id=self.id,
+                                agent_name=self.name or "",
+                                tool=ToolExecution(
+                                    tool_call_id=tool_id,
+                                    tool_name=tool_name,
+                                    tool_args=tool_input if isinstance(tool_input, dict) else {"input": tool_input},
+                                ),
+                            )
 
             elif isinstance(message, UserMessage):
                 # Tool results arrive as ToolResultBlock inside UserMessage
