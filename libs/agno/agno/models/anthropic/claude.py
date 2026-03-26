@@ -908,9 +908,8 @@ class Claude(Model):
                                 )
                 elif block.type == "thinking":
                     model_response.reasoning_content = block.thinking
-                    model_response.provider_data = {
-                        "signature": block.signature,
-                    }
+                    model_response.provider_data = model_response.provider_data or {}
+                    model_response.provider_data["signature"] = block.signature
                 elif block.type == "redacted_thinking":
                     model_response.redacted_reasoning_content = block.data
                 elif block.type not in ("tool_use",):
