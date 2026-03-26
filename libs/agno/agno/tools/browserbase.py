@@ -112,7 +112,7 @@ class BrowserbaseTools(Toolkit):
                 if self._session:
                     log_debug(f"Created new session with ID: {self._session.id}")
             except Exception as e:
-                logger.error(f"Failed to create session: {str(e)}")
+                logger.error("Failed to create session", exc_info=True)
                 raise
 
     def _initialize_browser(self, connect_url: Optional[str] = None):

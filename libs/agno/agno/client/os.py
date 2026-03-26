@@ -395,12 +395,12 @@ class AgentOSClient:
                     event = event_parser(event_dict)
                     yield event
 
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse SSE JSON: {line[:100]}... | Error: {e}")
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse SSE JSON: {line[:100]}...", exc_info=True)
                     continue  # Skip bad events, continue stream
 
-                except ValueError as e:
-                    logger.error(f"Unknown event type: {line[:100]}... | Error: {e}")
+                except ValueError:
+                    logger.error(f"Unknown event type: {line[:100]}...", exc_info=True)
                     continue  # Skip unknown events, continue stream
 
     # Discovery & Configuration Operations

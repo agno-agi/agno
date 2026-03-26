@@ -435,7 +435,7 @@ class OpenAIChat(Model):
             return model_response
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error("Rate limit error from OpenAI API", exc_info=True)
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -449,10 +449,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error("API connection error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error("API status error from OpenAI API", exc_info=True)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -469,10 +469,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error("Model authentication error from OpenAI API", exc_info=True)
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error("Error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -516,7 +516,7 @@ class OpenAIChat(Model):
             return provider_response
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error("Rate limit error from OpenAI API", exc_info=True)
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -530,10 +530,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error("API connection error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error("API status error from OpenAI API", exc_info=True)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -550,10 +550,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error("Model authentication error from OpenAI API", exc_info=True)
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error("Error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -594,7 +594,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error("Rate limit error from OpenAI API", exc_info=True)
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -608,10 +608,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error("API connection error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error("API status error from OpenAI API", exc_info=True)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -628,10 +628,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error("Model authentication error from OpenAI API", exc_info=True)
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error("Error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -674,7 +674,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error("Rate limit error from OpenAI API", exc_info=True)
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -688,10 +688,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error("API connection error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error("API status error from OpenAI API", exc_info=True)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -708,10 +708,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error("Model authentication error from OpenAI API", exc_info=True)
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error("Error from OpenAI API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     @staticmethod
@@ -807,7 +807,7 @@ class OpenAIChat(Model):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning("Error processing tool calls", exc_info=True)
 
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
@@ -833,7 +833,7 @@ class OpenAIChat(Model):
                         transcript=response_message.audio.transcript,
                     )
             except Exception as e:
-                log_warning(f"Error processing audio: {e}")
+                log_warning("Error processing audio", exc_info=True)
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
@@ -934,7 +934,7 @@ class OpenAIChat(Model):
                                 mime_type="pcm16",
                             )
                     except Exception as e:
-                        log_warning(f"Error processing audio: {e}")
+                        log_warning("Error processing audio", exc_info=True)
 
         # Add usage metrics if present
         if self._should_collect_metrics(response_delta) and response_delta.usage is not None:

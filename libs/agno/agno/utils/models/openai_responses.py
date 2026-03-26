@@ -87,7 +87,7 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             if image_data:
                 image_messages.append(image_data)
         except Exception as e:
-            logger.error(f"Failed to process image: {str(e)}")
+            logger.error("Failed to process image", exc_info=True)
             continue
 
     return image_messages
