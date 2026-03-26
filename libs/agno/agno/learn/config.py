@@ -119,6 +119,7 @@ class UserMemoryConfig:
         model: Model for extraction (required for ALWAYS mode).
         mode: How learning is extracted. Default: ALWAYS.
         schema: Custom schema for memories data. Default: Memories.
+        namespace: Sharing boundary ("user", "global", or custom string).
 
         # Extraction operations
         enable_add_memory: Allow adding new memories during extraction.
@@ -143,6 +144,9 @@ class UserMemoryConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Namespace for scoping stored records
+    namespace: Optional[str] = None
 
     # Extraction operations
     enable_add_memory: bool = True
@@ -185,6 +189,7 @@ class SessionContextConfig:
         model: Model for extraction (required for ALWAYS mode).
         mode: How learning is extracted. Default: ALWAYS.
         schema: Custom schema for session context. Default: SessionContext.
+        namespace: Sharing boundary ("user", "global", or custom string).
 
         # Planning mode
         enable_planning: Track goal, plan, and progress (not just summary).
@@ -206,6 +211,9 @@ class SessionContextConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Namespace for scoping stored records
+    namespace: Optional[str] = None
 
     # Planning mode
     enable_planning: bool = False
@@ -394,6 +402,9 @@ class DecisionLogConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Namespace for scoping stored records
+    namespace: Optional[str] = None
 
     # Agent tools
     enable_agent_tools: bool = True

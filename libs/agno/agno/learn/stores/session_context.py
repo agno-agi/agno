@@ -360,6 +360,7 @@ class SessionContextStore(LearningStore):
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
+                namespace=self.config.namespace,
                 content=content,
             )
             log_debug(f"SessionContextStore.save: saved context for session_id={session_id}")
@@ -392,6 +393,7 @@ class SessionContextStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    namespace=self.config.namespace,
                     content=content,
                 )
             else:
@@ -402,6 +404,7 @@ class SessionContextStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    namespace=self.config.namespace,
                     content=content,
                 )
             log_debug(f"SessionContextStore.asave: saved context for session_id={session_id}")
