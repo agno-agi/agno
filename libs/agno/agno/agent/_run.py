@@ -5206,6 +5206,11 @@ def branch_session_dispatch(
 
     now = int(time.time())
     new_session_id = str(uuid4())
+
+    new_metadata = copy.deepcopy(source_session.metadata) or {}
+    new_metadata["forked_from"] = source_session_id
+    new_metadata["fork_run_count"] = len(source_session.runs)
+
     new_session = AgentSession(
         session_id=new_session_id,
         agent_id=source_session.agent_id,
@@ -5213,7 +5218,7 @@ def branch_session_dispatch(
         team_id=source_session.team_id,
         workflow_id=source_session.workflow_id,
         session_data=copy.deepcopy(source_session.session_data),
-        metadata=copy.deepcopy(source_session.metadata),
+        metadata=new_metadata,
         agent_data=copy.deepcopy(source_session.agent_data),
         runs=copy.deepcopy(source_session.runs),
         summary=copy.deepcopy(source_session.summary),
@@ -5273,6 +5278,12 @@ async def abranch_session_dispatch(
 
     now = int(time.time())
     new_session_id = str(uuid4())
+
+    # Persist fork origin in metadata so the frontend can show a separator
+    new_metadata = copy.deepcopy(source_session.metadata) or {}
+    new_metadata["forked_from"] = source_session_id
+    new_metadata["fork_run_count"] = len(source_session.runs)
+
     new_session = AgentSession(
         session_id=new_session_id,
         agent_id=source_session.agent_id,
@@ -5280,7 +5291,7 @@ async def abranch_session_dispatch(
         team_id=source_session.team_id,
         workflow_id=source_session.workflow_id,
         session_data=copy.deepcopy(source_session.session_data),
-        metadata=copy.deepcopy(source_session.metadata),
+        metadata=new_metadata,
         agent_data=copy.deepcopy(source_session.agent_data),
         runs=copy.deepcopy(source_session.runs),
         summary=copy.deepcopy(source_session.summary),
