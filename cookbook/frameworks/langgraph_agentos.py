@@ -52,5 +52,11 @@ langgraph_agent = LangGraphAgent(
 )
 
 # ----- Serve through AgentOS -----
-app = AgentOS(agents=[langgraph_agent])
-app.serve(app.get_app())
+agent_os = AgentOS(agents=[langgraph_agent])
+app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent_os.serve(app="langgraph_agentos:app", reload=True)
