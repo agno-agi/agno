@@ -460,3 +460,204 @@ async def test_hitl_params_with_tool_name_prefix():
     assert "myprefix_SearchTool" in tools.functions
     # HITL setting should still be applied (matched by original name)
     assert tools.functions["myprefix_SearchTool"].requires_confirmation is True
+
+
+# =============================================================================
+# load_server_instructions tests (feat: load server instructions from MCP InitializeResult)
+# =============================================================================
+
+
+def test_load_server_instructions_defaults_to_true():
+    """Test that load_server_instructions defaults to True."""
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    assert tools.load_server_instructions is True
+
+
+def test_load_server_instructions_can_be_disabled():
+    """Test that load_server_instructions can be set to False."""
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=False)
+    assert tools.load_server_instructions is False
+
+
+@pytest.mark.asyncio
+async def test_initialize_sets_instructions_from_init_result():
+    """Test that initialize() captures instructions from InitializeResult when load_server_instructions=True."""
+    server_instructions = "Use this server to search for files. Always provide absolute paths."
+
+    mock_init_result = MagicMock()
+    mock_init_result.instructions = server_instructions
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+
+    await tools.initialize()
+
+    assert tools.instructions == server_instructions
+
+
+@pytest.mark.asyncio
+async def test_initialize_skips_instructions_when_disabled():
+    """Test that initialize() does NOT set instructions when load_server_instructions=False."""
+    server_instructions = "Use this server to search for files."
+
+    mock_init_result = MagicMock()
+    mock_init_result.instructions = server_instructions
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=False)
+    tools.session = mock_session
+    # Ensure instructions are not pre-set
+    tools.instructions = None
+
+    await tools.initialize()
+
+    assert tools.instructions is None
+
+
+@pytest.mark.asyncio
+async def test_initialize_handles_none_init_result_gracefully():
+    """Test that initialize() handles None InitializeResult without raising an error."""
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=None)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+    tools.instructions = None
+
+    # Should not raise
+    await tools.initialize()
+
+    # instructions should remain None (no InitializeResult to read from)
+    assert tools.instructions is None
+
+
+@pytest.mark.asyncio
+async def test_initialize_handles_init_result_without_instructions_field():
+    """Test that initialize() handles an InitializeResult that has no 'instructions' attribute."""
+    mock_init_result = MagicMock(spec=[])  # spec=[] means no attributes allowed
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+    tools.instructions = None
+
+    # Should not raise even when instructions attribute doesn't exist
+    await tools.initialize()
+
+    assert tools.instructions is None
+
+
+@pytest.mark.asyncio
+async def test_initialize_handles_init_result_with_none_instructions():
+    """Test that initialize() does not override instructions when InitializeResult.instructions is None."""
+    mock_init_result = MagicMock()
+    mock_init_result.instructions = None  # Server returned no instructions
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+    tools.instructions = None
+
+    await tools.initialize()
+
+    # instructions should remain None; None instructions from server shouldn't override
+    assert tools.instructions is None
+
+
+@pytest.mark.asyncio
+async def test_initialize_handles_init_result_with_empty_string_instructions():
+    """Test that initialize() does not set instructions when InitializeResult.instructions is empty string."""
+    mock_init_result = MagicMock()
+    mock_init_result.instructions = ""  # Empty string is falsy
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+    tools.instructions = None
+
+    await tools.initialize()
+
+    # Empty string is falsy, so instructions should remain None
+    assert tools.instructions is None
+
+
+@pytest.mark.asyncio
+async def test_initialize_idempotent_does_not_overwrite_instructions():
+    """Test that calling initialize() twice does not re-run (idempotency via _initialized flag)."""
+    server_instructions = "Server-provided usage guidelines."
+
+    mock_init_result = MagicMock()
+    mock_init_result.instructions = server_instructions
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+
+    await tools.initialize()
+    assert tools.instructions == server_instructions
+
+    # Change what session.initialize returns to simulate a different result
+    mock_init_result2 = MagicMock()
+    mock_init_result2.instructions = "DIFFERENT INSTRUCTIONS"
+    mock_session.initialize = AsyncMock(return_value=mock_init_result2)
+
+    # Second call should be a no-op due to _initialized flag
+    await tools.initialize()
+
+    # Instructions should still be the original ones
+    assert tools.instructions == server_instructions
+    # session.initialize should only have been called once total
+    assert mock_session.initialize.call_count == 0  # reset mock, was not called again
+
+
+@pytest.mark.asyncio
+async def test_initialize_instructions_available_after_build_tools():
+    """Test that instructions are set BEFORE build_tools() is called during initialize()."""
+    set_order = []
+
+    server_instructions = "Always authenticate before calling tools."
+
+    mock_init_result = MagicMock()
+    mock_init_result.instructions = server_instructions
+
+    async def fake_initialize():
+        return mock_init_result
+
+    async def fake_list_tools():
+        # At this point, instructions should already be set (initialize sets them before build_tools)
+        set_order.append(("list_tools_called", tools.instructions))
+        return MagicMock(tools=[])
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(side_effect=fake_initialize)
+    mock_session.list_tools = AsyncMock(side_effect=fake_list_tools)
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=True)
+    tools.session = mock_session
+
+    await tools.initialize()
+
+    # By the time list_tools was called, instructions should have been set
+    assert len(set_order) == 1
+    assert set_order[0][1] == server_instructions
+    assert tools.instructions == server_instructions
