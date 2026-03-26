@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.10"
+version = "2.5.11"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -151,7 +151,7 @@ sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
 async_postgres = ["asyncpg"]
 async_mongo = ["pymongo>=4.9", "motor"]
-sqlite = ["sqlalchemy"]
+sqlite = ["sqlalchemy", "aiosqlite"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
 redis = ["redis", "redisvl>=0.12.1"]
