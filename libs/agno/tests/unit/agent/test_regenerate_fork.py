@@ -652,8 +652,8 @@ class TestBranchSessionDispatch:
         assert run1.session_id == "original"
         assert run2.session_id == "original"
 
-    def test_branch_reads_source_session_without_user_id(self, monkeypatch: pytest.MonkeyPatch):
-        """Branch must read the source session without filtering by the destination user_id."""
+    def test_branch_reads_source_session_scoped_to_caller(self, monkeypatch: pytest.MonkeyPatch):
+        """Branch must read the source session scoped to the caller's user_id for access control."""
         agent = Agent(name="test")
         run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
         session = _make_session(runs=[run1], session_id="original")
@@ -671,9 +671,9 @@ class TestBranchSessionDispatch:
         monkeypatch.setattr(_storage, "read_or_create_session", tracking_read)
         monkeypatch.setattr(_session, "save_session", MagicMock())
 
-        _run.branch_session_dispatch(agent, source_session_id="original", user_id="bob")
+        _run.branch_session_dispatch(agent, source_session_id="original", user_id="alice")
 
-        # Source session should be read without user_id filtering
+        # Source session should be read with the caller's user_id for access control
         assert len(read_calls) == 1
         assert read_calls[0]["session_id"] == "original"
-        assert read_calls[0]["user_id"] is None
+        assert read_calls[0]["user_id"] == "alice"

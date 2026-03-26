@@ -5218,10 +5218,9 @@ def branch_session_dispatch(
 
     agent.initialize_agent()
 
-    # Read the source session using its original user_id (not the destination user_id).
-    # Passing the destination user_id would miss the source session if it belongs to
-    # a different user, and silently create a new empty session instead.
-    source_session = read_or_create_session(agent, session_id=source_session_id)
+    # Read the source session scoped to the caller's user_id.
+    # This ensures users can only branch their own sessions.
+    source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
     if not source_session.runs:
         raise ValueError("Source session has no runs to branch.")
 
@@ -5291,11 +5290,12 @@ async def abranch_session_dispatch(
 
     agent.initialize_agent()
 
-    # Read the source session using its original user_id (not the destination user_id).
+    # Read the source session scoped to the caller's user_id.
+    # This ensures users can only branch their own sessions.
     if has_async_db(agent):
-        source_session = await aread_or_create_session(agent, session_id=source_session_id)
+        source_session = await aread_or_create_session(agent, session_id=source_session_id, user_id=user_id)
     else:
-        source_session = read_or_create_session(agent, session_id=source_session_id)
+        source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
 
     if not source_session.runs:
         raise ValueError("Source session has no runs to branch.")
