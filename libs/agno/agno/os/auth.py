@@ -107,7 +107,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             return True
 
         # Verify the token against security key
-        if token != settings.os_security_key:
+        if not hmac.compare_digest(token, settings.os_security_key):
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
         return True
@@ -142,7 +142,7 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
         return True
 
     # Verify the token matches the configured security key
-    return token == settings.os_security_key
+    return hmac.compare_digest(token, settings.os_security_key)
 
 
 def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
