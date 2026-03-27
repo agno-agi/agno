@@ -223,6 +223,7 @@ SCHEDULE_TABLE_SCHEMA = {
     "method": {"type": String, "nullable": False},
     "endpoint": {"type": String, "nullable": False},
     "payload": {"type": JSON, "nullable": True},
+    "content_type": {"type": String, "nullable": True},
     "cron_expr": {"type": String, "nullable": False},
     "timezone": {"type": String, "nullable": False},
     "timeout_seconds": {"type": BigInteger, "nullable": False},
