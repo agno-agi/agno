@@ -675,6 +675,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+            _num_tools = len(tools) if tools is not None else 0
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
@@ -836,6 +837,12 @@ class Model(ABC):
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
 
+                    # Refresh tool registry if tools were added during execution
+                    if tools is not None and len(tools) != _num_tools:
+                        _num_tools = len(tools)
+                        _tool_dicts = self._format_tools(tools)
+                        _functions = {t.name: t for t in tools if isinstance(t, Function)}
+
                     # Continue loop to get next response
                     continue
 
@@ -895,6 +902,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+            _num_tools = len(tools) if tools is not None else 0
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
@@ -1056,6 +1064,12 @@ class Model(ABC):
                     if run_response is not None and run_response.requirements:
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
+
+                    # Refresh tool registry if tools were added during execution
+                    if tools is not None and len(tools) != _num_tools:
+                        _num_tools = len(tools)
+                        _tool_dicts = self._format_tools(tools)
+                        _functions = {t.name: t for t in tools if isinstance(t, Function)}
 
                     # Continue loop to get next response
                     continue
@@ -1370,6 +1384,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+            _num_tools = len(tools) if tools is not None else 0
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
@@ -1546,6 +1561,12 @@ class Model(ABC):
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
 
+                    # Refresh tool registry if tools were added during execution
+                    if tools is not None and len(tools) != _num_tools:
+                        _num_tools = len(tools)
+                        _tool_dicts = self._format_tools(tools)
+                        _functions = {t.name: t for t in tools if isinstance(t, Function)}
+
                     # Continue loop to get next response
                     continue
 
@@ -1646,6 +1667,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+            _num_tools = len(tools) if tools is not None else 0
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
@@ -1821,6 +1843,12 @@ class Model(ABC):
                     if run_response is not None and run_response.requirements:
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
+
+                    # Refresh tool registry if tools were added during execution
+                    if tools is not None and len(tools) != _num_tools:
+                        _num_tools = len(tools)
+                        _tool_dicts = self._format_tools(tools)
+                        _functions = {t.name: t for t in tools if isinstance(t, Function)}
 
                     # Continue loop to get next response
                     continue
