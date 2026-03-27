@@ -1017,3 +1017,33 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+def test_fc_excluded_from_schema():
+    from agno.tools.function import Function, FunctionCall
+
+    def my_tool(query: str, fc: FunctionCall) -> str:
+        return query
+
+    func = Function.from_callable(my_tool)
+    func.process_entrypoint()
+
+    params = func.parameters.get("properties", {})
+
+    assert "fc" not in params
+    assert "query" in params
+    assert "fc" not in func.parameters.get("required", [])
+
+def test_run_context_and_fc_excluded():
+    from agno.tools.function import Function, FunctionCall, RunContext
+
+    def my_tool(query: str, run_context: RunContext, fc: FunctionCall) -> str:
+        return query
+
+    func = Function.from_callable(my_tool)
+    func.process_entrypoint()
+
+    params = func.parameters.get("properties", {})
+
+    assert "fc" not in params
+    assert "run_context" not in params
+    assert "query" in params

@@ -293,6 +293,8 @@ class Function(BaseModel):
                 del type_hints["team"]
             if "run_context" in sig.parameters and "run_context" in type_hints:
                 del type_hints["run_context"]
+            if "fc" in sig.parameters and "fc" in type_hints:
+                del type_hints["fc"]
 
             # Remove media parameters from type hints as they are injected automatically
             if "images" in sig.parameters and "images" in type_hints:
@@ -315,6 +317,7 @@ class Function(BaseModel):
                     "agent",
                     "team",
                     "run_context",
+                    "fc",
                     "self",
                     "images",
                     "videos",
@@ -354,6 +357,7 @@ class Function(BaseModel):
                         "agent",
                         "team",
                         "run_context",
+                        "fc",
                         "self",
                         "images",
                         "videos",
@@ -372,6 +376,7 @@ class Function(BaseModel):
                         "agent",
                         "team",
                         "run_context",
+                        "fc",
                         "self",
                         "images",
                         "videos",
@@ -428,6 +433,8 @@ class Function(BaseModel):
                 del type_hints["team"]
             if "run_context" in sig.parameters and "run_context" in type_hints:
                 del type_hints["run_context"]
+            if "fc" in sig.parameters and "fc" in type_hints:
+                del type_hints["fc"]
             if "images" in sig.parameters and "images" in type_hints:
                 del type_hints["images"]
             if "videos" in sig.parameters and "videos" in type_hints:
@@ -443,6 +450,7 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
+                "fc",
                 "self",
                 "images",
                 "videos",
@@ -648,6 +656,7 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
+                "fc",
                 "images",
                 "videos",
                 "audios",
@@ -669,6 +678,8 @@ class Function(BaseModel):
             del copy_entrypoint_args["team"]
         if "run_context" in copy_entrypoint_args:
             del copy_entrypoint_args["run_context"]
+        if "fc" in copy_entrypoint_args:
+            del copy_entrypoint_args["fc"]
         if "images" in copy_entrypoint_args:
             del copy_entrypoint_args["images"]
         if "videos" in copy_entrypoint_args:
