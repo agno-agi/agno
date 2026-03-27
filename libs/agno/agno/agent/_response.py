@@ -1044,6 +1044,7 @@ def handle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    pre_call_hook: Optional[Any] = None,
 ) -> Iterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
@@ -1072,6 +1073,7 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        pre_call_hook=pre_call_hook,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1193,6 +1195,7 @@ async def ahandle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    async_pre_call_hook: Optional[Any] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
@@ -1221,6 +1224,7 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        async_pre_call_hook=async_pre_call_hook,
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore
