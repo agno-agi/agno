@@ -464,13 +464,14 @@ class Condition:
                 branch = CONDITION_BRANCH_ELSE
                 log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
             else:
-                # No else_steps provided, return "not met" message
+                # No else_steps provided, skip the condition
                 log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
                 return StepOutput(
                     step_name=self.name,
                     step_id=conditional_step_id,
                     step_type=StepType.CONDITION,
-                    content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                    # Use None content to avoid polluting previous_step_content for subsequent steps
+                    content=None,
                     success=True,
                 )
 
@@ -856,13 +857,14 @@ class Condition:
                 branch = CONDITION_BRANCH_ELSE
                 log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
             else:
-                # No else_steps provided, return "not met" message
+                # No else_steps provided, skip the condition
                 log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
                 return StepOutput(
                     step_name=self.name,
                     step_id=conditional_step_id,
                     step_type=StepType.CONDITION,
-                    content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                    # Use None content to avoid polluting previous_step_content for subsequent steps
+                    content=None,
                     success=True,
                 )
 
