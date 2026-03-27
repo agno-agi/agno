@@ -1117,6 +1117,20 @@ class Claude(Model):
                         model_response.provider_data["context_management"] = context_mgmt.model_dump()
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
+                        
+            # Extract file IDs if skills are enabled (streaming)
+            if self.skills and hasattr(response, "message") and response.message.content:
+                file_ids: List[str] = []
+                for block in response.message.content:
+                    if block.type == "bash_code_execution_tool_result":
+                        if hasattr(block, "content") and hasattr(block.content, "content"):
+                            if isinstance(block.content.content, list):
+                                for output_block in block.content.content:
+                                    if hasattr(output_block, "file_id"):
+                                        file_ids.append(output_block.file_id)
+                if file_ids:
+                    model_response.provider_data = model_response.provider_data or {}
+                    model_response.provider_data["file_ids"] = file_ids
 
             # Capture container information (ID and expiry) for session reuse
             if hasattr(response.message, "container") and response.message.container is not None:  # type: ignore
