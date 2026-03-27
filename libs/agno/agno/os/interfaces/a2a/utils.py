@@ -83,6 +83,25 @@ from agno.run.agent import (
 from agno.run.base import RunStatus
 
 
+def _serialize_content_for_text_part(content: Any) -> str:
+    """Convert arbitrary run content into safe text for A2A text parts."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+
+    if hasattr(content, "model_dump_json"):
+        return cast(Any, content).model_dump_json()
+
+    if hasattr(content, "model_dump"):
+        return json.dumps(cast(Any, content).model_dump(), default=str)
+
+    try:
+        return json.dumps(content, default=str)
+    except TypeError:
+        return str(content)
+
+
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
     """Map A2A SendMessageRequest to Agno RunInput.
 
@@ -348,11 +367,12 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            text_content = _serialize_content_for_text_part(event.content)
+            accumulated_content += text_content
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=text_content))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
@@ -804,7 +824,7 @@ async def stream_a2a_response(
 
         final_parts: List[Part] = []
         if final_content:
-            final_parts.append(Part(root=TextPart(text=str(final_content))))
+            final_parts.append(Part(root=TextPart(text=_serialize_content_for_text_part(final_content))))
 
         # Handle all media artifacts
         artifacts: List[Artifact] = []
