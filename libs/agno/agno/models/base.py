@@ -29,7 +29,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError
+from agno.exceptions import (
+    AgentRunException,
+    ContextWindowExceededError,
+    ModelProviderError,
+    ModelRateLimitError,
+    RetryableModelProviderError,
+)
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
 from agno.models.message import Citations, Message
@@ -184,45 +190,79 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
+    # Patterns that indicate a context window / token limit exceeded error
+    CONTEXT_WINDOW_PATTERNS = [
+        "context_length_exceeded",
+        "context window",
+        "maximum context length",
+        "token limit",
+        "max_tokens",
+        "too many tokens",
+        "payload too large",
+        "content_too_large",
+        "request too large",
+        "input too long",
+        "exceeds the model",
+    ]
+
+    @staticmethod
+    def classify_error(error: ModelProviderError) -> ModelProviderError:
+        """Re-classify a generic ModelProviderError into a specific subclass.
+
+        If the error is already a specific subclass (ModelRateLimitError,
+        ContextWindowExceededError), it is returned as-is. Otherwise, the
+        error message and status code are inspected to determine if a more
+        specific subclass applies.
+        """
+        # Already classified
+        if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
+            return error
+
+        # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
+        if error.status_code in {429, 529}:
+            return ModelRateLimitError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+            )
+
+        # Context-window detection
+        error_msg = str(error.message).lower()
+        if any(pattern in error_msg for pattern in Model.CONTEXT_WINDOW_PATTERNS):
+            return ContextWindowExceededError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+            )
+
+        return error
+
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
 
         Non-retryable errors include:
-        - Client errors (400, 401, 403, 413, 422) that won't change on retry
-        - Context window/token limit exceeded errors
-        - Payload too large errors
+        - ContextWindowExceededError (fast path after classify_error)
+        - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
+        - Context window/token limit patterns in error message (defense-in-depth)
 
         Retryable errors include:
         - Rate limit errors (429)
         - Server errors (500, 502, 503, 504)
-
-        Args:
-            error: The ModelProviderError to evaluate.
-
-        Returns:
-            True if the error is transient and worth retrying, False otherwise.
+        - Anything else not explicitly non-retryable
         """
-        # Non-retryable status codes (client errors that won't change)
+        # Fast path: already classified by classify_error()
+        if isinstance(error, ContextWindowExceededError):
+            return False
+
         non_retryable_codes = {400, 401, 403, 404, 413, 422}
         if error.status_code in non_retryable_codes:
             return False
 
-        # Non-retryable error message patterns (context/token limits)
-        non_retryable_patterns = [
-            "context_length_exceeded",
-            "context window",
-            "maximum context length",
-            "token limit",
-            "max_tokens",
-            "too many tokens",
-            "payload too large",
-            "content_too_large",
-            "request too large",
-            "input too long",
-            "exceeds the model",
-        ]
+        # Defense-in-depth: catch context window errors even if not pre-classified
         error_msg = str(error.message).lower()
-        if any(pattern in error_msg for pattern in non_retryable_patterns):
+        if any(pattern in error_msg for pattern in self.CONTEXT_WINDOW_PATTERNS):
             return False
 
         return True
@@ -241,20 +281,20 @@ class Model(ABC):
                 retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = e
+                last_exception = self.classify_error(e)
                 # Check if error is non-retryable
-                if not self._is_retryable_error(e):
-                    log_error(f"Non-retryable model provider error: {e}")
-                    raise
+                if not self._is_retryable_error(last_exception):
+                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s..."
                     )
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -288,20 +328,20 @@ class Model(ABC):
                 retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = e
+                last_exception = self.classify_error(e)
                 # Check if error is non-retryable
-                if not self._is_retryable_error(e):
-                    log_error(f"Non-retryable model provider error: {e}")
-                    raise
+                if not self._is_retryable_error(last_exception):
+                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s..."
                     )
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -337,21 +377,21 @@ class Model(ABC):
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = e
+                last_exception = self.classify_error(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
-                if not self._is_retryable_error(e):
-                    log_error(f"Non-retryable model provider error: {e}")
-                    raise
+                if not self._is_retryable_error(last_exception):
+                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
                         f"Retrying in {delay}s..."
                     )
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -389,21 +429,21 @@ class Model(ABC):
                     yield response
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = e
+                last_exception = self.classify_error(e)
                 # Check if error is non-retryable
-                if not self._is_retryable_error(e):
-                    log_error(f"Non-retryable model provider error: {e}")
-                    raise
+                if not self._is_retryable_error(last_exception):
+                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
                         f"Retrying in {delay}s..."
                     )
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:

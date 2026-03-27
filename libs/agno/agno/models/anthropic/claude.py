@@ -29,6 +29,7 @@ try:
     from anthropic import (
         AsyncAnthropic as AsyncAnthropicClient,
     )
+    from anthropic import OverloadedError as AnthropicOverloadedError
     from anthropic.lib.streaming._beta_types import (
         BetaRawContentBlockStartEvent,
         ParsedBetaContentBlockStopEvent,
@@ -634,8 +635,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -701,8 +712,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -758,8 +779,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -821,8 +852,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e

@@ -29,11 +29,13 @@ from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
+from agno.fallback import FallbackConfig
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
+from agno.metrics import ModelType
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -63,6 +65,8 @@ def __init__(
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
+    fallback_config: Optional[FallbackConfig] = None,
+    fallback_models: Optional[List[Union[Model, str]]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
     mode: Optional["TeamMode"] = None,
@@ -183,6 +187,14 @@ def __init__(
     team.members = members
 
     team.model = model  # type: ignore[assignment]
+    if fallback_config is not None:
+        if fallback_models:
+            log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
+        team.fallback_config = fallback_config
+    elif fallback_models:
+        team.fallback_config = FallbackConfig(models=fallback_models)
+    else:
+        team.fallback_config = None
 
     team.name = name
     team.id = id
@@ -674,6 +686,19 @@ def _resolve_models(team: "Team") -> None:
         team.parser_model = get_model(team.parser_model)
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+
+    if team.fallback_config is not None:
+        config = team.fallback_config
+        for attr in ("models", "rate_limit_models", "context_window_models"):
+            raw_list = getattr(config, attr)
+            if raw_list:
+                resolved: list = []
+                for fm in raw_list:
+                    resolved_model = get_model(fm)
+                    if resolved_model is not None:
+                        resolved_model.model_type = ModelType.MODEL
+                        resolved.append(resolved_model)
+                setattr(config, attr, resolved)
 
 
 def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
