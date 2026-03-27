@@ -159,6 +159,7 @@ class Skills:
                 name="get_skill_instructions",
                 description="Load the full instructions for a skill. Use this when you need to follow a skill's guidance.",
                 entrypoint=self._get_skill_instructions,
+                strict=False,
             )
         )
 
@@ -168,6 +169,7 @@ class Skills:
                 name="get_skill_reference",
                 description="Load a reference document from a skill's references. Use this to access detailed documentation.",
                 entrypoint=self._get_skill_reference,
+                strict=False,
             )
         )
 
@@ -177,6 +179,7 @@ class Skills:
                 name="get_skill_script",
                 description="Read or execute a script from a skill. Set execute=True to run the script and get output, or execute=False (default) to read the script content.",
                 entrypoint=self._get_skill_script,
+                strict=False,
             )
         )
 

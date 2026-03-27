@@ -271,6 +271,15 @@ def test_get_tools_returns_three_functions(mock_loader: MockSkillLoader) -> None
     assert "get_skill_script" in tool_names
 
 
+def test_get_tools_have_strict_false(mock_loader: MockSkillLoader) -> None:
+    """Test that all skill tools have strict=False to avoid conflicts with output_schema."""
+    skills = Skills(loaders=[mock_loader])
+    tools = skills.get_tools()
+
+    for tool in tools:
+        assert tool.strict is False, f"Tool '{tool.name}' should have strict=False"
+
+
 # --- Skill Instructions Tool Tests ---
 
 
