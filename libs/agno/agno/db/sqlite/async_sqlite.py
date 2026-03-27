@@ -1182,6 +1182,32 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error deleting user memories: {e}")
             raise e
 
+    async def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="memories")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.user_id == user_id)
+                result = await sess.execute(delete_stmt)
+                if result.rowcount == 0:  # type: ignore
+                    log_debug(f"No memories found for user {user_id}")
+                else:
+                    log_debug(f"Successfully deleted {result.rowcount} memories for user {user_id}")  # type: ignore
+
+        except Exception as e:
+            log_error(f"Error clearing memories for user {user_id}: {e}")
+            raise e
+
     async def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 

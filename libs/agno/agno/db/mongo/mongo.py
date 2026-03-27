@@ -934,6 +934,31 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting memories: {e}")
             raise e
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+
+        Raises:
+            Exception: If there is an error deleting the memories.
+        """
+        try:
+            collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return
+
+            result = collection.delete_many({"user_id": user_id})
+
+            if result.deleted_count == 0:
+                log_debug(f"No memories found for user {user_id}")
+            else:
+                log_debug(f"Successfully deleted {result.deleted_count} memories for user {user_id}")
+
+        except Exception as e:
+            log_error(f"Error clearing memories for user {user_id}: {e}")
+            raise e
+
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 

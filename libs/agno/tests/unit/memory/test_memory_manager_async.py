@@ -51,6 +51,9 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         for memory_id in memory_ids:
             user_memories.pop(memory_id, None)
 
+    async def clear_user_memories(self, user_id: str) -> None:
+        self._memories.pop(user_id, None)
+
     async def get_all_memory_topics(self, *args, **kwargs) -> List[str]:
         topics = set()
         for memories in self._memories.values():

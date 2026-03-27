@@ -755,6 +755,39 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting user memories: {e}")
             raise e
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            all_memories = self._get_all_records("memories")
+
+            deleted_count = 0
+            for memory in all_memories:
+                if memory.get("user_id") == user_id:
+                    memory_id = memory.get("memory_id")
+                    if memory_id:
+                        self._delete_record(
+                            "memories",
+                            memory_id,
+                            index_fields=["user_id", "agent_id", "team_id", "workflow_id"],
+                        )
+                        deleted_count += 1
+
+            if deleted_count == 0:
+                log_debug(f"No memories found for user {user_id}")
+            else:
+                log_debug(f"Successfully deleted {deleted_count} memories for user {user_id}")
+
+        except Exception as e:
+            log_error(f"Error clearing memories for user {user_id}: {e}")
+            raise e
+
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from Redis.
 

@@ -715,6 +715,53 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete user memories: {e}")
             raise e
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Uses the user_id GSI to find all memory IDs, then batch deletes them.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+
+        Raises:
+            Exception: If any error occurs while deleting the user memories.
+        """
+        try:
+            # Query the GSI to get all memory IDs for this user
+            items: List[Dict[str, Any]] = []
+            query_kwargs: Dict[str, Any] = {
+                "TableName": self.memory_table_name,
+                "IndexName": "user_id-updated_at-index",
+                "KeyConditionExpression": "user_id = :uid",
+                "ExpressionAttributeValues": {":uid": {"S": user_id}},
+                "ProjectionExpression": "memory_id",
+            }
+
+            response = self.client.query(**query_kwargs)
+            items.extend(response.get("Items", []))
+
+            while "LastEvaluatedKey" in response:
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+
+            if not items:
+                log_debug(f"No memories found for user {user_id}")
+                return
+
+            memory_ids = [item["memory_id"]["S"] for item in items]
+
+            for i in range(0, len(memory_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = memory_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+                delete_requests = [{"DeleteRequest": {"Key": {"memory_id": {"S": mid}}}} for mid in batch]
+                self.client.batch_write_item(RequestItems={self.memory_table_name: delete_requests})
+
+            log_debug(f"Successfully deleted {len(memory_ids)} memories for user {user_id}")
+
+        except Exception as e:
+            log_error(f"Error clearing memories for user {user_id}: {e}")
+            raise e
+
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 
