@@ -116,3 +116,13 @@ DEBUG *
 
 ---
 
+### cancel_run_persistence.py
+
+**Status:** PASS
+
+**Description:** Cancels a team run mid-stream and verifies partial content and messages are preserved in the database.
+
+**Result:** Completed successfully. Status=CANCELLED, content preserved, 3 messages persisted.
+
+---
+

@@ -1249,6 +1249,15 @@ def _handle_model_response_chunk(
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
 
+            # Accumulate member content for cancellation persistence
+            # Skip when using structured output to avoid corrupting the response type
+            if not parse_structured_output and team._member_response_model is None:
+                if hasattr(model_response_event, "content") and isinstance(model_response_event.content, str):
+                    if run_response.content is None:
+                        run_response.content = model_response_event.content
+                    elif isinstance(run_response.content, str):
+                        run_response.content += model_response_event.content
+
             # We just bubble the event up
             yield handle_event(  # type: ignore
                 model_response_event,  # type: ignore
@@ -1286,6 +1295,7 @@ def _handle_model_response_chunk(
                     run_response.content_type = content_type
                 elif isinstance(model_response_event.content, str):
                     full_model_response.content = (full_model_response.content or "") + model_response_event.content
+                    run_response.content = full_model_response.content
                 should_yield = True
 
             # Process reasoning content

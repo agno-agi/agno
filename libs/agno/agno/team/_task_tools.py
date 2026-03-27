@@ -25,6 +25,7 @@ from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
+from agno.run.cancel import cancel_run, raise_if_cancelled
 from agno.run.team import (
     TaskCreatedEvent,
     TaskUpdatedEvent,
@@ -427,13 +428,33 @@ def _get_task_management_tools(
                     else None,
                     yield_run_output=True,
                 )
+                member_run_id = None
+                _draining_after_cancel = False
                 for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
-                    check_if_run_cancelled(event)
+                    # After cancellation, keep draining to capture member's RunOutput
+                    if _draining_after_cancel:
+                        continue
+                    if member_run_id is None:
+                        member_run_id = getattr(event, "run_id", None)
+                    if event.is_cancelled:
+                        _draining_after_cancel = True
+                        continue
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        _draining_after_cancel = True
+                        continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
+                if _draining_after_cancel:
+                    raise RunCancelledException(run_response.run_id or "")
             else:
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -455,7 +476,12 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            # Persist the member's partial run before re-raising
+            use_team_logger()
+            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
             raise
         except Exception as e:
             task.status = TaskStatus.failed
@@ -571,13 +597,33 @@ def _get_task_management_tools(
                     else None,
                     yield_run_output=True,
                 )
+                member_run_id = None
+                _draining_after_cancel = False
                 async for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
-                    check_if_run_cancelled(event)
+                    # After cancellation, keep draining to capture member's RunOutput
+                    if _draining_after_cancel:
+                        continue
+                    if member_run_id is None:
+                        member_run_id = getattr(event, "run_id", None)
+                    if event.is_cancelled:
+                        _draining_after_cancel = True
+                        continue
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            cancel_run(member_run_id)
+                        _draining_after_cancel = True
+                        continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
+                if _draining_after_cancel:
+                    raise RunCancelledException(run_response.run_id or "")
             else:
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
@@ -599,7 +645,12 @@ def _get_task_management_tools(
                     else None,
                 )
                 check_if_run_cancelled(member_run_response)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            # Persist the member's partial run before re-raising
+            use_team_logger()
+            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
             raise
         except Exception as e:
             task.status = TaskStatus.failed

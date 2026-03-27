@@ -13,6 +13,7 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 - `background_execution_structured.py` - Background execution with structured output.
 - `basic_agent_events.py` - Listen to agent lifecycle events.
 - `cache_model_response.py` - Cache model responses.
+- `agent_run_cancel_persistence.py` - Cancel a running agent and verify partial content is persisted.
 - `cancel_run.py` - Cancel a running agent.
 - `compression_events.py` - Events during context compression.
 - `concurrent_execution.py` - Run multiple agents concurrently.
