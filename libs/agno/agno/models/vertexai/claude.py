@@ -6,6 +6,7 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
+from agno.models.message import Message
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
@@ -156,6 +157,7 @@ class Claude(AnthropicClaude):
     def _prepare_request_kwargs(
         self,
         system_message: str,
+        messages: Optional[List[Message]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
@@ -164,6 +166,7 @@ class Claude(AnthropicClaude):
 
         Args:
             system_message (str): The concatenated system messages.
+            messages: Optional list of messages in model format.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
 
