@@ -183,28 +183,6 @@ def prepare_command(command: str) -> list[str]:
     if not parts:
         raise ValueError("MCP command can't be empty")
 
-    # Only allow specific executables
-    ALLOWED_COMMANDS = {
-        # Python
-        "python",
-        "python3",
-        "uv",
-        "uvx",
-        "pipx",
-        # Node
-        "node",
-        "npm",
-        "npx",
-        "yarn",
-        "pnpm",
-        "bun",
-        # Other runtimes
-        "deno",
-        "java",
-        "ruby",
-        "docker",
-    }
-
     executable = parts[0].split("/")[-1]
 
     # Check if it's a relative path starting with ./ or ../
@@ -225,9 +203,6 @@ def prepare_command(command: str) -> list[str]:
     # Check if it's a binary in PATH
     if shutil.which(executable):
         return parts
-
-    if executable not in ALLOWED_COMMANDS:
-        raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
 
     first_part = parts[0]
     executable = first_part.split("/")[-1]
