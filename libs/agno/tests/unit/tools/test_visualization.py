@@ -38,6 +38,7 @@ def test_initialization_with_selective_charts(temp_output_dir):
         enable_create_pie_chart=False,
         enable_create_scatter_plot=False,
         enable_create_histogram=True,
+        enable_create_multi_line_chart=False,
     )
 
     function_names = [func.name for func in tools.functions.values()]
@@ -47,6 +48,7 @@ def test_initialization_with_selective_charts(temp_output_dir):
     assert "create_pie_chart" not in function_names
     assert "create_scatter_plot" not in function_names
     assert "create_histogram" in function_names
+    assert "create_multi_line_chart" not in function_names
 
 
 def test_initialization_with_all_charts(viz_tools):
@@ -58,6 +60,7 @@ def test_initialization_with_all_charts(viz_tools):
     assert "create_pie_chart" in function_names
     assert "create_scatter_plot" in function_names
     assert "create_histogram" in function_names
+    assert "create_multi_line_chart" in function_names
 
 
 def test_output_directory_creation(temp_output_dir):
@@ -442,6 +445,7 @@ def test_basic_initialization_has_correct_functions(basic_viz_tools):
     assert "create_pie_chart" in function_names
     assert "create_scatter_plot" in function_names
     assert "create_histogram" in function_names
+    assert "create_multi_line_chart" in function_names
 
 
 def test_normalize_data_for_charts_dict(viz_tools):
@@ -482,3 +486,320 @@ def test_create_bar_chart_with_json_string(viz_tools):
         assert result_dict["status"] == "success"
         assert result_dict["chart_type"] == "bar_chart"
         assert result_dict["data_points"] == 3
+
+
+# --- Multi-line chart tests ---
+
+
+@patch("matplotlib.pyplot.savefig")
+@patch("matplotlib.pyplot.close")
+@patch("matplotlib.pyplot.figure")
+@patch("matplotlib.pyplot.plot")
+@patch("matplotlib.pyplot.title")
+@patch("matplotlib.pyplot.xlabel")
+@patch("matplotlib.pyplot.ylabel")
+@patch("matplotlib.pyplot.xticks")
+@patch("matplotlib.pyplot.grid")
+@patch("matplotlib.pyplot.legend")
+@patch("matplotlib.pyplot.tight_layout")
+def test_create_multi_line_chart_success(
+    mock_tight_layout,
+    mock_legend,
+    mock_grid,
+    mock_xticks,
+    mock_ylabel,
+    mock_xlabel,
+    mock_title,
+    mock_plot,
+    mock_figure,
+    mock_close,
+    mock_savefig,
+    viz_tools,
+):
+    """Test successful multi-line chart creation with dict data."""
+    test_data = {
+        "Series A": {"Jan": 10, "Feb": 20, "Mar": 15},
+        "Series B": {"Jan": 5, "Feb": 25, "Mar": 30},
+    }
+
+    result = viz_tools.create_multi_line_chart(
+        data=test_data, title="Multi-Line Test", x_label="Month", y_label="Value"
+    )
+
+    result_dict = json.loads(result)
+
+    assert result_dict["status"] == "success"
+    assert result_dict["chart_type"] == "multi_line_chart"
+    assert result_dict["title"] == "Multi-Line Test"
+    assert result_dict["series_count"] == 2
+    assert result_dict["total_data_points"] == 6
+    assert "file_path" in result_dict
+
+    # Verify matplotlib functions were called
+    mock_figure.assert_called_once_with(figsize=(10, 6))
+    assert mock_plot.call_count == 2
+    mock_title.assert_called_once_with("Multi-Line Test")
+    mock_xlabel.assert_called_once_with("Month")
+    mock_ylabel.assert_called_once_with("Value")
+    mock_grid.assert_called_once_with(True, alpha=0.3)
+    mock_legend.assert_called_once()
+    mock_savefig.assert_called_once()
+    mock_close.assert_called_once()
+
+
+@patch("matplotlib.pyplot.savefig")
+@patch("matplotlib.pyplot.close")
+@patch("matplotlib.pyplot.figure")
+@patch("matplotlib.pyplot.plot")
+@patch("matplotlib.pyplot.title")
+@patch("matplotlib.pyplot.xlabel")
+@patch("matplotlib.pyplot.ylabel")
+@patch("matplotlib.pyplot.xticks")
+@patch("matplotlib.pyplot.grid")
+@patch("matplotlib.pyplot.legend")
+@patch("matplotlib.pyplot.tight_layout")
+def test_create_multi_line_chart_with_json_string(
+    mock_tight_layout,
+    mock_legend,
+    mock_grid,
+    mock_xticks,
+    mock_ylabel,
+    mock_xlabel,
+    mock_title,
+    mock_plot,
+    mock_figure,
+    mock_close,
+    mock_savefig,
+    viz_tools,
+):
+    """Test multi-line chart creation with JSON string data."""
+    test_data = json.dumps(
+        {
+            "Revenue": {"Q1": 100, "Q2": 150, "Q3": 200},
+            "Expenses": {"Q1": 80, "Q2": 90, "Q3": 110},
+        }
+    )
+
+    result = viz_tools.create_multi_line_chart(data=test_data, title="JSON Multi-Line")
+
+    result_dict = json.loads(result)
+
+    assert result_dict["status"] == "success"
+    assert result_dict["chart_type"] == "multi_line_chart"
+    assert result_dict["series_count"] == 2
+    assert result_dict["total_data_points"] == 6
+
+
+@patch("matplotlib.pyplot.savefig")
+@patch("matplotlib.pyplot.close")
+@patch("matplotlib.pyplot.figure")
+@patch("matplotlib.pyplot.plot")
+@patch("matplotlib.pyplot.title")
+@patch("matplotlib.pyplot.xlabel")
+@patch("matplotlib.pyplot.ylabel")
+@patch("matplotlib.pyplot.xticks")
+@patch("matplotlib.pyplot.grid")
+@patch("matplotlib.pyplot.legend")
+@patch("matplotlib.pyplot.tight_layout")
+def test_create_multi_line_chart_with_list_of_dicts_series(
+    mock_tight_layout,
+    mock_legend,
+    mock_grid,
+    mock_xticks,
+    mock_ylabel,
+    mock_xlabel,
+    mock_title,
+    mock_plot,
+    mock_figure,
+    mock_close,
+    mock_savefig,
+    viz_tools,
+):
+    """Test multi-line chart where each series is a list of dicts."""
+    test_data = {
+        "Sales": [{"month": "Jan", "value": 100}, {"month": "Feb", "value": 200}],
+        "Returns": [{"month": "Jan", "value": 10}, {"month": "Feb", "value": 20}],
+    }
+
+    result = viz_tools.create_multi_line_chart(data=test_data, title="List Series Test")
+
+    result_dict = json.loads(result)
+
+    assert result_dict["status"] == "success"
+    assert result_dict["chart_type"] == "multi_line_chart"
+    assert result_dict["series_count"] == 2
+    assert result_dict["total_data_points"] == 4
+
+
+@patch("matplotlib.pyplot.savefig")
+@patch("matplotlib.pyplot.close")
+@patch("matplotlib.pyplot.figure")
+@patch("matplotlib.pyplot.plot")
+@patch("matplotlib.pyplot.title")
+@patch("matplotlib.pyplot.xlabel")
+@patch("matplotlib.pyplot.ylabel")
+@patch("matplotlib.pyplot.xticks")
+@patch("matplotlib.pyplot.grid")
+@patch("matplotlib.pyplot.legend")
+@patch("matplotlib.pyplot.tight_layout")
+def test_create_multi_line_chart_single_series(
+    mock_tight_layout,
+    mock_legend,
+    mock_grid,
+    mock_xticks,
+    mock_ylabel,
+    mock_xlabel,
+    mock_title,
+    mock_plot,
+    mock_figure,
+    mock_close,
+    mock_savefig,
+    viz_tools,
+):
+    """Test multi-line chart with a single series."""
+    test_data = {
+        "Only Series": {"X1": 10, "X2": 20, "X3": 30},
+    }
+
+    result = viz_tools.create_multi_line_chart(data=test_data, title="Single Series")
+
+    result_dict = json.loads(result)
+
+    assert result_dict["status"] == "success"
+    assert result_dict["series_count"] == 1
+    assert result_dict["total_data_points"] == 3
+    assert mock_plot.call_count == 1
+
+
+@patch("matplotlib.pyplot.savefig")
+@patch("matplotlib.pyplot.close")
+@patch("matplotlib.pyplot.figure")
+@patch("matplotlib.pyplot.plot")
+@patch("matplotlib.pyplot.title")
+@patch("matplotlib.pyplot.xlabel")
+@patch("matplotlib.pyplot.ylabel")
+@patch("matplotlib.pyplot.xticks")
+@patch("matplotlib.pyplot.grid")
+@patch("matplotlib.pyplot.legend")
+@patch("matplotlib.pyplot.tight_layout")
+def test_create_multi_line_chart_custom_filename(
+    mock_tight_layout,
+    mock_legend,
+    mock_grid,
+    mock_xticks,
+    mock_ylabel,
+    mock_xlabel,
+    mock_title,
+    mock_plot,
+    mock_figure,
+    mock_close,
+    mock_savefig,
+    viz_tools,
+):
+    """Test multi-line chart with custom filename."""
+    test_data = {
+        "A": {"X": 1, "Y": 2},
+        "B": {"X": 3, "Y": 4},
+    }
+
+    result = viz_tools.create_multi_line_chart(data=test_data, filename="my_multi_line.png")
+
+    result_dict = json.loads(result)
+
+    assert result_dict["status"] == "success"
+    assert "my_multi_line.png" in result_dict["file_path"]
+
+
+def test_create_multi_line_chart_non_dict_data(viz_tools):
+    """Test multi-line chart with non-dict data returns error."""
+    result = viz_tools.create_multi_line_chart(data=[1, 2, 3])
+
+    result_dict = json.loads(result)
+    assert result_dict["status"] == "error"
+    assert "must be a dictionary" in result_dict["error"]
+
+
+def test_create_multi_line_chart_invalid_json_string(viz_tools):
+    """Test multi-line chart with invalid JSON string returns error."""
+    result = viz_tools.create_multi_line_chart(data="not valid json")
+
+    result_dict = json.loads(result)
+    assert result_dict["status"] == "error"
+    assert "must be a dictionary" in result_dict["error"]
+
+
+@patch("matplotlib.pyplot.savefig", side_effect=Exception("Save failed"))
+def test_create_multi_line_chart_error_handling(mock_savefig, viz_tools):
+    """Test error handling in multi-line chart creation."""
+    test_data = {
+        "Series A": {"X": 1, "Y": 2},
+    }
+
+    result = viz_tools.create_multi_line_chart(data=test_data)
+
+    result_dict = json.loads(result)
+    assert result_dict["status"] == "error"
+    assert result_dict["chart_type"] == "multi_line_chart"
+    assert "Save failed" in result_dict["error"]
+
+
+def test_initialization_with_only_multi_line_chart(temp_output_dir):
+    """Test initialization with only multi-line chart enabled."""
+    tools = VisualizationTools(
+        output_dir=temp_output_dir,
+        enable_create_bar_chart=False,
+        enable_create_line_chart=False,
+        enable_create_pie_chart=False,
+        enable_create_scatter_plot=False,
+        enable_create_histogram=False,
+        enable_create_multi_line_chart=True,
+    )
+
+    function_names = [func.name for func in tools.functions.values()]
+
+    assert "create_multi_line_chart" in function_names
+    assert "create_bar_chart" not in function_names
+    assert "create_line_chart" not in function_names
+    assert "create_pie_chart" not in function_names
+    assert "create_scatter_plot" not in function_names
+    assert "create_histogram" not in function_names
+
+
+@patch("matplotlib.pyplot.savefig")
+@patch("matplotlib.pyplot.close")
+@patch("matplotlib.pyplot.figure")
+@patch("matplotlib.pyplot.plot")
+@patch("matplotlib.pyplot.title")
+@patch("matplotlib.pyplot.xlabel")
+@patch("matplotlib.pyplot.ylabel")
+@patch("matplotlib.pyplot.xticks")
+@patch("matplotlib.pyplot.grid")
+@patch("matplotlib.pyplot.legend")
+@patch("matplotlib.pyplot.tight_layout")
+def test_create_multi_line_chart_plot_labels(
+    mock_tight_layout,
+    mock_legend,
+    mock_grid,
+    mock_xticks,
+    mock_ylabel,
+    mock_xlabel,
+    mock_title,
+    mock_plot,
+    mock_figure,
+    mock_close,
+    mock_savefig,
+    viz_tools,
+):
+    """Test that each series is plotted with its name as the label."""
+    test_data = {
+        "Temperature": {"Mon": 20, "Tue": 22},
+        "Humidity": {"Mon": 60, "Tue": 65},
+    }
+
+    viz_tools.create_multi_line_chart(data=test_data)
+
+    # Verify that each series was plotted with the correct label
+    plot_calls = mock_plot.call_args_list
+    labels = [call.kwargs["label"] for call in plot_calls]
+    assert "Temperature" in labels
+    assert "Humidity" in labels
