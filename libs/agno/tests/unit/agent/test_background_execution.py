@@ -102,12 +102,13 @@ class TestCancelBeforeStart:
 
 
 class TestBackgroundValidation:
-    def test_background_with_stream_raises_value_error(self, monkeypatch: pytest.MonkeyPatch):
-        """Background execution cannot be combined with streaming."""
+    def test_background_with_stream_requires_db(self, monkeypatch: pytest.MonkeyPatch):
+        """Background execution with streaming requires a database."""
         agent = Agent(name="test-agent")
+        agent.db = None
         _patch_sync_dispatch_dependencies(agent, monkeypatch, runs=[])
 
-        with pytest.raises(ValueError, match="Background execution cannot be combined with streaming"):
+        with pytest.raises(ValueError, match="Background execution requires a database"):
             _run.arun_dispatch(agent=agent, input="hello", stream=True, background=True)
 
     def test_background_without_db_raises_value_error(self, monkeypatch: pytest.MonkeyPatch):

@@ -3247,6 +3247,142 @@ async def _arun_background(
     return run_response
 
 
+async def _arun_background_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming team run that survives client disconnections.
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _arun_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+
+    The detached task keeps running even if the client disconnects.
+    The caller (router) just yields the SSE strings to the client.
+    """
+    from agno.team._session import asave_session
+    from agno.team._storage import _aread_or_create_session, _update_metadata
+
+    run_id = run_response.run_id
+    if not run_id:
+        raise ValueError("run_id is required for background streaming")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    run_response.status = RunStatus.running
+
+    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+    team_session.upsert_run(run_response=run_response)
+    await asave_session(team, session=team_session)
+
+    log_info(f"Background stream run {run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _arun_stream(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, TeamRunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for run {run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
+
+        except Exception:
+            log_error(f"Background stream run {run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
+
+        finally:
+            # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
+            try:
+                event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
+            except Exception:
+                log_warning(f"Failed to mark run {run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done
+            try:
+                await sse_subscriber_manager.complete(run_id)
+            except Exception:
+                log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
+
+            # Signal primary queue that run is done
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
+
+
 async def _arun_stream(
     team: "Team",
     run_response: TeamRunOutput,
@@ -3877,13 +4013,27 @@ def arun_dispatch(  # type: ignore
 
     # Background execution: return immediately with PENDING status
     if background:
-        if opts.stream:
-            raise ValueError(
-                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
-            )
         if not team.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the team for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, stream events via queue
+            return _arun_background_stream(  # type: ignore[return-value]
+                team,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             team,  # type: ignore
