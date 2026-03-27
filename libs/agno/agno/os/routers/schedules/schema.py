@@ -140,6 +140,38 @@ class ScheduleResponse(BaseModel):
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
+    @field_validator("payload", mode="before")
+    @classmethod
+    def coerce_payload_values(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Coerce string payload values back to native Python types.
+
+        Form-data submissions store booleans as ``"true"``/``"false"`` and numbers
+        as their string representations.  This validator normalises them so that the
+        API response uses proper JSON types (``true`` instead of ``"true"``).
+        """
+        if not v:
+            return v
+        coerced: Dict[str, Any] = {}
+        for key, val in v.items():
+            if isinstance(val, str):
+                low = val.lower()
+                if low == "true":
+                    coerced[key] = True
+                elif low == "false":
+                    coerced[key] = False
+                else:
+                    # Try numeric coercion
+                    try:
+                        coerced[key] = int(val)
+                    except ValueError:
+                        try:
+                            coerced[key] = float(val)
+                        except ValueError:
+                            coerced[key] = val
+            else:
+                coerced[key] = val
+        return coerced
+
 
 class ScheduleStateResponse(BaseModel):
     """Trimmed response for state-changing operations (enable/disable)."""
