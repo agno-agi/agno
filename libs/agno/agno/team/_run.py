@@ -2187,7 +2187,7 @@ async def _arun_tasks(
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         # Wait for background memory and learning creation
-        await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
+        await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
         merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
