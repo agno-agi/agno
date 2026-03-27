@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+﻿from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
+from agno.models.utils import normalize_model_provider
 
 
 class AgentResponse(BaseModel):
@@ -129,7 +130,14 @@ class AgentResponse(BaseModel):
 
         # Build model only if it has at least one non-null field
         model_name = agent.model.name if (agent.model and agent.model.name) else None
-        model_provider = agent.model.provider if (agent.model and agent.model.provider) else None
+        model_provider = (
+            normalize_model_provider(
+                agent.model.provider if agent.model else None,
+                agent.model.name if agent.model else None,
+            )
+            if agent.model
+            else None
+        )
         model_id = agent.model.id if (agent.model and agent.model.id) else None
         _agent_model_data: Dict[str, Any] = {}
         if model_name is not None:
@@ -186,7 +194,9 @@ class AgentResponse(BaseModel):
                 memory_info["model"] = ModelResponse(
                     name=agent.memory_manager.model.name,
                     model=agent.memory_manager.model.id,
-                    provider=agent.memory_manager.model.provider,
+                    provider=normalize_model_provider(
+                        agent.memory_manager.model.provider, agent.memory_manager.model.name
+                    ),
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
@@ -200,7 +210,7 @@ class AgentResponse(BaseModel):
             reasoning_info["reasoning_model"] = ModelResponse(
                 name=agent.reasoning_model.name,
                 model=agent.reasoning_model.id,
-                provider=agent.reasoning_model.provider,
+                provider=normalize_model_provider(agent.reasoning_model.provider, agent.reasoning_model.name),
             ).model_dump()
 
         default_tools_info = {
@@ -269,7 +279,7 @@ class AgentResponse(BaseModel):
             response_settings_info["parser_model"] = ModelResponse(
                 name=agent.parser_model.name,
                 model=agent.parser_model.id,
-                provider=agent.parser_model.provider,
+                provider=normalize_model_provider(agent.parser_model.provider, agent.parser_model.name),
             ).model_dump()
 
         streaming_info = {
@@ -301,3 +311,4 @@ class AgentResponse(BaseModel):
             current_version=getattr(agent, "_version", None),
             stage=getattr(agent, "_stage", None),
         )
+
