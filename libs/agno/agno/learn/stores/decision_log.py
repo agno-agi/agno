@@ -937,6 +937,7 @@ class DecisionLogStore(LearningStore):
                 session_id=decision.session_id,
                 user_id=decision.user_id,
                 team_id=decision.team_id,
+                namespace=self.config.namespace,
                 content=content,
             )
 
@@ -964,6 +965,7 @@ class DecisionLogStore(LearningStore):
                     session_id=decision.session_id,
                     user_id=decision.user_id,
                     team_id=decision.team_id,
+                    namespace=self.config.namespace,
                     content=content,
                 )
             else:
@@ -974,6 +976,7 @@ class DecisionLogStore(LearningStore):
                     session_id=decision.session_id,
                     user_id=decision.user_id,
                     team_id=decision.team_id,
+                    namespace=self.config.namespace,
                     content=content,
                 )
 
