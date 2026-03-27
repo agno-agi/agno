@@ -118,6 +118,7 @@ class AgentSession:
         team_id: Optional[str] = None,
         last_n_runs: Optional[int] = None,
         limit: Optional[int] = None,
+        after_run_id: Optional[str] = None,
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
@@ -158,6 +159,11 @@ class AgentSession:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
 
         runs = self.runs
+
+        if after_run_id is not None:
+            after_run_index = next((i for i, run in enumerate(runs) if run.run_id == after_run_id), None)
+            if after_run_index is not None:
+                runs = runs[after_run_index + 1 :]
 
         # Filter by agent_id and team_id
         if agent_id:
@@ -258,3 +264,21 @@ class AgentSession:
         if self.summary is None:
             return None
         return self.summary
+
+    def get_last_compacted_run_id(self) -> Optional[str]:
+        if self.session_data is None:
+            return None
+        compaction_data = self.session_data.get("context_compaction")
+        if not isinstance(compaction_data, dict):
+            return None
+        last_compacted_run_id = compaction_data.get("last_compacted_run_id")
+        return last_compacted_run_id if isinstance(last_compacted_run_id, str) else None
+
+    def set_last_compacted_run_id(self, run_id: Optional[str]) -> None:
+        if self.session_data is None:
+            self.session_data = {}
+        compaction_data = self.session_data.get("context_compaction")
+        if not isinstance(compaction_data, dict):
+            compaction_data = {}
+            self.session_data["context_compaction"] = compaction_data
+        compaction_data["last_compacted_run_id"] = run_id

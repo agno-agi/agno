@@ -55,7 +55,7 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.requirement import RunRequirement
-from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
+from agno.session import AgentSession, ContextCompactionManager, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.tools import Toolkit
@@ -133,6 +133,10 @@ class Agent:
     num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
+    # If True, automatically compact long history into the session summary.
+    enable_context_compaction: bool = False
+    # Manager for automatic history compaction.
+    context_compaction_manager: Optional[ContextCompactionManager] = None
 
     # --- Knowledge ---
     knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
@@ -404,6 +408,8 @@ class Agent:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        enable_context_compaction: bool = False,
+        context_compaction_manager: Optional[ContextCompactionManager] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
@@ -548,6 +554,10 @@ class Agent:
             self.num_history_runs = 3
 
         self.max_tool_calls_from_history = max_tool_calls_from_history
+        self.enable_context_compaction = enable_context_compaction
+        self.context_compaction_manager = context_compaction_manager
+        if context_compaction_manager is not None:
+            self.enable_context_compaction = True
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages

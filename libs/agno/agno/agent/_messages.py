@@ -1195,6 +1195,8 @@ def get_run_messages(
     )
     """
 
+    skip_context_compaction = kwargs.pop("_skip_context_compaction", False)
+
     # Initialize the RunMessages object (no media here - that's in RunInput now)
     run_messages = RunMessages()
 
@@ -1251,6 +1253,7 @@ def get_run_messages(
         history: List[Message] = session.get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
+            after_run_id=session.get_last_compacted_run_id(),
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
         )
@@ -1355,6 +1358,38 @@ def get_run_messages(
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
+    if (
+        not skip_context_compaction
+        and add_history_to_context
+        and agent.context_compaction_manager is not None
+        and agent.model is not None
+        and agent.context_compaction_manager.should_compact(
+            run_messages.messages,
+            model=agent.model,
+            tools=tools,
+            response_format=run_context.output_schema,
+        )
+        and agent.context_compaction_manager.compact_session(session)
+    ):
+        return get_run_messages(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            input=input,
+            session=session,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
+            _skip_context_compaction=True,
+            **kwargs,
+        )
+
     return run_messages
 
 
@@ -1399,6 +1434,8 @@ async def aget_run_messages(
         agent, input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
     )
     """
+
+    skip_context_compaction = kwargs.pop("_skip_context_compaction", False)
 
     # Initialize the RunMessages object (no media here - that's in RunInput now)
     run_messages = RunMessages()
@@ -1456,6 +1493,7 @@ async def aget_run_messages(
         history: List[Message] = session.get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
+            after_run_id=session.get_last_compacted_run_id(),
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
         )
@@ -1560,6 +1598,38 @@ async def aget_run_messages(
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
+    if (
+        not skip_context_compaction
+        and add_history_to_context
+        and agent.context_compaction_manager is not None
+        and agent.model is not None
+        and await agent.context_compaction_manager.ashould_compact(
+            run_messages.messages,
+            model=agent.model,
+            tools=tools,
+            response_format=run_context.output_schema,
+        )
+        and await agent.context_compaction_manager.acompact_session(session)
+    ):
+        return await aget_run_messages(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            input=input,
+            session=session,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
+            _skip_context_compaction=True,
+            **kwargs,
+        )
+
     return run_messages
 
 
@@ -1628,6 +1698,7 @@ def get_continue_run_messages(
         history: List[Message] = session.get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
+            after_run_id=session.get_last_compacted_run_id(),
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
         )

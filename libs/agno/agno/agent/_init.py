@@ -24,7 +24,7 @@ from agno.db.base import AsyncBaseDb
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.utils import get_model
-from agno.session import SessionSummaryManager
+from agno.session import ContextCompactionManager, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -170,6 +170,19 @@ def set_session_summary_manager(agent: Agent) -> None:
         )
 
 
+def set_context_compaction_manager(agent: Agent) -> None:
+    if agent.enable_context_compaction and agent.context_compaction_manager is None:
+        agent.context_compaction_manager = ContextCompactionManager(model=agent.model)
+
+    if agent.context_compaction_manager is not None and agent.context_compaction_manager.model is None:
+        agent.context_compaction_manager.model = agent.model
+
+    if agent.context_compaction_manager is not None:
+        agent.enable_context_compaction = True
+        if agent.add_session_summary_to_context is None:
+            agent.add_session_summary_to_context = True
+
+
 def set_compression_manager(agent: Agent) -> None:
     if agent.compress_tool_results and agent.compression_manager is None:
         agent.compression_manager = CompressionManager(
@@ -232,6 +245,8 @@ def get_models(agent: Agent) -> None:
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
+    if agent.context_compaction_manager is not None and agent.context_compaction_manager.model is None:
+        agent.context_compaction_manager.model = agent.model
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
@@ -250,6 +265,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_culture_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
+    if agent.enable_context_compaction or agent.context_compaction_manager is not None:
+        set_context_compaction_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
     if agent.learning is not None and agent.learning is not False:

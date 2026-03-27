@@ -116,6 +116,7 @@ class TeamSession:
         member_ids: Optional[List[str]] = None,
         last_n_runs: Optional[int] = None,
         limit: Optional[int] = None,
+        after_run_id: Optional[str] = None,
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
@@ -161,6 +162,11 @@ class TeamSession:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
 
         session_runs = self.runs
+
+        if after_run_id is not None:
+            after_run_index = next((i for i, run in enumerate(session_runs) if run.run_id == after_run_id), None)
+            if after_run_index is not None:
+                session_runs = session_runs[after_run_index + 1 :]
 
         # Filter by team_id and member_ids
         if team_id:
@@ -247,6 +253,24 @@ class TeamSession:
             A list of user and assistant Messages belonging to the session.
         """
         return self.get_messages(skip_roles=["system", "tool"], skip_member_messages=True, last_n_runs=last_n_runs)
+
+    def get_last_compacted_run_id(self) -> Optional[str]:
+        if self.session_data is None:
+            return None
+        compaction_data = self.session_data.get("context_compaction")
+        if not isinstance(compaction_data, dict):
+            return None
+        last_compacted_run_id = compaction_data.get("last_compacted_run_id")
+        return last_compacted_run_id if isinstance(last_compacted_run_id, str) else None
+
+    def set_last_compacted_run_id(self, run_id: Optional[str]) -> None:
+        if self.session_data is None:
+            self.session_data = {}
+        compaction_data = self.session_data.get("context_compaction")
+        if not isinstance(compaction_data, dict):
+            compaction_data = {}
+            self.session_data["context_compaction"] = compaction_data
+        compaction_data["last_compacted_run_id"] = run_id
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
