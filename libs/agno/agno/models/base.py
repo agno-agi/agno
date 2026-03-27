@@ -2153,6 +2153,8 @@ class Model(ABC):
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
+                            elif item.content is not None and isinstance(item.content, dict):
+                                function_call_output += json.dumps(item.content)
                             else:
                                 # Capture output
                                 function_call_output += item.content or ""
@@ -2171,6 +2173,8 @@ class Model(ABC):
                             if item.content is not None:
                                 if isinstance(item.content, BaseModel):
                                     function_call_output += item.content.model_dump_json()
+                                elif isinstance(item.content, dict):
+                                    function_call_output += json.dumps(item.content)
                                 else:
                                     function_call_output += str(item.content)
 
@@ -2683,6 +2687,8 @@ class Model(ABC):
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
+                            elif item.content is not None and isinstance(item.content, dict):
+                                function_call_output += json.dumps(item.content)
                             else:
                                 # Capture output
                                 function_call_output += item.content or ""
@@ -2702,6 +2708,8 @@ class Model(ABC):
                                 if item.content is not None:
                                     if isinstance(item.content, BaseModel):
                                         function_call_output += item.content.model_dump_json()
+                                    elif isinstance(item.content, dict):
+                                        function_call_output += json.dumps(item.content)
                                     else:
                                         function_call_output += str(item.content)
 
@@ -2815,6 +2823,8 @@ class Model(ABC):
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):
                                     function_call_output += item.content.model_dump_json()
+                                elif item.content is not None and isinstance(item.content, dict):
+                                    function_call_output += json.dumps(item.content)
                                 else:
                                     # Capture output
                                     function_call_output += item.content or ""
