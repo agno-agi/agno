@@ -4,7 +4,7 @@ import time
 import weakref
 from dataclasses import asdict
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -53,6 +53,8 @@ class MCPTools(Toolkit):
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        lazy_load_tools: bool = False,
+        max_discovered_tools: int = 10,
         **kwargs,
     ):
         """
@@ -74,6 +76,11 @@ class MCPTools(Toolkit):
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
+            lazy_load_tools: If True, tools are not registered with the agent upfront.
+                Instead, a single `search_tools` meta-tool is provided that allows the agent
+                to discover and dynamically load relevant tools on demand.
+            max_discovered_tools: Maximum number of tools returned per search_tools call.
+                Only relevant when lazy_load_tools is True. Defaults to 10.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -106,6 +113,10 @@ class MCPTools(Toolkit):
         self.show_result_tools = show_result_tools or []
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
+        self.lazy_load_tools = lazy_load_tools
+        self.max_discovered_tools = max_discovered_tools
+        self._tool_registry: Dict[str, Any] = {}
+        self._activated_tools: set[str] = set()
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -594,53 +605,185 @@ class MCPTools(Toolkit):
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)
 
-            # Get tool name prefix if available
-            tool_name_prefix = ""
-            if self.tool_name_prefix is not None:
-                tool_name_prefix = self.tool_name_prefix + "_"
+            if self.lazy_load_tools:
+                # Store tools in internal registry without registering with agent
+                self._tool_registry.clear()
+                self._activated_tools.clear()
+                for tool in filtered_tools:
+                    self._tool_registry[tool.name] = tool
 
-            # Register the tools with the toolkit
-            for tool in filtered_tools:
-                try:
-                    # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(
-                        tool=tool,
-                        session=self.session,  # type: ignore
-                        mcp_tools_instance=self,
-                    )
-                    # Create a Function for the tool
-                    # Apply toolkit-level settings
-                    tool_name = tool.name
-                    stop_after = tool_name in self.stop_after_tool_call_tools
-                    show_result = tool_name in self.show_result_tools or stop_after
+                log_debug(
+                    f"Stored {len(self._tool_registry)} tools in registry for lazy loading"
+                )
 
-                    f = Function(
-                        name=tool_name_prefix + tool_name,
-                        description=tool.description,
-                        parameters=tool.inputSchema,
-                        entrypoint=entrypoint,
-                        # Set skip_entrypoint_processing to True to avoid processing the entrypoint
-                        skip_entrypoint_processing=True,
-                        # Apply toolkit-level settings for HITL and control flow
-                        requires_confirmation=tool_name in self.requires_confirmation_tools,
-                        external_execution=tool_name in self.external_execution_required_tools,
-                        stop_after_tool_call=stop_after,
-                        show_result=show_result,
-                        # Apply toolkit-level cache settings
-                        cache_results=self.cache_results,
-                        cache_dir=self.cache_dir,
-                        cache_ttl=self.cache_ttl,
-                    )
+                # Register only the search_tools meta-tool
+                search_fn = Function(
+                    name="search_tools",
+                    description=(
+                        "Search for available tools by keyword query. "
+                        "Returns matching tool names and descriptions. "
+                        "Call this before using a specific tool to discover what is available."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query to find relevant tools (e.g. 'vector database', 'file operations')",
+                            }
+                        },
+                        "required": ["query"],
+                    },
+                    entrypoint=self._search_tools_entrypoint,
+                    skip_entrypoint_processing=True,
+                    stop_after_tool_call=True,
+                )
+                self.functions[search_fn.name] = search_fn
+                log_debug(f"Function: search_tools registered with {self.name} (lazy loading mode)")
+            else:
+                # Eager mode: register all tools with the toolkit (default behavior)
+                # Get tool name prefix if available
+                tool_name_prefix = ""
+                if self.tool_name_prefix is not None:
+                    tool_name_prefix = self.tool_name_prefix + "_"
 
-                    # Register the Function with the toolkit
-                    self.functions[f.name] = f
-                    log_debug(f"Function: {f.name} registered with {self.name}")
-                except Exception as e:
-                    log_error(f"Failed to register tool {tool.name}: {e}")
+                # Register the tools with the toolkit
+                for tool in filtered_tools:
+                    try:
+                        # Get an entrypoint for the tool
+                        entrypoint = get_entrypoint_for_tool(
+                            tool=tool,
+                            session=self.session,  # type: ignore
+                            mcp_tools_instance=self,
+                        )
+                        # Create a Function for the tool
+                        # Apply toolkit-level settings
+                        tool_name = tool.name
+                        stop_after = tool_name in self.stop_after_tool_call_tools
+                        show_result = tool_name in self.show_result_tools or stop_after
+
+                        f = Function(
+                            name=tool_name_prefix + tool_name,
+                            description=tool.description,
+                            parameters=tool.inputSchema,
+                            entrypoint=entrypoint,
+                            # Set skip_entrypoint_processing to True to avoid processing the entrypoint
+                            skip_entrypoint_processing=True,
+                            # Apply toolkit-level settings for HITL and control flow
+                            requires_confirmation=tool_name in self.requires_confirmation_tools,
+                            external_execution=tool_name in self.external_execution_required_tools,
+                            stop_after_tool_call=stop_after,
+                            show_result=show_result,
+                            # Apply toolkit-level cache settings
+                            cache_results=self.cache_results,
+                            cache_dir=self.cache_dir,
+                            cache_ttl=self.cache_ttl,
+                        )
+
+                        # Register the Function with the toolkit
+                        self.functions[f.name] = f
+                        log_debug(f"Function: {f.name} registered with {self.name}")
+                    except Exception as e:
+                        log_error(f"Failed to register tool {tool.name}: {e}")
 
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to get tools for {str(self)}: {e}")
             raise
+
+    async def _search_tools_entrypoint(self, query: str) -> str:
+        """Search the tool registry and dynamically activate matching tools.
+
+        This is the entrypoint for the search_tools meta-tool registered
+        when lazy_load_tools is True. It performs keyword matching against
+        tool names and descriptions, then dynamically registers matched tools
+        with the toolkit so the agent can use them.
+
+        Args:
+            query: Search query string to match against tool names and descriptions.
+
+        Returns:
+            A formatted string listing matched tools, or a message if none found.
+        """
+        query_lower = query.lower()
+        query_terms = query_lower.split()
+
+        matches = []
+        for name, tool in self._tool_registry.items():
+            searchable = f"{name} {tool.description or ''}".lower()
+            # Score: count of query terms found in tool name+description
+            score = sum(1 for term in query_terms if term in searchable)
+            if score > 0:
+                matches.append((score, name, tool))
+
+        # Sort by relevance score (descending), cap results
+        matches.sort(key=lambda x: x[0], reverse=True)
+        top_matches = matches[: self.max_discovered_tools]
+
+        if not top_matches:
+            return "No matching tools found. Try a different search query."
+
+        # Dynamically register discovered tools with the agent
+        results = []
+        for _, name, tool in top_matches:
+            if name not in self._activated_tools:
+                self._activate_tool(tool)
+                self._activated_tools.add(name)
+            results.append(f"- {name}: {tool.description or 'No description'}")
+
+        return (
+            f"Found {len(results)} matching tool(s):\n"
+            + "\n".join(results)
+            + "\n\nThese tools are now available for use."
+        )
+
+    def _activate_tool(self, tool: Any) -> None:
+        """Register a single MCP tool with the toolkit on demand.
+
+        Called by _search_tools_entrypoint when a matching tool is discovered.
+        Creates a Function entrypoint and registers it in self.functions so
+        the agent can call it in subsequent turns.
+
+        Args:
+            tool: An MCP tool object with name, description, and inputSchema attributes.
+        """
+        if self.session is None:
+            log_error("Cannot activate tool: session is not initialized")
+            return
+
+        try:
+            entrypoint = get_entrypoint_for_tool(
+                tool=tool,
+                session=self.session,  # type: ignore
+                mcp_tools_instance=self,
+            )
+
+            tool_name = tool.name
+            tool_name_prefix = ""
+            if self.tool_name_prefix is not None:
+                tool_name_prefix = self.tool_name_prefix + "_"
+
+            stop_after = tool_name in self.stop_after_tool_call_tools
+            show_result = tool_name in self.show_result_tools or stop_after
+
+            f = Function(
+                name=tool_name_prefix + tool_name,
+                description=tool.description,
+                parameters=tool.inputSchema,
+                entrypoint=entrypoint,
+                skip_entrypoint_processing=True,
+                requires_confirmation=tool_name in self.requires_confirmation_tools,
+                external_execution=tool_name in self.external_execution_required_tools,
+                stop_after_tool_call=stop_after,
+                show_result=show_result,
+                cache_results=self.cache_results,
+                cache_dir=self.cache_dir,
+                cache_ttl=self.cache_ttl,
+            )
+
+            self.functions[f.name] = f
+            log_debug(f"Lazy-loaded tool: {f.name}")
+        except Exception as e:
+            log_error(f"Failed to lazy-load tool {tool.name}: {e}")
 
     async def initialize(self) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
