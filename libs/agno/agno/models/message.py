@@ -144,8 +144,30 @@ class Message(BaseModel):
             reconstructed_images = []
             for i, img_data in enumerate(data["images"]):
                 if isinstance(img_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in img_data and isinstance(img_data["content"], str):
+                    # Check for media_reference FIRST
+                    if (
+                        "media_reference" in img_data
+                        and isinstance(img_data["media_reference"], dict)
+                        and "storage_key" in img_data["media_reference"]
+                    ):
+                        from agno.media_storage.reference import MediaReference
+
+                        ref = MediaReference.from_dict(img_data["media_reference"])
+                        reconstructed_images.append(
+                            Image(
+                                url=ref.url,
+                                id=img_data.get("id"),
+                                mime_type=img_data.get("mime_type"),
+                                format=img_data.get("format"),
+                                detail=img_data.get("detail"),
+                                original_prompt=img_data.get("original_prompt"),
+                                revised_prompt=img_data.get("revised_prompt"),
+                                alt_text=img_data.get("alt_text"),
+                                metadata=img_data.get("metadata"),
+                                media_reference=ref,
+                            )
+                        )
+                    elif "content" in img_data and isinstance(img_data["content"], str):
                         reconstructed_images.append(
                             Image.from_base64(
                                 img_data["content"],
@@ -155,7 +177,6 @@ class Message(BaseModel):
                             )
                         )
                     else:
-                        # Regular image (filepath/url)
                         reconstructed_images.append(Image(**img_data))
                 else:
                     reconstructed_images.append(img_data)
@@ -166,8 +187,30 @@ class Message(BaseModel):
             reconstructed_audio = []
             for i, aud_data in enumerate(data["audio"]):
                 if isinstance(aud_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in aud_data and isinstance(aud_data["content"], str):
+                    if (
+                        "media_reference" in aud_data
+                        and isinstance(aud_data["media_reference"], dict)
+                        and "storage_key" in aud_data["media_reference"]
+                    ):
+                        from agno.media_storage.reference import MediaReference
+
+                        ref = MediaReference.from_dict(aud_data["media_reference"])
+                        reconstructed_audio.append(
+                            Audio(
+                                url=ref.url,
+                                id=aud_data.get("id"),
+                                mime_type=aud_data.get("mime_type"),
+                                format=aud_data.get("format"),
+                                duration=aud_data.get("duration"),
+                                sample_rate=aud_data.get("sample_rate", 24000),
+                                channels=aud_data.get("channels", 1),
+                                transcript=aud_data.get("transcript"),
+                                expires_at=aud_data.get("expires_at"),
+                                metadata=aud_data.get("metadata"),
+                                media_reference=ref,
+                            )
+                        )
+                    elif "content" in aud_data and isinstance(aud_data["content"], str):
                         reconstructed_audio.append(
                             Audio.from_base64(
                                 aud_data["content"],
@@ -190,8 +233,32 @@ class Message(BaseModel):
             reconstructed_videos = []
             for i, vid_data in enumerate(data["videos"]):
                 if isinstance(vid_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in vid_data and isinstance(vid_data["content"], str):
+                    if (
+                        "media_reference" in vid_data
+                        and isinstance(vid_data["media_reference"], dict)
+                        and "storage_key" in vid_data["media_reference"]
+                    ):
+                        from agno.media_storage.reference import MediaReference
+
+                        ref = MediaReference.from_dict(vid_data["media_reference"])
+                        reconstructed_videos.append(
+                            Video(
+                                url=ref.url,
+                                id=vid_data.get("id"),
+                                mime_type=vid_data.get("mime_type"),
+                                format=vid_data.get("format"),
+                                duration=vid_data.get("duration"),
+                                width=vid_data.get("width"),
+                                height=vid_data.get("height"),
+                                fps=vid_data.get("fps"),
+                                eta=vid_data.get("eta"),
+                                original_prompt=vid_data.get("original_prompt"),
+                                revised_prompt=vid_data.get("revised_prompt"),
+                                metadata=vid_data.get("metadata"),
+                                media_reference=ref,
+                            )
+                        )
+                    elif "content" in vid_data and isinstance(vid_data["content"], str):
                         reconstructed_videos.append(
                             Video.from_base64(
                                 vid_data["content"],
@@ -211,8 +278,29 @@ class Message(BaseModel):
             reconstructed_files = []
             for i, file_data in enumerate(data["files"]):
                 if isinstance(file_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in file_data and isinstance(file_data["content"], str):
+                    if (
+                        "media_reference" in file_data
+                        and isinstance(file_data["media_reference"], dict)
+                        and "storage_key" in file_data["media_reference"]
+                    ):
+                        from agno.media_storage.reference import MediaReference
+
+                        ref = MediaReference.from_dict(file_data["media_reference"])
+                        reconstructed_files.append(
+                            File(
+                                url=ref.url,
+                                id=file_data.get("id"),
+                                mime_type=file_data.get("mime_type"),
+                                file_type=file_data.get("file_type"),
+                                filename=file_data.get("filename"),
+                                size=file_data.get("size"),
+                                format=file_data.get("format"),
+                                name=file_data.get("name"),
+                                metadata=file_data.get("metadata"),
+                                media_reference=ref,
+                            )
+                        )
+                    elif "content" in file_data and isinstance(file_data["content"], str):
                         reconstructed_files.append(
                             File.from_base64(
                                 file_data["content"],
@@ -232,7 +320,28 @@ class Message(BaseModel):
         if "audio_output" in data and data["audio_output"]:
             aud_data = data["audio_output"]
             if isinstance(aud_data, dict):
-                if "content" in aud_data and isinstance(aud_data["content"], str):
+                if (
+                    "media_reference" in aud_data
+                    and isinstance(aud_data["media_reference"], dict)
+                    and "storage_key" in aud_data["media_reference"]
+                ):
+                    from agno.media_storage.reference import MediaReference
+
+                    ref = MediaReference.from_dict(aud_data["media_reference"])
+                    data["audio_output"] = Audio(
+                        url=ref.url,
+                        id=aud_data.get("id"),
+                        mime_type=aud_data.get("mime_type"),
+                        format=aud_data.get("format"),
+                        duration=aud_data.get("duration"),
+                        sample_rate=aud_data.get("sample_rate", 24000),
+                        channels=aud_data.get("channels", 1),
+                        transcript=aud_data.get("transcript"),
+                        expires_at=aud_data.get("expires_at"),
+                        metadata=aud_data.get("metadata"),
+                        media_reference=ref,
+                    )
+                elif "content" in aud_data and isinstance(aud_data["content"], str):
                     data["audio_output"] = Audio.from_base64(
                         aud_data["content"],
                         id=aud_data.get("id"),
@@ -248,7 +357,27 @@ class Message(BaseModel):
         if "image_output" in data and data["image_output"]:
             img_data = data["image_output"]
             if isinstance(img_data, dict):
-                if "content" in img_data and isinstance(img_data["content"], str):
+                if (
+                    "media_reference" in img_data
+                    and isinstance(img_data["media_reference"], dict)
+                    and "storage_key" in img_data["media_reference"]
+                ):
+                    from agno.media_storage.reference import MediaReference
+
+                    ref = MediaReference.from_dict(img_data["media_reference"])
+                    data["image_output"] = Image(
+                        url=ref.url,
+                        id=img_data.get("id"),
+                        mime_type=img_data.get("mime_type"),
+                        format=img_data.get("format"),
+                        detail=img_data.get("detail"),
+                        original_prompt=img_data.get("original_prompt"),
+                        revised_prompt=img_data.get("revised_prompt"),
+                        alt_text=img_data.get("alt_text"),
+                        metadata=img_data.get("metadata"),
+                        media_reference=ref,
+                    )
+                elif "content" in img_data and isinstance(img_data["content"], str):
                     data["image_output"] = Image.from_base64(
                         img_data["content"],
                         id=img_data.get("id"),
@@ -261,7 +390,30 @@ class Message(BaseModel):
         if "video_output" in data and data["video_output"]:
             vid_data = data["video_output"]
             if isinstance(vid_data, dict):
-                if "content" in vid_data and isinstance(vid_data["content"], str):
+                if (
+                    "media_reference" in vid_data
+                    and isinstance(vid_data["media_reference"], dict)
+                    and "storage_key" in vid_data["media_reference"]
+                ):
+                    from agno.media_storage.reference import MediaReference
+
+                    ref = MediaReference.from_dict(vid_data["media_reference"])
+                    data["video_output"] = Video(
+                        url=ref.url,
+                        id=vid_data.get("id"),
+                        mime_type=vid_data.get("mime_type"),
+                        format=vid_data.get("format"),
+                        duration=vid_data.get("duration"),
+                        width=vid_data.get("width"),
+                        height=vid_data.get("height"),
+                        fps=vid_data.get("fps"),
+                        eta=vid_data.get("eta"),
+                        original_prompt=vid_data.get("original_prompt"),
+                        revised_prompt=vid_data.get("revised_prompt"),
+                        metadata=vid_data.get("metadata"),
+                        media_reference=ref,
+                    )
+                elif "content" in vid_data and isinstance(vid_data["content"], str):
                     data["video_output"] = Video.from_base64(
                         vid_data["content"],
                         id=vid_data.get("id"),
