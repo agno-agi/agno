@@ -8,6 +8,7 @@ from fastapi import (
     Depends,
     Form,
     HTTPException,
+    Query,
     Request,
     WebSocket,
 )
@@ -547,21 +548,18 @@ def get_workflow_router(
         workflows: List[WorkflowSummaryResponse] = []
         if accessible_workflows:
             for workflow in accessible_workflows:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            db_workflows = get_workflows(db=os.db, registry=os.registry)
-            if db_workflows:
-                for db_workflow in db_workflows:
-                    try:
-                        workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
-                    except Exception as e:
-                        workflow_id = getattr(db_workflow, "id", "unknown")
-                        logger.error(f"Error converting workflow {workflow_id} to response: {e}")
-                        # Continue processing other workflows even if this one fails
-                        continue
+            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+                try:
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
+                except Exception as e:
+                    workflow_id = getattr(db_workflow, "id", "unknown")
+                    logger.error(f"Error converting workflow {workflow_id} to response: {e}")
+                    continue
 
         return workflows
 
@@ -591,9 +589,18 @@ def get_workflow_router(
         },
         dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
-    async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
+    async def get_workflow(
+        workflow_id: str,
+        request: Request,
+        version: Optional[int] = Query(None, description="Workflow version to retrieve"),
+    ) -> WorkflowResponse:
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            version=version,
+            registry=os.registry,
+            create_fresh=True,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -641,11 +648,13 @@ def get_workflow_router(
         workflow_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        version: Optional[int] = Form(None),
+        message: str = Form(..., description="The input message or prompt to send to the workflow"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        version: Optional[int] = Form(None, description="Workflow version to use for this run"),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
@@ -754,10 +763,43 @@ def get_workflow_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        cancelled = await workflow.acancel_run(run_id=run_id)
-        if not cancelled:
-            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
-
+        # cancel_run always stores cancellation intent (even for not-yet-registered runs
+        # in cancel-before-start scenarios), so we always return success.
+        await workflow.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
+
+    @router.get(
+        "/workflows/{workflow_id}/runs/{run_id}",
+        tags=["Workflows"],
+        operation_id="get_workflow_run",
+        summary="Get Workflow Run",
+        description=(
+            "Retrieve the status and output of a workflow run. Use this to poll for run completion.\n\n"
+            "Requires the `session_id` that was returned when the run was created."
+        ),
+        responses={
+            200: {"description": "Run output retrieved successfully"},
+            404: {"description": "Workflow or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+    )
+    async def get_workflow_run(
+        workflow_id: str,
+        run_id: str,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if isinstance(workflow, RemoteWorkflow):
+            raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
+
+        run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return run_output.to_dict()
 
     return router

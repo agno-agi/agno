@@ -10,6 +10,11 @@ Run this with `fastmcp run cookbook/90_tools/mcp/local_server/server.py`
 
 from fastmcp import FastMCP
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 mcp = FastMCP("weather_tools")
 
 
@@ -22,6 +27,10 @@ def get_weather(city: str) -> str:
 def get_temperature(city: str) -> str:
     return f"The temperature in {city} is 70 degrees"
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

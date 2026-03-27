@@ -1,5 +1,17 @@
+"""
+Postgres Tools
+=============================
+
+Demonstrates postgres tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.postgres import PostgresTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Include specific Postgres functions (default behavior - all functions included)
 agent = Agent(
@@ -50,10 +62,14 @@ agent_safe = Agent(
     ]
 )
 
-agent.print_response(
-    "List the tables in the database and summarize one of the tables", markdown=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "List the tables in the database and summarize one of the tables", markdown=True
+    )
 
-agent.print_response("""
-Please run a SQL query to get all sessions in `agno_sessions` created in the last 24 hours and summarize the table.
-""")
+    agent.print_response("""
+    Please run a SQL query to get all sessions in `agno_sessions` created in the last 24 hours and summarize the table.
+    """)

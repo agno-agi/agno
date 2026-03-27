@@ -1,3 +1,20 @@
+"""
+Support Team
+============
+
+A multi-agent team that routes support questions to the right specialist.
+Technical Support handles code and API questions; Documentation Specialist
+searches Slack history and the web for existing answers.
+
+Key concepts:
+  - ``Team`` with a coordinator model routes questions to the best member.
+  - One member uses ``SlackTools`` to find past answers in Slack threads.
+  - Both members use ``WebSearchTools`` for external documentation.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             search:read, channels:history
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -6,6 +23,10 @@ from agno.os.interfaces.slack import Slack
 from agno.team import Team
 from agno.tools.slack import SlackTools
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 team_db = SqliteDb(session_table="team_sessions", db_file="tmp/support_team.db")
 
@@ -72,6 +93,10 @@ agent_os = AgentOS(
     ],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="support_team:app", reload=True)

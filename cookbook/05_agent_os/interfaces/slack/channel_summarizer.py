@@ -1,9 +1,31 @@
+"""
+Channel Summarizer
+==================
+
+An agent that reads channel history and produces structured summaries.
+Supports follow-up questions in the same thread via session history.
+
+Key concepts:
+  - ``SlackTools`` with ``enable_get_thread`` and ``enable_search_messages``
+    lets the agent read Slack data as tool calls.
+  - ``add_history_to_context=True`` + ``db`` enables follow-up questions
+    within the same Slack thread — the agent remembers previous exchanges.
+  - ``num_history_runs=5`` includes the last 5 exchanges for context.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             channels:history, search:read, users:read
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.slack import SlackTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/summarizer.db")
 
@@ -32,8 +54,9 @@ summarizer = Agent(
         "- Questions/Blockers",
         "Use bullet points and keep summaries concise.",
     ],
+    # Session history — enables follow-up questions in the same Slack thread
     add_history_to_context=True,
-    num_history_runs=3,
+    num_history_runs=5,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -48,6 +71,10 @@ agent_os = AgentOS(
     ],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="channel_summarizer:app", reload=True)

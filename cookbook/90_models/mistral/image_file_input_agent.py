@@ -1,9 +1,20 @@
+"""
+Mistral Image File Input Agent
+==============================
+
+Cookbook example for `mistral/image_file_input_agent.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=MistralChat(id="pixtral-12b-2409"),
@@ -22,3 +33,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

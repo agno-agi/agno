@@ -343,6 +343,23 @@ class LearningMachine:
         """True if any store was updated in the last operation."""
         return any(getattr(store, "was_updated", False) for store in self.stores.values())
 
+    @property
+    def requires_history(self) -> bool:
+        # PROPOSE and HITL modes need chat history for multi-turn confirmation
+        modes_needing_history = {LearningMode.PROPOSE, LearningMode.HITL}
+        for cfg in (
+            self.learned_knowledge,
+            self.user_profile,
+            self.user_memory,
+            self.session_context,
+            self.entity_memory,
+            self.decision_log,
+        ):
+            mode = getattr(cfg, "mode", None) or getattr(getattr(cfg, "config", None), "mode", None)
+            if mode in modes_needing_history:
+                return True
+        return False
+
     # =========================================================================
     # Main API
     # =========================================================================
@@ -702,6 +719,53 @@ class LearningMachine:
             set_log_level_to_debug()
         else:
             set_log_level_to_info()
+
+    # =========================================================================
+    # Serialization
+    # =========================================================================
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the LearningMachine configuration to a dictionary.
+
+        Preserves which stores are enabled and the namespace so that
+        from_dict() can reconstruct an equivalent instance. Does not
+        serialize db, model, or knowledge (those are injected at init).
+        """
+        d: Dict[str, Any] = {}
+        if self.user_profile:
+            d["user_profile"] = True
+        if self.user_memory:
+            d["user_memory"] = True
+        if self.session_context:
+            d["session_context"] = True
+        if self.entity_memory:
+            d["entity_memory"] = True
+        if self.learned_knowledge:
+            d["learned_knowledge"] = True
+        if self.decision_log:
+            d["decision_log"] = True
+        if self.namespace != "global":
+            d["namespace"] = self.namespace
+        if self.debug_mode:
+            d["debug_mode"] = True
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LearningMachine":
+        """Reconstruct a LearningMachine from a serialized dictionary.
+
+        db and model must be injected separately (e.g. during agent/team init).
+        """
+        return cls(
+            user_profile=data.get("user_profile", False),
+            user_memory=data.get("user_memory", False),
+            session_context=data.get("session_context", False),
+            entity_memory=data.get("entity_memory", False),
+            learned_knowledge=data.get("learned_knowledge", False),
+            decision_log=data.get("decision_log", False),
+            namespace=data.get("namespace", "global"),
+            debug_mode=data.get("debug_mode", False),
+        )
 
     # =========================================================================
     # Representation

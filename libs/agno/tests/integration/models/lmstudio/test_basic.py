@@ -136,6 +136,7 @@ def test_history():
         model=LMStudio(id="qwen2.5-7b-instruct-1m"),
         db=SqliteDb(db_file="tmp/lmstudio/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

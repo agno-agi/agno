@@ -8,6 +8,10 @@ from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIResponses
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     name="ZDR Compliant Agent",
     session_id="zdr_demo_session",
@@ -25,3 +29,10 @@ agent = Agent(
 agent.print_response("What's the largest country in Europe by area?")
 agent.print_response("What's the population of that country?")
 agent.print_response("What's the population density per square kilometer?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

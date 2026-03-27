@@ -39,6 +39,7 @@ from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
     TraceNode,
+    TraceSearchGroupBy,
     TraceSessionStats,
     TraceSummary,
 )
@@ -570,9 +571,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -630,9 +631,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps([img.model_dump() for img in images])
@@ -685,9 +686,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -727,9 +728,9 @@ class AgentOSClient:
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
         data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
 
         for key, value in kwargs.items():
@@ -842,9 +843,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -902,9 +903,9 @@ class AgentOSClient:
         """
         endpoint = f"/teams/{team_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -961,11 +962,14 @@ class AgentOSClient:
         data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
-    def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    def get_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -974,14 +978,19 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = self._get(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = self._get(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
-    async def aget_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    async def aget_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -990,7 +999,9 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = await self._aget(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = await self._aget(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
     async def run_workflow(
@@ -1027,9 +1038,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "false"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1087,9 +1098,9 @@ class AgentOSClient:
         """
         endpoint = f"/workflows/{workflow_id}/runs"
         data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
+        if session_id is not None:
             data["session_id"] = session_id
-        if user_id:
+        if user_id is not None:
             data["user_id"] = user_id
         if images:
             data["images"] = json.dumps(images)
@@ -1684,6 +1695,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Delete a specific session.
 
@@ -1697,6 +1709,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1711,6 +1724,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Delete multiple sessions.
 
@@ -1725,6 +1739,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -1744,6 +1759,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Rename a session.
 
@@ -1763,6 +1779,7 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {
             "type": session_type.value,
+            "user_id": user_id,
             "db_id": db_id,
             "table": table,
         }
@@ -2121,6 +2138,7 @@ class AgentOSClient:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Upload content to the knowledge base.
@@ -2137,6 +2155,7 @@ class AgentOSClient:
             chunk_size: Chunk size for processing
             chunk_overlap: Chunk overlap for processing
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2146,7 +2165,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
 
         """
-        params: Dict[str, Any] = {"db_id": db_id}
+        params: Dict[str, Any] = {"db_id": db_id, "knowledge_id": knowledge_id}
         params = {k: v for k, v in params.items() if v is not None}
 
         # Build multipart form data
@@ -2194,6 +2213,7 @@ class AgentOSClient:
         metadata: Optional[Dict[str, Any]] = None,
         reader_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Update content properties.
@@ -2205,6 +2225,7 @@ class AgentOSClient:
             metadata: New metadata dictionary
             reader_id: ID of the reader to use
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2213,7 +2234,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params: Dict[str, Any] = {"db_id": db_id}
+        params: Dict[str, Any] = {"db_id": db_id, "knowledge_id": knowledge_id}
         params = {k: v for k, v in params.items() if v is not None}
 
         form_data: Dict[str, Any] = {}
@@ -2238,6 +2259,7 @@ class AgentOSClient:
         sort_by: Optional[str] = "created_at",
         sort_order: Optional[str] = "desc",
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[ContentResponseSchema]:
         """List all content in the knowledge base.
@@ -2248,6 +2270,7 @@ class AgentOSClient:
             sort_by: Field to sort by
             sort_order: Sort order (asc or desc)
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2262,6 +2285,7 @@ class AgentOSClient:
             "sort_by": sort_by,
             "sort_order": sort_order,
             "db_id": db_id,
+            "knowledge_id": knowledge_id,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
@@ -2272,6 +2296,7 @@ class AgentOSClient:
         self,
         content_id: str,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Get a specific content by ID.
@@ -2279,6 +2304,7 @@ class AgentOSClient:
         Args:
             content_id: ID of the content to retrieve
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2287,7 +2313,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params: Dict[str, Any] = {"db_id": db_id}
+        params: Dict[str, Any] = {"db_id": db_id, "knowledge_id": knowledge_id}
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/knowledge/content/{content_id}", params=params, headers=headers)
@@ -2297,6 +2323,7 @@ class AgentOSClient:
         self,
         content_id: str,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Delete a specific content.
@@ -2304,6 +2331,7 @@ class AgentOSClient:
         Args:
             content_id: ID of the content to delete
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2312,9 +2340,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {"db_id": db_id, "knowledge_id": knowledge_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         endpoint = f"/knowledge/content/{content_id}"
 
@@ -2324,6 +2351,7 @@ class AgentOSClient:
     async def delete_all_knowledge_content(
         self,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> str:
         """Delete all content from the knowledge base.
@@ -2332,6 +2360,7 @@ class AgentOSClient:
 
         Args:
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2340,9 +2369,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {"db_id": db_id, "knowledge_id": knowledge_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         endpoint = "/knowledge/content"
 
@@ -2352,6 +2380,7 @@ class AgentOSClient:
         self,
         content_id: str,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> ContentStatusResponse:
         """Get the processing status of a content item.
@@ -2359,6 +2388,7 @@ class AgentOSClient:
         Args:
             content_id: ID of the content
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2367,7 +2397,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"db_id": db_id}
+        params: Dict[str, Any] = {"db_id": db_id, "knowledge_id": knowledge_id}
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/knowledge/content/{content_id}/status", params=params, headers=headers)
@@ -2383,6 +2413,7 @@ class AgentOSClient:
         limit: int = 20,
         page: int = 1,
         db_id: Optional[str] = None,
+        knowledge_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[VectorSearchResult]:
         """Search the knowledge base.
@@ -2396,6 +2427,7 @@ class AgentOSClient:
             limit: Number of results per page
             page: Page number
             db_id: Optional database ID to use
+            knowledge_id: Optional knowledge instance ID for content isolation
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2416,6 +2448,8 @@ class AgentOSClient:
         payload["meta"] = {"limit": limit, "page": page}
         if db_id:
             payload["db_id"] = db_id
+        if knowledge_id:
+            payload["knowledge_id"] = knowledge_id
 
         data = await self._apost("/knowledge/search", payload, headers=headers)
         return PaginatedResponse[VectorSearchResult].model_validate(data)
@@ -2430,7 +2464,7 @@ class AgentOSClient:
         Returns available readers, chunkers, vector DBs, and filters.
 
         Args:
-            db_id: Optional database ID to use
+            db_id: Optional database ID to filter by
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2441,7 +2475,6 @@ class AgentOSClient:
         """
         params: Dict[str, Any] = {"db_id": db_id}
         params = {k: v for k, v in params.items() if v is not None}
-
         data = await self._aget("/knowledge/config", params=params, headers=headers)
         return KnowledgeConfigResponse.model_validate(data)
 
@@ -2602,6 +2635,51 @@ class AgentOSClient:
 
         data = await self._aget("/trace_session_stats", params=params, headers=headers)
         return PaginatedResponse[TraceSessionStats].model_validate(data)
+
+    async def search_traces(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: TraceSearchGroupBy = TraceSearchGroupBy.RUN,
+        page: int = 1,
+        limit: int = 20,
+        db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Union[PaginatedResponse[TraceDetail], PaginatedResponse[TraceSessionStats]]:
+        """Search traces using the FilterExpr DSL for composable queries.
+
+        Supports operators: EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH,
+        AND, OR, NOT.
+
+        Args:
+            filter_expr: FilterExpr DSL as a dict (e.g., {"op": "EQ", "key": "status", "value": "OK"})
+            group_by: Grouping mode - TraceSearchGroupBy.RUN (default) returns TraceDetail,
+                TraceSearchGroupBy.SESSION returns TraceSessionStats
+            page: Page number (1-indexed)
+            limit: Number of traces per page (max 100)
+            db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[TraceDetail] if group_by=RUN, PaginatedResponse[TraceSessionStats] if group_by=SESSION
+
+        Raises:
+            HTTPStatusError: On HTTP errors (400 for invalid filter)
+        """
+        body: Dict[str, Any] = {
+            "filter": filter_expr,
+            "group_by": group_by.value,
+            "page": page,
+            "limit": limit,
+        }
+        params: Dict[str, Any] = {}
+        if db_id is not None:
+            params["db_id"] = db_id
+
+        data = await self._apost("/traces/search", data=body, params=params if params else None, headers=headers)
+
+        if group_by == TraceSearchGroupBy.SESSION:
+            return PaginatedResponse[TraceSessionStats].model_validate(data)
+        return PaginatedResponse[TraceDetail].model_validate(data)
 
     # Metrics Operations
     async def get_metrics(
