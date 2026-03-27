@@ -1627,6 +1627,226 @@ class Agent:
             **kwargs,
         )
 
+    @overload
+    def regenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> RunOutput: ...
+
+    @overload
+    def regenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    def regenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
+        """Regenerate the last run's response in the current session.
+
+        By default the original run is **replaced**. Set ``preserve_original=True``
+        to keep it with a ``regenerated`` status for audit purposes.
+
+        Args:
+            additional_instructions: Optional extra guidance appended as a user message
+                before re-generation so the caller can steer the new response.
+            preserve_original: If True, keep the original run with status ``regenerated``
+                instead of replacing it.  Defaults to False (replace).
+            stream: Whether to stream the response.
+            stream_events: Whether to stream all events.
+            user_id: The user id for the session.
+            session_id: The session id to regenerate in. Defaults to the agent's current session.
+            knowledge_filters: Knowledge filters for the new run.
+            dependencies: Dependencies for the new run.
+            metadata: Metadata for the new run.
+            debug_mode: Whether to enable debug mode.
+            yield_run_output: Whether to yield the run output.
+        """
+        return _run.regenerate_dispatch(
+            self,
+            additional_instructions=additional_instructions,
+            preserve_original=preserve_original,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    @overload
+    def aregenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> RunOutput: ...
+
+    @overload
+    def aregenerate(
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    def aregenerate(  # type: ignore
+        self,
+        *,
+        additional_instructions: Optional[str] = None,
+        preserve_original: bool = False,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
+        """Async variant of regenerate.
+
+        Regenerate the last run's response in the current session.
+
+        By default the original run is **replaced**. Set ``preserve_original=True``
+        to keep it with a ``regenerated`` status for audit purposes.
+
+        Args:
+            additional_instructions: Optional extra guidance appended as a user message
+                before re-generation so the caller can steer the new response.
+            preserve_original: If True, keep the original run with status ``regenerated``
+                instead of replacing it.  Defaults to False (replace).
+            stream: Whether to stream the response.
+            stream_events: Whether to stream all events.
+            user_id: The user id for the session.
+            session_id: The session id to regenerate in. Defaults to the agent's current session.
+            knowledge_filters: Knowledge filters for the new run.
+            dependencies: Dependencies for the new run.
+            metadata: Metadata for the new run.
+            debug_mode: Whether to enable debug mode.
+            yield_run_output: Whether to yield the run output.
+        """
+        return _run.aregenerate_dispatch(
+            self,
+            additional_instructions=additional_instructions,
+            preserve_original=preserve_original,
+            stream=stream,
+            stream_events=stream_events,
+            user_id=user_id,
+            session_id=session_id,
+            knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            yield_run_output=yield_run_output,
+            **kwargs,
+        )
+
+    def branch_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Branch the current session into a new independent session.
+
+        Copies all runs so the new session can continue the conversation independently.
+
+        Args:
+            source_session_id: The session to branch.  Defaults to the agent's current session.
+            user_id: The user performing the branch. Must own the source session.
+                The new session inherits the same user_id.
+
+        Returns:
+            The new session_id.
+        """
+        return _run.branch_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
+
+    async def abranch_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Async variant of branch_session.
+
+        Branch the current session into a new independent session.
+
+        Args:
+            source_session_id: The session to branch.  Defaults to the agent's current session.
+            user_id: The user performing the branch. Must own the source session.
+                The new session inherits the same user_id.
+
+        Returns:
+            The new session_id.
+        """
+        return await _run.abranch_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
+
 
 # ---------------------------------------------------------------
 # Module-level functions
