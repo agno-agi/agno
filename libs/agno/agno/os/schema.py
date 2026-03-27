@@ -83,16 +83,6 @@ class HealthResponse(BaseModel):
     instantiated_at: datetime = Field(..., description="Timestamp when service was instantiated")
 
 
-class OSConfigResponse(BaseModel):
-    """Lightweight, unauthenticated response with OS component counts."""
-
-    model_config = ConfigDict(json_schema_extra={"example": {"agent_count": 2, "team_count": 1, "workflow_count": 0}})
-
-    agent_count: int = Field(0, description="Number of agents registered in this OS instance")
-    team_count: int = Field(0, description="Number of teams registered in this OS instance")
-    workflow_count: int = Field(0, description="Number of workflows registered in this OS instance")
-
-
 class InterfaceResponse(BaseModel):
     type: str = Field(..., description="Type of the interface")
     version: str = Field(..., description="Version of the interface")

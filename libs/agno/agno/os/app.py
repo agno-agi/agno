@@ -36,7 +36,7 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
+from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
@@ -47,7 +47,6 @@ from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
-from agno.os.routers.os_config import get_os_config_router
 from agno.os.routers.registry import get_registry_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.session import get_session_router
@@ -449,7 +448,7 @@ class AgentOS:
             self._add_router(app, get_home_router(self))
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
-        self._add_router(app, get_os_config_router(self))
+        self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
