@@ -512,6 +512,7 @@ class Claude(Model):
     def _prepare_request_kwargs(
         self,
         system_message: str,
+        messages: Optional[List[Message]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
@@ -520,6 +521,7 @@ class Claude(Model):
 
         Args:
             system_message (str): The concatenated system messages.
+            messages: Optional list of messages in model format.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
 
