@@ -4,62 +4,47 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
+_REASONING_MODEL_PATTERNS = (
+    "qwq",
+    "qwen3",
+    "deepseek-r1",
+    "openthinker",
+)
 
-def is_openai_reasoning_model(reasoning_model: Model) -> bool:
-    # VLLM has its own handler in reasoning/vllm.py
-    if reasoning_model.__class__.__name__ == "VLLM":
+
+def is_vllm_reasoning_model(reasoning_model: Model) -> bool:
+    if reasoning_model.__class__.__name__ != "VLLM":
         return False
-
-    return (
-        (
-            reasoning_model.__class__.__name__ == "OpenAIChat"
-            or reasoning_model.__class__.__name__ == "OpenAIResponses"
-            or reasoning_model.__class__.__name__ == "AzureOpenAI"
-        )
-        and (
-            ("o4" in reasoning_model.id)
-            or ("o3" in reasoning_model.id)
-            or ("o1" in reasoning_model.id)
-            or ("4.1" in reasoning_model.id)
-            or ("4.5" in reasoning_model.id)
-            or ("5.1" in reasoning_model.id)
-            or ("5.2" in reasoning_model.id)
-        )
-    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
+    if getattr(reasoning_model, "enable_thinking", None) is True:
+        return True
+    model_id = reasoning_model.id.lower()
+    return any(pattern in model_id for pattern in _REASONING_MODEL_PATTERNS)
 
 
-def get_openai_reasoning(
+def get_vllm_reasoning(
     reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
     messages: List[Message],
     run_metrics: Optional["RunMetrics"] = None,
 ) -> Optional[Message]:
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
-
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
 
-    # Accumulate reasoning agent metrics into the parent run_metrics
+    # Accumulate reasoning metrics into parent run
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
         accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
-    # We use the normal content as no reasoning content is returned
     if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
         content = reasoning_agent_response.content
         if "<think>" in content and "</think>" in content:
             start_idx = content.find("<think>") + len("<think>")
@@ -73,23 +58,18 @@ def get_openai_reasoning(
     )
 
 
-async def aget_openai_reasoning(
+async def aget_vllm_reasoning(
     reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
     messages: List[Message],
     run_metrics: Optional["RunMetrics"] = None,
 ) -> Optional[Message]:
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
-
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
 
-    # Accumulate reasoning agent metrics into the parent run_metrics
+    # Accumulate reasoning metrics into parent run
     if run_metrics is not None:
         from agno.metrics import accumulate_eval_metrics
 
@@ -97,7 +77,6 @@ async def aget_openai_reasoning(
 
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
         content = reasoning_agent_response.content
         if "<think>" in content and "</think>" in content:
             start_idx = content.find("<think>") + len("<think>")
@@ -111,26 +90,11 @@ async def aget_openai_reasoning(
     )
 
 
-def get_openai_reasoning_stream(
+def get_vllm_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
     messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
-    """
-    Stream reasoning content from OpenAI model.
-
-    For OpenAI reasoning models, we use the main content output as reasoning content.
-
-    Yields:
-        Tuple of (reasoning_content_delta, final_message)
-        - During streaming: (reasoning_content_delta, None)
-        - At the end: (None, final_message)
-    """
     from agno.run.agent import RunEvent
-
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
 
     reasoning_content: str = ""
 
@@ -138,21 +102,16 @@ def get_openai_reasoning_stream(
         for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
-                    # Check for reasoning_content attribute first (native reasoning)
+                    # Native reasoning field takes priority over main content
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
-                    # Use the main content as reasoning content
+                    # Fallback: treat main content as reasoning
                     elif hasattr(event, "content") and event.content:
                         reasoning_content += event.content
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
-                    # Check for reasoning_content at completion (OpenAIResponses with reasoning_summary)
-                    if hasattr(event, "reasoning_content") and event.reasoning_content:
-                        # If we haven't accumulated any reasoning content yet, use this
-                        if not reasoning_content:
-                            reasoning_content = event.reasoning_content
-                            yield (event.reasoning_content, None)
+                    pass
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return
@@ -167,26 +126,11 @@ def get_openai_reasoning_stream(
         yield (None, final_message)
 
 
-async def aget_openai_reasoning_stream(
+async def aget_vllm_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
     messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
-    """
-    Stream reasoning content from OpenAI model asynchronously.
-
-    For OpenAI reasoning models, we use the main content output as reasoning content.
-
-    Yields:
-        Tuple of (reasoning_content_delta, final_message)
-        - During streaming: (reasoning_content_delta, None)
-        - At the end: (None, final_message)
-    """
     from agno.run.agent import RunEvent
-
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
 
     reasoning_content: str = ""
 
@@ -194,21 +138,16 @@ async def aget_openai_reasoning_stream(
         async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
-                    # Check for reasoning_content attribute first (native reasoning)
+                    # Native reasoning field takes priority over main content
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
-                    # Use the main content as reasoning content
+                    # Fallback: treat main content as reasoning
                     elif hasattr(event, "content") and event.content:
                         reasoning_content += event.content
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
-                    # Check for reasoning_content at completion (OpenAIResponses with reasoning_summary)
-                    if hasattr(event, "reasoning_content") and event.reasoning_content:
-                        # If we haven't accumulated any reasoning content yet, use this
-                        if not reasoning_content:
-                            reasoning_content = event.reasoning_content
-                            yield (event.reasoning_content, None)
+                    pass
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return
