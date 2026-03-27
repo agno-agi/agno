@@ -1,10 +1,13 @@
 """Unit tests for Claude output_config passthrough (#7050)."""
 
+import inspect
+
 import pytest
 
 pytest.importorskip("anthropic")
 
 from agno.models.anthropic.claude import Claude as AnthropicClaude
+from agno.models.message import Message
 from agno.models.vertexai.claude import Claude as VertexAIClaude
 
 
@@ -130,3 +133,45 @@ def test_vertexai_to_dict_includes_output_config():
     model_dict = model.to_dict()
 
     assert model_dict["output_config"] == {"effort": "medium"}
+
+
+def test_vertexai_prepare_request_kwargs_accepts_messages_parameter():
+    signature = inspect.signature(VertexAIClaude._prepare_request_kwargs)
+    assert "messages" in signature.parameters
+
+
+def test_aws_prepare_request_kwargs_accepts_messages_parameter():
+    pytest.importorskip("boto3")
+    from agno.models.aws.claude import Claude as AwsClaude
+
+    signature = inspect.signature(AwsClaude._prepare_request_kwargs)
+    assert "messages" in signature.parameters
+
+
+def test_vertexai_prepare_request_kwargs_handles_messages_argument():
+    model = VertexAIClaude()
+
+    request_kwargs = model._prepare_request_kwargs(
+        system_message="",
+        messages=[Message(role="user", content="hello")],
+        tools=None,
+        response_format=None,
+    )
+
+    assert isinstance(request_kwargs, dict)
+
+
+def test_aws_prepare_request_kwargs_handles_messages_argument():
+    pytest.importorskip("boto3")
+    from agno.models.aws.claude import Claude as AwsClaude
+
+    model = AwsClaude()
+
+    request_kwargs = model._prepare_request_kwargs(
+        system_message="",
+        messages=[Message(role="user", content="hello")],
+        tools=None,
+        response_format=None,
+    )
+
+    assert isinstance(request_kwargs, dict)
