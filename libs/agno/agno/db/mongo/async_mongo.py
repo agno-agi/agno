@@ -509,6 +509,15 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error getting collection {collection_name}: {e}")
             raise
 
+    async def _aggregate_to_list(
+        self, collection: AsyncMongoCollectionType, pipeline: List[Dict[str, Any]], length: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Run aggregate safely for Motor and PyMongo async variants."""
+        aggregate_cursor_or_coro: Any = collection.aggregate(pipeline)
+        if asyncio.iscoroutine(aggregate_cursor_or_coro):
+            aggregate_cursor_or_coro = await aggregate_cursor_or_coro
+        return await aggregate_cursor_or_coro.to_list(length=length)
+
     def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         pass
@@ -1344,7 +1353,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -1353,7 +1362,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
                 pipeline.append({"$limit": limit})  # type: ignore
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
 
             formatted_results = [
                 {
@@ -2689,7 +2698,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -2697,7 +2706,7 @@ class AsyncMongoDb(AsyncBaseDb):
             pipeline.append({"$skip": skip})
             pipeline.append({"$limit": limit or 20})
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
 
             # Convert to list of dicts with datetime objects
             stats_list = []
