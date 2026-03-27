@@ -1221,11 +1221,11 @@ def create_knowledge_search_tool(
         if not docs:
             return "No documents found"
         if team.references_format == "json":
-            return json.dumps(docs, indent=2, default=str)
+            return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
         else:
             import yaml
 
-            return yaml.dump(docs, default_flow_style=False)
+            return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
 
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
