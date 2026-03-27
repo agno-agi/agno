@@ -9,7 +9,7 @@ See: https://github.com/agno-agi/agno/pull/6993
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Iterator, List
 
 import pytest
 
