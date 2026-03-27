@@ -788,6 +788,19 @@ class OpenAIChat(Model):
 
         # Get response message
         response_message = response.choices[0].message
+        finish_reason = response.choices[0].finish_reason
+
+        # Detect truncated responses where output was cut off with no content
+        if finish_reason == "length" and response_message.content is None and not response_message.tool_calls:
+            log_warning(f"Model response truncated: finish_reason=length, content=None, model={self.id}")
+            raise ModelProviderError(
+                message=(
+                    "Model response truncated (finish_reason=length): no content generated. "
+                    "The context_length_exceeded the model's capacity to produce output."
+                ),
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         # Add role
         if response_message.role is not None:

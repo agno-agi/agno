@@ -996,6 +996,27 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             )
 
+        # Detect incomplete responses (output truncated by max_output_tokens or content filter)
+        if response.status == "incomplete":
+            reason = response.incomplete_details.reason if response.incomplete_details else "unknown"
+            has_partial_content = bool(response.output_text) or any(
+                getattr(item, "type", None) == "function_call" for item in (response.output or [])
+            )
+            log_warning(
+                f"Model response incomplete: reason={reason}, model={self.id}, "
+                f"has_partial_content={has_partial_content}"
+            )
+            # No content at all — context window likely exhausted, raise non-retryable error
+            if not has_partial_content:
+                raise ModelProviderError(
+                    message=(
+                        f"Model response incomplete ({reason}): no content generated. "
+                        f"The context_length_exceeded the model's capacity to produce output."
+                    ),
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+
         # Store the response ID for continuity
         if response.id:
             if model_response.provider_data is None:
@@ -1157,8 +1178,29 @@ class OpenAIResponses(Model):
             model_response.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
             tool_use = {}
 
-        # 5. Add metrics
+        # 5. Handle response completion (metrics + incomplete detection)
         elif stream_event.type == "response.completed":
+            # Detect incomplete responses in streaming mode
+            if stream_event.response.status == "incomplete":
+                reason = (
+                    stream_event.response.incomplete_details.reason
+                    if stream_event.response.incomplete_details
+                    else "unknown"
+                )
+                has_content = bool(assistant_message.content) or bool(assistant_message.tool_calls)
+                log_warning(
+                    f"Streaming response incomplete: reason={reason}, model={self.id}, has_content={has_content}"
+                )
+                if not has_content:
+                    raise ModelProviderError(
+                        message=(
+                            f"Model response incomplete ({reason}): no content generated. "
+                            f"The context_length_exceeded the model's capacity to produce output."
+                        ),
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
             model_response = ModelResponse()
 
             # Handle reasoning output items
