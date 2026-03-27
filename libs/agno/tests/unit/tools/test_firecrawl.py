@@ -1,5 +1,3 @@
-"""Unit tests for FirecrawlTools class."""
-
 import json
 import os
 from unittest.mock import Mock, patch
@@ -223,3 +221,19 @@ def test_search_with_custom_params(firecrawl_tools, mock_firecrawl):
     assert result_data["results"] == ["result1", "result2"]
     assert result_data["status"] == "success"
     mock_firecrawl.search.assert_called_once_with("test query", limit=10, language="en", region="us")
+
+
+def test_search_tool_response(firecrawl_tools, mock_firecrawl):
+    mock_response = Mock(spec=["model_dump"])
+    mock_response.model_dump.return_value = {
+        "query": "test query",
+        "results": ["result1", "result2"],
+    }
+    mock_firecrawl.search.return_value = mock_response
+
+    result = firecrawl_tools.search_web("test query")
+    result_data = json.loads(result)
+
+    assert result_data["query"] == "test query"
+    assert result_data["results"] == ["result1", "result2"]
+    mock_firecrawl.search.assert_called_once_with("test query", limit=10)

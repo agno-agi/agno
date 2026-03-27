@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str, url_safe_string
+from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
 
 
 def test_url_safe_string_spaces():
@@ -98,6 +98,19 @@ def test_parse_json_with_generic_code_block():
     }
     ```
     Some text after"""
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_json_with_unclosed_block():
+    """Test parsing JSON from an unclosed markdown code block"""
+    content = """```json
+    {
+        "name": "test",
+        "value": "123"
+    }"""
     result = parse_response_model_str(content, MockModel)
     assert result is not None
     assert result.name == "test"
@@ -346,3 +359,59 @@ def test_parse_json_with_python_code_in_value():
         == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
     )
     assert result.description == "A recursive factorial function with comments and multiplication"
+
+
+def test_generate_id_from_name_with_name():
+    """Test that named IDs are deterministic kebab-case"""
+    assert generate_id_from_name("My Agent") == "my-agent"
+    assert generate_id_from_name("hello_world") == "hello-world"
+    assert generate_id_from_name("UPPER") == "upper"
+
+
+def test_generate_id_from_name_without_name():
+    """Test that unnamed IDs are human-readable Docker-style"""
+    result = generate_id_from_name()
+    parts = result.split("-")
+    assert len(parts) == 3, f"Expected 3 parts, got {len(parts)}: {result}"
+    adjective, name, hex_suffix = parts
+    assert adjective.isalpha()
+    assert name.isalpha()
+    assert len(hex_suffix) == 8
+    int(hex_suffix, 16)  # must be valid hex
+
+
+def test_generate_id_from_name_uniqueness():
+    """Test that successive calls produce different IDs"""
+    ids = {generate_id_from_name() for _ in range(100)}
+    assert len(ids) == 100
+
+
+def test_sanitize_postgres_string_none_input():
+    """Test that sanitize_postgres_string handles None input correctly"""
+    assert sanitize_postgres_string(None) is None
+
+
+def test_sanitize_postgres_string_normal_string():
+    """Test that sanitize_postgres_string handles normal strings correctly"""
+    assert sanitize_postgres_string("hello world") == "hello world"
+    assert sanitize_postgres_string("") == ""
+    assert sanitize_postgres_string("Special chars: @#$%^&*()") == "Special chars: @#$%^&*()"
+
+
+def test_sanitize_postgres_string_null_chars():
+    """Test that sanitize_postgres_string handles null characters correctly"""
+    assert sanitize_postgres_string("hello\x00world") == "helloworld"
+    assert sanitize_postgres_string("\x00\x00\x00") == ""
+    assert sanitize_postgres_string("start\x00middle\x00end") == "startmiddleend"
+
+
+def test_sanitize_postgres_string_other_illegal_chars():
+    """Test that sanitize_postgres_string handles other illegal characters correctly"""
+    # Control characters \x01-\x08
+    assert sanitize_postgres_string("hello\x01\x02\x03world") == "helloworld"
+    # \x0b (vertical tab) and \x0c (form feed)
+    assert sanitize_postgres_string("hello\x0b\x0cworld") == "helloworld"
+    # Control characters \x0e-\x1f
+    assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
+    # Unicode replacement characters
+    assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"

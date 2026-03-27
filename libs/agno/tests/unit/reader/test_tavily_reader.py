@@ -380,6 +380,7 @@ def test_supported_chunking_strategies():
     supported_strategies = TavilyReader.get_supported_chunking_strategies()
 
     # Verify all expected strategies are supported
+    assert ChunkingStrategyType.CODE_CHUNKER in supported_strategies
     assert ChunkingStrategyType.SEMANTIC_CHUNKER in supported_strategies
     assert ChunkingStrategyType.FIXED_SIZE_CHUNKER in supported_strategies
     assert ChunkingStrategyType.AGENTIC_CHUNKER in supported_strategies

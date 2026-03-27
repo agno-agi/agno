@@ -1,7 +1,11 @@
+import os
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 @pytest.fixture
@@ -16,6 +20,7 @@ def agent(shared_db):
         tools=[get_weather],
         db=shared_db,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
+        store_history_messages=True,
         add_history_to_context=True,
     )
 

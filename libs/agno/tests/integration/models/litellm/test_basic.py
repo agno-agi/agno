@@ -135,6 +135,7 @@ def test_history():
         model=LiteLLM(id="gpt-4o"),
         db=SqliteDb(db_file="tmp/litellm/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")
@@ -149,3 +150,36 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_count_tokens():
+    from agno.models.message import Message
+
+    model = LiteLLM(id="gpt-4o")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
+
+
+def test_count_tokens_with_tools():
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    model = LiteLLM(id="gpt-4o")
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = model.count_tokens(messages)
+    tokens_with_tools = model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"

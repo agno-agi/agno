@@ -28,10 +28,11 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
+from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
 
 
@@ -62,6 +63,8 @@ class PgVector(VectorDb):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
+        create_schema: bool = True,
+        similarity_threshold: Optional[float] = None,
     ):
         """
         Initialize the PgVector instance.
@@ -82,6 +85,10 @@ class PgVector(VectorDb):
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
             auto_upgrade_schema (bool): Automatically upgrade schema if True.
+            reranker (Optional[Reranker]): Reranker instance for reranking search results.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -95,8 +102,8 @@ class PgVector(VectorDb):
             seed = f"{base_seed}#{schema_suffix}"
             id = generate_id(seed)
 
-        # Initialize base class with name and description
-        super().__init__(id=id, name=name, description=description)
+        # Initialize base class
+        super().__init__(id=id, name=name, description=description, similarity_threshold=similarity_threshold)
 
         if db_engine is None:
             if db_url is None:
@@ -104,7 +111,7 @@ class PgVector(VectorDb):
             try:
                 db_engine = create_engine(db_url)
             except Exception as e:
-                logger.error(f"Failed to create engine from 'db_url': {e}")
+                log_error(f"Failed to create engine from 'db_url': {e}")
                 raise
 
         # Database settings
@@ -119,7 +126,7 @@ class PgVector(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -146,6 +153,9 @@ class PgVector(VectorDb):
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
+
+        # Schema creation flag
+        self.create_schema: bool = create_schema
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -209,7 +219,7 @@ class PgVector(VectorDb):
         try:
             return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
         except Exception as e:
-            logger.error(f"Error checking if table exists: {e}")
+            log_error(f"Error checking if table exists: {e}")
             return False
 
     def create(self) -> None:
@@ -220,9 +230,12 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 log_debug("Creating extension: vector")
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-                if self.schema is not None:
-                    log_debug(f"Creating schema: {self.schema}")
-                    sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                if self.create_schema and self.schema is not None:
+                    try:
+                        log_debug(f"Creating schema: {self.schema}")
+                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.schema}: {e}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 
@@ -247,7 +260,7 @@ class PgVector(VectorDb):
                 result = sess.execute(stmt).first()
                 return result is not None
         except Exception as e:
-            logger.error(f"Error checking if record exists: {e}")
+            log_error(f"Error checking if record exists: {e}")
             return False
 
     def name_exists(self, name: str) -> bool:
@@ -324,7 +337,7 @@ class PgVector(VectorDb):
                             try:
                                 batch_records.append(self._get_document_record(doc, filters, content_hash))
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                log_error(f"Error processing document '{doc.name}': {e}")
 
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
@@ -332,11 +345,11 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
-                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        log_error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
-            logger.error(f"Error inserting documents: {e}")
+            log_error(f"Error inserting documents: {e}")
             raise
 
     async def async_insert(
@@ -361,7 +374,10 @@ class PgVector(VectorDb):
                         for doc in batch_docs:
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = doc.id or content_hash
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
@@ -370,7 +386,7 @@ class PgVector(VectorDb):
                                 record = {
                                     "id": record_id,
                                     "name": doc.name,
-                                    "meta_data": doc.meta_data,
+                                    "meta_data": meta_data,
                                     "filters": filters,
                                     "content": cleaned_content,
                                     "embedding": doc.embedding,
@@ -380,7 +396,7 @@ class PgVector(VectorDb):
                                 }
                                 batch_records.append(record)
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                log_error(f"Error processing document '{doc.name}': {e}")
 
                         # Insert the batch of records
                         if batch_records:
@@ -389,11 +405,11 @@ class PgVector(VectorDb):
                             sess.commit()  # Commit batch independently
                             log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
-                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        log_error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
-            logger.error(f"Error inserting documents: {e}")
+            log_error(f"Error inserting documents: {e}")
             raise
 
     def upsert_available(self) -> bool:
@@ -422,7 +438,7 @@ class PgVector(VectorDb):
                 self._delete_by_content_hash(content_hash)
             self._upsert(content_hash, documents, filters, batch_size)
         except Exception as e:
-            logger.error(f"Error upserting documents by content hash: {e}")
+            log_error(f"Error upserting documents by content hash: {e}")
             raise
 
     def _upsert(
@@ -450,9 +466,11 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                batch_records_dict[doc.id] = self._get_document_record(doc, filters, content_hash)  # type: ignore
+                                record = self._get_document_record(doc, filters, content_hash)
+                                # Use the generated record ID (which includes content_hash) for deduplication
+                                batch_records_dict[record["id"]] = record
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                log_error(f"Error processing document '{doc.name}': {e}")
 
                         # Convert dict to list for upsert
                         batch_records = list(batch_records_dict.values())
@@ -479,11 +497,11 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception as e:
-                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        log_error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
-            logger.error(f"Error upserting documents: {e}")
+            log_error(f"Error upserting documents: {e}")
             raise
 
     def _get_document_record(
@@ -491,7 +509,10 @@ class PgVector(VectorDb):
     ) -> Dict[str, Any]:
         doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
-        record_id = doc.id or content_hash
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        # This allows the same URL/content to be inserted with different descriptions
+        base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
         meta_data = doc.meta_data or {}
         if filters:
@@ -500,7 +521,7 @@ class PgVector(VectorDb):
         return {
             "id": record_id,
             "name": doc.name,
-            "meta_data": doc.meta_data,
+            "meta_data": meta_data,
             "filters": filters,
             "content": cleaned_content,
             "embedding": doc.embedding,
@@ -532,7 +553,7 @@ class PgVector(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -543,17 +564,41 @@ class PgVector(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding.  {e}")
+                    log_error(f"Rate limit detected during batch embedding.  {e}")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+                    # Check for exceptions and handle them
+                    for i, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            error_msg = str(result)
+                            # If it's an event loop closure error, log it but don't fail
+                            if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
+                                log_warning(
+                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+                                )
+                            else:
+                                log_error(f"Error embedding document {i}: {result}")
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+            # Check for exceptions and handle them
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    error_msg = str(result)
+                    # If it's an event loop closure error, log it but don't fail
+                    if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
+                        log_warning(
+                            f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+                        )
+                    else:
+                        log_error(f"Error embedding document {i}: {result}")
 
     async def async_upsert(
         self,
@@ -568,7 +613,7 @@ class PgVector(VectorDb):
                 self._delete_by_content_hash(content_hash)
             await self._async_upsert(content_hash, documents, filters, batch_size)
         except Exception as e:
-            logger.error(f"Error upserting documents by content hash: {e}")
+            log_error(f"Error upserting documents by content hash: {e}")
             raise
 
     async def _async_upsert(
@@ -597,10 +642,27 @@ class PgVector(VectorDb):
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
-                        for doc in batch_docs:
+                        for idx, doc in enumerate(batch_docs):
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = md5(cleaned_content.encode()).hexdigest()
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+                                if (
+                                    doc.embedding is not None
+                                    and isinstance(doc.embedding, list)
+                                    and len(doc.embedding) == 0
+                                ):
+                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
+
+                                if (
+                                    doc.embedding is not None
+                                    and isinstance(doc.embedding, list)
+                                    and len(doc.embedding) == 0
+                                ):
+                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
@@ -609,7 +671,7 @@ class PgVector(VectorDb):
                                 record = {
                                     "id": record_id,  # use record_id as a reproducible id to avoid duplicates while upsert
                                     "name": doc.name,
-                                    "meta_data": doc.meta_data,
+                                    "meta_data": meta_data,
                                     "filters": filters,
                                     "content": cleaned_content,
                                     "embedding": doc.embedding,
@@ -619,7 +681,7 @@ class PgVector(VectorDb):
                                 }
                                 batch_records_dict[record_id] = record  # This deduplicates by ID
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                log_error(f"Error processing document '{doc.name}': {e}")
 
                         # Convert dict to list for upsert
                         batch_records = list(batch_records_dict.values())
@@ -646,11 +708,11 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception as e:
-                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        log_error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
-            logger.error(f"Error upserting documents: {e}")
+            log_error(f"Error upserting documents: {e}")
             raise
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -658,28 +720,26 @@ class PgVector(VectorDb):
         Update the metadata for a document.
 
         Args:
-            id (str): The ID of the document.
+            content_id (str): The ID of the document.
             metadata (Dict[str, Any]): The metadata to update.
         """
         try:
             with self.Session() as sess:
-                # Merge JSONB instead of overwriting: coalesce(existing, '{}') || :new
+                # Merge JSONB for metadata, but replace filters entirely (absolute value)
                 stmt = (
                     update(self.table)
                     .where(self.table.c.content_id == content_id)
                     .values(
                         meta_data=func.coalesce(self.table.c.meta_data, text("'{}'::jsonb")).op("||")(
-                            bindparam("md", metadata, type_=postgresql.JSONB)
+                            bindparam("md", type_=postgresql.JSONB)
                         ),
-                        filters=func.coalesce(self.table.c.filters, text("'{}'::jsonb")).op("||")(
-                            bindparam("ft", metadata, type_=postgresql.JSONB)
-                        ),
+                        filters=bindparam("ft", type_=postgresql.JSONB),
                     )
                 )
-                sess.execute(stmt)
+                sess.execute(stmt, {"md": metadata, "ft": metadata})
                 sess.commit()
         except Exception as e:
-            logger.error(f"Error updating metadata for document {content_id}: {e}")
+            log_error(f"Error updating metadata for document {content_id}: {e}")
             raise
 
     def search(
@@ -703,7 +763,7 @@ class PgVector(VectorDb):
         elif self.search_type == SearchType.hybrid:
             return self.hybrid_search(query=query, limit=limit, filters=filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
@@ -751,10 +811,19 @@ class PgVector(VectorDb):
             # Get the embedding for the query string
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
-            # Define the columns to select
+            if self.distance == Distance.l2:
+                distance_expr = self.table.c.embedding.l2_distance(query_embedding)
+            elif self.distance == Distance.cosine:
+                distance_expr = self.table.c.embedding.cosine_distance(query_embedding)
+            elif self.distance == Distance.max_inner_product:
+                distance_expr = self.table.c.embedding.max_inner_product(query_embedding)
+            else:
+                log_error(f"Unknown distance metric: {self.distance}")
+                return []
+
             columns = [
                 self.table.c.id,
                 self.table.c.name,
@@ -762,6 +831,7 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
+                distance_expr.label("distance"),
             ]
 
             # Build the base statement
@@ -781,16 +851,17 @@ class PgVector(VectorDb):
                     ]
                     stmt = stmt.where(and_(*sqlalchemy_conditions))
 
-            # Order the results based on the distance metric
-            if self.distance == Distance.l2:
-                stmt = stmt.order_by(self.table.c.embedding.l2_distance(query_embedding))
-            elif self.distance == Distance.cosine:
-                stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
-            elif self.distance == Distance.max_inner_product:
-                stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
-            else:
-                logger.error(f"Unknown distance metric: {self.distance}")
-                return []
+            # Apply similarity threshold filter
+            if self.similarity_threshold is not None:
+                distance_threshold = score_to_distance_threshold(self.similarity_threshold, self.distance)
+                if self.distance == Distance.max_inner_product:
+                    # For inner product, negate threshold since pgvector returns negative values
+                    stmt = stmt.where(distance_expr <= -distance_threshold)
+                else:
+                    # For cosine and L2, smaller distances mean higher similarity
+                    stmt = stmt.where(distance_expr <= distance_threshold)
+
+            stmt = stmt.order_by(distance_expr)
 
             # Limit the number of results
             stmt = stmt.limit(limit)
@@ -808,19 +879,24 @@ class PgVector(VectorDb):
                             sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
-                logger.error(f"Error performing semantic search: {e}")
-                logger.error("Table might not exist, creating for future use")
+                log_error(f"Error performing semantic search: {e}")
+                log_error("Table might not exist, creating for future use")
                 self.create()
                 return []
 
-            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
+                # For inner product, negate since pgvector returns negative values
+                raw_distance = -result.distance if self.distance == Distance.max_inner_product else result.distance
+                similarity_score = normalize_score(raw_distance, self.distance)
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = similarity_score
+
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
@@ -834,7 +910,7 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
-            logger.error(f"Error during vector search: {e}")
+            log_error(f"Error during vector search: {e}")
             return []
 
     def enable_prefix_matching(self, query: str) -> str:
@@ -916,8 +992,8 @@ class PgVector(VectorDb):
                 with self.Session() as sess, sess.begin():
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
-                logger.error(f"Error performing keyword search: {e}")
-                logger.error("Table might not exist, creating for future use")
+                log_error(f"Error performing keyword search: {e}")
+                log_error("Table might not exist, creating for future use")
                 self.create()
                 return []
 
@@ -939,7 +1015,7 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
-            logger.error(f"Error during keyword search: {e}")
+            log_error(f"Error during keyword search: {e}")
             return []
 
     def hybrid_search(
@@ -963,7 +1039,7 @@ class PgVector(VectorDb):
             # Get the embedding for the query string
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
             # Define the columns to select
@@ -981,8 +1057,10 @@ class PgVector(VectorDb):
             # Create the ts_query using websearch_to_tsquery with parameter binding
             processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
             ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank
-            text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            # Compute the text rank, normalized to [0, 1] range
+            # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
+            raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            text_rank = raw_text_rank / (raw_text_rank + 0.1)
 
             # Compute the vector similarity score
             if self.distance == Distance.l2:
@@ -993,15 +1071,17 @@ class PgVector(VectorDb):
             elif self.distance == Distance.cosine:
                 # For cosine distance, smaller distances are better
                 vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
-                vector_score = 1 / (1 + vector_distance)
+                # Convert distance to similarity (cosine_distance = 1 - cosine_similarity)
+                vector_score = func.greatest(0.0, 1 - vector_distance)
             elif self.distance == Distance.max_inner_product:
                 # For inner product, higher values are better
-                # Assume embeddings are normalized, so inner product ranges from -1 to 1
-                raw_vector_score = self.table.c.embedding.max_inner_product(query_embedding)
+                # pgvector returns negative inner product, so negate to get actual value
+                negative_ip = self.table.c.embedding.max_inner_product(query_embedding)
+                inner_product = -negative_ip
                 # Normalize to range [0, 1]
-                vector_score = (raw_vector_score + 1) / 2
+                vector_score = func.greatest(0.0, func.least(1.0, (inner_product + 1) / 2))
             else:
-                logger.error(f"Unknown distance metric: {self.distance}")
+                log_error(f"Unknown distance metric: {self.distance}")
                 return []
 
             # Apply weights to control the influence of each score
@@ -1033,6 +1113,9 @@ class PgVector(VectorDb):
                     ]
                     stmt = stmt.where(and_(*sqlalchemy_conditions))
 
+            if self.similarity_threshold is not None:
+                stmt = stmt.where(hybrid_score >= self.similarity_threshold)
+
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
 
@@ -1052,17 +1135,19 @@ class PgVector(VectorDb):
                             sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
-                logger.error(f"Error performing hybrid search: {e}")
+                log_error(f"Error performing hybrid search: {e}")
                 return []
 
-            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = float(result.hybrid_score)
+
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
@@ -1074,9 +1159,10 @@ class PgVector(VectorDb):
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
+
             return search_results
         except Exception as e:
-            logger.error(f"Error during hybrid search: {e}")
+            log_error(f"Error during hybrid search: {e}")
             return []
 
     def drop(self) -> None:
@@ -1089,7 +1175,7 @@ class PgVector(VectorDb):
                 self.table.drop(self.db_engine)
                 log_info(f"Table '{self.table.fullname}' dropped successfully.")
             except Exception as e:
-                logger.error(f"Error dropping table '{self.table.fullname}': {e}")
+                log_error(f"Error dropping table '{self.table.fullname}': {e}")
                 raise
         else:
             log_info(f"Table '{self.table.fullname}' does not exist.")
@@ -1124,7 +1210,7 @@ class PgVector(VectorDb):
                 result = sess.execute(stmt).scalar()
                 return int(result) if result is not None else 0
         except Exception as e:
-            logger.error(f"Error getting count from table '{self.table.fullname}': {e}")
+            log_error(f"Error getting count from table '{self.table.fullname}': {e}")
             return 0
 
     def optimize(self, force_recreate: bool = False) -> None:
@@ -1165,7 +1251,7 @@ class PgVector(VectorDb):
                 drop_index_sql = f'DROP INDEX IF EXISTS "{self.schema}"."{index_name}";'
                 sess.execute(text(drop_index_sql))
         except Exception as e:
-            logger.error(f"Error dropping index '{index_name}': {e}")
+            log_error(f"Error dropping index '{index_name}': {e}")
             raise
 
     def _create_vector_index(self, force_recreate: bool = False) -> None:
@@ -1220,10 +1306,10 @@ class PgVector(VectorDb):
                 elif isinstance(self.vector_index, HNSW):
                     self._create_hnsw_index(sess, table_fullname, index_distance)
                 else:
-                    logger.error(f"Unknown index type: {type(self.vector_index)}")
+                    log_error(f"Unknown index type: {type(self.vector_index)}")
                     return
         except Exception as e:
-            logger.error(f"Error creating vector index '{self.vector_index.name}': {e}")
+            log_error(f"Error creating vector index '{self.vector_index.name}': {e}")
             raise
 
     def _create_ivfflat_index(self, sess: Session, table_fullname: str, index_distance: str) -> None:
@@ -1322,7 +1408,7 @@ class PgVector(VectorDb):
                 )
                 sess.execute(create_gin_index_sql)
         except Exception as e:
-            logger.error(f"Error creating GIN index '{gin_index_name}': {e}")
+            log_error(f"Error creating GIN index '{gin_index_name}': {e}")
             raise
 
     def delete(self) -> bool:
@@ -1341,7 +1427,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted all records from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
             sess.rollback()
             return False
 
@@ -1357,7 +1443,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
             sess.rollback()
             return False
 
@@ -1373,7 +1459,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with name '{name}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
             sess.rollback()
             return False
 
@@ -1389,7 +1475,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with metadata '{metadata}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
             sess.rollback()
             return False
 
@@ -1405,7 +1491,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
             sess.rollback()
             return False
 
@@ -1421,7 +1507,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
             sess.rollback()
             return False
 

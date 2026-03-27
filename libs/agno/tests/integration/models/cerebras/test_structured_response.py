@@ -77,3 +77,63 @@ def test_structured_response_strict_output_false():
     )
     response = guided_output_agent.run("Create a short action movie")
     assert response.content is not None
+
+
+def test_structured_response_with_nested_objects():
+    """Test structured response with nested objects - validates additionalProperties: false fix.
+
+    This test ensures that the _ensure_additional_properties_false method correctly
+    handles nested object schemas, which is required by the Cerebras API.
+    """
+
+    class Address(BaseModel):
+        city: str = Field(..., description="City name")
+        country: str = Field(..., description="Country name")
+
+    class Person(BaseModel):
+        name: str = Field(..., description="Person's full name")
+        age: int = Field(..., description="Person's age")
+        address: Address = Field(..., description="Person's address")
+
+    agent = Agent(
+        model=Cerebras(id="zai-glm-4.7"),
+        description="You generate person profiles.",
+        output_schema=Person,
+    )
+    response = agent.run("Create a profile for a 30-year-old software engineer living in San Francisco")
+    assert response.content is not None
+    assert isinstance(response.content.name, str)
+    assert isinstance(response.content.age, int)
+    assert isinstance(response.content.address, Address)
+    assert isinstance(response.content.address.city, str)
+    assert isinstance(response.content.address.country, str)
+
+
+def test_structured_response_with_list_of_objects():
+    """Test structured response with a list of objects - validates additionalProperties: false fix.
+
+    This test ensures that array items with object types also get additionalProperties: false.
+    """
+
+    class Task(BaseModel):
+        title: str = Field(..., description="Task title")
+        completed: bool = Field(..., description="Whether the task is completed")
+
+    class TodoList(BaseModel):
+        name: str = Field(..., description="Name of the todo list")
+        tasks: List[Task] = Field(..., description="List of tasks")
+
+    agent = Agent(
+        model=Cerebras(id="zai-glm-4.7"),
+        description="You create todo lists.",
+        output_schema=TodoList,
+    )
+    response = agent.run("Create a todo list for a weekend trip with 3 tasks")
+    assert response.content is not None
+    assert isinstance(response.content.name, str)
+    assert isinstance(response.content.tasks, list)
+    assert len(response.content.tasks) > 0
+    for task in response.content.tasks:
+        assert isinstance(task, Task)
+        assert isinstance(task.title, str)
+        assert isinstance(task.completed, bool)

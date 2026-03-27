@@ -13,8 +13,9 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Table
+    from sqlalchemy import Table, func
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -34,6 +35,11 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
 
     Returns:
         The modified statement with sorting applied
+
+    Note:
+        For 'updated_at' sorting, uses COALESCE(updated_at, created_at) to fall back
+        to created_at when updated_at is NULL. This ensures pre-2.0 records (which may
+        have NULL updated_at) are sorted correctly by their creation time.
     """
     if sort_by is None:
         return stmt
@@ -42,8 +48,13 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
         return stmt
 
-    # Apply the given sorting
-    sort_column = getattr(table.c, sort_by)
+    # For updated_at, use COALESCE to fall back to created_at if updated_at is NULL
+    # This handles pre-2.0 records that may have NULL updated_at values
+    if sort_by == "updated_at" and hasattr(table.c, "created_at"):
+        sort_column = func.coalesce(table.c.updated_at, table.c.created_at)
+    else:
+        sort_column = getattr(table.c, sort_by)
+
     if sort_order and sort_order == "asc":
         return stmt.order_by(sort_column.asc())
     else:
@@ -173,6 +184,9 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
             return False
 
         return True
+    except NoSuchTableError:
+        log_error(f"Table {db_schema}.{table_name} does not exist")
+        return False
     except Exception as e:
         log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
         return False
@@ -298,16 +312,17 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         for session in sessions:
             if session.get("user_id"):
                 all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
-            if runs := session.get("runs", []):
+            runs = session.get("runs", []) or []
+            metrics[runs_count_key] += len(runs)
+            if runs:
                 for run in runs:
                     if model_id := run.get("model"):
                         model_provider = run.get("model_provider", "")
                         model_counts[f"{model_id}:{model_provider}"] = (
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
-
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            session_data = session.get("session_data", {}) or {}
+            session_metrics = session_data.get("session_metrics", {}) or {}
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
 

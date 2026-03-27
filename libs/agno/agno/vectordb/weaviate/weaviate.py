@@ -81,7 +81,7 @@ class Weaviate(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
 
         # Search setup
@@ -247,7 +247,9 @@ class Weaviate(VectorDb):
                 continue
 
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            record_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
             doc_uuid = uuid.UUID(hex=record_id[:32])
 
             # Merge filters with metadata
@@ -338,7 +340,9 @@ class Weaviate(VectorDb):
 
                     # Clean content and generate UUID
                     cleaned_content = document.content.replace("\x00", "\ufffd")
-                    record_id = md5(cleaned_content.encode()).hexdigest()
+                    # Include content_hash in ID to ensure uniqueness across different content hashes
+                    base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                    record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
                     doc_uuid = uuid.UUID(hex=record_id[:32])
 
                     # Serialize meta_data to JSON string

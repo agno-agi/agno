@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from agno.db.firestore.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import get_sort_value
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -126,19 +127,33 @@ def apply_pagination(query, limit: Optional[int] = None, page: Optional[int] = N
 def apply_sorting_to_records(
     records: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Apply sorting to in-memory records (for cases where Firestore query sorting isn't possible)."""
-    if sort_by is None:
+    """Apply sorting to in-memory records (for cases where Firestore query sorting isn't possible).
+
+    Args:
+        records: The list of dictionaries to sort
+        sort_by: The field to sort by
+        sort_order: The sort order ('asc' or 'desc')
+
+    Returns:
+        The sorted list
+
+    Note:
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
+    """
+    if sort_by is None or not records:
         return records
 
-    def get_sort_key(record):
-        value = record.get(sort_by, 0)
-        if value is None:
-            return 0 if records and isinstance(records[0].get(sort_by, 0), (int, float)) else ""
-        return value
-
     try:
-        is_reverse = sort_order == "desc"
-        return sorted(records, key=get_sort_key, reverse=is_reverse)
+        is_descending = sort_order == "desc"
+
+        # Sort using the helper function that handles updated_at -> created_at fallback
+        sorted_records = sorted(
+            records,
+            key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+            reverse=is_descending,
+        )
+
+        return sorted_records
     except Exception as e:
         log_warning(f"Error sorting Firestore records: {e}")
         return records

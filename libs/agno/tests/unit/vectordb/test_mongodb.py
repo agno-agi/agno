@@ -256,14 +256,8 @@ def test_document_existence(vector_db: MongoVectorDb, mock_mongodb_client: Magic
     """Test document existence checking methods."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
 
-    # Create test documents
-    docs = create_test_documents(1)
-
     # Setup mock responses for find_one
     def mock_find_one(query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        # For doc_exists
-        if "_id" in query and query["_id"] == md5(docs[0].content.encode("utf-8")).hexdigest():
-            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
         # For name_exists
         if "name" in query and query["name"] == "test_doc_0":
             return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
@@ -273,9 +267,6 @@ def test_document_existence(vector_db: MongoVectorDb, mock_mongodb_client: Magic
         return None
 
     collection.find_one.side_effect = mock_find_one
-
-    # Test by document object
-    assert vector_db.doc_exists(docs[0])
 
     # Test by name
     assert vector_db.name_exists("test_doc_0")
@@ -549,8 +540,8 @@ async def test_async_search(
     mock_cursor = AsyncCursor(mock_results)
     mock_collection.aggregate = AsyncMock(return_value=mock_cursor)
 
-    # Mock embedder.get_embedding to ensure it returns consistent results
-    mock_embedder.get_embedding.return_value = [0.1] * 384
+    # Mock embedder.async_get_embedding to ensure it returns consistent results
+    mock_embedder.async_get_embedding = AsyncMock(return_value=[0.1] * 384)
 
     # Perform the search
     results = await async_vector_db.async_search("test query", limit=5)
@@ -664,3 +655,82 @@ async def test_async_drop(async_vector_db: MongoVectorDb, mock_async_mongodb_cli
     await async_vector_db.async_drop()
 
     mock_collection.drop.assert_called_once()
+
+
+@pytest.fixture
+def tracking_embedder() -> MagicMock:
+    """
+    Mock embedder that tracks whether sync or async methods are called.
+
+    This is used to verify that async search methods properly use
+    async_get_embedding() instead of blocking get_embedding().
+    """
+    mock = MagicMock()
+    mock.dimensions = 384
+    mock_embedding = [0.1] * 384
+
+    # Track call counts
+    mock.sync_call_count = 0
+    mock.async_call_count = 0
+
+    def sync_get_embedding(text: str):
+        mock.sync_call_count += 1
+        return mock_embedding
+
+    mock.get_embedding = sync_get_embedding
+
+    async def async_get_embedding(text: str):
+        mock.async_call_count += 1
+        return mock_embedding
+
+    mock.async_get_embedding = async_get_embedding
+
+    return mock
+
+
+@pytest.mark.asyncio
+async def test_async_search_uses_async_embedder(
+    mock_async_mongodb_client: AsyncMock, tracking_embedder: MagicMock
+) -> None:
+    """
+    Verify async_search uses async embedder, not sync.
+
+    This test ensures that async search methods don't block the event loop
+    by calling the synchronous get_embedding() method.
+    """
+    collection_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
+
+    with patch("pymongo.AsyncMongoClient", return_value=mock_async_mongodb_client):
+        db = MongoVectorDb(
+            collection_name=collection_name,
+            embedder=tracking_embedder,
+            database="test_vectordb",
+        )
+
+        # Setup the DB for async tests
+        db._async_client = mock_async_mongodb_client
+        db._async_db = mock_async_mongodb_client["test_vectordb"]
+        db._async_collection = db._async_db[collection_name]
+
+        # Create mock results for the cursor
+        mock_results = [
+            {
+                "_id": "doc_0",
+                "content": "Test content",
+                "meta_data": {},
+                "name": "test_doc",
+                "content_id": "content_0",
+                "score": 0.95,
+            }
+        ]
+
+        # Create and set up a proper async cursor
+        mock_cursor = AsyncCursor(mock_results)
+        db._async_collection.aggregate = AsyncMock(return_value=mock_cursor)
+
+        # Perform the search
+        await db.async_search("test query", limit=5)
+
+        # Verify async embedder was called, not sync
+        assert tracking_embedder.async_call_count == 1, "async_get_embedding should be called once"
+        assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT be called"

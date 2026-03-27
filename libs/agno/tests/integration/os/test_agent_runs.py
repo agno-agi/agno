@@ -11,7 +11,7 @@ def test_create_agent_run(test_os_client, test_agent: Agent):
     """Test creating an agent run using form input."""
     response = test_os_client.post(
         f"/agents/{test_agent.id}/runs",
-        data={"message": "Hello, world!"},
+        data={"message": "Hello, world!", "stream": "false"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert response.status_code == 200
@@ -85,7 +85,12 @@ def test_create_agent_run_with_kwargs(test_os_client, test_agent: Agent):
         def to_dict(self):
             return {}
 
-    with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+    # Patch deep_copy to return the same instance so our mock works
+    # (AgentOS uses create_fresh=True which calls deep_copy)
+    with (
+        patch.object(test_agent, "deep_copy", return_value=test_agent),
+        patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun,
+    ):
         mock_arun.return_value = MockRunOutput()
 
         response = test_os_client.post(
@@ -124,6 +129,7 @@ def test_kwargs_propagate_to_run_context(test_os_client, test_agent: Agent):
         f"/agents/{test_agent.id}/runs",
         data={
             "message": "Hello, world!",
+            "stream": "false",
             "user_id": "test-user-123",
             "session_id": "test-session-123",
             "session_state": {"test_session_state": "test-session-state"},

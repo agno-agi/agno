@@ -3,6 +3,14 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from httpx import ASGITransport
+
+from agno.db.base import ComponentType
+from agno.db.sqlite import SqliteDb
+from agno.os import AgentOS
 from agno.workflow.workflow import Workflow
 
 
@@ -84,7 +92,12 @@ def test_create_workflow_run_with_kwargs(test_os_client, test_workflow: Workflow
         def to_dict(self):
             return {}
 
-    with patch.object(test_workflow, "arun", new_callable=AsyncMock) as mock_arun:
+    # Patch deep_copy to return the same instance so our mock works
+    # (AgentOS uses create_fresh=True which calls deep_copy)
+    with (
+        patch.object(test_workflow, "deep_copy", return_value=test_workflow),
+        patch.object(test_workflow, "arun", new_callable=AsyncMock) as mock_arun,
+    ):
         mock_arun.return_value = MockRunOutput()
 
         response = test_os_client.post(
@@ -103,3 +116,132 @@ def test_create_workflow_run_with_kwargs(test_os_client, test_workflow: Workflow
         call_args = mock_arun.call_args
         assert call_args.kwargs["extra_field"] == "foo"
         assert call_args.kwargs["extra_field_two"] == "bar"
+
+
+# =============================================================================
+# Workflow Version Tests
+# =============================================================================
+
+
+@pytest.fixture
+def versioned_workflow_client(temp_storage_db_file):
+    """Create a TestClient with a DB-only AgentOS containing two published workflow versions."""
+    db = SqliteDb(db_file=temp_storage_db_file)
+
+    db.create_component_with_config(
+        component_id="versioned-wf",
+        component_type=ComponentType.WORKFLOW,
+        name="Workflow Alpha",
+        config={"name": "Workflow Alpha", "id": "versioned-wf", "description": "First version"},
+        stage="published",
+    )
+    db.upsert_config(
+        component_id="versioned-wf",
+        config={"name": "Workflow Beta", "id": "versioned-wf", "description": "Second version"},
+        stage="published",
+    )
+
+    agent_os = AgentOS(db=db)
+    app = agent_os.get_app()
+    return TestClient(app)
+
+
+def test_get_workflow_version_returns_specific_version(versioned_workflow_client):
+    """Test GET /workflows/{id}?version=1 returns version 1 config."""
+    response = versioned_workflow_client.get("/workflows/versioned-wf", params={"version": 1})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Workflow Alpha"
+    assert data["description"] == "First version"
+
+
+def test_get_workflow_version_returns_different_version(versioned_workflow_client):
+    """Test GET /workflows/{id}?version=2 returns version 2 config."""
+    response = versioned_workflow_client.get("/workflows/versioned-wf", params={"version": 2})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Workflow Beta"
+    assert data["description"] == "Second version"
+
+
+def test_get_workflow_without_version_returns_current(versioned_workflow_client):
+    """Test GET /workflows/{id} without version returns latest published version."""
+    response = versioned_workflow_client.get("/workflows/versioned-wf")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Workflow Beta"
+    assert data["description"] == "Second version"
+
+
+def test_get_workflow_nonexistent_version_returns_404(versioned_workflow_client):
+    """Test GET /workflows/{id}?version=999 returns 404."""
+    response = versioned_workflow_client.get("/workflows/versioned-wf", params={"version": 999})
+    assert response.status_code == 404
+
+
+# =============================================================================
+# Workflow Version Tests (Async)
+# =============================================================================
+
+
+@pytest.fixture
+def versioned_workflow_app(temp_storage_db_file):
+    """Create a FastAPI app with a DB-only AgentOS containing two published workflow versions."""
+    db = SqliteDb(db_file=temp_storage_db_file)
+
+    db.create_component_with_config(
+        component_id="versioned-wf",
+        component_type=ComponentType.WORKFLOW,
+        name="Workflow Alpha",
+        config={"name": "Workflow Alpha", "id": "versioned-wf", "description": "First version"},
+        stage="published",
+    )
+    db.upsert_config(
+        component_id="versioned-wf",
+        config={"name": "Workflow Beta", "id": "versioned-wf", "description": "Second version"},
+        stage="published",
+    )
+
+    agent_os = AgentOS(db=db)
+    return agent_os.get_app()
+
+
+@pytest.mark.asyncio
+async def test_aget_workflow_version_returns_specific_version(versioned_workflow_app):
+    """Test async GET /workflows/{id}?version=1 returns version 1 config."""
+    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+        response = await client.get("/workflows/versioned-wf", params={"version": 1})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Workflow Alpha"
+        assert data["description"] == "First version"
+
+
+@pytest.mark.asyncio
+async def test_aget_workflow_version_returns_different_version(versioned_workflow_app):
+    """Test async GET /workflows/{id}?version=2 returns version 2 config."""
+    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+        response = await client.get("/workflows/versioned-wf", params={"version": 2})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Workflow Beta"
+        assert data["description"] == "Second version"
+
+
+@pytest.mark.asyncio
+async def test_aget_workflow_without_version_returns_current(versioned_workflow_app):
+    """Test async GET /workflows/{id} without version returns latest published version."""
+    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+        response = await client.get("/workflows/versioned-wf")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Workflow Beta"
+        assert data["description"] == "Second version"
+
+
+@pytest.mark.asyncio
+async def test_aget_workflow_nonexistent_version_returns_404(versioned_workflow_app):
+    """Test async GET /workflows/{id}?version=999 returns 404."""
+    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+        response = await client.get("/workflows/versioned-wf", params={"version": 999})
+        assert response.status_code == 404

@@ -35,6 +35,7 @@ class Claude(AnthropicClaude):
 
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     aws_region: Optional[str] = None
     api_key: Optional[str] = None
     session: Optional[Session] = None
@@ -53,32 +54,47 @@ class Claude(AnthropicClaude):
 
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:
-            credentials = self.session.get_credentials()
+            # Use get_frozen_credentials() for an atomic snapshot so that
+            # a credential refresh between property reads cannot produce a
+            # mismatched access-key / secret-key / token tuple.
+            resolved = self.session.get_credentials()
+            if resolved is None:
+                raise ValueError(
+                    "boto3 session has no credentials. Check your AWS configuration "
+                    "(environment variables, config files, IAM role, etc.)."
+                )
+            credentials = resolved.get_frozen_credentials()
             client_params: Dict[str, Any] = {
                 "aws_access_key": credentials.access_key,
                 "aws_secret_key": credentials.secret_key,
                 "aws_session_token": credentials.token,
-                "aws_region": self.session.region_name,
+                "aws_region": self.aws_region or self.session.region_name,
             }
         else:
             self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
             if self.api_key:
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
-                client_params = {
-                    "api_key": self.api_key,
-                }
-                if self.aws_region:
-                    client_params["aws_region"] = self.aws_region
-            else:
-                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
-                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
+                raise ValueError(
+                    "AWS_BEDROCK_API_KEY authentication is not currently supported by AnthropicBedrock. "
+                    "Use IAM credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY[/AWS_SESSION_TOKEN]) "
+                    "or provide a boto3 session instead."
+                )
 
-                client_params = {
-                    "aws_secret_key": self.aws_secret_key,
-                    "aws_access_key": self.aws_access_key,
-                    "aws_region": self.aws_region,
-                }
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
+
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_session_token": self.aws_session_token,
+                "aws_region": self.aws_region,
+            }
+
+            if not (self.aws_access_key and self.aws_secret_key):
+                log_warning(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                )
 
         if self.timeout is not None:
             client_params["timeout"] = self.timeout
@@ -95,7 +111,10 @@ class Claude(AnthropicClaude):
         Returns:
             AnthropicBedrock: The Bedrock client.
         """
-        if self.client is not None and not self.client.is_closed():
+        # When using a boto3 session, always recreate the client so
+        # session.get_credentials() can return rotated credentials
+        # (IAM roles, EKS pod identity, instance profiles, STS).
+        if not self.session and self.client is not None and not self.client.is_closed():
             return self.client
 
         client_params = self._get_client_params()
@@ -111,10 +130,14 @@ class Claude(AnthropicClaude):
             # Use global sync client when no custom http_client is provided
             client_params["http_client"] = get_default_sync_client()
 
-        self.client = AnthropicBedrock(
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.client.
+        client = AnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.client
+        if not self.session:
+            self.client = client
+        return client
 
     def get_async_client(self):
         """
@@ -123,7 +146,9 @@ class Claude(AnthropicClaude):
         Returns:
             AsyncAnthropicBedrock: The Bedrock async client.
         """
-        if self.async_client is not None:
+        # When using a boto3 session, always recreate the client so
+        # session.get_credentials() can return rotated credentials.
+        if not self.session and self.async_client is not None and not self.async_client.is_closed():
             return self.async_client
 
         client_params = self._get_client_params()
@@ -141,10 +166,14 @@ class Claude(AnthropicClaude):
             # Use global async client when no custom http_client is provided
             client_params["http_client"] = get_default_async_client()
 
-        self.async_client = AsyncAnthropicBedrock(
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.async_client.
+        async_client = AsyncAnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.async_client
+        if not self.session:
+            self.async_client = async_client
+        return async_client
 
     def get_request_params(
         self,
@@ -166,6 +195,8 @@ class Claude(AnthropicClaude):
             _request_params["max_tokens"] = self.max_tokens
         if self.thinking:
             _request_params["thinking"] = self.thinking
+        if self.output_config:
+            _request_params["output_config"] = self.output_config
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:

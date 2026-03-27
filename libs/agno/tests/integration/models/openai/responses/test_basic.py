@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
-from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIResponses
+from agno.run.base import RunStatus
 
 
 @pytest.fixture(scope="module")
@@ -102,15 +102,15 @@ async def test_async_basic_stream(openai_responses_model, shared_db):
 
 
 def test_exception_handling():
-    """Test proper error handling for invalid model IDs."""
+    """Test that errors are handled gracefully and returned in RunOutput."""
     agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False)
 
-    with pytest.raises(ModelProviderError) as exc:
-        agent.run("Share a 2 sentence horror story")
+    # Agent now handles errors gracefully and returns RunOutput with error status
+    response = agent.run("Share a 2 sentence horror story")
 
-    assert exc.value.model_name == "OpenAIResponses"
-    assert exc.value.model_id == "gpt-100"
-    assert exc.value.status_code == 400
+    assert response.status == RunStatus.error
+    assert response.content is not None
+    assert "gpt-100" in response.content
 
 
 def test_with_memory(openai_responses_model):
@@ -195,6 +195,7 @@ def test_history(openai_responses_model):
         model=openai_responses_model,
         db=SqliteDb(db_file="tmp/openai/responses/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")
@@ -257,3 +258,131 @@ async def test_async_client_persistence(openai_responses_model):
     third_client = openai_responses_model.async_client
     assert third_client is not None
     assert first_client is third_client, "Async client should still be the same instance"
+
+
+def test_count_tokens(openai_responses_model):
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = openai_responses_model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
+
+
+def test_count_tokens_with_tools(openai_responses_model):
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = openai_responses_model.count_tokens(messages)
+    tokens_with_tools = openai_responses_model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens(openai_responses_model):
+    """Test async token counting uses the async client."""
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    sync_tokens = openai_responses_model.count_tokens(messages)
+    async_tokens = await openai_responses_model.acount_tokens(messages)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens > 0
+    assert async_tokens == sync_tokens
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens_with_tools(openai_responses_model):
+    """Test async token counting with tools uses the async client."""
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+    tools = list(calculator.functions.values())
+
+    sync_tokens = openai_responses_model.count_tokens(messages, tools=tools)
+    async_tokens = await openai_responses_model.acount_tokens(messages, tools=tools)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens == sync_tokens
+    assert async_tokens > openai_responses_model.count_tokens(messages), "Token count with tools should be higher"
+
+
+def test_format_tool_params_with_function_objects(openai_responses_model):
+    """Test that _format_tool_params correctly handles Function objects."""
+    from agno.models.message import Message
+    from agno.tools.function import Function
+
+    messages = [Message(role="user", content="Test")]
+
+    # Create a Function object directly
+    test_function = Function(
+        name="test_tool",
+        description="A test tool",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The query to search for"},
+            },
+            "required": ["query"],
+        },
+    )
+
+    formatted_tools = openai_responses_model._format_tool_params(messages, [test_function])
+
+    assert len(formatted_tools) == 1
+    assert formatted_tools[0]["type"] == "function"
+    assert formatted_tools[0]["name"] == "test_tool"
+    assert formatted_tools[0]["description"] == "A test tool"
+    assert formatted_tools[0]["parameters"]["properties"]["query"]["type"] == "string"
+
+
+def test_format_tool_params_handles_list_types_in_function(openai_responses_model):
+    """Test that _format_tool_params converts list types to single types in Function objects."""
+    from agno.models.message import Message
+    from agno.tools.function import Function
+
+    messages = [Message(role="user", content="Test")]
+
+    # Create a Function object with a list type (e.g., ["string", "null"] for Optional)
+    test_function = Function(
+        name="optional_param_tool",
+        description="A tool with optional parameter",
+        parameters={
+            "type": "object",
+            "properties": {
+                "required_param": {"type": "string", "description": "A required parameter"},
+                "optional_param": {"type": ["string", "null"], "description": "An optional parameter"},
+            },
+            "required": ["required_param"],
+        },
+    )
+
+    formatted_tools = openai_responses_model._format_tool_params(messages, [test_function])
+
+    assert len(formatted_tools) == 1
+    # The list type should be converted to single type (first element)
+    assert formatted_tools[0]["parameters"]["properties"]["optional_param"]["type"] == "string"
+    # Regular string type should remain unchanged
+    assert formatted_tools[0]["parameters"]["properties"]["required_param"]["type"] == "string"

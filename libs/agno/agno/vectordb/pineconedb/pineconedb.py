@@ -26,7 +26,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -136,7 +136,7 @@ class PineconeDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.reranker: Optional[Reranker] = reranker
 
@@ -216,23 +216,6 @@ class PineconeDb(VectorDb):
         if self.exists():
             log_debug(f"Deleting index: {self.name}")
             self.client.delete_index(name=self.name, timeout=self.timeout)
-
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index.
-
-        Args:
-            document (Document): The document to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-
-        """
-        response = self.index.fetch(ids=[document.id], namespace=self.namespace)
-        return len(response.vectors) > 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
 
     def name_exists(self, name: str) -> bool:
         """Check if an index with the given name exists.

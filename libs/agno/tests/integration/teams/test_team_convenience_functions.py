@@ -1,10 +1,10 @@
 import uuid
-from typing import Any, Dict
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 from agno.team.team import Team
 
 
@@ -403,16 +403,6 @@ async def test_aget_session_summary(async_test_team):
     assert summary is None  # Summaries not enabled by default
 
 
-# Tests for get_user_memories()
-def test_get_user_memories_without_memory_manager(test_team):
-    """Test get_user_memories returns None without memory manager."""
-    user_id = "test_user"
-    test_team.run("Hello", user_id=user_id, session_id=str(uuid.uuid4()))
-
-    memories = test_team.get_user_memories(user_id=user_id)
-    assert memories is None  # No memory manager configured
-
-
 # Test error handling and edge cases
 def test_convenience_functions_without_db():
     """Test convenience functions fail gracefully without a database."""
@@ -430,9 +420,9 @@ def test_convenience_functions_without_db():
 def test_get_session_state_with_tool_updates(test_team):
     """Test session state updates via tools."""
 
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the list."""
-        session_state["items"].append(item)
+        run_context.session_state["items"].append(item)
         return f"Added {item}"
 
     agent = Agent(

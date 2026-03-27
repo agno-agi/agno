@@ -15,7 +15,8 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.knowledge.reranker.base import Reranker
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -39,6 +40,7 @@ class RedisDB(VectorDb):
         search_type: SearchType = SearchType.vector,
         distance: Distance = Distance.cosine,
         vector_score_weight: float = 0.7,
+        reranker: Optional[Reranker] = None,
         **redis_kwargs,
     ):
         """
@@ -78,7 +80,7 @@ class RedisDB(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
 
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
@@ -91,8 +93,8 @@ class RedisDB(VectorDb):
         self.distance: Distance = distance
         self.vector_score_weight: float = vector_score_weight
 
-        # # Reranker instance
-        # self.reranker: Optional[Reranker] = reranker
+        # Reranker instance
+        self.reranker: Optional[Reranker] = reranker
 
         # Create index schema
         self.schema = self._get_schema()
@@ -183,32 +185,6 @@ class RedisDB(VectorDb):
             else:
                 log_error(f"Error creating Redis index: {e}")
                 raise
-
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index."""
-        try:
-            doc_id = document.id or hash_string_sha256(document.content)
-            return self.id_exists(doc_id)
-        except Exception as e:
-            log_error(f"Error checking if document exists: {e}")
-            return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Async version of doc_exists method."""
-        try:
-            doc_id = document.id or hash_string_sha256(document.content)
-            async_index = await self._get_async_index()
-            id_filter = Tag("id") == doc_id
-            query = FilterQuery(
-                filter_expression=id_filter,
-                return_fields=["id"],
-                num_results=1,
-            )
-            results = await async_index.query(query)
-            return len(results) > 0
-        except Exception as e:
-            log_error(f"Error checking if document exists: {e}")
-            return False
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with the given name exists."""
@@ -453,6 +429,10 @@ class RedisDB(VectorDb):
             # Convert results to documents
             documents = [Document.from_dict(r) for r in results]
 
+            # Apply reranking if reranker is available
+            if self.reranker:
+                documents = self.reranker.rerank(query=query, documents=documents)
+
             return documents
         except Exception as e:
             log_error(f"Error in vector search: {e}")
@@ -476,6 +456,10 @@ class RedisDB(VectorDb):
             # Convert results to documents
             documents = [Document.from_dict(p) for p in parsed]
 
+            # Apply reranking if reranker is available
+            if self.reranker:
+                documents = self.reranker.rerank(query=query, documents=documents)
+
             return documents
         except Exception as e:
             log_error(f"Error in keyword search: {e}")
@@ -493,7 +477,7 @@ class RedisDB(VectorDb):
                 vector_field_name="embedding",
                 text=query,
                 text_field_name="content",
-                alpha=self.vector_score_weight,
+                linear_alpha=self.vector_score_weight,
                 return_fields=["id", "name", "content"],
                 num_results=limit,
             )
@@ -504,6 +488,10 @@ class RedisDB(VectorDb):
 
             # Convert results to documents
             documents = [Document.from_dict(p) for p in parsed]
+
+            # Apply reranking if reranker is available
+            if self.reranker:
+                documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
         except Exception as e:
