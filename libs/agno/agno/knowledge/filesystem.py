@@ -164,8 +164,8 @@ class FileSystemKnowledge:
                     },
                 )
             ]
-        except Exception as e:
-            log_warning(f"Error reading file {query}: {e}")
+        except Exception:
+            log_warning(f"Error reading file {query}", exc_info=True)
             return []
 
     def _grep(self, query: str, max_results: Optional[int] = None) -> List[Document]:

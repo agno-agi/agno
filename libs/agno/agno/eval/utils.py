@@ -45,8 +45,8 @@ def log_eval_run(
                 workflow_id=workflow_id,
             )
         )
-    except Exception as e:
-        log_debug(f"Could not create agent event: {e}")
+    except Exception:
+        log_debug("Could not create agent event", exc_info=True)
 
 
 async def async_log_eval(
@@ -98,8 +98,8 @@ async def async_log_eval(
                     workflow_id=workflow_id,
                 )
             )
-    except Exception as e:
-        log_debug(f"Could not create agent event: {e}")
+    except Exception:
+        log_debug("Could not create agent event", exc_info=True)
 
 
 def store_result_in_file(
@@ -116,5 +116,5 @@ def store_result_in_file(
         if not fn_path.parent.exists():
             fn_path.parent.mkdir(parents=True, exist_ok=True)
         fn_path.write_text(json.dumps(asdict(result), indent=4))
-    except Exception as e:
-        logger.warning(f"Failed to save result to file: {e}")
+    except Exception:
+        logger.warning("Failed to save result to file", exc_info=True)

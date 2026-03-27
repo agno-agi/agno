@@ -127,11 +127,11 @@ def read_session(
         if not agent.db:
             raise ValueError("Db not initialized")
         return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
+    except Exception:
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {e}")
+        log_warning("Error getting session from db", exc_info=True)
         return None
 
 
@@ -148,11 +148,11 @@ async def aread_session(
             return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
         else:
             return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
+    except Exception:
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {e}")
+        log_warning("Error getting session from db", exc_info=True)
         return None
 
 
@@ -165,11 +165,11 @@ def upsert_session(
         if not agent.db:
             raise ValueError("Db not initialized")
         return agent.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
+    except Exception:
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning("Error upserting session into db", exc_info=True)
         return None
 
 
@@ -186,11 +186,11 @@ async def aupsert_session(
             return await agent.db.upsert_session(session=session)  # type: ignore
         else:
             return agent.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
+    except Exception:
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning("Error upserting session into db", exc_info=True)
         return None
 
 
@@ -551,9 +551,9 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
                     serialized_tools.append(tool.to_dict())
                 else:
                     serialized_tools.append(tool)
-            except Exception as e:
+            except Exception:
                 # Skip tools that can't be serialized
-                log_warning(f"Could not serialize tool {tool}: {e}")
+                log_warning("Could not serialize tool", exc_info=True)
         if serialized_tools:
             config["tools"] = serialized_tools
 
@@ -1038,8 +1038,8 @@ def save(
 
         return config.get("version")
 
-    except Exception as e:
-        log_error(f"Error saving Agent to database: {e}")
+    except Exception:
+        log_error("Error saving Agent to database", exc_info=True)
         raise
 
 

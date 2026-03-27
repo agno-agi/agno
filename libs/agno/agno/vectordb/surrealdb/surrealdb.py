@@ -654,8 +654,8 @@ class SurrealDb(VectorDb):
 
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            log_error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
     def get_supported_search_types(self) -> List[str]:

@@ -126,8 +126,8 @@ class UpstashVectorDb(VectorDb):
         try:
             self.index.info()
             return True
-        except Exception as e:
-            logger.error(f"Error checking index existence: {str(e)}")
+        except Exception:
+            logger.error("Error checking index existence", exc_info=True)
             return False
 
     def create(self) -> None:
@@ -205,8 +205,8 @@ class UpstashVectorDb(VectorDb):
                 )
 
             return response is not None and len(response) > 0
-        except Exception as e:
-            logger.error(f"Error checking if content_hash {content_hash} exists: {e}")
+        except Exception:
+            logger.error(f"Error checking if content_hash {content_hash} exists", exc_info=True)
             return False
 
     def name_exists(self, name: str) -> bool:
@@ -431,8 +431,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with ID: {id}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting document by ID {id}: {e}")
+        except Exception:
+            logger.error(f"Error deleting document by ID {id}", exc_info=True)
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -450,8 +450,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with name: {name}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by name {name}: {e}")
+        except Exception:
+            logger.error(f"Error deleting documents by name {name}", exc_info=True)
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -478,8 +478,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) matching metadata: {metadata}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by metadata {metadata}: {e}")
+        except Exception:
+            logger.error(f"Error deleting documents by metadata {metadata}", exc_info=True)
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -547,8 +547,8 @@ class UpstashVectorDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -559,10 +559,10 @@ class UpstashVectorDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.error("Rate limit detected during batch embedding.", exc_info=True)
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -642,8 +642,8 @@ class UpstashVectorDb(VectorDb):
         try:
             response = self.index.fetch(ids=[id], namespace=self.namespace)
             return len(response) > 0
-        except Exception as e:
-            logger.error(f"Error checking if ID {id} exists: {e}")
+        except Exception:
+            logger.error(f"Error checking if ID {id} exists", exc_info=True)
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -660,8 +660,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with content_hash: {content_hash}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash {content_hash}: {e}")
+        except Exception:
+            logger.error(f"Error deleting documents by content_hash {content_hash}", exc_info=True)
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -709,8 +709,8 @@ class UpstashVectorDb(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
     def get_supported_search_types(self) -> List[str]:

@@ -234,19 +234,19 @@ class WebsiteReader(Reader):
                 if e.response.status_code >= 300 and e.response.status_code < 400:
                     log_debug(f"Redirect encountered for {current_url}, skipping: {e}")
                 else:
-                    log_warning(f"HTTP status error while crawling {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling {current_url}", exc_info=True)
                 # For the initial URL, we should raise the error only if it's not a redirect
                 if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
-            except httpx.RequestError as e:
+            except httpx.RequestError:
                 # Log request errors but continue crawling other pages
-                log_warning(f"Request error while crawling {current_url}: {e}")
+                log_warning(f"Request error while crawling {current_url}", exc_info=True)
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     raise
             except Exception as e:
                 # Log other exceptions but continue crawling other pages
-                log_warning(f"Failed to crawl {current_url}: {e}")
+                log_warning(f"Failed to crawl {current_url}", exc_info=True)
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     # Wrap non-HTTP exceptions in a RequestError
@@ -333,21 +333,21 @@ class WebsiteReader(Reader):
                             ):
                                 self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
-                except httpx.HTTPStatusError as e:
+                except httpx.HTTPStatusError:
                     # Log HTTP status errors but continue crawling other pages
-                    log_warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling asynchronously {current_url}", exc_info=True)
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
-                except httpx.RequestError as e:
+                except httpx.RequestError:
                     # Log request errors but continue crawling other pages
-                    log_warning(f"Request error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"Request error while crawling asynchronously {current_url}", exc_info=True)
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except Exception as e:
                     # Log other exceptions but continue crawling other pages
-                    log_warning(f"Failed to crawl asynchronously {current_url}: {e}")
+                    log_warning(f"Failed to crawl asynchronously {current_url}", exc_info=True)
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         # Wrap non-HTTP exceptions in a RequestError
@@ -400,8 +400,8 @@ class WebsiteReader(Reader):
                         )
                     )
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            log_error(f"Error reading website {url}: {e}")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            log_error(f"Error reading website {url}", exc_info=True)
             raise
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -455,6 +455,6 @@ class WebsiteReader(Reader):
                 documents.extend(doc_list)
 
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            log_error(f"Error reading website asynchronously {url}: {e}")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            log_error(f"Error reading website asynchronously {url}", exc_info=True)
             raise

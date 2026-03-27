@@ -92,8 +92,8 @@ class S3Loader(BaseLoader):
                     aws_access_key_id=s3_config.aws_access_key_id if s3_config else None,
                     aws_secret_access_key=s3_config.aws_secret_access_key if s3_config else None,
                 )
-        except Exception as e:
-            log_error(f"Error getting bucket: {e}")
+        except Exception:
+            log_error("Error getting bucket", exc_info=True)
 
         # Identify objects to read
         objects_to_read: List[S3Object] = []

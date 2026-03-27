@@ -60,8 +60,8 @@ class TextReader(Reader):
                     chunked_documents.extend(self.chunk_document(document))
                 return chunked_documents
             return documents
-        except Exception as e:
-            log_error(f"Error reading: {file}: {e}")
+        except Exception:
+            log_error(f"Error reading: {file}", exc_info=True)
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -96,8 +96,8 @@ class TextReader(Reader):
             if self.chunk:
                 return await self._async_chunk_document(document)
             return [document]
-        except Exception as e:
-            log_error(f"Error reading asynchronously: {file}: {e}")
+        except Exception:
+            log_error(f"Error reading asynchronously: {file}", exc_info=True)
             return []
 
     async def _async_chunk_document(self, document: Document) -> List[Document]:

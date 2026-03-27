@@ -317,8 +317,8 @@ class AwsBedrockEmbedder(Embedder):
 
             log_warning("No embeddings found in response")
             return []
-        except Exception as e:
-            log_warning(f"Error extracting embeddings: {e}")
+        except Exception:
+            log_warning("Error extracting embeddings", exc_info=True)
             return []
 
     def response(self, text: str) -> Dict[str, Any]:
@@ -342,10 +342,10 @@ class AwsBedrockEmbedder(Embedder):
             response_body = json.loads(response["body"].read().decode("utf-8"))
             return response_body
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
     def get_embedding(self, text: str) -> List[float]:
@@ -404,10 +404,10 @@ class AwsBedrockEmbedder(Embedder):
             response_body = json.loads(response["body"].read().decode("utf-8"))
             return self._extract_embeddings(response_body)
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
     def get_multimodal_embedding(
@@ -449,10 +449,10 @@ class AwsBedrockEmbedder(Embedder):
             response_body = json.loads(response["body"].read().decode("utf-8"))
             return self._extract_embeddings(response_body)
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -471,10 +471,10 @@ class AwsBedrockEmbedder(Embedder):
                 response_body = json.loads((await response["body"].read()).decode("utf-8"))
                 return self._extract_embeddings(response_body)
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -495,10 +495,10 @@ class AwsBedrockEmbedder(Embedder):
                 usage = response_body.get("usage")
                 return embedding, usage
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
     async def async_get_image_embedding(self, image_data_uri: str) -> List[float]:
@@ -523,10 +523,10 @@ class AwsBedrockEmbedder(Embedder):
                 response_body = json.loads((await response["body"].read()).decode("utf-8"))
                 return self._extract_embeddings(response_body)
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
     async def async_get_multimodal_embedding(
@@ -555,8 +555,8 @@ class AwsBedrockEmbedder(Embedder):
                 response_body = json.loads((await response["body"].read()).decode("utf-8"))
                 return self._extract_embeddings(response_body)
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error("Unexpected error calling Bedrock API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e

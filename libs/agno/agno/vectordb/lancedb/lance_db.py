@@ -259,15 +259,15 @@ class LanceDb(VectorDb):
                     self.table_name, schema=schema, mode="overwrite", exist_ok=True
                 )
                 log_debug(f"Successfully created async table: {self.table_name}")
-            except Exception as e:
-                logger.error(f"Error creating async table: {e}")
+            except Exception:
+                logger.error("Error creating async table", exc_info=True)
                 # Try to fall back to sync table creation
                 try:
                     log_debug("Falling back to sync table creation")
                     self.table = self._init_table()
                     log_debug("Sync table created successfully")
-                except Exception as sync_e:
-                    logger.error(f"Sync table creation also failed: {sync_e}")
+                except Exception:
+                    logger.error("Sync table creation also failed", exc_info=True)
                     raise
 
     def _base_schema(self) -> pa.Schema:
@@ -396,10 +396,10 @@ class LanceDb(VectorDb):
                     for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
                 )
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.error("Rate limit detected during batch embedding.", exc_info=True)
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                     # Log any embedding failures (they will be re-tried in sync insert)
@@ -461,7 +461,9 @@ class LanceDb(VectorDb):
                     if is_rate_limit:
                         raise e
                     else:
-                        logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                        logger.warning(
+                            "Async batch embedding failed, falling back to individual embeddings", exc_info=True
+                        )
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                         results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                         # Log any embedding failures (they will be re-tried in sync upsert)
@@ -664,8 +666,8 @@ class LanceDb(VectorDb):
                     )
                 )
 
-        except Exception as e:
-            logger.error(f"Error building search results: {e}")
+        except Exception:
+            logger.error("Error building search results", exc_info=True)
 
         return search_results
 
@@ -755,8 +757,8 @@ class LanceDb(VectorDb):
                 if payload.get("name") == name:
                     return True
             return False
-        except Exception as e:
-            logger.error(f"Error checking name existence: {e}")
+        except Exception:
+            logger.error("Error checking name existence", exc_info=True)
             return False
 
     async def async_name_exists(self, name: str) -> bool:
@@ -771,8 +773,8 @@ class LanceDb(VectorDb):
         try:
             result = self.table.search().where(f"{self._id} = '{id}'").to_list()
             return len(result) > 0
-        except Exception as e:
-            logger.error(f"Error checking id existence: {e}")
+        except Exception:
+            logger.error("Error checking id existence", exc_info=True)
             return False
 
     def delete_by_id(self, id: str) -> bool:
@@ -786,8 +788,8 @@ class LanceDb(VectorDb):
             self.table.delete(f"{self._id} = '{id}'")
             log_info(f"Deleted records with id '{id}' from table '{self.table_name}'.")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting rows by id '{id}': {e}")
+        except Exception:
+            logger.error(f"Error deleting rows by id '{id}'", exc_info=True)
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -815,8 +817,8 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with name '{name}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by name '{name}': {e}")
+        except Exception:
+            logger.error(f"Error deleting rows by name '{name}'", exc_info=True)
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -854,8 +856,8 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with metadata '{metadata}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by metadata '{metadata}': {e}")
+        except Exception:
+            logger.error(f"Error deleting rows by metadata '{metadata}'", exc_info=True)
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -885,8 +887,8 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with content_id '{content_id}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by content_id '{content_id}': {e}")
+        except Exception:
+            logger.error(f"Error deleting rows by content_id '{content_id}'", exc_info=True)
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -916,8 +918,8 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with content_hash '{content_hash}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by content_hash '{content_hash}': {e}")
+        except Exception:
+            logger.error(f"Error deleting rows by content_hash '{content_hash}'", exc_info=True)
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -937,8 +939,8 @@ class LanceDb(VectorDb):
 
             return False
 
-        except Exception as e:
-            logger.error(f"Error checking content_hash existence '{content_hash}': {e}")
+        except Exception:
+            logger.error(f"Error checking content_hash existence '{content_hash}'", exc_info=True)
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -1014,8 +1016,8 @@ class LanceDb(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
     def get_supported_search_types(self) -> List[str]:

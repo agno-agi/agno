@@ -139,7 +139,7 @@ class CouchbaseSearch(VectorDb):
                 logger.info("Connected to Couchbase successfully.")
                 self._cluster = cluster
             except Exception as e:
-                logger.error(f"Failed to connect to Couchbase: {e}")
+                logger.error("Failed to connect to Couchbase", exc_info=True)
                 raise ConnectionError(f"Failed to connect to Couchbase: {e}")
         return self._cluster
 
@@ -181,8 +181,8 @@ class CouchbaseSearch(VectorDb):
             logger.info(f"Created new scope '{self.scope_name}'")
         except ScopeAlreadyExistsException:
             logger.info(f"Scope '{self.scope_name}' already exists. Using existing scope.")
-        except Exception as e:
-            logger.error(f"Failed to create or ensure scope '{self.scope_name}' exists: {e}")
+        except Exception:
+            logger.error(f"Failed to create or ensure scope '{self.scope_name}' exists", exc_info=True)
             raise
 
         collection_manager = self.bucket.collections()
@@ -201,8 +201,8 @@ class CouchbaseSearch(VectorDb):
                 logger.info(
                     f"Collection '{self.collection_name}' not found in scope '{self.scope_name}'. No need to drop."
                 )
-            except Exception as e:
-                logger.error(f"Error dropping collection '{self.collection_name}' during overwrite: {e}")
+            except Exception:
+                logger.error(f"Error dropping collection '{self.collection_name}' during overwrite", exc_info=True)
                 raise
 
             # Proceed to create the collection
@@ -219,9 +219,10 @@ class CouchbaseSearch(VectorDb):
                     f"even after drop attempt for overwrite. Overwrite operation may not have completed as intended."
                 )
                 raise  # Re-raise as the overwrite intent failed
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    f"Error creating collection '{self.collection_name}' after drop attempt (overwrite=True): {e}"
+                    f"Error creating collection '{self.collection_name}' after drop attempt (overwrite=True)",
+                    exc_info=True,
                 )
                 raise
         else:  # self.overwrite is False
@@ -235,8 +236,8 @@ class CouchbaseSearch(VectorDb):
                 logger.info(
                     f"Collection '{self.collection_name}' already exists in scope '{self.scope_name}'. Using existing collection."
                 )
-            except Exception as e:
-                logger.error(f"Error creating collection '{self.collection_name}': {e}")
+            except Exception:
+                logger.error(f"Error creating collection '{self.collection_name}'", exc_info=True)
                 raise
 
     def _search_indexes_mng(self) -> Union[SearchIndexManager, ScopeSearchIndexManager]:
@@ -265,8 +266,8 @@ class CouchbaseSearch(VectorDb):
                     self._search_indexes_mng().drop_index(self.search_index_name)
                 except SearchIndexNotFoundException:
                     logger.warning(f"Index '{self.search_index_name}' does not exist")
-                except Exception as e:
-                    logger.warning(f"Error dropping index (may not exist): {e}")
+                except Exception:
+                    logger.warning("Error dropping index (may not exist)", exc_info=True)
 
             self._search_indexes_mng().upsert_index(self.search_index_definition)
             logger.info(f"Created FTS index '{self.search_index_name}'")
@@ -274,8 +275,8 @@ class CouchbaseSearch(VectorDb):
             if self.wait_until_index_ready:
                 self._wait_for_index_ready()
 
-        except Exception as e:
-            logger.error(f"Error creating FTS index '{self.search_index_name}': {e}")
+        except Exception:
+            logger.error(f"Error creating FTS index '{self.search_index_name}'", exc_info=True)
             raise
 
     def _wait_for_index_ready(self):
@@ -288,9 +289,9 @@ class CouchbaseSearch(VectorDb):
                     logger.info(f"FTS index '{self.search_index_name}' is ready")
                     break
                 # logger.info(f"FTS index '{self.search_index_name}' is not ready yet status: {index['status']}")
-            except Exception as e:
+            except Exception:
                 if time.time() - start_time > self.wait_until_index_ready:
-                    logger.error(f"Error checking index status: {e}")
+                    logger.error("Error checking index status", exc_info=True)
                     raise TimeoutError("Timeout waiting for FTS index to become ready")
                 time.sleep(1)
 
@@ -324,8 +325,8 @@ class CouchbaseSearch(VectorDb):
                 # and the value is the document content itself.
                 doc_id = doc_data.pop("_id")
                 docs_to_insert[doc_id] = doc_data
-            except Exception as e:
-                logger.error(f"Error preparing document '{document.name}': {e}")
+            except Exception:
+                logger.error(f"Error preparing document '{document.name}'", exc_info=True)
 
         if not docs_to_insert:
             logger.info("No documents prepared for insertion.")
@@ -370,8 +371,8 @@ class CouchbaseSearch(VectorDb):
                     errors_occurred = True
                 total_inserted_count += batch_inserted_count
 
-            except Exception as e:
-                logger.error(f"Error during batch bulk insert for {len(batch_docs_to_insert)} documents: {e}")
+            except Exception:
+                logger.error(f"Error during batch bulk insert for {len(batch_docs_to_insert)} documents", exc_info=True)
                 errors_occurred = True  # Mark that an error occurred in this batch
 
         logger.info(f"Finished processing {total_processed_count} documents for insertion.")
@@ -417,8 +418,8 @@ class CouchbaseSearch(VectorDb):
                 # and the value is the document content itself.
                 doc_id = doc_data.pop("_id")
                 docs_to_upsert[doc_id] = doc_data
-            except Exception as e:
-                logger.error(f"Error preparing document '{document.name}': {e}")
+            except Exception:
+                logger.error(f"Error preparing document '{document.name}'", exc_info=True)
 
         if not docs_to_upsert:
             logger.info("No documents prepared for upsert.")
@@ -454,8 +455,8 @@ class CouchbaseSearch(VectorDb):
                     errors_occurred = True
                 total_upserted_count += batch_upserted_count
 
-            except Exception as e:
-                logger.error(f"Error during batch bulk upsert for {len(batch_docs_to_upsert)} documents: {e}")
+            except Exception:
+                logger.error(f"Error during batch bulk upsert for {len(batch_docs_to_upsert)} documents", exc_info=True)
                 errors_occurred = True
 
         logger.info(f"Finished processing {total_processed_count} documents for upsert.")
@@ -499,8 +500,8 @@ class CouchbaseSearch(VectorDb):
                 results = self.scope.search(**search_args)
 
             return self.__get_doc_from_kv(results)
-        except Exception as e:
-            logger.error(f"Error during search: {e}")
+        except Exception:
+            logger.error("Error during search", exc_info=True)
             raise
 
     def __get_doc_from_kv(self, response: SearchResult) -> List[Document]:
@@ -555,8 +556,8 @@ class CouchbaseSearch(VectorDb):
                     collection_name=self.collection_name, scope_name=self.scope_name
                 )
                 logger.info(f"Collection '{self.collection_name}' dropped successfully.")
-            except Exception as e:
-                logger.error(f"Error dropping collection '{self.collection_name}': {e}")
+            except Exception:
+                logger.error(f"Error dropping collection '{self.collection_name}'", exc_info=True)
                 raise
 
     def delete(self) -> bool:
@@ -618,8 +619,8 @@ class CouchbaseSearch(VectorDb):
             if not self.is_global_level_index:
                 search_indexes = self.scope.search_indexes()
             return search_indexes.get_indexed_documents_count(self.search_index_name)
-        except Exception as e:
-            logger.error(f"Error getting document count: {e}")
+        except Exception:
+            logger.error("Error getting document count", exc_info=True)
             return 0
 
     def name_exists(self, name: str) -> bool:
@@ -633,8 +634,8 @@ class CouchbaseSearch(VectorDb):
             for row in result.rows():
                 return True
             return False
-        except Exception as e:
-            logger.error(f"Error checking document name existence: {e}")
+        except Exception:
+            logger.error("Error checking document name existence", exc_info=True)
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -644,8 +645,8 @@ class CouchbaseSearch(VectorDb):
             if not result.exists:
                 logger.debug(f"Document 'does not exist': {id}")
             return result.exists
-        except Exception as e:
-            logger.error(f"Error checking document existence: {e}")
+        except Exception:
+            logger.error("Error checking document existence", exc_info=True)
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -662,8 +663,8 @@ class CouchbaseSearch(VectorDb):
             for row in result.rows():
                 return True
             return False
-        except Exception as e:
-            logger.error(f"Error checking document content_hash existence: {e}")
+        except Exception:
+            logger.error("Error checking document content_hash existence", exc_info=True)
             return False
 
     # === ASYNC SUPPORT USING acouchbase ===
@@ -732,8 +733,8 @@ class CouchbaseSearch(VectorDb):
             logger.info(f"Created new scope '{self.scope_name}'")
         except ScopeAlreadyExistsException:
             logger.info(f"Scope '{self.scope_name}' already exists. Using existing scope.")
-        except Exception as e:
-            logger.error(f"Failed to create or ensure scope '{self.scope_name}' exists: {e}")
+        except Exception:
+            logger.error(f"Failed to create or ensure scope '{self.scope_name}' exists", exc_info=True)
             raise
 
         collection_manager = async_bucket_instance.collections()
@@ -754,8 +755,8 @@ class CouchbaseSearch(VectorDb):
                 logger.info(
                     f"Collection '{self.collection_name}' not found in scope '{self.scope_name}'. No need to drop."
                 )
-            except Exception as e:
-                logger.error(f"Error dropping collection '{self.collection_name}' during overwrite: {e}")
+            except Exception:
+                logger.error(f"Error dropping collection '{self.collection_name}' during overwrite", exc_info=True)
                 raise
 
             # Proceed to create the collection
@@ -774,9 +775,10 @@ class CouchbaseSearch(VectorDb):
                     f"even after drop attempt for overwrite. Overwrite operation may not have completed as intended."
                 )
                 raise  # Re-raise as the overwrite intent failed
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    f"Error creating collection '{self.collection_name}' after drop attempt (overwrite=True): {e}"
+                    f"Error creating collection '{self.collection_name}' after drop attempt (overwrite=True)",
+                    exc_info=True,
                 )
                 raise
         else:  # self.overwrite is False
@@ -792,8 +794,8 @@ class CouchbaseSearch(VectorDb):
                 logger.info(
                     f"Collection '{self.collection_name}' already exists in scope '{self.scope_name}'. Using existing collection."
                 )
-            except Exception as e:
-                logger.error(f"Error creating collection '{self.collection_name}': {e}")
+            except Exception:
+                logger.error(f"Error creating collection '{self.collection_name}'", exc_info=True)
                 raise
 
     async def _get_async_search_indexes_mng(self) -> Union[AsyncSearchIndexManager, AsyncScopeSearchIndexManager]:
@@ -825,8 +827,8 @@ class CouchbaseSearch(VectorDb):
                     await async_search_mng.drop_index(self.search_index_name)
                 except SearchIndexNotFoundException:
                     logger.warning(f"Index '{self.search_index_name}' does not exist")
-                except Exception as e:
-                    logger.warning(f"Error dropping index (may not exist): {e}")
+                except Exception:
+                    logger.warning("Error dropping index (may not exist)", exc_info=True)
 
             await async_search_mng.upsert_index(self.search_index_definition)
             logger.info(f"Created FTS index '{self.search_index_name}'")
@@ -834,8 +836,8 @@ class CouchbaseSearch(VectorDb):
             if self.wait_until_index_ready:
                 await self._async_wait_for_index_ready()
 
-        except Exception as e:
-            logger.error(f"Error creating FTS index '{self.search_index_name}': {e}")
+        except Exception:
+            logger.error(f"Error creating FTS index '{self.search_index_name}'", exc_info=True)
             raise
 
     async def _async_wait_for_index_ready(self):
@@ -849,9 +851,9 @@ class CouchbaseSearch(VectorDb):
                     logger.info(f"FTS index '{self.search_index_name}' is ready")
                     break
                 # logger.info(f"FTS index '{self.search_index_name}' is not ready yet status: {index['status']}")
-            except Exception as e:
+            except Exception:
                 if time.time() - start_time > self.wait_until_index_ready:
-                    logger.error(f"Error checking index status: {e}")
+                    logger.error("Error checking index status", exc_info=True)
                     raise TimeoutError("Timeout waiting for FTS index to become ready")
                 await asyncio.sleep(1)
 
@@ -862,8 +864,8 @@ class CouchbaseSearch(VectorDb):
             if not result.exists:
                 logger.debug(f"[async] Document does not exist: {id}")
             return result.exists
-        except Exception as e:
-            logger.error(f"[async] Error checking document existence: {e}")
+        except Exception:
+            logger.error("[async] Error checking document existence", exc_info=True)
             return False
 
     async def async_name_exists(self, name: str) -> bool:
@@ -876,8 +878,8 @@ class CouchbaseSearch(VectorDb):
             async for row in result.rows():
                 return True
             return False
-        except Exception as e:
-            logger.error(f"[async] Error checking document name existence: {e}")
+        except Exception:
+            logger.error("[async] Error checking document name existence", exc_info=True)
             return False
 
     async def async_insert(
@@ -903,8 +905,8 @@ class CouchbaseSearch(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -915,10 +917,10 @@ class CouchbaseSearch(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.error("Rate limit detected during batch embedding.", exc_info=True)
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -935,8 +937,8 @@ class CouchbaseSearch(VectorDb):
                     doc_data["filters"] = filters
                 doc_id = doc_data.pop("_id")  # Remove _id as it's used as key
                 all_docs_to_insert[doc_id] = doc_data
-            except Exception as e:
-                logger.error(f"[async] Error preparing document '{document.name}': {e}")
+            except Exception:
+                logger.error(f"[async] Error preparing document '{document.name}'", exc_info=True)
 
         if not all_docs_to_insert:
             logger.info("[async] No documents prepared for insertion.")
@@ -1005,8 +1007,8 @@ class CouchbaseSearch(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}'", exc_info=True)
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -1017,10 +1019,10 @@ class CouchbaseSearch(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.error("Rate limit detected during batch embedding.", exc_info=True)
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -1037,8 +1039,8 @@ class CouchbaseSearch(VectorDb):
                     doc_data["filters"] = filters
                 doc_id = doc_data.pop("_id")  # _id is used as key for upsert
                 all_docs_to_upsert[doc_id] = doc_data
-            except Exception as e:
-                logger.error(f"[async] Error preparing document '{document.name}' for upsert: {e}")
+            except Exception:
+                logger.error(f"[async] Error preparing document '{document.name}' for upsert", exc_info=True)
 
         if not all_docs_to_upsert:
             logger.info("[async] No documents prepared for upsert.")
@@ -1113,8 +1115,8 @@ class CouchbaseSearch(VectorDb):
                 results = async_scope_instance.search(**search_args)
 
             return await self.__async_get_doc_from_kv(results)
-        except Exception as e:
-            logger.error(f"[async] Error during search: {e}")
+        except Exception:
+            logger.error("[async] Error during search", exc_info=True)
             raise
 
     async def async_drop(self) -> None:
@@ -1125,8 +1127,8 @@ class CouchbaseSearch(VectorDb):
                     collection_name=self.collection_name, scope_name=self.scope_name
                 )
                 logger.info(f"[async] Collection '{self.collection_name}' dropped successfully.")
-            except Exception as e:
-                logger.error(f"[async] Error dropping collection '{self.collection_name}': {e}")
+            except Exception:
+                logger.error(f"[async] Error dropping collection '{self.collection_name}'", exc_info=True)
                 raise
 
     async def async_exists(self) -> bool:
@@ -1429,16 +1431,16 @@ class CouchbaseSearch(VectorDb):
 
                     self.collection.upsert(doc_id, doc_content)
                     updated_count += 1
-                except Exception as doc_error:
-                    logger.warning(f"Failed to update document {doc_id}: {doc_error}")
+                except Exception:
+                    logger.warning(f"Failed to update document {doc_id}", exc_info=True)
 
             if updated_count == 0:
                 logger.debug(f"No documents found with content_id: {content_id}")
             else:
                 logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.error(f"Error updating metadata for content_id '{content_id}'", exc_info=True)
             raise
 
     def get_supported_search_types(self) -> List[str]:

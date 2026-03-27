@@ -1173,7 +1173,7 @@ class SurrealDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error("Exception refreshing metrics", exc_info=True)
             raise e
 
     # --- Knowledge ---
@@ -1544,8 +1544,8 @@ class SurrealDb(BaseDb):
                     dict,
                 )
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_error("Error creating trace", exc_info=True)
 
     def get_trace(
         self,
@@ -1602,8 +1602,8 @@ class SurrealDb(BaseDb):
             # Deserialize
             return self._deserialize_trace(trace_data)
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_error("Error getting trace", exc_info=True)
             return None
 
     def get_traces(
@@ -1695,8 +1695,8 @@ class SurrealDb(BaseDb):
 
             return result_traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_error("Error getting traces", exc_info=True)
             return [], 0
 
     def get_trace_stats(
@@ -1790,8 +1790,8 @@ class SurrealDb(BaseDb):
 
             return stats_list, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_error("Error getting trace stats", exc_info=True)
             return [], 0
 
     def _deserialize_trace(self, trace_data: dict) -> "Trace":
@@ -1838,8 +1838,8 @@ class SurrealDb(BaseDb):
                 dict,
             )
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_error("Error creating span", exc_info=True)
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -1871,8 +1871,8 @@ class SurrealDb(BaseDb):
                     dict,
                 )
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_error("Error creating spans batch", exc_info=True)
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -1893,8 +1893,8 @@ class SurrealDb(BaseDb):
 
             return self._deserialize_span(span_data)
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_error("Error getting span", exc_info=True)
             return None
 
     def get_spans(
@@ -1937,8 +1937,8 @@ class SurrealDb(BaseDb):
 
             return [self._deserialize_span(s) for s in spans_raw]
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_error("Error getting spans", exc_info=True)
             return []
 
     def _deserialize_span(self, span_data: dict) -> "Span":

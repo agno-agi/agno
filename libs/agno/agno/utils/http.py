@@ -185,9 +185,9 @@ def fetch_with_retry(
             response = httpx.get(url, proxy=proxy) if proxy else httpx.get(url)
             response.raise_for_status()
             return response
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                logger.error(f"Failed to fetch {url} after {max_retries} attempts", exc_info=True)
                 raise
             wait_time = backoff_factor**attempt
             logger.warning("Connection error.")
@@ -221,9 +221,9 @@ async def async_fetch_with_retry(
             response = await _fetch()
             response.raise_for_status()
             return response
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                logger.error(f"Failed to fetch {url} after {max_retries} attempts", exc_info=True)
                 raise
             wait_time = backoff_factor**attempt
             logger.warning("Connection error.")

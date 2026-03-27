@@ -48,11 +48,11 @@ def download_image(url: str, output_path: str) -> bool:
         log_info(f"Image successfully downloaded and saved to '{output_path}'.")
         return True
 
-    except httpx.HTTPError as e:
-        log_warning(f"Error downloading the image: {e}")
+    except httpx.HTTPError:
+        log_warning("Error downloading the image", exc_info=True)
         return False
-    except IOError as e:
-        log_warning(f"Error saving the image to '{output_path}': {e}")
+    except IOError:
+        log_warning(f"Error saving the image to '{output_path}'", exc_info=True)
         return False
 
 
@@ -223,8 +223,8 @@ def reconstruct_image_from_dict(img_data):
                 # Regular image (filepath/url)
                 return Image(**img_data)
         return img_data
-    except Exception as e:
-        log_warning(f"Failed to reconstruct image from dict: {e}")
+    except Exception:
+        log_warning("Failed to reconstruct image from dict", exc_info=True)
         return None
 
 
@@ -248,8 +248,8 @@ def reconstruct_video_from_dict(vid_data):
                 # Regular video (filepath/url)
                 return Video(**vid_data)
         return vid_data
-    except Exception as e:
-        log_warning(f"Failed to reconstruct video from dict: {e}")
+    except Exception:
+        log_warning("Failed to reconstruct video from dict", exc_info=True)
         return None
 
 
@@ -276,8 +276,8 @@ def reconstruct_audio_from_dict(aud_data):
                 # Regular audio (filepath/url)
                 return Audio(**aud_data)
         return aud_data
-    except Exception as e:
-        log_warning(f"Failed to reconstruct audio from dict: {e}")
+    except Exception:
+        log_warning("Failed to reconstruct audio from dict", exc_info=True)
         return None
 
 
@@ -313,8 +313,8 @@ def reconstruct_file_from_dict(file_data):
                 # Regular file (filepath/url)
                 return File(**file_data)
         return file_data
-    except Exception as e:
-        log_warning(f"Failed to reconstruct file from dict: {e}")
+    except Exception:
+        log_warning("Failed to reconstruct file from dict", exc_info=True)
         return None
 
 

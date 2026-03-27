@@ -168,7 +168,7 @@ class ScheduleExecutor:
                 except Exception as exc:
                     last_status = "failed"
                     last_error = str(exc)
-                    log_error(f"Schedule {schedule_id} attempt {attempt} failed: {exc}")
+                    log_error(f"Schedule {schedule_id} attempt {attempt} failed", exc_info=True)
 
                     updates = {
                         "completed_at": int(time.time()),
@@ -234,16 +234,16 @@ class ScheduleExecutor:
                             await db.update_schedule(schedule_id, enabled=False)
                         else:
                             db.update_schedule(schedule_id, enabled=False)
-                    except Exception as exc:
-                        log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
+                    except Exception:
+                        log_error(f"Failed to disable schedule {schedule_id} after cron failure", exc_info=True)
 
                 try:
                     if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
                         await db.release_schedule(schedule_id, next_run_at=next_run_at)
                     else:
                         db.release_schedule(schedule_id, next_run_at=next_run_at)
-                except Exception as exc:
-                    log_error(f"Failed to release schedule {schedule_id}: {exc}")
+                except Exception:
+                    log_error(f"Failed to release schedule {schedule_id}", exc_info=True)
 
     # ------------------------------------------------------------------
     async def _call_endpoint(self, schedule: Schedule) -> Dict[str, Any]:
@@ -414,8 +414,8 @@ class ScheduleExecutor:
                     headers=headers,
                     params={"session_id": session_id},
                 )
-            except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}")
+            except Exception:
+                log_warning(f"Poll request failed for run {run_id}", exc_info=True)
                 continue
 
             if resp.status_code == 404:

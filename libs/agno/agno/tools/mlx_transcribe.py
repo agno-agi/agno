@@ -138,5 +138,5 @@ class MLXTranscribeTools(Toolkit):
             log_info(f"Reading files in : {self.base_dir}")
             return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4)
         except Exception as e:
-            logger.error(f"Error reading files: {e}")
+            logger.error("Error reading files", exc_info=True)
             return f"Error reading files: {e}"

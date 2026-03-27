@@ -381,8 +381,8 @@ class Function(BaseModel):
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
-        except Exception as e:
-            log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
+        except Exception:
+            log_warning(f"Could not parse args for {function_name}", exc_info=True)
 
         entrypoint = cls._wrap_callable(c)
 
@@ -535,8 +535,8 @@ class Function(BaseModel):
             self.description = self.description or get_entrypoint_docstring(self.entrypoint)
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
-        except Exception as e:
-            log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
+        except Exception:
+            log_warning(f"Could not parse args for {self.name}", exc_info=True)
 
         if not params_set_by_user:
             self.parameters = parameters
@@ -546,8 +546,8 @@ class Function(BaseModel):
 
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
-        except Exception as e:
-            log_warning(f"Failed to add validate decorator to entrypoint: {e}")
+        except Exception:
+            log_warning("Failed to add validate decorator to entrypoint", exc_info=True)
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
@@ -716,8 +716,8 @@ class Function(BaseModel):
 
             # Remove expired entry
             cache_path.unlink()
-        except Exception as e:
-            log_error(f"Error reading cache: {e}")
+        except Exception:
+            log_error("Error reading cache", exc_info=True)
 
         return None
 
@@ -730,8 +730,8 @@ class Function(BaseModel):
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
             with open(cache_file, "w") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
-        except Exception as e:
-            log_error(f"Error writing cache: {e}")
+        except Exception:
+            log_error("Error writing cache", exc_info=True)
 
 
 class FunctionExecutionResult(BaseModel):
@@ -847,7 +847,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning("Error in pre-hook callback", exc_info=True)
                 log_exception(e)
 
     def _handle_post_hook(self):
@@ -875,7 +875,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning("Error in post-hook callback", exc_info=True)
                 log_exception(e)
 
     def _build_entrypoint_args(self) -> Dict[str, Any]:
@@ -1120,7 +1120,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning("Error in pre-hook callback", exc_info=True)
                 log_exception(e)
 
     async def _handle_post_hook_async(self):
@@ -1149,7 +1149,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning("Error in post-hook callback", exc_info=True)
                 log_exception(e)
 
     async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):

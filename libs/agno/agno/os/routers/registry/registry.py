@@ -515,7 +515,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 ),
             )
         except Exception as e:
-            log_error(f"Error listing registry resources: {e}")
+            log_error("Error listing registry resources", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
     return router

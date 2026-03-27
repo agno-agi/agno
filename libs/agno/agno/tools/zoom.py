@@ -88,8 +88,8 @@ class ZoomTools(Toolkit):
             log_debug("Successfully generated new Zoom access token")
             return self.__access_token  # type: ignore
 
-        except requests.RequestException as e:
-            logger.error(f"Failed to generate Zoom access token: {e}")
+        except requests.RequestException:
+            logger.error("Failed to generate Zoom access token", exc_info=True)
             self.__access_token = None
             self.__token_expiry = None
             return ""
@@ -149,7 +149,7 @@ class ZoomTools(Toolkit):
             log_info(f"Meeting scheduled successfully. ID: {meeting_info['id']}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error scheduling meeting: {e}")
+            logger.error("Error scheduling meeting", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_upcoming_meetings(self, user_id: str = "me") -> str:
@@ -182,7 +182,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {len(result['meetings'])} upcoming meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching upcoming meetings: {e}")
+            logger.error("Error fetching upcoming meetings", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def list_meetings(self, user_id: str = "me", type: str = "scheduled") -> str:
@@ -228,7 +228,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {len(result['meetings'])} meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching meetings: {e}")
+            logger.error("Error fetching meetings", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_meeting_recordings(
@@ -286,7 +286,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {result['recording_count']} recording files")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching meeting recordings: {e}")
+            logger.error("Error fetching meeting recordings", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def delete_meeting(self, meeting_id: str, schedule_for_reminder: bool = True) -> str:
@@ -325,7 +325,7 @@ class ZoomTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error deleting meeting: {e}")
+            logger.error("Error deleting meeting", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_meeting(self, meeting_id: str) -> str:
@@ -369,7 +369,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved details for meeting ID: {meeting_id}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching meeting details: {e}")
+            logger.error("Error fetching meeting details", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def instructions(self) -> str:

@@ -949,8 +949,8 @@ def convert_response_to_structured_format(
                             run_response.content_type = output_schema.__name__
                     else:
                         log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                except Exception:
+                    log_warning("Failed to convert response to output model", exc_info=True)
             else:
                 log_warning("Something went wrong. Run response content is not a string")
 
@@ -1800,8 +1800,8 @@ def generate_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
 
 async def agenerate_followups(
@@ -1827,8 +1827,8 @@ async def agenerate_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
 
 def generate_followups_stream(
@@ -1863,8 +1863,8 @@ def generate_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
     if stream_events:
         yield handle_event(
@@ -1907,8 +1907,8 @@ async def agenerate_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    except Exception:
+        log_warning("Error generating followups", exc_info=True)
 
     if stream_events:
         yield handle_event(

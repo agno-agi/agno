@@ -209,8 +209,8 @@ def attach_routes(
                     thread_ts=ctx["thread_id"],
                 )
                 await upload_response_media_async(async_client, response, ctx["channel_id"], ctx["thread_id"])
-        except Exception as e:
-            log_error(f"Error processing slack event: {e}")
+        except Exception:
+            log_error("Error processing slack event", exc_info=True)
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
@@ -338,9 +338,10 @@ def attach_routes(
 
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 
-        except Exception as e:
+        except Exception:
             log_error(
-                f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
+                f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]",
+                exc_info=True,
             )
             try:
                 await async_client.assistant_threads_setStatus(
@@ -382,7 +383,7 @@ def attach_routes(
             await async_client.assistant_threads_setSuggestedPrompts(
                 channel_id=channel_id, thread_ts=thread_ts, prompts=prompts
             )
-        except Exception as e:
-            log_error(f"Failed to set suggested prompts: {e}")
+        except Exception:
+            log_error("Failed to set suggested prompts", exc_info=True)
 
     return router

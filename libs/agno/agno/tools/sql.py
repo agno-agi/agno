@@ -82,7 +82,7 @@ class SQLTools(Toolkit):
             log_debug(f"table_names: {table_names}")
             return json.dumps(table_names)
         except Exception as e:
-            logger.error(f"Error getting tables: {e}")
+            logger.error("Error getting tables", exc_info=True)
             return f"Error getting tables: {e}"
 
     def describe_table(self, table_name: str) -> str:
@@ -106,7 +106,7 @@ class SQLTools(Toolkit):
                 ]
             )
         except Exception as e:
-            logger.error(f"Error getting table schema: {e}")
+            logger.error("Error getting table schema", exc_info=True)
             return f"Error getting table schema: {e}"
 
     def run_sql_query(self, query: str, limit: Optional[int] = 10) -> str:
@@ -124,7 +124,7 @@ class SQLTools(Toolkit):
         try:
             return json.dumps(self.run_sql(sql=query, limit=limit), default=str)
         except Exception as e:
-            logger.error(f"Error running query: {e}")
+            logger.error("Error running query", exc_info=True)
             return f"Error running query: {e}"
 
     def run_sql(self, sql: str, limit: Optional[int] = None) -> List[dict]:
@@ -149,6 +149,6 @@ class SQLTools(Toolkit):
                 else:
                     rows = result.fetchall()
                 return [row._asdict() for row in rows]
-            except Exception as e:
-                logger.error(f"Error while executing SQL: {e}")
+            except Exception:
+                logger.error("Error while executing SQL", exc_info=True)
                 return []

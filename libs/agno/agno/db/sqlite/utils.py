@@ -75,8 +75,8 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         if not exists:
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
-    except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+    except Exception:
+        log_error("Error checking if table exists", exc_info=True)
         return False
 
 
@@ -94,8 +94,8 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         if not exists:
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
-    except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+    except Exception:
+        log_error("Error checking if table exists", exc_info=True)
         return False
 
 
@@ -127,8 +127,8 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
             return False
 
         return True
-    except Exception as e:
-        log_error(f"Error validating table schema for {table_name}: {e}")
+    except Exception:
+        log_error(f"Error validating table schema for {table_name}", exc_info=True)
         return False
 
 
@@ -159,8 +159,8 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
         return True
 
-    except Exception as e:
-        log_error(f"Error validating table schema for {table_name}: {e}")
+    except Exception:
+        log_error(f"Error validating table schema for {table_name}", exc_info=True)
         return False
 
 

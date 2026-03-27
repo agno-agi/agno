@@ -476,8 +476,8 @@ class LearningMachine:
                 if store_tools:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
-            except Exception as e:
-                log_warning(f"Error getting tools from {name}: {e}")
+            except Exception:
+                log_warning(f"Error getting tools from {name}", exc_info=True)
 
         return tools
 
@@ -507,8 +507,8 @@ class LearningMachine:
                 if store_tools:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
-            except Exception as e:
-                log_warning(f"Error getting tools from {name}: {e}")
+            except Exception:
+                log_warning(f"Error getting tools from {name}", exc_info=True)
 
         return tools
 
@@ -550,8 +550,8 @@ class LearningMachine:
                 store.process(**context)
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
-            except Exception as e:
-                log_warning(f"Error processing through {name}: {e}")
+            except Exception:
+                log_warning(f"Error processing through {name}", exc_info=True)
 
     async def aprocess(
         self,
@@ -579,8 +579,8 @@ class LearningMachine:
                 await store.aprocess(**context)
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
-            except Exception as e:
-                log_warning(f"Error processing through {name}: {e}")
+            except Exception:
+                log_warning(f"Error processing through {name}", exc_info=True)
 
     # =========================================================================
     # Lower-Level API
@@ -627,8 +627,8 @@ class LearningMachine:
                     log_debug(f"Recalled from {name}: {result}")
                 except Exception:
                     pass
-            except Exception as e:
-                log_warning(f"Error recalling from {name}: {e}")
+            except Exception:
+                log_warning(f"Error recalling from {name}", exc_info=True)
 
         return results
 
@@ -667,8 +667,8 @@ class LearningMachine:
                     log_debug(f"Recalled from {name}: {result}")
                 except Exception:
                     pass
-            except Exception as e:
-                log_warning(f"Error recalling from {name}: {e}")
+            except Exception:
+                log_warning(f"Error recalling from {name}", exc_info=True)
 
         return results
 
@@ -683,8 +683,8 @@ class LearningMachine:
                     formatted = store.build_context(data=data)
                     if formatted:
                         parts.append(formatted)
-                except Exception as e:
-                    log_warning(f"Error building context from {name}: {e}")
+                except Exception:
+                    log_warning(f"Error building context from {name}", exc_info=True)
 
         return "\n\n".join(parts)
 

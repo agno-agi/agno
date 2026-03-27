@@ -327,7 +327,7 @@ class Parallel:
                 return idx, step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                logger.error(f"Parallel step {parallel_step_name} failed", exc_info=True)
                 return (
                     idx,
                     StepOutput(
@@ -363,7 +363,7 @@ class Parallel:
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.error(f"Parallel step {step_name} failed: {e}")
+                    logger.error(f"Parallel step {step_name} failed", exc_info=True)
                     results_with_indices.append(
                         (
                             index,
@@ -508,7 +508,7 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
+                logger.error(f"Parallel step {parallel_step_name} streaming failed", exc_info=True)
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(exc)}",
@@ -559,15 +559,15 @@ class Parallel:
                             logger.error(f"Parallel step {i} failed: {future.exception()}")
                             if completed_steps < total_steps:
                                 completed_steps += 1
-                except Exception as e:
-                    logger.error(f"Error processing parallel step events: {e}")
+                except Exception:
+                    logger.error("Error processing parallel step events", exc_info=True)
                     completed_steps += 1
 
             for future in futures:
                 try:
                     future.result()
-                except Exception as e:
-                    logger.error(f"Future completion error: {e}")
+                except Exception:
+                    logger.error("Future completion error", exc_info=True)
 
         # Merge all session_state changes back into the original session_state
         if run_context is None and session_state is not None:
@@ -665,7 +665,7 @@ class Parallel:
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                logger.error(f"Parallel step {parallel_step_name} failed", exc_info=True)
                 return (
                     idx,
                     StepOutput(
@@ -846,7 +846,7 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} async streaming failed: {e}")
+                logger.error(f"Parallel step {parallel_step_name} async streaming failed", exc_info=True)
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(e)}",
@@ -885,8 +885,8 @@ class Parallel:
                     step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                     log_debug(f"Parallel step {step_name} async streaming completed")
 
-            except Exception as e:
-                logger.error(f"Error processing parallel step events: {e}")
+            except Exception:
+                logger.error("Error processing parallel step events", exc_info=True)
                 completed_steps += 1
 
         await asyncio.gather(*tasks, return_exceptions=True)

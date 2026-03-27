@@ -297,7 +297,7 @@ class Llama(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error from Llama API: {e}")
+            log_error("Error from Llama API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -330,7 +330,7 @@ class Llama(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error from Llama API: {e}")
+            log_error("Error from Llama API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_tool_calls(self, tool_calls_data: List[EventDeltaToolCallDeltaFunction]) -> List[Dict[str, Any]]:
@@ -430,8 +430,8 @@ class Llama(Model):
                         }
                     )
 
-            except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+            except Exception:
+                log_warning("Error processing tool calls", exc_info=True)
 
         # Add metrics from the metrics list
         if hasattr(response, "metrics") and response.metrics is not None:

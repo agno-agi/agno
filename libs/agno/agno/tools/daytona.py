@@ -206,7 +206,7 @@ class DaytonaTools(Toolkit):
             return sandbox
         except Exception as e:
             if self.auto_create_sandbox:
-                log_warning(f"Error in sandbox management: {e}. Creating new sandbox.")
+                log_warning("Error in sandbox management. Creating new sandbox.", exc_info=True)
                 return self._create_new_sandbox(agent)
             else:
                 raise e
@@ -240,7 +240,7 @@ class DaytonaTools(Toolkit):
             log_info(f"Created new Daytona sandbox: {sandbox.id}")
             return sandbox
         except Exception as e:
-            log_error(f"Error creating Daytona sandbox: {e}")
+            log_error("Error creating Daytona sandbox", exc_info=True)
             raise e
 
     # Tools

@@ -311,15 +311,15 @@ class Groq(Model):
             return model_response
 
         except (APIResponseValidationError, APIStatusError) as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error("Unexpected error calling Groq API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -353,15 +353,15 @@ class Groq(Model):
             return model_response
 
         except (APIResponseValidationError, APIStatusError) as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error("Unexpected error calling Groq API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -395,15 +395,15 @@ class Groq(Model):
             assistant_message.metrics.stop_timer()
 
         except (APIResponseValidationError, APIStatusError) as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error("Unexpected error calling Groq API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -438,15 +438,15 @@ class Groq(Model):
             assistant_message.metrics.stop_timer()
 
         except (APIResponseValidationError, APIStatusError) as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            log_error(f"Error calling Groq API: {str(e)}")
+            log_error("Error calling Groq API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error("Unexpected error calling Groq API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -517,8 +517,8 @@ class Groq(Model):
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
-            except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+            except Exception:
+                log_warning("Error processing tool calls", exc_info=True)
 
         # Add usage metrics if present
         if response.usage is not None:

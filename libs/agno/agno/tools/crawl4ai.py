@@ -157,5 +157,5 @@ class Crawl4aiTools(Toolkit):
                 return content
 
         except Exception as e:
-            log_warning(f"Exception during crawl: {str(e)}")
+            log_warning("Exception during crawl", exc_info=True)
             return f"Error crawling {url}: {str(e)}"

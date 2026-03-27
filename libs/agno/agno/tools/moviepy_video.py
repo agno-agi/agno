@@ -236,7 +236,7 @@ class MoviePyVideoTools(Toolkit):
             log_info(f"Audio extracted to {output_path}")
             return output_path
         except Exception as e:
-            logger.error(f"Failed to extract audio: {str(e)}")
+            logger.error("Failed to extract audio", exc_info=True)
             return f"Failed to extract audio: {str(e)}"
 
     def create_srt(self, transcription: str, output_path: str) -> str:
@@ -255,7 +255,7 @@ class MoviePyVideoTools(Toolkit):
                 f.write(transcription)
             return output_path
         except Exception as e:
-            logger.error(f"Failed to create SRT file: {str(e)}")
+            logger.error("Failed to create SRT file", exc_info=True)
             return f"Failed to create SRT file: {str(e)}"
 
     def embed_captions(
@@ -345,5 +345,5 @@ class MoviePyVideoTools(Toolkit):
             return output_path
 
         except Exception as e:
-            logger.error(f"Failed to embed captions: {str(e)}")
+            logger.error("Failed to embed captions", exc_info=True)
             return f"Failed to embed captions: {str(e)}"

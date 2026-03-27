@@ -186,5 +186,5 @@ class AzureOpenAITools(Toolkit):
                 return ToolResult(content="No images were generated.")
 
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.error("Failed to generate image", exc_info=True)
             return ToolResult(content=f"Error: {e}")

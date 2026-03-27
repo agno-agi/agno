@@ -89,7 +89,7 @@ class FalTools(Toolkit):
                 return ToolResult(content=f"Unsupported type in result: {result}")
 
         except Exception as e:
-            logger.error(f"Failed to run model: {e}")
+            logger.error("Failed to run model", exc_info=True)
             return ToolResult(content=f"Error: {e}")
 
     def image_to_image(self, agent: Union[Agent, Team], prompt: str, image_url: Optional[str] = None) -> ToolResult:
@@ -123,5 +123,5 @@ class FalTools(Toolkit):
             return ToolResult(content=f"Image generated successfully at {url}", images=[image_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.error("Failed to generate image", exc_info=True)
             return ToolResult(content=f"Error: {e}")

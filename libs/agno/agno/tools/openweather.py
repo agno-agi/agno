@@ -74,7 +74,7 @@ class OpenWeatherTools(Toolkit):
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to {url}: {e}")
+            logger.error(f"Error making request to {url}", exc_info=True)
             return {"error": str(e)}
 
     def geocode_location(self, location: str, limit: int = 1) -> str:
@@ -102,7 +102,7 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error geocoding location: {e}")
+            logger.error("Error geocoding location", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_current_weather(self, location: str) -> str:
@@ -142,7 +142,7 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error getting current weather: {e}")
+            logger.error("Error getting current weather", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_forecast(self, location: str, days: int = 5) -> str:
@@ -189,7 +189,7 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error getting forecast: {e}")
+            logger.error("Error getting forecast", exc_info=True)
             return json.dumps({"error": str(e)})
 
     def get_air_pollution(self, location: str) -> str:
@@ -229,5 +229,5 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error getting air pollution data: {e}")
+            logger.error("Error getting air pollution data", exc_info=True)
             return json.dumps({"error": str(e)})

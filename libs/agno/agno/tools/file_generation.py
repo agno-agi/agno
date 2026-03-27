@@ -131,7 +131,7 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate JSON file: {e}")
+            logger.error("Failed to generate JSON file", exc_info=True)
             return ToolResult(content=f"Error generating JSON file: {e}")
 
     def generate_csv_file(
@@ -220,7 +220,7 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate CSV file: {e}")
+            logger.error("Failed to generate CSV file", exc_info=True)
             return ToolResult(content=f"Error generating CSV file: {e}")
 
     def generate_pdf_file(
@@ -304,7 +304,7 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate PDF file: {e}")
+            logger.error("Failed to generate PDF file", exc_info=True)
             return ToolResult(content=f"Error generating PDF file: {e}")
 
     def generate_text_file(self, content: str, filename: Optional[str] = None) -> ToolResult:
@@ -352,5 +352,5 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate text file: {e}")
+            logger.error("Failed to generate text file", exc_info=True)
             return ToolResult(content=f"Error generating text file: {e}")

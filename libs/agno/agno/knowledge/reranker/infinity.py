@@ -116,8 +116,8 @@ class InfinityReranker(Reranker):
                 if top_n and len(compressed_docs) > top_n:
                     compressed_docs = compressed_docs[:top_n]
 
-        except Exception as e:
-            logger.error(f"Error connecting to Infinity server at {self.base_url}: {e}")
+        except Exception:
+            logger.error(f"Error connecting to Infinity server at {self.base_url}", exc_info=True)
             return documents
 
         return compressed_docs
@@ -125,8 +125,8 @@ class InfinityReranker(Reranker):
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         try:
             return self._rerank(query=query, documents=documents)
-        except Exception as e:
-            logger.error(f"Error reranking documents: {e}. Returning original documents")
+        except Exception:
+            logger.error("Error reranking documents. Returning original documents", exc_info=True)
             return documents
 
     async def arerank(self, query: str, documents: List[Document]) -> List[Document]:
@@ -188,8 +188,8 @@ class InfinityReranker(Reranker):
                 if top_n and len(compressed_docs) > top_n:
                     compressed_docs = compressed_docs[:top_n]
 
-        except Exception as e:
-            logger.error(f"Error connecting to Infinity server at {self.base_url}: {e}")
+        except Exception:
+            logger.error(f"Error connecting to Infinity server at {self.base_url}", exc_info=True)
             return documents
 
         return compressed_docs

@@ -88,8 +88,8 @@ class RedditTools(Toolkit):
             # Verify authentication by checking if we can get the authenticated user
             self.reddit.user.me()
             return True
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception:
+            logger.error("Authentication error", exc_info=True)
             return False
 
     def get_user_info(self, username: str) -> str:
@@ -368,9 +368,8 @@ class RedditTools(Toolkit):
             return error_msg
 
         except Exception as e:
-            error_msg = f"Error creating reply: {str(e)}"
-            logger.error(error_msg)
-            return error_msg
+            logger.error("Error creating reply", exc_info=True)
+            return f"Error creating reply: {e}"
 
     def reply_to_comment(self, comment_id: str, content: str, subreddit: Optional[str] = None) -> str:
         """
@@ -442,9 +441,8 @@ class RedditTools(Toolkit):
             return error_msg
 
         except Exception as e:
-            error_msg = f"Error creating reply: {str(e)}"
-            logger.error(error_msg)
-            return error_msg
+            logger.error("Error creating reply", exc_info=True)
+            return f"Error creating reply: {e}"
 
     def _check_post_exists(self, post_id: str) -> bool:
         """
@@ -462,6 +460,6 @@ class RedditTools(Toolkit):
             _ = submission.title
             _ = submission.author
             return True
-        except Exception as e:
-            logger.error(f"Error checking post existence: {str(e)}")
+        except Exception:
+            logger.error("Error checking post existence", exc_info=True)
             return False

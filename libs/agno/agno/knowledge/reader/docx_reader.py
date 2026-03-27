@@ -68,14 +68,14 @@ class DocxReader(Reader):
                 return chunked_documents
             return documents
 
-        except Exception as e:
-            log_error(f"Error reading file: {e}")
+        except Exception:
+            log_error("Error reading file", exc_info=True)
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Asynchronously read a docx file and return a list of documents"""
         try:
             return await asyncio.to_thread(self.read, file, name)
-        except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+        except Exception:
+            log_error("Error reading file asynchronously", exc_info=True)
             return []

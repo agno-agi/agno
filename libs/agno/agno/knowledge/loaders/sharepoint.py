@@ -272,8 +272,8 @@ class SharePointLoader(BaseLoader):
                     else:
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
                         return
-            except Exception as e:
-                log_error(f"Error checking SharePoint path {path_to_process}: {e}")
+            except Exception:
+                log_error(f"Error checking SharePoint path {path_to_process}", exc_info=True)
                 return
 
         if not files_to_process:
@@ -388,8 +388,8 @@ class SharePointLoader(BaseLoader):
                     else:
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
                         return
-            except Exception as e:
-                log_error(f"Error checking SharePoint path {path_to_process}: {e}")
+            except Exception:
+                log_error(f"Error checking SharePoint path {path_to_process}", exc_info=True)
                 return
 
         if not files_to_process:

@@ -58,8 +58,8 @@ class DatabaseSpanExporter(SpanExporter):
                 try:
                     converted_span = Span.from_otel_span(span)
                     converted_spans.append(converted_span)
-                except Exception as e:
-                    logger.error(f"Failed to convert span {span.name}: {e}")
+                except Exception:
+                    logger.error(f"Failed to convert span {span.name}", exc_info=True)
                     # Continue processing other spans
                     continue
 
@@ -82,8 +82,8 @@ class DatabaseSpanExporter(SpanExporter):
                 self._export_sync(spans_by_trace)
 
             return SpanExportResult.SUCCESS
-        except Exception as e:
-            logger.error(f"Failed to export spans to database: {e}", exc_info=True)
+        except Exception:
+            logger.error("Failed to export spans to database", exc_info=True)
             return SpanExportResult.FAILURE
 
     def _export_sync(self, spans_by_trace: Dict[str, List[Span]]) -> None:
@@ -99,8 +99,8 @@ class DatabaseSpanExporter(SpanExporter):
                 # Create span records
                 self.db.create_spans(spans)  # type: ignore
 
-        except Exception as e:
-            logger.error(f"Failed to export sync traces: {e}", exc_info=True)
+        except Exception:
+            logger.error("Failed to export sync traces", exc_info=True)
             raise
 
     def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
@@ -117,8 +117,8 @@ class DatabaseSpanExporter(SpanExporter):
             # No event loop, create new one
             try:
                 asyncio.run(self._do_async_export(spans_by_trace))
-            except Exception as e:
-                logger.error(f"Failed to export async traces: {e}", exc_info=True)
+            except Exception:
+                logger.error("Failed to export async traces", exc_info=True)
 
     async def _do_async_export(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Actually perform the async export"""
@@ -137,8 +137,8 @@ class DatabaseSpanExporter(SpanExporter):
                 if create_spans_result is not None:
                     await create_spans_result
 
-        except Exception as e:
-            logger.error(f"Failed to do async export: {e}", exc_info=True)
+        except Exception:
+            logger.error("Failed to do async export", exc_info=True)
             raise
 
     def shutdown(self) -> None:

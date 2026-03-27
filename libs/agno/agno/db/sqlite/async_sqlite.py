@@ -274,8 +274,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                         await conn.run_sync(idx.create)
                     log_debug(f"Created index: {idx.name} for table {table_name}")
 
-                except Exception as e:
-                    log_warning(f"Error creating index {idx.name}: {e}")
+                except Exception:
+                    log_warning(f"Error creating index {idx.name}", exc_info=True)
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -285,7 +285,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table '{table_name}': {e}")
+            log_error(f"Could not create table '{table_name}'", exc_info=True)
             raise e
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -437,7 +437,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {table_name}: {e}")
+            log_error(f"Error loading existing table {table_name}", exc_info=True)
             raise e
 
     async def get_latest_schema_version(self, table_name: str) -> str:
@@ -510,8 +510,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                     log_debug(f"Successfully deleted session with session_id: {session_id}")
                     return True
 
-        except Exception as e:
-            log_error(f"Error deleting session: {e}")
+        except Exception:
+            log_error("Error deleting session", exc_info=True)
             return False
 
     async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -538,8 +538,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
-        except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+        except Exception:
+            log_error("Error deleting sessions", exc_info=True)
 
     async def get_session(
         self,
@@ -743,7 +743,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return await self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error("Exception renaming session", exc_info=True)
             raise e
 
     async def upsert_session(
@@ -887,7 +887,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_warning(f"Exception upserting into table: {e}")
+            log_warning("Exception upserting into table", exc_info=True)
             raise e
 
     async def upsert_sessions(
@@ -1108,8 +1108,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_error("Exception during bulk session upsert, falling back to individual upserts", exc_info=True)
             # Fallback to individual upserts
             return [
                 result
@@ -1152,7 +1152,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error("Error deleting user memory", exc_info=True)
             raise e
 
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1179,7 +1179,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error("Error deleting user memories", exc_info=True)
             raise e
 
     async def get_all_memory_topics(self) -> List[str]:
@@ -1329,7 +1329,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Error reading from memory table: {e}")
+            log_error("Error reading from memory table", exc_info=True)
             raise e
 
     async def get_user_memory_stats(
@@ -1402,7 +1402,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Error getting user memory stats: {e}")
+            log_error("Error getting user memory stats", exc_info=True)
             raise e
 
     async def upsert_user_memory(
@@ -1474,7 +1474,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Error upserting user memory: {e}")
+            log_error("Error upserting user memory", exc_info=True)
             raise e
 
     async def upsert_memories(
@@ -1571,8 +1571,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_error("Exception during bulk memory upsert, falling back to individual upserts", exc_info=True)
 
             # Fallback to individual upserts
             return [
@@ -1600,7 +1600,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning("Exception deleting all memories", exc_info=True)
             raise e
 
     # -- Metrics methods --
@@ -1644,7 +1644,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return [dict(record._mapping) for record in result]
 
         except Exception as e:
-            log_error(f"Error reading from sessions table: {e}")
+            log_error("Error reading from sessions table", exc_info=True)
             raise e
 
     async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1749,7 +1749,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error refreshing metrics: {e}")
+            log_error("Error refreshing metrics", exc_info=True)
             raise e
 
     async def get_metrics(
@@ -1791,7 +1791,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return [dict(row._mapping) for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error("Error getting metrics", exc_info=True)
             raise e
 
     # -- Knowledge methods --
@@ -1815,7 +1815,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error("Error deleting knowledge content", exc_info=True)
             raise e
 
     async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1844,7 +1844,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error("Error getting knowledge content", exc_info=True)
             raise e
 
     async def get_knowledge_contents(
@@ -1900,7 +1900,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error("Error getting knowledge contents", exc_info=True)
             raise e
 
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1948,7 +1948,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error("Error upserting knowledge content", exc_info=True)
             raise e
 
     # -- Eval methods --
@@ -1986,7 +1986,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error("Error creating eval run", exc_info=True)
             raise e
 
     async def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2009,7 +2009,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}", exc_info=True)
             raise e
 
     async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2032,7 +2032,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}", exc_info=True)
             raise e
 
     async def get_eval_run(
@@ -2070,7 +2070,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}", exc_info=True)
             raise e
 
     async def get_eval_runs(
@@ -2164,7 +2164,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error("Exception getting eval runs", exc_info=True)
             raise e
 
     async def rename_eval_run(
@@ -2206,7 +2206,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}", exc_info=True)
             raise e
 
     # -- Migrations --
@@ -2283,8 +2283,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
 
-        except Exception as e:
-            log_error(f"Exception deleting all cultural artifacts: {e}")
+        except Exception:
+            log_error("Exception deleting all cultural artifacts", exc_info=True)
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete a cultural artifact from the database.
@@ -2310,8 +2310,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 else:
                     log_debug(f"No cultural artifact found with id: {id}")
 
-        except Exception as e:
-            log_error(f"Error deleting cultural artifact: {e}")
+        except Exception:
+            log_error("Error deleting cultural artifact", exc_info=True)
 
     async def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
@@ -2345,8 +2345,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             return deserialize_cultural_knowledge_from_db(db_row)
 
-        except Exception as e:
-            log_error(f"Exception reading from cultural artifacts table: {e}")
+        except Exception:
+            log_error("Exception reading from cultural artifacts table", exc_info=True)
             return None
 
     async def get_all_cultural_knowledge(
@@ -2419,8 +2419,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
-        except Exception as e:
-            log_error(f"Error reading from cultural artifacts table: {e}")
+        except Exception:
+            log_error("Error reading from cultural artifacts table", exc_info=True)
             return [] if deserialize else ([], 0)
 
     async def upsert_cultural_knowledge(
@@ -2491,7 +2491,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error("Error upserting cultural knowledge", exc_info=True)
             raise e
 
     # --- Traces ---
@@ -2632,8 +2632,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
                 await sess.execute(upsert_stmt)
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_error("Error creating trace", exc_info=True)
             # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
@@ -2685,8 +2685,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return Trace.from_dict(dict(row._mapping))
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_error("Error getting trace", exc_info=True)
             return None
 
     async def get_traces(
@@ -2788,8 +2788,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_error("Error getting traces", exc_info=True)
             return [], 0
 
     async def get_trace_stats(
@@ -2914,8 +2914,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 return stats_list, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_error("Error getting trace stats", exc_info=True)
             return [], 0
 
     # --- Spans ---
@@ -2934,8 +2934,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = sqlite.insert(table).values(span.to_dict())
                 await sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_error("Error creating span", exc_info=True)
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2956,8 +2956,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = sqlite.insert(table).values(span.to_dict())
                     await sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_error("Error creating spans batch", exc_info=True)
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2983,8 +2983,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return Span.from_dict(dict(row._mapping))
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_error("Error getting span", exc_info=True)
             return None
 
     async def get_spans(
@@ -3026,8 +3026,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 results = result.fetchall()
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_error("Error getting spans", exc_info=True)
             return []
 
     # -- Learning methods --
@@ -3441,8 +3441,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**schedule_data))
             return schedule_data
-        except Exception as e:
-            log_error(f"Error creating schedule: {e}")
+        except Exception:
+            log_error("Error creating schedule", exc_info=True)
             raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3547,8 +3547,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**run_data))
             return run_data
-        except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
+        except Exception:
+            log_error("Error creating schedule run", exc_info=True)
             raise
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3625,8 +3625,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**data))
             return data
-        except Exception as e:
-            log_error(f"Error creating approval: {e}")
+        except Exception:
+            log_error("Error creating approval", exc_info=True)
             raise
 
     async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:

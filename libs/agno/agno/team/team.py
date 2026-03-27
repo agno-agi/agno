@@ -1737,8 +1737,8 @@ def get_team_by_id(
 
         return team
 
-    except Exception as e:
-        log_error(f"Error loading Team {id} from database: {e}")
+    except Exception:
+        log_error(f"Error loading Team {id} from database", exc_info=True)
         return None
 
 
@@ -1778,6 +1778,6 @@ def get_teams(
                     teams.append(team)
         return teams
 
-    except Exception as e:
-        log_error(f"Error loading Teams from database: {e}")
+    except Exception:
+        log_error("Error loading Teams from database", exc_info=True)
         return []

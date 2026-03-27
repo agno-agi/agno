@@ -629,18 +629,18 @@ class Claude(Model):
             return model_response
 
         except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded", exc_info=True)
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})", exc_info=True)
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error("Unexpected error calling Claude API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -696,18 +696,18 @@ class Claude(Model):
             assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded", exc_info=True)
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})", exc_info=True)
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error("Unexpected error calling Claude API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -753,18 +753,18 @@ class Claude(Model):
             return model_response
 
         except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded", exc_info=True)
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})", exc_info=True)
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error("Unexpected error calling Claude API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -816,18 +816,18 @@ class Claude(Model):
             assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API", exc_info=True)
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded", exc_info=True)
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})", exc_info=True)
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error("Unexpected error calling Claude API", exc_info=True)
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
@@ -880,12 +880,12 @@ class Claude(Model):
                                 # Validate against Pydantic model
                                 model_response.parsed = response_format.model_validate(parsed_data)
                                 log_debug(f"Successfully parsed structured output: {model_response.parsed}")
-                            except json.JSONDecodeError as e:
-                                log_warning(f"Failed to parse JSON from structured output: {e}")
-                            except ValidationError as e:
-                                log_warning(f"Failed to validate structured output against schema: {e}")
-                            except Exception as e:
-                                log_warning(f"Unexpected error parsing structured output: {e}")
+                            except json.JSONDecodeError:
+                                log_warning("Failed to parse JSON from structured output", exc_info=True)
+                            except ValidationError:
+                                log_warning("Failed to validate structured output against schema", exc_info=True)
+                            except Exception:
+                                log_warning("Unexpected error parsing structured output", exc_info=True)
 
                     # Capture citations from the response
                     if block.citations is not None:
@@ -1101,12 +1101,12 @@ class Claude(Model):
                         # Validate against Pydantic model
                         model_response.parsed = response_format.model_validate(parsed_data)
                         log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
-                    except json.JSONDecodeError as e:
-                        log_warning(f"Failed to parse JSON from structured output in stream: {e}")
-                    except ValidationError as e:
-                        log_warning(f"Failed to validate structured output against schema in stream: {e}")
-                    except Exception as e:
-                        log_warning(f"Unexpected error parsing structured output in stream: {e}")
+                    except json.JSONDecodeError:
+                        log_warning("Failed to parse JSON from structured output in stream", exc_info=True)
+                    except ValidationError:
+                        log_warning("Failed to validate structured output against schema in stream", exc_info=True)
+                    except Exception:
+                        log_warning("Unexpected error parsing structured output in stream", exc_info=True)
 
             # Capture context management information if present
             if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
@@ -1156,8 +1156,8 @@ class Claude(Model):
                 and response.delta.text is not None
             ):
                 model_response.content = response.delta.text
-        except Exception as e:
-            log_error(f"Error parsing Beta response: {e}")
+        except Exception:
+            log_error("Error parsing Beta response", exc_info=True)
 
         return model_response
 
