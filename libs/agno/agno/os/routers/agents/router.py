@@ -37,6 +37,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    deserialize_media_from_form,
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
@@ -359,6 +360,14 @@ def get_agent_router(
                         continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        # Deserialize JSON-encoded media from form data (URL-based media and SDK client fix)
+        form_data = await request.form()
+        url_images, url_audios, url_videos, url_files = deserialize_media_from_form(kwargs, form_data)
+        base64_images.extend(url_images)
+        base64_audios.extend(url_audios)
+        base64_videos.extend(url_videos)
+        input_files.extend(url_files)
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
