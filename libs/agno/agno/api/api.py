@@ -3,6 +3,7 @@ from typing import Dict
 from httpx import AsyncClient as HttpxAsyncClient
 from httpx import Client as HttpxClient
 from httpx import Response
+from httpx import Timeout
 
 from agno.api.settings import agno_api_settings
 
@@ -18,7 +19,7 @@ class Api:
         return HttpxClient(
             base_url=agno_api_settings.api_url,
             headers=self.headers,
-            timeout=60,
+            timeout=Timeout(5.0, connect=2.0),
             http2=True,
         )
 
@@ -26,7 +27,7 @@ class Api:
         return HttpxAsyncClient(
             base_url=agno_api_settings.api_url,
             headers=self.headers,
-            timeout=60,
+            timeout=Timeout(5.0, connect=2.0),
             http2=True,
         )
 
