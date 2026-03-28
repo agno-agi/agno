@@ -75,6 +75,10 @@ class OpenAIChat(Model):
     request_params: Optional[Dict[str, Any]] = None
     role_map: Optional[Dict[str, str]] = None
 
+    # When True, extract text from files and send as {"type": "text"} instead of {"type": "file"}.
+    # Useful for models that reject the file content type (e.g. gpt-4.1-mini via Azure OpenAI).
+    extract_file_text: bool = False
+
     # Client parameters
     api_key: Optional[str] = None
     organization: Optional[str] = None
@@ -373,7 +377,7 @@ class OpenAIChat(Model):
                 message_dict["content"] = []
             # Insert each file part before text parts
             for file in message.files:
-                file_part = _format_file_for_message(file)
+                file_part = _format_file_for_message(file, extract_text=self.extract_file_text)
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
