@@ -1,10 +1,11 @@
+import base64
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import ContentInput, Embedder, EmbeddingInput
 from agno.utils.log import log_error, log_warning
 
 try:
@@ -196,6 +197,10 @@ class AwsBedrockEmbedder(Embedder):
 
         return aio_session.client("bedrock-runtime", **(self.client_params or {}))
 
+    # ------------------------------------------------------------------
+    # Request formatting helpers
+    # ------------------------------------------------------------------
+
     def _format_request_body(self, text: str) -> str:
         """
         Format the request body for the embedder.
@@ -321,6 +326,96 @@ class AwsBedrockEmbedder(Embedder):
             log_warning(f"Error extracting embeddings: {e}")
             return []
 
+    # ------------------------------------------------------------------
+    # Media conversion helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _image_to_data_uri(image: Any) -> str:
+        """Convert an agno Image object to a base64 data URI for Cohere v4."""
+        data = image.get_content_bytes()
+        if data is None:
+            raise ValueError("Image has no content bytes")
+        mime_type = image.mime_type or "image/png"
+        b64 = base64.b64encode(data).decode("utf-8")
+        return f"data:{mime_type};base64,{b64}"
+
+    def _build_multimodal_parts(self, content: Sequence[EmbeddingInput]) -> List[Dict[str, str]]:
+        """Convert a sequence of EmbeddingInput items to Cohere v4 multimodal input format."""
+        from agno.media import Audio, Image, Video
+
+        parts: List[Dict[str, str]] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append({"type": "text", "text": item})
+            elif isinstance(item, Image):
+                parts.append({"type": "image_url", "image_url": self._image_to_data_uri(item)})
+            elif isinstance(item, (Audio, Video)):
+                raise NotImplementedError(f"{type(item).__name__} embedding is not supported by Cohere Embed models.")
+            else:
+                raise TypeError(f"Unsupported content type: {type(item)}")
+        return parts
+
+    # ------------------------------------------------------------------
+    # Low-level invoke helpers
+    # ------------------------------------------------------------------
+
+    def _invoke_media(self, body: str) -> Dict[str, Any]:
+        """Invoke Bedrock API with a pre-formatted body and return the raw response."""
+        try:
+            response = self.get_client().invoke_model(
+                modelId=self.id,
+                body=body,
+                contentType="application/json",
+                accept="application/json",
+            )
+            return json.loads(response["body"].read().decode("utf-8"))
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+
+    async def _async_invoke_media(self, body: str) -> Dict[str, Any]:
+        """Async invoke Bedrock API with a pre-formatted body and return the raw response."""
+        try:
+            async with self.get_async_client() as client:
+                response = await client.invoke_model(
+                    modelId=self.id,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json",
+                )
+                return json.loads((await response["body"].read()).decode("utf-8"))
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+
+    def _media_request_body(self, content: ContentInput) -> str:
+        """Build a multimodal request body from an Image or Sequence of EmbeddingInput."""
+        from agno.media import Image
+
+        if not self._is_v4_model():
+            raise AgnoError(
+                message="Multimodal embeddings are only supported with Cohere Embed v4 models.",
+                status_code=400,
+            )
+        if isinstance(content, Image):
+            data_uri = self._image_to_data_uri(content)
+            return self._format_multimodal_request_body(images=[data_uri])
+        # Sequence
+        parts = self._build_multimodal_parts(content)  # type: ignore[arg-type]
+        inputs = [{"content": parts}]
+        return self._format_multimodal_request_body(inputs=inputs)
+
+    # ------------------------------------------------------------------
+    # Text-only internal helper
+    # ------------------------------------------------------------------
+
     def response(self, text: str) -> Dict[str, Any]:
         """
         Get embeddings from AWS Bedrock for the given text.
@@ -348,33 +443,110 @@ class AwsBedrockEmbedder(Embedder):
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
 
-    def get_embedding(self, text: str) -> List[float]:
-        """
-        Get embeddings for the given text.
+    # ------------------------------------------------------------------
+    # Unified embedding methods
+    # ------------------------------------------------------------------
 
-        Args:
-            text (str): The text to embed.
+    def get_embedding(self, content: ContentInput) -> List[float]:
+        from agno.media import Audio, Video
 
-        Returns:
-            List[float]: The embedding vector.
-        """
-        response = self.response(text=text)
-        return self._extract_embeddings(response)
+        if isinstance(content, str):
+            response = self.response(text=content)
+            return self._extract_embeddings(response)
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        """
-        Get embeddings and usage information for the given text.
+        if isinstance(content, (Audio, Video)):
+            raise NotImplementedError(f"{type(content).__name__} embedding is not supported by Cohere Embed models.")
 
-        Args:
-            text (str): The text to embed.
+        # Image or Sequence → multimodal path
+        body = self._media_request_body(content)
+        response_body = self._invoke_media(body)
+        return self._extract_embeddings(response_body)
 
-        Returns:
-            Tuple[List[float], Optional[Dict[str, Any]]]: The embedding vector and usage information.
-        """
-        response = self.response(text=text)
-        embedding = self._extract_embeddings(response)
-        usage = response.get("usage")
-        return embedding, usage
+    def get_embedding_and_usage(self, content: ContentInput) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        from agno.media import Audio, Video
+
+        if isinstance(content, str):
+            response = self.response(text=content)
+            embedding = self._extract_embeddings(response)
+            usage = response.get("usage")
+            return embedding, usage
+
+        if isinstance(content, (Audio, Video)):
+            raise NotImplementedError(f"{type(content).__name__} embedding is not supported by Cohere Embed models.")
+
+        body = self._media_request_body(content)
+        response_body = self._invoke_media(body)
+        return self._extract_embeddings(response_body), response_body.get("usage")
+
+    async def async_get_embedding(self, content: ContentInput) -> List[float]:
+        from agno.media import Audio, Video
+
+        if isinstance(content, str):
+            try:
+                body = self._format_request_body(content)
+                async with self.get_async_client() as client:
+                    response = await client.invoke_model(
+                        modelId=self.id,
+                        body=body,
+                        contentType="application/json",
+                        accept="application/json",
+                    )
+                    response_body = json.loads((await response["body"].read()).decode("utf-8"))
+                    return self._extract_embeddings(response_body)
+            except ClientError as e:
+                log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+                raise ModelProviderError(
+                    message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id
+                ) from e
+            except Exception as e:
+                log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+                raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+
+        if isinstance(content, (Audio, Video)):
+            raise NotImplementedError(f"{type(content).__name__} embedding is not supported by Cohere Embed models.")
+
+        body = self._media_request_body(content)
+        response_body = await self._async_invoke_media(body)
+        return self._extract_embeddings(response_body)
+
+    async def async_get_embedding_and_usage(
+        self, content: ContentInput
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        from agno.media import Audio, Video
+
+        if isinstance(content, str):
+            try:
+                body = self._format_request_body(content)
+                async with self.get_async_client() as client:
+                    response = await client.invoke_model(
+                        modelId=self.id,
+                        body=body,
+                        contentType="application/json",
+                        accept="application/json",
+                    )
+                    response_body = json.loads((await response["body"].read()).decode("utf-8"))
+                    embedding = self._extract_embeddings(response_body)
+                    usage = response_body.get("usage")
+                    return embedding, usage
+            except ClientError as e:
+                log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+                raise ModelProviderError(
+                    message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id
+                ) from e
+            except Exception as e:
+                log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+                raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+
+        if isinstance(content, (Audio, Video)):
+            raise NotImplementedError(f"{type(content).__name__} embedding is not supported by Cohere Embed models.")
+
+        body = self._media_request_body(content)
+        response_body = await self._async_invoke_media(body)
+        return self._extract_embeddings(response_body), response_body.get("usage")
+
+    # ------------------------------------------------------------------
+    # Convenience methods (raw Cohere formats)
+    # ------------------------------------------------------------------
 
     def get_image_embedding(self, image_data_uri: str) -> List[float]:
         """
@@ -392,28 +564,10 @@ class AwsBedrockEmbedder(Embedder):
                 message="Image embeddings are only supported with Cohere Embed v4 models.",
                 status_code=400,
             )
+        body = self._format_multimodal_request_body(images=[image_data_uri])
+        return self._extract_embeddings(self._invoke_media(body))
 
-        try:
-            body = self._format_multimodal_request_body(images=[image_data_uri])
-            response = self.get_client().invoke_model(
-                modelId=self.id,
-                body=body,
-                contentType="application/json",
-                accept="application/json",
-            )
-            response_body = json.loads(response["body"].read().decode("utf-8"))
-            return self._extract_embeddings(response_body)
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-
-    def get_multimodal_embedding(
-        self,
-        content: List[Dict[str, str]],
-    ) -> List[float]:
+    def get_multimodal_embedding(self, content: List[Dict[str, str]]) -> List[float]:
         """
         Get embeddings for interleaved text and image content (v4 only).
 
@@ -424,139 +578,35 @@ class AwsBedrockEmbedder(Embedder):
 
         Returns:
             List[float]: The embedding vector.
-
-        Example:
-            embedder.get_multimodal_embedding([
-                {"type": "text", "text": "Product description"},
-                {"type": "image_url", "image_url": "data:image/png;base64,..."}
-            ])
         """
         if not self._is_v4_model():
             raise AgnoError(
                 message="Multimodal embeddings are only supported with Cohere Embed v4 models.",
                 status_code=400,
             )
-
-        try:
-            inputs = [{"content": content}]
-            body = self._format_multimodal_request_body(inputs=inputs)
-            response = self.get_client().invoke_model(
-                modelId=self.id,
-                body=body,
-                contentType="application/json",
-                accept="application/json",
-            )
-            response_body = json.loads(response["body"].read().decode("utf-8"))
-            return self._extract_embeddings(response_body)
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-
-    async def async_get_embedding(self, text: str) -> List[float]:
-        """
-        Async version of get_embedding() using native aioboto3 async client.
-        """
-        try:
-            body = self._format_request_body(text)
-            async with self.get_async_client() as client:
-                response = await client.invoke_model(
-                    modelId=self.id,
-                    body=body,
-                    contentType="application/json",
-                    accept="application/json",
-                )
-                response_body = json.loads((await response["body"].read()).decode("utf-8"))
-                return self._extract_embeddings(response_body)
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-
-    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        """
-        Async version of get_embedding_and_usage() using native aioboto3 async client.
-        """
-        try:
-            body = self._format_request_body(text)
-            async with self.get_async_client() as client:
-                response = await client.invoke_model(
-                    modelId=self.id,
-                    body=body,
-                    contentType="application/json",
-                    accept="application/json",
-                )
-                response_body = json.loads((await response["body"].read()).decode("utf-8"))
-                embedding = self._extract_embeddings(response_body)
-                usage = response_body.get("usage")
-                return embedding, usage
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+        inputs = [{"content": content}]
+        body = self._format_multimodal_request_body(inputs=inputs)
+        return self._extract_embeddings(self._invoke_media(body))
 
     async def async_get_image_embedding(self, image_data_uri: str) -> List[float]:
-        """
-        Async version of get_image_embedding() (v4 only).
-        """
+        """Async version of get_image_embedding() (v4 only)."""
         if not self._is_v4_model():
             raise AgnoError(
                 message="Image embeddings are only supported with Cohere Embed v4 models.",
                 status_code=400,
             )
+        body = self._format_multimodal_request_body(images=[image_data_uri])
+        response_body = await self._async_invoke_media(body)
+        return self._extract_embeddings(response_body)
 
-        try:
-            body = self._format_multimodal_request_body(images=[image_data_uri])
-            async with self.get_async_client() as client:
-                response = await client.invoke_model(
-                    modelId=self.id,
-                    body=body,
-                    contentType="application/json",
-                    accept="application/json",
-                )
-                response_body = json.loads((await response["body"].read()).decode("utf-8"))
-                return self._extract_embeddings(response_body)
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-
-    async def async_get_multimodal_embedding(
-        self,
-        content: List[Dict[str, str]],
-    ) -> List[float]:
-        """
-        Async version of get_multimodal_embedding() (v4 only).
-        """
+    async def async_get_multimodal_embedding(self, content: List[Dict[str, str]]) -> List[float]:
+        """Async version of get_multimodal_embedding() (v4 only)."""
         if not self._is_v4_model():
             raise AgnoError(
                 message="Multimodal embeddings are only supported with Cohere Embed v4 models.",
                 status_code=400,
             )
-
-        try:
-            inputs = [{"content": content}]
-            body = self._format_multimodal_request_body(inputs=inputs)
-            async with self.get_async_client() as client:
-                response = await client.invoke_model(
-                    modelId=self.id,
-                    body=body,
-                    contentType="application/json",
-                    accept="application/json",
-                )
-                response_body = json.loads((await response["body"].read()).decode("utf-8"))
-                return self._extract_embeddings(response_body)
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+        inputs = [{"content": content}]
+        body = self._format_multimodal_request_body(inputs=inputs)
+        response_body = await self._async_invoke_media(body)
+        return self._extract_embeddings(response_body)

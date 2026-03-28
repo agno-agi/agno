@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import ContentInput, Embedder, EmbeddingInput
+from agno.media import Audio, Image, Video
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from google import genai
     from google.genai import Client as GeminiClient
+    from google.genai import types
     from google.genai.types import EmbedContentResponse
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
@@ -61,123 +63,221 @@ class GeminiEmbedder(Embedder):
         """Returns the same client instance since Google GenAI Client supports both sync and async operations."""
         return self.client
 
-    def _response(self, text: str) -> EmbedContentResponse:
-        # If a user provides a model id with the `models/` prefix, we need to remove it
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _get_model_id(self) -> str:
         _id = self.id
         if _id.startswith("models/"):
             _id = _id.split("/")[-1]
+        return _id
 
-        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
+    def _supports_multimodal(self) -> bool:
+        """Check if the current model supports multimodal embeddings."""
+        _id = self._get_model_id().lower()
+        return "embedding-2" in _id
+
+    def _require_multimodal(self) -> None:
+        """Raise if the current model does not support multimodal embeddings."""
+        if not self._supports_multimodal():
+            raise ValueError(
+                f"Model '{self.id}' does not support multimodal embeddings. "
+                "Use a multimodal model such as 'gemini-embedding-2-preview'."
+            )
+
+    def _build_config(self) -> Dict[str, Any]:
+        config: Dict[str, Any] = {}
         if self.dimensions:
-            _request_params["config"]["output_dimensionality"] = self.dimensions
+            config["output_dimensionality"] = self.dimensions
         if self.task_type:
-            _request_params["config"]["task_type"] = self.task_type
+            config["task_type"] = self.task_type
         if self.title:
-            _request_params["config"]["title"] = self.title
-        if not _request_params["config"]:
-            del _request_params["config"]
+            config["title"] = self.title
+        return config
 
+    def _build_request_params(self, contents: Any) -> Dict[str, Any]:
+        _request_params: Dict[str, Any] = {
+            "contents": contents,
+            "model": self._get_model_id(),
+        }
+        config = self._build_config()
+        if config:
+            _request_params["config"] = config
         if self.request_params:
             _request_params.update(self.request_params)
-        return self.client.models.embed_content(**_request_params)
+        return _request_params
 
-    def get_embedding(self, text: str) -> List[float]:
-        response = self._response(text=text)
-        try:
-            if response.embeddings and len(response.embeddings) > 0:
-                values = response.embeddings[0].values
-                if values is not None:
-                    return values
-            log_info("No embeddings found in response")
-            return []
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return []
+    @staticmethod
+    def _infer_mime_type(media: Any, default: str) -> str:
+        """Infer MIME type from a media object's mime_type, format, or filepath extension.
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        response = self._response(text=text)
-        usage = None
+        Falls back to the provided default if inference fails.
+        """
+        if media.mime_type:
+            return media.mime_type
+
+        ext = None
+        if hasattr(media, "format") and media.format:
+            ext = media.format.lower()
+
+        if ext is None and hasattr(media, "filepath") and media.filepath:
+            import os
+
+            ext = os.path.splitext(str(media.filepath))[1].lstrip(".").lower()
+
+        if ext:
+            import mimetypes
+
+            guessed = mimetypes.guess_type(f"file.{ext}")[0]
+            if guessed:
+                return guessed
+
+        return default
+
+    @staticmethod
+    def _build_contents(content: Sequence[EmbeddingInput]) -> list:
+        """Convert agno media types to Gemini Part objects."""
+        if isinstance(content, str):
+            raise TypeError(
+                "Expected a list of inputs, not a plain string. "
+                "Use get_embedding('text') for text-only embedding, or wrap in a list: ['text']"
+            )
+        parts: list = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(types.Part.from_text(text=item))
+            elif isinstance(item, Image):
+                data = item.get_content_bytes()
+                if data is None:
+                    raise ValueError("Image has no content bytes")
+                mime = GeminiEmbedder._infer_mime_type(item, "image/png")
+                parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+            elif isinstance(item, Audio):
+                data = item.get_content_bytes()
+                if data is None:
+                    raise ValueError("Audio has no content bytes")
+                mime = GeminiEmbedder._infer_mime_type(item, "audio/wav")
+                parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+            elif isinstance(item, Video):
+                data = item.get_content_bytes()
+                if data is None:
+                    raise ValueError("Video has no content bytes")
+                mime = GeminiEmbedder._infer_mime_type(item, "video/mp4")
+                parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+            else:
+                raise TypeError(f"Unsupported content type: {type(item)}")
+        return parts
+
+    def _embed_parts(self, parts: list) -> EmbedContentResponse:
+        """Sync embed a list of Gemini Part objects."""
+        return self.client.models.embed_content(**self._build_request_params(parts))
+
+    async def _async_embed_parts(self, parts: list) -> EmbedContentResponse:
+        """Async embed a list of Gemini Part objects."""
+        return await self.aclient.aio.models.embed_content(**self._build_request_params(parts))
+
+    @staticmethod
+    def _extract_embedding(response: EmbedContentResponse) -> List[float]:
+        if response.embeddings and len(response.embeddings) > 0:
+            values = response.embeddings[0].values
+            if values is not None:
+                return values
+        log_info("No embeddings found in response")
+        return []
+
+    @staticmethod
+    def _extract_usage(response: EmbedContentResponse) -> Optional[Dict]:
         if response.metadata and hasattr(response.metadata, "billable_character_count"):
-            usage = {"billable_character_count": response.metadata.billable_character_count}
+            return {"billable_character_count": response.metadata.billable_character_count}
+        return None
 
-        try:
-            if response.embeddings and len(response.embeddings) > 0:
-                values = response.embeddings[0].values
-                if values is not None:
-                    return values, usage
-            log_info("No embeddings found in response")
-            return [], usage
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return [], usage
+    def _is_media(self, content: ContentInput) -> bool:
+        """Return True if content is a media object or a sequence of inputs."""
+        return isinstance(content, (Image, Audio, Video, list, tuple))
 
-    async def async_get_embedding(self, text: str) -> List[float]:
-        """Async version of get_embedding using client.aio."""
-        # If a user provides a model id with the `models/` prefix, we need to remove it
-        _id = self.id
-        if _id.startswith("models/"):
-            _id = _id.split("/")[-1]
+    # ------------------------------------------------------------------
+    # Unified embedding methods
+    # ------------------------------------------------------------------
 
-        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
-        if self.dimensions:
-            _request_params["config"]["output_dimensionality"] = self.dimensions
-        if self.task_type:
-            _request_params["config"]["task_type"] = self.task_type
-        if self.title:
-            _request_params["config"]["title"] = self.title
-        if not _request_params["config"]:
-            del _request_params["config"]
+    def _response(self, text: str) -> EmbedContentResponse:
+        return self.client.models.embed_content(**self._build_request_params(text))
 
-        if self.request_params:
-            _request_params.update(self.request_params)
+    def get_embedding(self, content: ContentInput) -> List[float]:
+        if isinstance(content, str):
+            response = self._response(text=content)
+            try:
+                return self._extract_embedding(response)
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return []
 
-        try:
-            response = await self.aclient.aio.models.embed_content(**_request_params)
-            if response.embeddings and len(response.embeddings) > 0:
-                values = response.embeddings[0].values
-                if values is not None:
-                    return values
-            log_info("No embeddings found in response")
-            return []
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return []
+        self._require_multimodal()
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
+        response = self._embed_parts(parts)
+        return self._extract_embedding(response)
 
-    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        """Async version of get_embedding_and_usage using client.aio."""
-        # If a user provides a model id with the `models/` prefix, we need to remove it
-        _id = self.id
-        if _id.startswith("models/"):
-            _id = _id.split("/")[-1]
+    def get_embedding_and_usage(self, content: ContentInput) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        if isinstance(content, str):
+            response = self._response(text=content)
+            usage = self._extract_usage(response)
+            try:
+                return self._extract_embedding(response), usage
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return [], usage
 
-        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
-        if self.dimensions:
-            _request_params["config"]["output_dimensionality"] = self.dimensions
-        if self.task_type:
-            _request_params["config"]["task_type"] = self.task_type
-        if self.title:
-            _request_params["config"]["title"] = self.title
-        if not _request_params["config"]:
-            del _request_params["config"]
+        self._require_multimodal()
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
+        response = self._embed_parts(parts)
+        return self._extract_embedding(response), self._extract_usage(response)
 
-        if self.request_params:
-            _request_params.update(self.request_params)
+    async def async_get_embedding(self, content: ContentInput) -> List[float]:
+        if isinstance(content, str):
+            try:
+                response = await self.aclient.aio.models.embed_content(**self._build_request_params(content))
+                return self._extract_embedding(response)
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return []
 
-        try:
-            response = await self.aclient.aio.models.embed_content(**_request_params)
-            usage = None
-            if response.metadata and hasattr(response.metadata, "billable_character_count"):
-                usage = {"billable_character_count": response.metadata.billable_character_count}
+        self._require_multimodal()
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
+        response = await self._async_embed_parts(parts)
+        return self._extract_embedding(response)
 
-            if response.embeddings and len(response.embeddings) > 0:
-                values = response.embeddings[0].values
-                if values is not None:
-                    return values, usage
-            log_info("No embeddings found in response")
-            return [], usage
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
-            return [], usage
+    async def async_get_embedding_and_usage(
+        self, content: ContentInput
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        if isinstance(content, str):
+            try:
+                response = await self.aclient.aio.models.embed_content(**self._build_request_params(content))
+                usage = self._extract_usage(response)
+                return self._extract_embedding(response), usage
+            except Exception as e:
+                log_error(f"Error extracting embeddings: {e}")
+                return [], None
+
+        self._require_multimodal()
+        if isinstance(content, (Image, Audio, Video)):
+            parts = self._build_contents([content])
+        else:
+            parts = self._build_contents(content)
+        response = await self._async_embed_parts(parts)
+        return self._extract_embedding(response), self._extract_usage(response)
+
+    # ------------------------------------------------------------------
+    # Batch embedding (text-only)
+    # ------------------------------------------------------------------
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -198,26 +298,8 @@ class GeminiEmbedder(Embedder):
         for i in range(0, len(texts), self.batch_size):
             batch_texts = texts[i : i + self.batch_size]
 
-            # If a user provides a model id with the `models/` prefix, we need to remove it
-            _id = self.id
-            if _id.startswith("models/"):
-                _id = _id.split("/")[-1]
-
-            _request_params: Dict[str, Any] = {"contents": batch_texts, "model": _id, "config": {}}
-            if self.dimensions:
-                _request_params["config"]["output_dimensionality"] = self.dimensions
-            if self.task_type:
-                _request_params["config"]["task_type"] = self.task_type
-            if self.title:
-                _request_params["config"]["title"] = self.title
-            if not _request_params["config"]:
-                del _request_params["config"]
-
-            if self.request_params:
-                _request_params.update(self.request_params)
-
             try:
-                response = await self.aclient.aio.models.embed_content(**_request_params)
+                response = await self.aclient.aio.models.embed_content(**self._build_request_params(batch_texts))
 
                 # Extract embeddings from batch response
                 if response.embeddings:
@@ -233,9 +315,7 @@ class GeminiEmbedder(Embedder):
                     all_embeddings.extend([[] for _ in batch_texts])
 
                 # Extract usage information
-                usage_dict = None
-                if response.metadata and hasattr(response.metadata, "billable_character_count"):
-                    usage_dict = {"billable_character_count": response.metadata.billable_character_count}
+                usage_dict = self._extract_usage(response)
 
                 # Add same usage info for each embedding in the batch
                 all_usage.extend([usage_dict] * len(batch_texts))

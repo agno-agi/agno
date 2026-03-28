@@ -127,6 +127,61 @@ def create_knowledge_search_tool(
 
             return yaml.dump(docs, default_flow_style=False)
 
+    def _build_result_with_media(
+        docs: Optional[List[Union[Dict[str, Any], str]]],
+    ) -> Any:
+        """Build a ToolResult with media if any search results contain media documents.
+
+        Reconstructs Image/Audio/Video objects from meta_data so the LLM can
+        actually see/hear the media rather than just reading a text description.
+        """
+        from agno.tools.function import ToolResult
+
+        text_content = _format_results(docs)
+        if not docs:
+            return text_content
+
+        from pathlib import Path as _Path
+
+        from agno.media import Audio as _Audio
+        from agno.media import Image as _Image
+        from agno.media import Video as _Video
+
+        # Registry: content_type string -> (ToolResult kwarg, media class)
+        _MEDIA_CONSTRUCTORS: Dict[str, tuple] = {
+            "image": ("images", _Image),
+            "audio": ("audios", _Audio),
+            "video": ("videos", _Video),
+        }
+
+        media_lists: Dict[str, List[Any]] = {key: [] for key, _ in _MEDIA_CONSTRUCTORS.values()}
+
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            meta = doc.get("meta_data")
+            if not isinstance(meta, dict):
+                continue
+            content_type = meta.get("content_type")
+            source = meta.get("source")
+            if not content_type or not source:
+                continue
+            if content_type not in _MEDIA_CONSTRUCTORS:
+                continue
+            list_key, cls = _MEDIA_CONSTRUCTORS[content_type]
+            if source.startswith(("http://", "https://")):
+                media_lists[list_key].append(cls(url=source))
+            elif _Path(source).exists():
+                media_lists[list_key].append(cls(filepath=source))
+
+        if not any(media_lists.values()):
+            return text_content
+
+        return ToolResult(
+            content=text_content,
+            **{key: lst or None for key, lst in media_lists.items()},
+        )
+
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
             references = MessageReferences(
@@ -181,7 +236,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         async def asearch_knowledge_base_with_filters(
             query: str, filters: Optional[List[KnowledgeFilter]] = None
@@ -213,7 +268,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
@@ -247,7 +302,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         async def asearch_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -275,7 +330,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _build_result_with_media(docs)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")

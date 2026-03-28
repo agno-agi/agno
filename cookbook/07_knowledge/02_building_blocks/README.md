@@ -18,6 +18,7 @@ Core components you can configure to customize knowledge behavior.
 | [04_filtering.py](./04_filtering.py) | Dict filters, FilterExpr, and metadata tagging |
 | [05_agentic_filtering.py](./05_agentic_filtering.py) | Agent-driven dynamic filter selection |
 | [06_embedders.py](./06_embedders.py) | Comparing OpenAI and Ollama embedders |
+| [07_multimodal_embedders.py](./07_multimodal_embedders.py) | Gemini Embedding 2 for text, images, and audio |
 
 ## Running
 
