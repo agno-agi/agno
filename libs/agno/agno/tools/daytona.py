@@ -1,4 +1,5 @@
 import json
+import shlex
 from os import getenv
 from pathlib import Path
 from textwrap import dedent
@@ -290,7 +291,7 @@ class DaytonaTools(Toolkit):
                 # Resolve relative paths
                 if not new_path.is_absolute():
                     # Get current absolute path first
-                    result = current_sandbox.process.exec(f"cd {cwd} && pwd", cwd="/")
+                    result = current_sandbox.process.exec(f"cd {shlex.quote(cwd)} && pwd", cwd="/")
                     current_abs_path = Path(result.result.strip())
                     new_path = current_abs_path / new_path
 
@@ -299,7 +300,7 @@ class DaytonaTools(Toolkit):
 
                 # Test if directory exists
                 test_result = current_sandbox.process.exec(
-                    f"test -d {new_path_str} && echo 'exists' || echo 'not found'", cwd="/"
+                    f"test -d {shlex.quote(new_path_str)} && echo 'exists' || echo 'not found'", cwd="/"
                 )
                 if "exists" in test_result.result:
                     self._set_working_directory(agent, new_path_str)
@@ -339,14 +340,14 @@ class DaytonaTools(Toolkit):
             # Create directory if needed
             parent_dir = str(path.parent)
             if parent_dir and parent_dir != "/":
-                result = current_sandbox.process.exec(f"mkdir -p {parent_dir}")
+                result = current_sandbox.process.exec(f"mkdir -p {shlex.quote(parent_dir)}")
                 if result.exit_code != 0:
                     return json.dumps({"status": "error", "message": f"Failed to create directory: {result.result}"})
 
             # Write the file using shell command
             # Use cat with heredoc for better handling of special characters
             escaped_content = content.replace("'", "'\"'\"'")
-            command = f"cat > '{path_str}' << 'EOF'\n{escaped_content}\nEOF"
+            command = f"cat > {shlex.quote(path_str)} << 'EOF'\n{escaped_content}\nEOF"
             result = current_sandbox.process.exec(command)
 
             if result.exit_code != 0:
@@ -378,7 +379,7 @@ class DaytonaTools(Toolkit):
             path_str = str(path)
 
             # Read file using cat
-            result = current_sandbox.process.exec(f"cat '{path_str}'")
+            result = current_sandbox.process.exec(f"cat {shlex.quote(path_str)}")
 
             if result.exit_code != 0:
                 return json.dumps({"status": "error", "message": f"Error reading file: {result.result}"})
@@ -411,7 +412,7 @@ class DaytonaTools(Toolkit):
             path_str = str(dir_path)
 
             # List files using ls -la for detailed info
-            result = current_sandbox.process.exec(f"ls -la '{path_str}'")
+            result = current_sandbox.process.exec(f"ls -la {shlex.quote(path_str)}")
 
             if result.exit_code != 0:
                 return json.dumps({"status": "error", "message": f"Error listing directory: {result.result}"})
@@ -442,14 +443,16 @@ class DaytonaTools(Toolkit):
             path_str = str(path)
 
             # Check if it's a directory or file
-            check_result = current_sandbox.process.exec(f"test -d '{path_str}' && echo 'directory' || echo 'file'")
+            check_result = current_sandbox.process.exec(
+                f"test -d {shlex.quote(path_str)} && echo 'directory' || echo 'file'"
+            )
 
             if "directory" in check_result.result:
                 # Remove directory recursively
-                result = current_sandbox.process.exec(f"rm -rf '{path_str}'")
+                result = current_sandbox.process.exec(f"rm -rf {shlex.quote(path_str)}")
             else:
                 # Remove file
-                result = current_sandbox.process.exec(f"rm -f '{path_str}'")
+                result = current_sandbox.process.exec(f"rm -f {shlex.quote(path_str)}")
 
             if result.exit_code != 0:
                 return json.dumps({"status": "error", "message": f"Failed to delete: {result.result}"})
