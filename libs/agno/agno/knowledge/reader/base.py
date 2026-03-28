@@ -39,6 +39,9 @@ class Reader:
             separators if separators is not None else ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "]
         )
         self.chunking_strategy = chunking_strategy
+        # Propagate chunk_size to the chunking_strategy if it supports it
+        if self.chunking_strategy is not None and hasattr(self.chunking_strategy, "chunk_size"):
+            self.chunking_strategy.chunk_size = self.chunk_size
         self.name = name
         self.description = description
         self.max_results = max_results
