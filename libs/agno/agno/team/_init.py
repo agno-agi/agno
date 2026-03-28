@@ -69,6 +69,7 @@ def __init__(
     respond_directly: bool = False,
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
+    enable_team_leader_response: bool = True,
     max_iterations: int = 10,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
@@ -191,6 +192,7 @@ def __init__(
     team.respond_directly = respond_directly
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
+    team.enable_team_leader_response = enable_team_leader_response
     team.max_iterations = max_iterations
 
     # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
