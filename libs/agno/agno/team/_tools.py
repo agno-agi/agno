@@ -222,6 +222,10 @@ def _determine_tools_for_model(
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
 
+    # Add tools for accessing skills
+    if team.skills is not None:
+        _tools.extend(team.skills.get_tools())
+
     from agno.team.mode import TeamMode
 
     if team.mode == TeamMode.tasks:

@@ -311,6 +311,12 @@ def _build_trailing_sections(
     if team.additional_context is not None:
         content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
 
+    # Add skills to the system prompt
+    if team.skills is not None:
+        skills_snippet = team.skills.get_system_prompt_snippet()
+        if skills_snippet:
+            content += f"\n{skills_snippet}\n"
+
     if add_session_state_to_context and session_state is not None:
         content += _get_formatted_session_state_for_system_message(team, session_state)
 
