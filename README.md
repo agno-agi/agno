@@ -166,6 +166,11 @@ Add Agno docs as a source in your coding tools:
 
 Also works with VSCode, Windsurf, and similar tools.
 
+**Skills:** Install Agno skills for major coding agents with:
+```bash
+npx add-skill agno-agi/agno
+```
+
 ## Contributing
 
 See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md).
