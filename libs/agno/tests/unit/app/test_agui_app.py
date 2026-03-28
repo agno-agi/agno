@@ -564,7 +564,7 @@ async def test_stream_ends_without_completion_event():
 
 @pytest.mark.asyncio
 async def test_reasoning_events_handling():
-    """Test that reasoning events are properly converted to step events"""
+    """Test that reasoning events are properly converted to AG-UI reasoning events"""
     from agno.run.agent import RunEvent
 
     async def mock_stream_with_reasoning():
@@ -574,7 +574,7 @@ async def test_reasoning_events_handling():
         reasoning_start.content = ""
         yield reasoning_start
 
-        # Some reasoning content
+        # Some reasoning content (as run_content between reasoning start/end)
         reasoning_content = RunContentEvent()
         reasoning_content.event = RunEvent.run_content
         reasoning_content.content = "Thinking about this problem..."
@@ -598,11 +598,208 @@ async def test_reasoning_events_handling():
 
     event_types = [event.type for event in events]
 
-    # Should have step events for reasoning
-    assert EventType.STEP_STARTED in event_types, "Should have STEP_STARTED for reasoning"
-    assert EventType.STEP_FINISHED in event_types, "Should have STEP_FINISHED for reasoning"
+    # Should have proper reasoning events
+    assert EventType.REASONING_START in event_types, "Should have REASONING_START for reasoning"
+    assert EventType.REASONING_MESSAGE_START in event_types, "Should have REASONING_MESSAGE_START"
+    assert EventType.REASONING_MESSAGE_END in event_types, "Should have REASONING_MESSAGE_END"
+    assert EventType.REASONING_END in event_types, "Should have REASONING_END"
 
-    # Should have text content during reasoning
+    # Should have text content (the run_content event between reasoning phases)
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # Verify reasoning event ordering: START before MESSAGE_START before MESSAGE_END before END
+    reasoning_start_idx = event_types.index(EventType.REASONING_START)
+    msg_start_idx = event_types.index(EventType.REASONING_MESSAGE_START)
+    msg_end_idx = event_types.index(EventType.REASONING_MESSAGE_END)
+    reasoning_end_idx = event_types.index(EventType.REASONING_END)
+    assert reasoning_start_idx < msg_start_idx < msg_end_idx < reasoning_end_idx
+
+
+@pytest.mark.asyncio
+async def test_reasoning_content_delta_streaming():
+    """Test that reasoning_content_delta events produce REASONING_MESSAGE_CONTENT events"""
+    from agno.run.agent import ReasoningContentDeltaEvent, RunEvent
+
+    async def mock_stream_with_reasoning_deltas():
+        # Start reasoning
+        reasoning_start = RunContentEvent()
+        reasoning_start.event = RunEvent.reasoning_started
+        reasoning_start.content = ""
+        yield reasoning_start
+
+        # Stream reasoning content deltas
+        for text in ["Let me ", "think about ", "this..."]:
+            delta = ReasoningContentDeltaEvent()
+            delta.event = RunEvent.reasoning_content_delta
+            delta.reasoning_content = text
+            yield delta
+
+        # End reasoning
+        reasoning_end = RunContentEvent()
+        reasoning_end.event = RunEvent.reasoning_completed
+        reasoning_end.content = ""
+        yield reasoning_end
+
+        # Normal response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Here is my answer."
+        yield text_response
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_reasoning_deltas(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should have reasoning content events
+    reasoning_content_events = [e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT]
+    assert len(reasoning_content_events) == 3, (
+        f"Expected 3 reasoning content events, got {len(reasoning_content_events)}"
+    )
+    assert reasoning_content_events[0].delta == "Let me "
+    assert reasoning_content_events[1].delta == "think about "
+    assert reasoning_content_events[2].delta == "this..."
+
+    # All reasoning content events should share the same message_id
+    reasoning_msg_ids = {e.message_id for e in reasoning_content_events}
+    assert len(reasoning_msg_ids) == 1, "All reasoning content should share the same message_id"
+
+    # Normal text should also be present
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_reasoning_auto_start():
+    """Test that reasoning_content_delta without prior reasoning_started auto-creates reasoning phase"""
+    from agno.run.agent import ReasoningContentDeltaEvent, RunEvent
+
+    async def mock_stream_delta_without_start():
+        # Delta without prior reasoning_started
+        delta = ReasoningContentDeltaEvent()
+        delta.event = RunEvent.reasoning_content_delta
+        delta.reasoning_content = "Hmm, interesting..."
+        yield delta
+
+        # End reasoning
+        reasoning_end = RunContentEvent()
+        reasoning_end.event = RunEvent.reasoning_completed
+        reasoning_end.content = ""
+        yield reasoning_end
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_delta_without_start(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should auto-start reasoning
+    assert EventType.REASONING_START in event_types, "Should auto-start reasoning"
+    assert EventType.REASONING_MESSAGE_START in event_types, "Should auto-start reasoning message"
+    assert EventType.REASONING_MESSAGE_CONTENT in event_types, "Should have reasoning content"
+    assert EventType.REASONING_MESSAGE_END in event_types, "Should close reasoning message"
+    assert EventType.REASONING_END in event_types, "Should close reasoning"
+
+    # Verify ordering
+    reasoning_start_idx = event_types.index(EventType.REASONING_START)
+    content_idx = event_types.index(EventType.REASONING_MESSAGE_CONTENT)
+    assert reasoning_start_idx < content_idx, "Auto-start should come before content"
+
+
+@pytest.mark.asyncio
+async def test_raw_event_catch_all():
+    """Test that unmapped agno events are emitted as RawEvent"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_unmapped_event():
+        # An unmapped event (e.g., memory_update_started)
+        unmapped = RunContentEvent()
+        unmapped.event = RunEvent.memory_update_started
+        unmapped.content = ""
+        yield unmapped
+
+        # Normal response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_unmapped_event(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should have a RAW event for the unmapped event
+    assert EventType.RAW in event_types, "Unmapped events should produce RAW events"
+
+    raw_events = [e for e in events if e.type == EventType.RAW]
+    assert len(raw_events) == 1
+    assert raw_events[0].source == "agno"
+
+    # Normal events should still work
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_content_event_no_spurious_raw():
+    """Test that run_content events with empty content do NOT produce spurious RawEvents"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_empty_content():
+        # Content event with empty string (common during streaming)
+        empty_content = RunContentEvent()
+        empty_content.event = RunEvent.run_content
+        empty_content.content = ""
+        yield empty_content
+
+        # Normal content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_empty_content(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should NOT have RAW events (content events are handled, not catch-all'd)
+    assert EventType.RAW not in event_types, "Content events should not produce RAW events"
     assert EventType.TEXT_MESSAGE_CONTENT in event_types
     assert EventType.RUN_FINISHED in event_types
 
@@ -1358,3 +1555,211 @@ def test_validate_agui_state_with_invalid_to_dict():
     obj = TestClass()
     result = validate_agui_state(obj, "test_thread")
     assert result is None
+
+
+# --- State Events Tests ---
+
+
+def test_event_buffer_state_snapshot_deep_copy():
+    """Test EventBuffer state snapshot stores a deep copy and computes deltas correctly."""
+    buffer = EventBuffer()
+
+    state = {"score": 0, "items": ["a"]}
+    buffer.set_state_snapshot(state)
+
+    # Verify deep copy: mutating original dict should not affect snapshot
+    state["score"] = 10
+    state["items"].append("b")
+
+    delta = buffer.compute_state_delta(state)
+    assert delta is not None
+    # Should have ops for score change and items change
+    ops_paths = [op["path"] for op in delta]
+    assert "/score" in ops_paths
+
+    # No change should return None
+    buffer.set_state_snapshot(state)
+    delta = buffer.compute_state_delta(state)
+    assert delta is None
+
+
+def test_event_buffer_compute_delta_no_snapshot():
+    """Test compute_state_delta returns None when no snapshot has been set."""
+    buffer = EventBuffer()
+    result = buffer.compute_state_delta({"key": "value"})
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_final_state_snapshot_at_completion():
+    """Test that a StateSnapshotEvent is emitted before RUN_FINISHED when state is provided."""
+    from agno.run.agent import RunCompletedEvent, RunEvent
+
+    final_state = {"score": 42, "done": True}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Done"
+        yield text_response
+
+        completed = RunCompletedEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        completed.session_state = final_state
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state={"score": 0}
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_SNAPSHOT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # StateSnapshotEvent must come before RUN_FINISHED
+    snapshot_idx = event_types.index(EventType.STATE_SNAPSHOT)
+    finished_idx = event_types.index(EventType.RUN_FINISHED)
+    assert snapshot_idx < finished_idx
+
+    # The snapshot should use the authoritative session_state from RunCompletedEvent
+    snapshot_event = events[snapshot_idx]
+    assert snapshot_event.snapshot == final_state
+
+
+@pytest.mark.asyncio
+async def test_state_delta_after_tool_call():
+    """Test that a StateDeltaEvent is emitted when state changes during a tool call."""
+    from agno.run.agent import RunEvent
+
+    # Shared mutable state dict (same reference the agent would use)
+    run_state = {"counter": 0, "status": "idle"}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing"
+        yield text_response
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = MagicMock()
+        tool.tool_call_id = "tool_1"
+        tool.tool_name = "increment"
+        tool.tool_args = {}
+        tool_start.tool = tool
+        yield tool_start
+
+        # Simulate agent mutating state during tool execution (before tool_call_completed)
+        run_state["counter"] = 1
+        run_state["status"] = "active"
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = "incremented"
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_DELTA in event_types
+
+    # StateDelta should come after ToolCallResult
+    delta_idx = event_types.index(EventType.STATE_DELTA)
+    result_idx = event_types.index(EventType.TOOL_CALL_RESULT)
+    assert delta_idx > result_idx
+
+    # Verify the delta contains the right operations
+    delta_event = events[delta_idx]
+    delta_paths = [op["path"] for op in delta_event.delta]
+    assert "/counter" in delta_paths
+    assert "/status" in delta_paths
+
+
+@pytest.mark.asyncio
+async def test_no_state_events_when_no_state():
+    """Test backward compatibility: no state events when run_state is None."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_SNAPSHOT not in event_types
+    assert EventType.STATE_DELTA not in event_types
+
+
+@pytest.mark.asyncio
+async def test_no_delta_when_state_unchanged():
+    """Test that no StateDeltaEvent is emitted when a tool call does not mutate state."""
+    from agno.run.agent import RunEvent
+
+    run_state = {"counter": 0}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing"
+        yield text_response
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = MagicMock()
+        tool.tool_call_id = "tool_1"
+        tool.tool_name = "noop"
+        tool.tool_args = {}
+        tool_start.tool = tool
+        yield tool_start
+
+        # State is NOT mutated here
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = "done"
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    # No delta should be emitted since state was not changed
+    assert EventType.STATE_DELTA not in event_types
+    # But a final snapshot should still be emitted (run_state fallback)
+    assert EventType.STATE_SNAPSHOT in event_types
