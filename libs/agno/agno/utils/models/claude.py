@@ -359,11 +359,25 @@ def format_messages(
 
             # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
+            # Build tool_result content with optional inline images
+            tool_content: Any = str(tool_result)
+            if message.images:
+                parts: list = []
+                if tool_result:
+                    parts.append({"type": "text", "text": str(tool_result)})
+                for image in message.images:
+                    image_block = _format_image_for_message(image)
+                    if image_block:
+                        parts.append(image_block)
+                if parts:
+                    tool_content = parts
+
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(tool_result),
+                    "content": tool_content,
                 }
             )
 

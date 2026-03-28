@@ -2,8 +2,9 @@ import base64
 
 import pytest
 
-from agno.media import File
-from agno.utils.models.claude import _format_file_for_message
+from agno.media import File, Image
+from agno.models.message import Message
+from agno.utils.models.claude import _format_file_for_message, format_messages
 
 
 class TestFormatFileForMessage:
@@ -86,3 +87,78 @@ class TestFormatFileForMessage:
 
         assert result["source"]["data"] == csv_content
         assert result["source"]["data"] != base64.standard_b64encode(csv_content.encode()).decode()
+
+
+class TestToolResultWithImages:
+    def test_tool_result_with_images(self):
+        """Tool message with images should produce content list with text + image blocks."""
+        # Minimal 1x1 PNG
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
+            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        msgs = [
+            Message(role="user", content="Describe this"),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "toolu_001",
+                        "type": "function",
+                        "function": {"name": "screenshot", "arguments": "{}"},
+                    }
+                ],
+            ),
+            Message(
+                role="tool",
+                tool_call_id="toolu_001",
+                tool_name="screenshot",
+                content="Screenshot taken",
+                images=[Image(content=png_bytes, format="png")],
+            ),
+        ]
+        formatted, _system = format_messages(msgs)
+
+        # Tool result is the last (merged into user) message
+        tool_result = formatted[2]["content"][0]
+        assert tool_result["type"] == "tool_result"
+        assert tool_result["tool_use_id"] == "toolu_001"
+
+        # Content should be a list with text + image blocks
+        content = tool_result["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "Screenshot taken"
+        assert content[1]["type"] == "image"
+
+    def test_tool_result_without_images_unchanged(self):
+        """Tool message without images should produce str content (backward compat)."""
+        msgs = [
+            Message(role="user", content="Hello"),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "toolu_002",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
+                ],
+            ),
+            Message(
+                role="tool",
+                tool_call_id="toolu_002",
+                tool_name="search",
+                content="Result text",
+            ),
+        ]
+        formatted, _system = format_messages(msgs)
+
+        tool_result = formatted[2]["content"][0]
+        assert tool_result["type"] == "tool_result"
+        assert tool_result["content"] == "Result text"
