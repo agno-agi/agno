@@ -1,8 +1,7 @@
 import asyncio
 from typing import List, Optional
 
-from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -17,9 +16,11 @@ except ImportError:
 class WikipediaReader(Reader):
     auto_suggest: bool = True
 
-    def __init__(
-        self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), auto_suggest: bool = True, **kwargs
-    ):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, auto_suggest: bool = True, **kwargs):
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.FIXED_SIZE_CHUNKER, **kwargs
+            )
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.auto_suggest = auto_suggest
 

@@ -10,8 +10,7 @@ try:
 except ImportError:
     raise ImportError("`aiofiles` not installed. Please install it with `pip install aiofiles`")
 
-from agno.knowledge.chunking.row import RowChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.utils import stringify_cell_value
@@ -41,7 +40,9 @@ class CSVReader(Reader):
         ```
     """
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(ChunkingStrategyType.ROW_CHUNKER, **kwargs)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod

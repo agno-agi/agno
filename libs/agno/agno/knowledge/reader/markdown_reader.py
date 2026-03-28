@@ -3,24 +3,18 @@ import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
-DEFAULT_CHUNKER_STRATEGY: ChunkingStrategy
-
-# Try to import MarkdownChunking, fallback to FixedSizeChunking if not available
+# Check MarkdownChunking availability at import time (for get_supported_chunking_strategies)
 try:
-    from agno.knowledge.chunking.markdown import MarkdownChunking
+    from agno.knowledge.chunking.markdown import MarkdownChunking as _MarkdownChunking  # noqa: F401
 
-    DEFAULT_CHUNKER_STRATEGY = MarkdownChunking()
     MARKDOWN_CHUNKER_AVAILABLE = True
 except ImportError:
-    from agno.knowledge.chunking.fixed import FixedSizeChunking
-
-    DEFAULT_CHUNKER_STRATEGY = FixedSizeChunking()
     MARKDOWN_CHUNKER_AVAILABLE = False
 
 
@@ -54,12 +48,19 @@ class MarkdownReader(Reader):
         chunking_strategy: Optional[ChunkingStrategy] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        **kwargs,
     ) -> None:
-        # Use the default chunking strategy if none provided
         if chunking_strategy is None:
-            chunking_strategy = DEFAULT_CHUNKER_STRATEGY
+            try:
+                chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategyType.MARKDOWN_CHUNKER, **kwargs
+                )
+            except ImportError:
+                chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategyType.FIXED_SIZE_CHUNKER, **kwargs
+                )
 
-        super().__init__(chunking_strategy=chunking_strategy, name=name, description=description)
+        super().__init__(chunking_strategy=chunking_strategy, name=name, description=description, **kwargs)
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:
