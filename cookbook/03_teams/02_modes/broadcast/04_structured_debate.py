@@ -34,5 +34,7 @@ team = Team(
 
 if __name__ == "__main__":
     team.print_response(
-        "Remote work is better than in-office work for software teams.", stream=True
+        "Remote work is better than in-office work for software teams.",
+        stream=True,
+        show_member_responses=True,
     )
