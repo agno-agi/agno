@@ -922,6 +922,13 @@ class Claude(Model):
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
                     server_blocks.append(block.model_dump())
 
+        # Warn if the response was truncated due to max_tokens
+        if response.stop_reason == "max_tokens":
+            log_warning(
+                f"Claude response was truncated because it hit the max_tokens limit ({self.max_tokens}). "
+                "The returned content is incomplete. Consider increasing `max_tokens` for this model."
+            )
+
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
@@ -1045,6 +1052,14 @@ class Claude(Model):
 
         # Capture citations from the final response and handle structured outputs
         elif isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)):
+            # Warn if the response was truncated due to max_tokens
+            stop_reason = getattr(response.message, "stop_reason", None)  # type: ignore
+            if stop_reason == "max_tokens":
+                log_warning(
+                    f"Claude response was truncated because it hit the max_tokens limit ({self.max_tokens}). "
+                    "The returned content is incomplete. Consider increasing `max_tokens` for this model."
+                )
+
             # In streaming mode, content has already been emitted via ContentBlockDeltaEvent chunks
             # Setting content here would cause duplication since _populate_stream_data accumulates with +=
             # Keep content empty to avoid duplication
