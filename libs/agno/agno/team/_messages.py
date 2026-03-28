@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agno.team.team import Team
+    from agno.team.remote import RemoteTeam
 
 import json
 from collections import ChainMap
@@ -75,9 +76,10 @@ def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
 
 
 def get_members_system_message_content(
-    team: "Team", indent: int = 0, run_context: Optional["RunContext"] = None, async_mode: bool = False
+    team: Union["Team", "RemoteTeam"], indent: int = 0, run_context: Optional["RunContext"] = None, async_mode: bool = False
 ) -> str:
     from agno.team.team import Team
+    from agno.team.remote import RemoteTeam
     from agno.utils.callables import get_resolved_members
 
     pad = " " * indent
@@ -88,8 +90,10 @@ def get_members_system_message_content(
     for member in resolved_members:
         member_id = get_member_id(member)
 
-        if isinstance(member, Team):
+        if isinstance(member, (Team, RemoteTeam)):
             content += f'{pad}<member id="{member_id}" name="{member.name}" type="team">\n'
+            if member.role is not None:
+                content += f"{pad}  Role: {member.role}\n"
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
@@ -103,7 +107,7 @@ def get_members_system_message_content(
                 content += f"{pad}  Role: {member.role}\n"
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
-            if team.add_member_tools_to_context:
+            if getattr(team, 'add_member_tools_to_context', None):
                 tool_names = _get_tool_names(member, async_mode=async_mode)
                 if tool_names:
                     content += f"{pad}  Tools: {', '.join(tool_names)}\n"
