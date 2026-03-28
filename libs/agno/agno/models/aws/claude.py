@@ -252,9 +252,9 @@ class Claude(AnthropicClaude):
             else:
                 request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
-        # Format tools (this will handle strict mode)
+        # Format tools — strip strict since AWS Bedrock Claude does not support it
         if tools:
-            request_kwargs["tools"] = format_tools_for_model(tools)
+            request_kwargs["tools"] = format_tools_for_model(tools, strip_strict=True)
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

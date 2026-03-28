@@ -403,10 +403,19 @@ def format_messages(
     return merged_messages, " ".join(system_messages)
 
 
-def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
+def format_tools_for_model(
+    tools: Optional[List[Dict[str, Any]]] = None,
+    strip_strict: bool = False,
+) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
     Now supports strict mode for structured outputs.
+
+    Args:
+        tools: List of tool definitions to format.
+        strip_strict: If True, omit the ``strict`` field from formatted tools.
+            Use this for providers that do not support native structured outputs
+            (e.g. VertexAI Claude, AWS Bedrock Claude).
     """
     if not tools:
         return None
@@ -451,10 +460,11 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             "input_schema": input_schema,
         }
 
-        # Add strict mode if specified (check both function dict and tool_def top level)
-        strict_mode = func_def.get("strict") or tool_def.get("strict")
-        if strict_mode is True:
-            tool["strict"] = True
+        # Add strict mode if specified and provider supports it
+        if not strip_strict:
+            strict_mode = func_def.get("strict") or tool_def.get("strict")
+            if strict_mode is True:
+                tool["strict"] = True
 
         parsed_tools.append(tool)
     return parsed_tools
