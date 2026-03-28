@@ -92,7 +92,7 @@ class CohereEmbedder(Embedder):
         """Sleep with exponential backoff."""
         delay = base_delay * (2**attempt) + (time.time() % 1)  # Add jitter
         log_debug(f"Rate limited, waiting {delay:.2f} seconds before retry (attempt {attempt + 1})")
-        time.sleep(delay)
+        asyncio.sleep(delay)
 
     async def _async_rate_limit_backoff_sleep(self, attempt: int) -> None:
         """Async version of rate-limit-aware backoff for APIs with per-minute limits."""

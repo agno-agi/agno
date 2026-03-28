@@ -38,7 +38,7 @@ def run_sync() -> None:
     sync_agent.print_response("I'm going to a concert tomorrow")
 
     # Allow the memories to sync with Zep database
-    time.sleep(10)
+    asyncio.sleep(10)
 
     if sync_agent.dependencies:
         # Refresh the context
@@ -85,7 +85,7 @@ async def run_async() -> None:
     await async_agent.aprint_response("I'm going to a concert tomorrow")
 
     # Allow the memories to sync with Zep database
-    time.sleep(10)
+    asyncio.sleep(10)
 
     # Refresh the context
     async_agent.dependencies["memory"] = await async_zep_tools.get_zep_memory(

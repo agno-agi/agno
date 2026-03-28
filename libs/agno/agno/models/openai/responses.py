@@ -420,7 +420,7 @@ class OpenAIResponses(Model):
             uploaded_files = list(self.get_client().vector_stores.files.list(vector_store_id=vector_store.id))
             # Wait until all files appear in the list (eventual consistency)
             if len(uploaded_files) < len(file_ids):
-                time.sleep(1)
+                asyncio.sleep(1)
                 continue
             all_completed = True
             failed = False
@@ -433,7 +433,7 @@ class OpenAIResponses(Model):
                     all_completed = False
             if all_completed or failed:
                 break
-            time.sleep(1)
+            asyncio.sleep(1)
         return vector_store.id
 
     def _format_tool_params(
