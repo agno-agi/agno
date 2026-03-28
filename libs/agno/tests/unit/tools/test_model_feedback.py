@@ -89,9 +89,9 @@ class TestInitialization:
         assert len(tool.feedback_models) == 2
         assert single not in tool.feedback_models
 
-    def test_default_gemini_lazy(self):
-        tool = ModelFeedbackTools()
-        assert tool.feedback_models == []
+    def test_no_model_raises_error(self):
+        with pytest.raises(ValueError, match="Either `model` or `models` must be provided"):
+            ModelFeedbackTools()
 
     def test_toolkit_name(self, mock_model):
         tool = ModelFeedbackTools(model=mock_model)

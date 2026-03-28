@@ -19,7 +19,7 @@ class ModelFeedbackTools(Toolkit):
     feedback from multiple models (e.g. Gemini + Claude at the same time).
 
     Args:
-        model: A single Model instance to use for feedback. Defaults to Gemini.
+        model: A single Model instance to use for feedback.
         models: A list of Model instances for parallel feedback from multiple models.
         aspects: Aspects to evaluate (e.g. ["accuracy", "completeness", "tone"]).
         system_prompt: Override the default critique system prompt.
@@ -65,26 +65,7 @@ class ModelFeedbackTools(Toolkit):
             return models
         if model:
             return [model]
-        # Default: lazy Gemini
-        return []
-
-    def _get_default_model(self) -> Model:
-        """Lazily create a default Gemini model."""
-        try:
-            from agno.models.google import Gemini
-
-            return Gemini(id="gemini-2.0-flash")
-        except (ImportError, ModuleNotFoundError):
-            raise ImportError(
-                "Default feedback model requires `google-genai`. "
-                "Install it with `pip install google-genai` or pass a `model` argument."
-            )
-
-    def _get_models(self) -> List[Model]:
-        """Get the list of feedback models, creating the default if needed."""
-        if not self.feedback_models:
-            self.feedback_models = [self._get_default_model()]
-        return self.feedback_models
+        raise ValueError("Either `model` or `models` must be provided.")
 
     def _format_conversation(self, messages: List[Message]) -> str:
         """Format conversation messages into a readable transcript."""
@@ -215,7 +196,7 @@ class ModelFeedbackTools(Toolkit):
         if not conversation:
             return json.dumps({"error": "No conversation content to review."})
 
-        models = self._get_models()
+        models = self.feedback_models
 
         if len(models) == 1:
             result = self._invoke_model(models[0], conversation, focus)
@@ -247,7 +228,7 @@ class ModelFeedbackTools(Toolkit):
         if not conversation:
             return json.dumps({"error": "No conversation content to review."})
 
-        models = self._get_models()
+        models = self.feedback_models
 
         if len(models) == 1:
             result = await self._ainvoke_model(models[0], conversation, focus)
