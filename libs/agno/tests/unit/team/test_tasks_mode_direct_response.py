@@ -5,8 +5,6 @@ requests without going through the full task lifecycle (create tasks,
 execute, mark_all_complete).
 """
 
-import pytest
-
 from agno.team.mode import TeamMode
 
 
