@@ -1,11 +1,11 @@
 import json
 import os
 from functools import wraps
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 
 
 def google_authenticate(service_name: str):
@@ -43,11 +43,64 @@ def google_authenticate(service_name: str):
     return decorator
 
 
+def google_auth_from_store(
+    toolkit: Any,
+    service_name: str,
+    scopes: list,
+) -> bool:
+    """Try loading credentials from GoogleAuth's DB store.
+
+    Returns True if credentials are now valid on toolkit.creds.
+    Handles refresh and auto-persist on refresh.
+    """
+    google_auth: Optional[GoogleAuth] = getattr(toolkit, "google_auth", None)
+    if not google_auth or not google_auth._db:
+        return False
+
+    creds = google_auth.load_token(service_name, scopes)
+    if not creds:
+        return False
+
+    toolkit.creds = creds
+    return True
+
+
+def google_auth_save_to_store(
+    toolkit: Any,
+    service_name: str,
+) -> None:
+    """Persist toolkit credentials to GoogleAuth's DB store after successful auth."""
+    google_auth: Optional[GoogleAuth] = getattr(toolkit, "google_auth", None)
+    if not google_auth or not google_auth._db or not toolkit.creds:
+        return
+    google_auth.store_token(service_name, toolkit.creds)
+
+
 class GoogleAuth(Toolkit):
+    """Central auth coordinator and token store for all Google toolkits.
+
+    Handles:
+    - OAuth URL generation for interactive auth flows (Slack, etc.)
+    - Token storage/retrieval via agent's DB when available
+    - Service scope registry for combined OAuth consent
+
+    Usage (cookbook — file-based, zero config):
+        gmail = GmailTools()
+
+    Usage (interface — DB-backed via agent):
+        google_auth = GoogleAuth(client_id="...")
+        gmail = GmailTools(google_auth=google_auth)
+        agent = Agent(db=PgDb(...), tools=[google_auth, gmail])
+        # auto-wiring sets google_auth._db = agent.db
+    """
+
     def __init__(
         self,
         client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
         redirect_uri: Optional[str] = None,
+        db: Optional[Any] = None,
+        user_id: Optional[str] = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -56,12 +109,80 @@ class GoogleAuth(Toolkit):
             **kwargs,
         )
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
+        self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
         self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
+        self.user_id: Optional[str] = user_id
+        # Set by auto-wiring from agent.db, or explicitly via db= param
+        self._db: Optional[Any] = db
         self._services: Dict[str, List[str]] = {}
         self.register(self.authenticate_google)
 
     def register_service(self, service: str, scopes: List[str]) -> None:
         self._services[service] = scopes
+
+    def load_token(self, service: str, scopes: list) -> Any:
+        """Load credentials from DB, refresh if expired, auto-persist on refresh.
+
+        Returns valid Credentials or None.
+        """
+        if not self._db:
+            return None
+
+        user_id = self.user_id or ""
+        try:
+            row = self._db.get_oauth_token("google", user_id, service)
+        except NotImplementedError:
+            # Backend doesn't support oauth tokens yet
+            return None
+        except Exception as e:
+            log_error(f"DB load failed for {service}: {e}")
+            return None
+
+        if not row:
+            return None
+
+        try:
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+
+            creds = Credentials.from_authorized_user_info(row["token_data"], scopes)
+        except (ValueError, KeyError, ImportError) as e:
+            log_error(f"Invalid stored token for {service}: {e}")
+            return None
+
+        # Refresh expired token and auto-persist
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                self.store_token(service, creds)
+            except Exception as e:
+                log_error(f"Token refresh failed for {service}: {e}")
+                return None
+
+        return creds if creds.valid else None
+
+    def store_token(self, service: str, creds: Any) -> None:
+        """Serialize and persist credentials to DB."""
+        if not self._db:
+            return
+
+        user_id = self.user_id or ""
+        try:
+            token_data = json.loads(creds.to_json())
+            self._db.upsert_oauth_token(
+                {
+                    "provider": "google",
+                    "user_id": user_id,
+                    "service": service,
+                    "token_data": token_data,
+                    "granted_scopes": token_data.get("scopes", []),
+                }
+            )
+            log_debug(f"Token stored for {user_id}/{service}")
+        except NotImplementedError:
+            log_debug("Backend does not support oauth token storage")
+        except Exception as e:
+            log_error(f"Failed to store token for {service}: {e}")
 
     def authenticate_google(self, services: List[Literal["gmail", "calendar", "drive", "sheets", "slides"]]) -> str:
         """

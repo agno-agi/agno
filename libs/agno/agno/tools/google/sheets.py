@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
 
 try:
     from google.auth.transport.requests import Request
@@ -78,6 +78,7 @@ class GoogleSheetsTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
         scopes: Optional[List[str]] = None,
         spreadsheet_id: Optional[str] = None,
         spreadsheet_range: Optional[str] = None,
@@ -127,6 +128,7 @@ class GoogleSheetsTools(Toolkit):
             enable_create_duplicate_sheet if enable_create_duplicate_sheet is not None else create_duplicate_sheet
         )
 
+        self.google_auth = google_auth
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         self.creds = creds
@@ -172,6 +174,9 @@ class GoogleSheetsTools(Toolkit):
 
         super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
 
+        if self.google_auth:
+            self.google_auth.register_service("sheets", self.scopes)
+
     def _build_service(self):
         return build("sheets", "v4", credentials=self.creds)
 
@@ -191,6 +196,10 @@ class GoogleSheetsTools(Toolkit):
             )
             if self.creds and self.creds.expired:
                 self.creds.refresh(Request())
+            return
+
+        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
+        if google_auth_from_store(self, "sheets", self.scopes):
             return
 
         token_file = Path(self.token_path or "token.json")
@@ -221,7 +230,9 @@ class GoogleSheetsTools(Toolkit):
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
                 # Opens up a browser window for OAuth authentication
                 self.creds = flow.run_local_server(port=self.oauth_port)
-            token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
+            if self.creds:
+                token_file.write_text(self.creds.to_json())  # type: ignore
+                google_auth_save_to_store(self, "sheets")
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

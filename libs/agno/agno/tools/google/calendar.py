@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -50,6 +50,7 @@ class GoogleCalendarTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = "token.json",
@@ -103,6 +104,7 @@ class GoogleCalendarTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
         self.creds = creds
         self.service: Optional[Resource] = None
         self.calendar_id = calendar_id
@@ -154,6 +156,9 @@ class GoogleCalendarTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+        if self.google_auth:
+            self.google_auth.register_service("calendar", self.scopes)
 
         # Validate that required scopes cover registered tools
         write_tools = {
@@ -209,6 +214,10 @@ class GoogleCalendarTools(Toolkit):
             self.creds = sa_creds
             return
 
+        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
+        if google_auth_from_store(self, "calendar", self.scopes):
+            return
+
         # OAuth flow
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
@@ -253,6 +262,7 @@ class GoogleCalendarTools(Toolkit):
         # Save the credentials for future use
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+            google_auth_save_to_store(self, "calendar")
             log_debug("Successfully authenticated with Google Calendar API.")
             log_info(f"Token file path: {token_file}")
 

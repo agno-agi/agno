@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_error
 
 try:
@@ -129,6 +129,7 @@ class GoogleDriveTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
         # Authentication
         auth_port: Optional[int] = 5050,
         login_hint: Optional[str] = None,
@@ -164,6 +165,7 @@ class GoogleDriveTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
@@ -235,6 +237,9 @@ class GoogleDriveTools(Toolkit):
             **kwargs,
         )
 
+        if self.google_auth:
+            self.google_auth.register_service("drive", self.scopes)
+
     def _auth(self) -> None:
         """Authenticate with Google Drive API using service account or OAuth."""
         if self.creds and self.creds.valid:
@@ -252,6 +257,10 @@ class GoogleDriveTools(Toolkit):
                 service_account_creds = service_account_creds.with_subject(delegated_user)
             self.creds = service_account_creds
             self.creds.refresh(Request())
+            return
+
+        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
+        if google_auth_from_store(self, "drive", self.scopes):
             return
 
         # OAuth flow
@@ -293,6 +302,7 @@ class GoogleDriveTools(Toolkit):
 
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
+            google_auth_save_to_store(self, "drive")
 
     def _build_service(self):
         creds_to_use = self.creds

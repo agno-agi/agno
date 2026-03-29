@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -129,6 +129,7 @@ class GmailTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
@@ -206,6 +207,7 @@ class GmailTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
@@ -303,6 +305,9 @@ class GmailTools(Toolkit):
             **kwargs,
         )
 
+        if self.google_auth:
+            self.google_auth.register_service("gmail", self.scopes)
+
         # Validate that required scopes are present for requested operations (only check registered functions)
         compose_tools = {"create_draft_email", "send_email", "send_email_reply", "send_draft", "update_draft"}
         if any(t in self.functions for t in compose_tools):
@@ -358,11 +363,10 @@ class GmailTools(Toolkit):
         return build("gmail", "v1", credentials=self.creds)
 
     def _auth(self) -> None:
-        """Authenticate with Gmail API using service account (priority) or OAuth flow."""
         if self.creds and self.creds.valid:
             return
 
-        # Service account authentication takes priority over OAuth
+        # Service account takes priority — never stored in GoogleAuth
         service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         if service_account_path:
             delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
@@ -377,11 +381,14 @@ class GmailTools(Toolkit):
                 scopes=self.scopes,
                 subject=delegated_user,
             )
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
             self.creds.refresh(Request())
             return
 
-        # OAuth flow
+        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
+        if google_auth_from_store(self, "gmail", self.scopes):
+            return
+
+        # File-based OAuth flow
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
@@ -389,14 +396,12 @@ class GmailTools(Toolkit):
             try:
                 self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
             except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
                 self.creds = None
 
         if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
             try:
                 self.creds.refresh(Request())
             except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
@@ -415,15 +420,14 @@ class GmailTools(Toolkit):
                 flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
             else:
                 flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            # prompt=consent forces Google to return a refresh_token every time
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
             self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
 
-        # Save the credentials for future use
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+            google_auth_save_to_store(self, "gmail")
             log_debug("Gmail credentials saved")
 
     def _format_emails(self, emails: List[dict]) -> str:
