@@ -306,7 +306,7 @@ def _run_tasks(
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
                 if task_list.tasks:
                     state_message = Message(
                         role="user",
@@ -664,7 +664,7 @@ def _run_tasks_stream(
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
                 if task_list.tasks:
                     state_message = Message(
                         role="user",
@@ -776,7 +776,7 @@ def _run_tasks_stream(
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                         goal_complete=task_list.goal_complete,
                         tasks=task_data_list,
                         completion_summary=task_list.completion_summary,
@@ -793,7 +793,7 @@ def _run_tasks_stream(
                         from_run_response=run_response,
                         iteration=iteration + 1,
                         max_iterations=team.max_iterations,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
@@ -2132,7 +2132,7 @@ async def _arun_tasks(
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
                 if task_list.tasks:
                     state_message = Message(
                         role="user",
@@ -2508,7 +2508,7 @@ async def _arun_tasks_stream(
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
                 if task_list.tasks:
                     state_message = Message(
                         role="user",
@@ -2621,7 +2621,7 @@ async def _arun_tasks_stream(
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                         goal_complete=task_list.goal_complete,
                         tasks=task_data_list,
                         completion_summary=task_list.completion_summary,
@@ -2638,7 +2638,7 @@ async def _arun_tasks_stream(
                         from_run_response=run_response,
                         iteration=iteration + 1,
                         max_iterations=team.max_iterations,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,

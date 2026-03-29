@@ -136,6 +136,22 @@ def _get_task_management_tools(
         )
 
     # ------------------------------------------------------------------
+    # Helper: dependency context
+    # ------------------------------------------------------------------
+    def _build_dependency_context(task_obj: Task) -> str:
+        """Gather results from completed dependency tasks and format as context."""
+        if not task_obj.dependencies:
+            return ""
+        dep_parts: list[str] = []
+        for dep_id in task_obj.dependencies:
+            dep = task_list.get_task(dep_id)
+            if dep is not None and dep.result:
+                dep_parts.append(f'Task "{dep.title}" result:\n{dep.result}')
+        if not dep_parts:
+            return ""
+        return "<dependency_results>\n" + "\n\n".join(dep_parts) + "\n</dependency_results>\n\n"
+
+    # ------------------------------------------------------------------
     # Tool: create_task
     # ------------------------------------------------------------------
     def create_task(
@@ -237,7 +253,7 @@ def _get_task_management_tools(
         Returns:
             str: Formatted task list.
         """
-        return task_list.get_summary_string()
+        return task_list.get_summary_string(result_limit=team.task_result_summary_limit)
 
     # ------------------------------------------------------------------
     # Tool: add_task_note
@@ -273,6 +289,97 @@ def _get_task_management_tools(
         task_list.completion_summary = summary
         save_task_list(run_context.session_state, task_list)
         return f"Goal marked as complete. Summary: {summary}"
+
+    # ------------------------------------------------------------------
+    # Tool: edit_task
+    # ------------------------------------------------------------------
+    def edit_task(
+        task_id: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        assignee: Optional[str] = None,
+    ) -> Iterator[Union[TaskUpdatedEvent, str]]:
+        """Edit a pending or blocked task's title, description, or assignee.
+
+        Only tasks with status 'pending' or 'blocked' can be edited.
+
+        Args:
+            task_id (str): The ID of the task to edit.
+            title (str, optional): New title for the task.
+            description (str, optional): New description for the task.
+            assignee (str, optional): New member_id to assign this task to.
+        Returns:
+            str: Confirmation of the edit.
+        """
+        task = task_list.get_task(task_id)
+        if task is None:
+            yield f"Task with ID '{task_id}' not found."
+            return
+
+        if task.status not in (TaskStatus.pending, TaskStatus.blocked):
+            yield f"Cannot edit task [{task_id}] with status '{task.status.value}'. Only pending or blocked tasks can be edited."
+            return
+
+        previous_status = task.status.value
+        changes: list[str] = []
+        if title is not None:
+            task.title = title
+            changes.append(f"title='{title}'")
+        if description is not None:
+            task.description = description
+            changes.append("description updated")
+        if assignee is not None:
+            task.assignee = assignee
+            changes.append(f"assignee='{assignee}'")
+
+        if not changes:
+            yield f"No changes provided for task [{task_id}]."
+            return
+
+        save_task_list(run_context.session_state, task_list)
+
+        if stream_events:
+            yield _emit_task_updated(task, previous_status)
+
+        yield f"Task [{task.id}] updated: {', '.join(changes)}."
+
+    # ------------------------------------------------------------------
+    # Tool: cancel_task
+    # ------------------------------------------------------------------
+    def cancel_task(
+        task_id: str,
+        reason: str = "",
+    ) -> Iterator[Union[TaskUpdatedEvent, str]]:
+        """Cancel a pending or blocked task. Sets its status to failed.
+
+        Only tasks with status 'pending' or 'blocked' can be cancelled.
+
+        Args:
+            task_id (str): The ID of the task to cancel.
+            reason (str): Reason for cancellation.
+        Returns:
+            str: Confirmation of cancellation.
+        """
+        task = task_list.get_task(task_id)
+        if task is None:
+            yield f"Task with ID '{task_id}' not found."
+            return
+
+        if task.status not in (TaskStatus.pending, TaskStatus.blocked):
+            yield f"Cannot cancel task [{task_id}] with status '{task.status.value}'. Only pending or blocked tasks can be cancelled."
+            return
+
+        previous_status = task.status.value
+        task.status = TaskStatus.failed
+        task.result = f"Cancelled: {reason}" if reason else "Cancelled by leader."
+
+        task_list._update_blocked_statuses()
+        save_task_list(run_context.session_state, task_list)
+
+        if stream_events:
+            yield _emit_task_updated(task, previous_status, result=task.result)
+
+        yield f"Task [{task.id}] '{task.title}' cancelled."
 
     # ------------------------------------------------------------------
     # Shared: member setup and post-processing
@@ -402,7 +509,7 @@ def _get_task_management_tools(
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
         try:
-            member_task_description = task.description or task.title
+            member_task_description = _build_dependency_context(task) + (task.description or task.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
@@ -546,7 +653,7 @@ def _get_task_management_tools(
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
         try:
-            member_task_description = task.description or task.title
+            member_task_description = _build_dependency_context(task) + (task.description or task.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
@@ -691,7 +798,7 @@ def _get_task_management_tools(
 
         def _run_single_task(task_obj, member_agent):
             """Run a single task in a thread. Returns (task_id, member_run_response, session_state_copy, error)."""
-            member_task_description = task_obj.description or task_obj.title
+            member_task_description = _build_dependency_context(task_obj) + (task_obj.description or task_obj.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
@@ -890,7 +997,7 @@ def _get_task_management_tools(
 
         async def _run_single_task_async(task_obj, member_agent):
             """Run a single task asynchronously."""
-            member_task_description = task_obj.description or task_obj.title
+            member_task_description = _build_dependency_context(task_obj) + (task_obj.description or task_obj.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
@@ -1038,6 +1145,8 @@ def _get_task_management_tools(
     tools: List[Function] = [
         Function.from_callable(create_task, name="create_task"),
         Function.from_callable(update_task_status, name="update_task_status"),
+        Function.from_callable(edit_task, name="edit_task"),
+        Function.from_callable(cancel_task, name="cancel_task"),
         Function.from_callable(list_tasks, name="list_tasks"),
         Function.from_callable(add_task_note, name="add_task_note"),
         Function.from_callable(mark_all_complete, name="mark_all_complete"),
