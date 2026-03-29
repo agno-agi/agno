@@ -607,7 +607,7 @@ def _get_delegate_task_function(
                         if len(content) > 0:
                             yield content
                     elif issubclass(type(member_agent_run_response.content), BaseModel):
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore[union-attr]
                     elif member_agent_run_response.content is not None:
                         yield json.dumps(member_agent_run_response.content, indent=2)
                 except Exception:
@@ -759,7 +759,7 @@ def _get_delegate_task_function(
                         if len(content) > 0:
                             yield content
                     elif issubclass(type(member_agent_run_response.content), BaseModel):
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore[union-attr]
                     elif member_agent_run_response.content is not None:
                         yield json.dumps(member_agent_run_response.content, indent=2)
                 except Exception:
@@ -900,7 +900,7 @@ def _get_delegate_task_function(
                             if len(content) > 0:
                                 yield f"Agent {member_agent.name}: {content}"
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"
+                            yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore[union-attr]
                         elif member_agent_run_response.content is not None:
                             yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"
                     except Exception:
@@ -1042,7 +1042,7 @@ def _get_delegate_task_function(
                                         await queue.put(f"Agent {agent.name}: {_content}")
                                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                                     await queue.put(
-                                        f"Agent {agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"
+                                        f"Agent {agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore[union-attr]
                                     )
                                 elif member_agent_run_response.content is not None:
                                     await queue.put(
