@@ -222,7 +222,7 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
 # =============================================================================
 
 
-def _get_image_type(data: bytes) -> Optional[str]:
+def get_image_type(data: bytes) -> Optional[str]:
     """Returns the image format from magic bytes in the file header."""
     if len(data) < 12:
         return None
@@ -250,7 +250,7 @@ def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = No
     import struct
 
     if img_type is None:
-        img_type = _get_image_type(data)
+        img_type = get_image_type(data)
 
     if img_type == "png":
         # PNG IHDR chunk: width at offset 16, height at offset 20 (big-endian)
