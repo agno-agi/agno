@@ -813,7 +813,7 @@ class Model(ABC):
                     if (
                         tool_call_limit is not None
                         and function_call_results
-                        and all(m.tool_call_error for m in function_call_results)
+                        and all(m.tool_call_limit_reached for m in function_call_results)
                     ):
                         break
 
@@ -1045,7 +1045,7 @@ class Model(ABC):
                     if (
                         tool_call_limit is not None
                         and function_call_results
-                        and all(m.tool_call_error for m in function_call_results)
+                        and all(m.tool_call_limit_reached for m in function_call_results)
                     ):
                         break
 
@@ -1541,7 +1541,7 @@ class Model(ABC):
                     if (
                         tool_call_limit is not None
                         and function_call_results
-                        and all(m.tool_call_error for m in function_call_results)
+                        and all(m.tool_call_limit_reached for m in function_call_results)
                     ):
                         break
 
@@ -1828,7 +1828,7 @@ class Model(ABC):
                     if (
                         tool_call_limit is not None
                         and function_call_results
-                        and all(m.tool_call_error for m in function_call_results)
+                        and all(m.tool_call_limit_reached for m in function_call_results)
                     ):
                         break
 
@@ -2107,6 +2107,7 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=True,
+            tool_call_limit_reached=True,
         )
 
     def run_function_call(

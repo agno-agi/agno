@@ -215,7 +215,7 @@ class TestRunFunctionCallsLimit:
     results consumed by the loop-break guard."""
 
     def test_calls_blocked_when_limit_exceeded(self):
-        """run_function_calls() must create tool_call_error=True results for
+        """run_function_calls() must create tool_call_limit_reached=True results for
         every FunctionCall that exceeds the limit, without executing them."""
         from agno.tools.function import Function, FunctionCall
 
@@ -240,15 +240,15 @@ class TestRunFunctionCallsLimit:
             )
         )
 
-        ok_results = [m for m in results if not m.tool_call_error]
-        error_results = [m for m in results if m.tool_call_error]
+        ok_results = [m for m in results if not m.tool_call_limit_reached]
+        error_results = [m for m in results if m.tool_call_limit_reached]
 
         assert len(ok_results) == 1, f"Expected 1 successful result, got {len(ok_results)}"
         assert len(error_results) == 1, f"Expected 1 blocked result, got {len(error_results)}"
         assert len(executed) == 1, f"Expected the tool executed once, got {len(executed)}"
 
     def test_all_calls_blocked_when_limit_zero(self):
-        """With tool_call_limit=0, ALL calls must produce tool_call_error=True
+        """With tool_call_limit=0, ALL calls must produce tool_call_limit_reached=True
         results — this is the condition that triggers the loop-break guard."""
         from agno.tools.function import Function, FunctionCall
 
@@ -274,12 +274,12 @@ class TestRunFunctionCallsLimit:
         )
 
         assert results, "Expected at least one result message"
-        assert all(m.tool_call_error for m in results), "All results must have tool_call_error=True when limit=0"
+        assert all(m.tool_call_limit_reached for m in results), "All results must have tool_call_limit_reached=True when limit=0"
         assert len(executed) == 0, f"No tool should have been executed, but got {len(executed)} executions"
 
     def test_guard_condition_all_errors(self):
         """Verify the exact boolean expression used in response():
-        ``all(m.tool_call_error for m in function_call_results)`` must be True
+        ``all(m.tool_call_limit_reached for m in function_call_results)`` must be True
         when every result is an error (i.e. all calls were blocked)."""
         from agno.tools.function import Function, FunctionCall
 
@@ -303,6 +303,6 @@ class TestRunFunctionCallsLimit:
         should_break = (
             tool_call_limit is not None  # 0 is a valid limit, not None
             and bool(results)  # function_call_results is non-empty
-            and all(m.tool_call_error for m in results)  # every result is an error
+            and all(m.tool_call_limit_reached for m in results)  # every result is an error
         )
         assert should_break, "The loop-break guard must evaluate to True when all calls are blocked"
