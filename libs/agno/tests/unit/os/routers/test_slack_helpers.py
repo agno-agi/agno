@@ -10,6 +10,7 @@ from agno.os.interfaces.slack.helpers import (
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
+    strip_bot_mention,
     task_id,
     upload_response_media_async,
 )
@@ -300,3 +301,36 @@ class TestResolveSlackUser:
         await resolve_slack_user(client, "UFAIL2")
         await resolve_slack_user(client, "UFAIL2")
         client.users_info.assert_called_once()
+
+
+# -- strip_bot_mention --
+
+
+class TestStripBotMention:
+    def test_strips_bot_mention(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hello world", "U0APCSS3MDH")
+        assert result == "hello world"
+
+    def test_preserves_other_user_mentions(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hey <@U999OTHER> check this", "U0APCSS3MDH")
+        assert result == "hey <@U999OTHER> check this"
+
+    def test_no_mention(self):
+        result = strip_bot_mention("just a plain message", "U0APCSS3MDH")
+        assert result == "just a plain message"
+
+    def test_empty_text(self):
+        result = strip_bot_mention("", "U0APCSS3MDH")
+        assert result == ""
+
+    def test_none_bot_id(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hello", None)
+        assert result == "<@U0APCSS3MDH> hello"
+
+    def test_mention_only(self):
+        result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH")
+        assert result == ""
+
+    def test_mention_in_middle(self):
+        result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH")
+        assert result == "hey  what's up"

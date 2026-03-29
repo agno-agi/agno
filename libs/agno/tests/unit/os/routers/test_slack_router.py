@@ -140,6 +140,46 @@ async def test_user_name_passed_as_metadata():
 
 
 @pytest.mark.asyncio
+async def test_bot_mention_stripped_from_message():
+    """The bot's own @mention should be stripped from the message text."""
+    from agno.os.interfaces.slack.helpers import _user_cache
+
+    _user_cache.clear()
+    agent_mock = make_agent_mock()
+    mock_slack = make_slack_mock()
+    with (
+        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+    ):
+        app = build_app(agent_mock, reply_to_mentions_only=False)
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        body = {
+            "type": "event_callback",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "text": "<@U_BOT> what's the status?",
+                "user": "U456",
+                "channel": "C123",
+                "ts": str(time.time()),
+            },
+        }
+        resp = make_signed_request(client, body)
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+
+        # The first positional arg to arun is the message text
+        call_args = agent_mock.arun.call_args
+        message = call_args.args[0] if call_args.args else call_args[0][0]
+        assert "<@U_BOT>" not in message
+        assert "what's the status?" in message
+
+
+@pytest.mark.asyncio
 async def test_mixed_files_categorized_correctly():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()

@@ -50,6 +50,22 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     }
 
 
+def strip_bot_mention(text: str, bot_user_id: Optional[str]) -> str:
+    """Remove the bot's own @mention from message text.
+
+    Slack encodes mentions as ``<@U123>``. When a user @-mentions the bot,
+    the agent shouldn't see its own ID in the text — it just adds noise and
+    causes the model to echo back the raw mention tag.
+
+    Only strips the *bot's* mention; other users' mentions are preserved.
+    """
+    if not bot_user_id or not text:
+        return text
+    import re
+
+    return re.sub(rf"<@{re.escape(bot_user_id)}>", "", text).strip()
+
+
 # Module-level cache: Slack user ID -> (resolved_user_id, display_name or None)
 _user_cache: Dict[str, Tuple[str, Optional[str]]] = {}
 

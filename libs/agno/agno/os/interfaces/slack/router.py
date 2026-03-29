@@ -14,6 +14,7 @@ from agno.os.interfaces.slack.helpers import (
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
+    strip_bot_mention,
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.security import verify_slack_signature
@@ -136,17 +137,23 @@ def attach_routes(
             elif streaming:
                 background_tasks.add_task(_stream_slack_response, data)
             else:
-                background_tasks.add_task(_process_slack_event, event)
+                background_tasks.add_task(_process_slack_event, data)
 
         return SlackEventResponse(status="ok")
 
-    async def _process_slack_event(event: dict):
+    async def _process_slack_event(data: dict):
+        event = data["event"]
         if not should_respond(event, reply_to_mentions_only):
             return
 
         from slack_sdk.web.async_client import AsyncWebClient
 
         ctx = extract_event_context(event)
+
+        # Strip the bot's own @mention from the message text
+        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id)
+
         # Namespace with entity_id so threads don't collide across mounted interfaces
         session_id = f"{entity_id}:{ctx['thread_id']}"
         async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
@@ -239,6 +246,11 @@ def attach_routes(
             return
 
         ctx = extract_event_context(event)
+
+        # Strip the bot's own @mention from the message text
+        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id)
+
         session_id = f"{entity_id}:{ctx['thread_id']}"
 
         # Not consistently placed across Slack event envelope shapes
