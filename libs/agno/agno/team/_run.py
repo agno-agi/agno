@@ -307,12 +307,19 @@ def _run_tasks(
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
                 task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
 
             # Get model response
@@ -345,6 +352,12 @@ def _run_tasks(
                 return _hooks.handle_team_run_paused(
                     team, run_response=run_response, session=session, run_context=run_context
                 )
+
+            # Early exit: if the model responded with content and no tool calls,
+            # it chose to respond directly without creating tasks.
+            if not model_response.tool_calls:
+                log_debug("Model responded directly without tool calls, exiting task loop.")
+                break
 
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
@@ -652,13 +665,23 @@ def _run_tasks_stream(
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
                 task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
+
+            # Track tool count before model response to detect direct responses
+            tools_before = len(run_response.tools) if run_response.tools else 0
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
@@ -724,6 +747,13 @@ def _run_tasks_stream(
                 if yield_run_output:
                     yield run_response
                 return
+
+            # Early exit: if no tool calls were made during this iteration,
+            # the model responded directly without creating tasks.
+            tools_after = len(run_response.tools) if run_response.tools else 0
+            if tools_after == tools_before:
+                log_debug("Model responded directly without tool calls, exiting task loop.")
+                break
 
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
@@ -2103,12 +2133,19 @@ async def _arun_tasks(
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
                 task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
 
             # Get model response
@@ -2141,6 +2178,12 @@ async def _arun_tasks(
                 return await _hooks.ahandle_team_run_paused(
                     team, run_response=run_response, session=team_session, run_context=run_context
                 )
+
+            # Early exit: if the model responded with content and no tool calls,
+            # it chose to respond directly without creating tasks.
+            if not model_response.tool_calls:
+                log_debug("Model responded directly without tool calls, exiting task loop.")
+                break
 
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
@@ -2466,13 +2509,23 @@ async def _arun_tasks_stream(
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
                 task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
+
+            # Track tool count before model response to detect direct responses
+            tools_before = len(run_response.tools) if run_response.tools else 0
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
@@ -2539,6 +2592,13 @@ async def _arun_tasks_stream(
                 if yield_run_output:
                     yield run_response
                 return
+
+            # Early exit: if no tool calls were made during this iteration,
+            # the model responded directly without creating tasks.
+            tools_after = len(run_response.tools) if run_response.tools else 0
+            if tools_after == tools_before:
+                log_debug("Model responded directly without tool calls, exiting task loop.")
+                break
 
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
