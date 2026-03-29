@@ -227,9 +227,12 @@ def _determine_tools_for_model(
     if team.mode == TeamMode.tasks:
         # Tasks mode: provide task management tools instead of delegation tools
         from agno.team._task_tools import _get_task_management_tools
-        from agno.team.task import load_task_list
+        from agno.team.task import TaskList, save_task_list
 
-        _task_list = load_task_list(run_context.session_state)
+        # Fresh task list for each run — previous results are available through
+        # team history and member interactions, not stale task state.
+        _task_list = TaskList()
+        save_task_list(run_context.session_state, _task_list)
         task_tools = _get_task_management_tools(
             team=team,
             task_list=_task_list,

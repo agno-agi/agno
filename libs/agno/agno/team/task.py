@@ -147,8 +147,12 @@ class TaskList:
             return False
         return all(t.status in TERMINAL_STATUSES for t in self.tasks)
 
-    def get_summary_string(self) -> str:
-        """Render the task list as a formatted string for the system message."""
+    def get_summary_string(self, result_limit: int = 200) -> str:
+        """Render the task list as a formatted string for the system message.
+
+        Args:
+            result_limit: Maximum character length for task result previews.
+        """
         if not self.tasks:
             return "No tasks created yet."
 
@@ -167,8 +171,7 @@ class TaskList:
             if t.dependencies:
                 lines.append(f"      Depends on: {t.dependencies}")
             if t.result:
-                # Truncate long results
-                result_preview = t.result[:200] + "..." if len(t.result) > 200 else t.result
+                result_preview = t.result[:result_limit] + "..." if len(t.result) > result_limit else t.result
                 lines.append(f"      Result: {result_preview}")
             if t.notes:
                 for note in t.notes[-3:]:  # Show last 3 notes
