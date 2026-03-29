@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from agno.media import Audio, File, Image, Video
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 
 def task_id(agent_name: Optional[str], base_id: str) -> str:
@@ -48,6 +48,44 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
     }
+
+
+# Module-level cache: Slack user ID -> (resolved_user_id, display_name or None)
+_user_cache: Dict[str, Tuple[str, Optional[str]]] = {}
+
+
+async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str, Optional[str]]:
+    """Resolve a Slack user ID to (canonical_user_id, display_name).
+
+    Returns the user's email as canonical_user_id if available, otherwise
+    falls back to the raw Slack user ID. Display name is best-effort.
+
+    Results are cached in-process to avoid repeated API calls.
+    """
+    if slack_user_id in _user_cache:
+        return _user_cache[slack_user_id]
+
+    try:
+        resp = await async_client.users_info(user=slack_user_id)
+        user = resp.get("user", {}) if resp else {}
+        profile = user.get("profile", {})
+
+        # Canonical ID: email if available, else raw Slack ID
+        email = profile.get("email")
+        resolved_id = email if email else slack_user_id
+
+        # Display name fallback: display_name > real_name > username > None
+        display_name = profile.get("display_name") or profile.get("real_name") or user.get("name") or None
+        if display_name is not None and not display_name.strip():
+            display_name = None
+
+        result = (resolved_id, display_name)
+    except Exception:
+        log_warning(f"Failed to resolve Slack user {slack_user_id}")
+        result = (slack_user_id, None)
+
+    _user_cache[slack_user_id] = result
+    return result
 
 
 async def download_event_files_async(

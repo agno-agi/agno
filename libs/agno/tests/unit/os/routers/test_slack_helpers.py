@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from agno.os.interfaces.slack.helpers import (
+    _user_cache,
     download_event_files_async,
     extract_event_context,
     member_name,
+    resolve_slack_user,
     send_slack_message_async,
     should_respond,
     task_id,
@@ -195,3 +197,106 @@ class TestStreamState:
         chunk = Mock(images=None, videos=None, audio=None, files=None)
         state.collect_media(chunk)
         assert state.images == []
+
+
+# -- resolve_slack_user --
+
+
+class TestResolveSlackUser:
+    def setup_method(self):
+        _user_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_returns_email_and_display_name(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "ashpreet",
+                    "profile": {
+                        "email": "ashpreet@example.com",
+                        "display_name": "Ashpreet",
+                        "real_name": "Ashpreet Bhatia",
+                    },
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U123")
+        assert resolved_id == "ashpreet@example.com"
+        assert display_name == "Ashpreet"
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_skips_api_call(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "alice",
+                    "profile": {"email": "alice@co.com", "display_name": "Alice", "real_name": "Alice Smith"},
+                }
+            }
+        )
+        await resolve_slack_user(client, "U999")
+        await resolve_slack_user(client, "U999")
+        client.users_info.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_email_falls_back_to_slack_id(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "bob",
+                    "profile": {"display_name": "Bob", "real_name": "Bob Jones"},
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U456")
+        assert resolved_id == "U456"
+        assert display_name == "Bob"
+
+    @pytest.mark.asyncio
+    async def test_display_name_fallback_to_real_name(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "charlie",
+                    "profile": {"email": "charlie@co.com", "display_name": "", "real_name": "Charlie Brown"},
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U789")
+        assert resolved_id == "charlie@co.com"
+        assert display_name == "Charlie Brown"
+
+    @pytest.mark.asyncio
+    async def test_display_name_fallback_to_username(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "dave",
+                    "profile": {"email": "dave@co.com", "display_name": "", "real_name": ""},
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U101")
+        assert resolved_id == "dave@co.com"
+        assert display_name == "dave"
+
+    @pytest.mark.asyncio
+    async def test_api_error_falls_back_gracefully(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("Slack API error"))
+        resolved_id, display_name = await resolve_slack_user(client, "UFAIL")
+        assert resolved_id == "UFAIL"
+        assert display_name is None
+
+    @pytest.mark.asyncio
+    async def test_error_results_are_cached(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("Slack API error"))
+        await resolve_slack_user(client, "UFAIL2")
+        await resolve_slack_user(client, "UFAIL2")
+        client.users_info.assert_called_once()

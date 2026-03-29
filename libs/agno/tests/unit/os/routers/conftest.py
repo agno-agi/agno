@@ -11,6 +11,16 @@ from fastapi.testclient import TestClient
 SIGNING_SECRET = "test-secret"
 
 
+@pytest.fixture(autouse=True)
+def _clear_slack_user_cache():
+    """Clear the resolve_slack_user cache between tests to prevent cross-contamination."""
+    from agno.os.interfaces.slack.helpers import _user_cache
+
+    _user_cache.clear()
+    yield
+    _user_cache.clear()
+
+
 def make_signed_request(client: TestClient, body: dict, signing_secret: str = SIGNING_SECRET):
     body_bytes = json.dumps(body).encode()
     timestamp = str(int(time.time()))
@@ -109,6 +119,20 @@ def make_async_client_mock(stream_mock=None):
     client.assistant_threads_setTitle = AsyncMock()
     client.assistant_threads_setSuggestedPrompts = AsyncMock()
     client.chat_stream = AsyncMock(return_value=stream_mock or make_stream_mock())
+    client.users_info = AsyncMock(
+        return_value={
+            "ok": True,
+            "user": {
+                "id": "U123",
+                "name": "testuser",
+                "profile": {
+                    "email": "test@example.com",
+                    "display_name": "Test User",
+                    "real_name": "Test User",
+                },
+            },
+        }
+    )
     return client
 
 

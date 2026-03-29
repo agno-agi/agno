@@ -11,6 +11,7 @@ from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
+    resolve_slack_user,
     send_slack_message_async,
     should_respond,
     upload_response_media_async,
@@ -160,6 +161,8 @@ def attach_routes(
             pass
 
         try:
+            resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -170,8 +173,9 @@ def attach_routes(
                 message_text = f"{notice}\n{message_text}"
 
             run_kwargs: Dict[str, Any] = {
-                "user_id": ctx["user"],
+                "user_id": resolved_user_id,
                 "session_id": session_id,
+                "metadata": {"user_name": display_name} if display_name else None,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
@@ -262,6 +266,8 @@ def attach_routes(
             except Exception:
                 pass
 
+            resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -275,8 +281,9 @@ def attach_routes(
                 "stream": True,
                 # Enables event-level chunks for task card and tool lifecycle rendering
                 "stream_events": True,
-                "user_id": ctx["user"],
+                "user_id": resolved_user_id,
                 "session_id": session_id,
+                "metadata": {"user_name": display_name} if display_name else None,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
