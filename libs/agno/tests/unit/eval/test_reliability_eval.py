@@ -154,6 +154,37 @@ def test_argument_validation_multiple_calls_any_match():
     assert "multiply" in result.passed_argument_checks
 
 
+def test_argument_validation_multiple_specs():
+    """List of specs: each spec must match at least one call."""
+    result = _run_eval(
+        agent_response=_make_response(
+            _make_tool_call("add", '{"a": 2, "b": 2}'),
+            _make_tool_call("add", '{"a": 3, "b": 3}'),
+        ),
+        expected_tool_calls=["add"],
+        expected_tool_call_arguments={
+            "add": [{"a": 2, "b": 2}, {"a": 3, "b": 3}],
+        },
+    )
+    assert result.eval_status == "PASSED"
+    assert "add" in result.passed_argument_checks
+
+
+def test_argument_validation_multiple_specs_one_missing():
+    """If one spec has no matching call, it fails."""
+    result = _run_eval(
+        agent_response=_make_response(
+            _make_tool_call("add", '{"a": 2, "b": 2}'),
+        ),
+        expected_tool_calls=["add"],
+        expected_tool_call_arguments={
+            "add": [{"a": 2, "b": 2}, {"a": 3, "b": 3}],
+        },
+    )
+    assert result.eval_status == "FAILED"
+    assert "add" in result.failed_argument_checks
+
+
 def test_argument_validation_none_arguments():
     """arguments=None should not crash."""
     tc = {"id": "call_1", "type": "function", "function": {"name": "multiply", "arguments": None}}

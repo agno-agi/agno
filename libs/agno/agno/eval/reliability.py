@@ -68,8 +68,10 @@ class ReliabilityEval:
     expected_tool_calls: Optional[List[str]] = None
     # When True, tool calls not in expected_tool_calls are allowed (subset matching)
     allow_additional_tool_calls: bool = False
-    # Expected arguments for specific tool calls: {"tool_name": {"arg_name": "expected_value"}}
-    expected_tool_call_arguments: Optional[Dict[str, Dict[str, Any]]] = None
+    # Expected arguments for specific tool calls
+    # Single check: {"multiply": {"a": 10, "b": 5}}
+    # Multiple checks: {"add": [{"a": 2, "b": 2}, {"a": 3, "b": 3}]}
+    expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None
     # Result of the evaluation
     result: Optional[ReliabilityResult] = None
 
@@ -140,12 +142,15 @@ class ReliabilityEval:
                     if expected_tool not in actual_tool_names:
                         missing_tool_calls.append(expected_tool)
 
-            # Check tool call arguments (partial match: at least one call must match)
+            # Check tool call arguments (partial match)
             if self.expected_tool_call_arguments:
-                for arg_tool_name, expected_args in self.expected_tool_call_arguments.items():
+                for arg_tool_name, expected_args_raw in self.expected_tool_call_arguments.items():
                     # Skip argument checks for tools already tracked as missing
                     if arg_tool_name in missing_tool_calls:
                         continue
+
+                    # Normalize: single dict becomes a one-element list
+                    arg_specs = expected_args_raw if isinstance(expected_args_raw, list) else [expected_args_raw]
 
                     matching_calls = [
                         tc
@@ -156,7 +161,8 @@ class ReliabilityEval:
                         failed_argument_checks.append(arg_tool_name)
                         continue
 
-                    any_match = False
+                    # Parse actual arguments from all matching calls
+                    parsed_args_list: List[Dict[str, Any]] = []
                     for tc in matching_calls:
                         func = tc.get("function")
                         actual_args_raw = func.get("arguments", "{}") if isinstance(func, dict) else "{}"
@@ -166,17 +172,21 @@ class ReliabilityEval:
                             )
                         except (json.JSONDecodeError, TypeError):
                             actual_args = {}
-
                         if not isinstance(actual_args, dict):
                             actual_args = {}
+                        parsed_args_list.append(actual_args)
 
-                        if all(
-                            key in actual_args and actual_args[key] == value for key, value in expected_args.items()
+                    # Each spec must match at least one call
+                    all_specs_matched = True
+                    for spec in arg_specs:
+                        if not any(
+                            all(key in actual and actual[key] == value for key, value in spec.items())
+                            for actual in parsed_args_list
                         ):
-                            any_match = True
+                            all_specs_matched = False
                             break
 
-                    if any_match:
+                    if all_specs_matched:
                         passed_argument_checks.append(arg_tool_name)
                     else:
                         failed_argument_checks.append(arg_tool_name)

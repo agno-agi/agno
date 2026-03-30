@@ -2018,7 +2018,7 @@ class AgentOSClient:
         expected_output: Optional[str] = None,
         expected_tool_calls: Optional[List[str]] = None,
         allow_additional_tool_calls: bool = False,
-        expected_tool_call_arguments: Optional[Dict[str, Dict[str, Any]]] = None,
+        expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None,
         num_iterations: int = 1,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
