@@ -52,6 +52,16 @@ def reciprocal_rank_fusion(
     return sorted_results
 
 
+# ChromaDB's SQLite backend has a limit on the number of SQL variables per
+# statement (SQLITE_MAX_VARIABLE_NUMBER, default 999).  Each document in a
+# collection.add/upsert call consumes several variables (id, embedding,
+# document text, plus one per metadata key).  When a single call contains
+# hundreds of documents the total easily exceeds the limit, causing:
+#   "(code: 1) too many SQL variables"
+# Batching the writes avoids this.
+_CHROMA_BATCH_SIZE = 100
+
+
 class ChromaDb(VectorDb):
     """
     ChromaDb class for managing vector operations with ChromaDB.
@@ -291,7 +301,14 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(docs), _CHROMA_BATCH_SIZE):
+                    end = i + _CHROMA_BATCH_SIZE
+                    self._collection.add(
+                        ids=ids[i:end],
+                        embeddings=docs_embeddings[i:end],
+                        documents=docs[i:end],
+                        metadatas=docs_metadata[i:end],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     async def async_insert(
@@ -390,7 +407,14 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(docs), _CHROMA_BATCH_SIZE):
+                    end = i + _CHROMA_BATCH_SIZE
+                    self._collection.add(
+                        ids=ids[i:end],
+                        embeddings=docs_embeddings[i:end],
+                        documents=docs[i:end],
+                        metadatas=docs_metadata[i:end],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
@@ -470,7 +494,14 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(docs), _CHROMA_BATCH_SIZE):
+                    end = i + _CHROMA_BATCH_SIZE
+                    self._collection.upsert(
+                        ids=ids[i:end],
+                        embeddings=docs_embeddings[i:end],
+                        documents=docs[i:end],
+                        metadatas=docs_metadata[i:end],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     async def _async_upsert(
@@ -571,7 +602,14 @@ class ChromaDb(VectorDb):
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                for i in range(0, len(docs), _CHROMA_BATCH_SIZE):
+                    end = i + _CHROMA_BATCH_SIZE
+                    self._collection.upsert(
+                        ids=ids[i:end],
+                        embeddings=docs_embeddings[i:end],
+                        documents=docs[i:end],
+                        metadatas=docs_metadata[i:end],
+                    )
                 log_debug(f"Committed {len(docs)} documents")
 
     async def async_upsert(
@@ -1264,8 +1302,9 @@ class ChromaDb(VectorDb):
                 log_info(f"No documents found with content_hash '{content_hash}'")
                 return False
 
-            # Delete all matching documents
-            collection.delete(ids=ids_to_delete)
+            # Delete in batches to avoid SQLite variable limit
+            for i in range(0, len(ids_to_delete), _CHROMA_BATCH_SIZE):
+                collection.delete(ids=ids_to_delete[i : i + _CHROMA_BATCH_SIZE])
             log_info(f"Deleted {len(ids_to_delete)} documents with content_hash '{content_hash}'")
             return True
         except Exception as e:
