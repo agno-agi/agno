@@ -43,6 +43,13 @@ class EvalRunInput(BaseModel):
 
     # Reliability eval specific fields
     expected_tool_calls: Optional[List[str]] = Field(None, description="Expected tool calls for reliability evaluation")
+    allow_additional_tool_calls: bool = Field(
+        False, description="When True, tool calls not in expected_tool_calls are allowed (subset matching)"
+    )
+    expected_tool_call_arguments: Optional[Dict[str, Dict[str, Any]]] = Field(
+        None,
+        description='Expected arguments for specific tool calls, e.g. {"tool_name": {"arg_name": "expected_value"}}',
+    )
 
 
 class EvalSchema(BaseModel):
