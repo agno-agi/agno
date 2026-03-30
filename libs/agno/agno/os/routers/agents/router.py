@@ -733,29 +733,29 @@ def get_agent_router(
                     ),
                 )
                 return run_response_obj.to_dict()
-            except ValueError as e:
+            except (ValueError, RuntimeError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
             except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
-        "/agents/{agent_id}/sessions/{session_id}/fork",
+        "/agents/{agent_id}/sessions/{session_id}/branch",
         tags=["Agents"],
-        operation_id="fork_agent_session",
-        summary="Fork Agent Session",
+        operation_id="branch_agent_session",
+        summary="Branch Agent Session",
         description=(
-            "Fork an existing session into a new independent session.\n\n"
+            "Branch an existing session into a new independent session.\n\n"
             "Copies all runs from the source session so the new session can continue "
             "the conversation independently. The original session is not modified."
         ),
         responses={
             200: {
-                "description": "Session forked successfully",
+                "description": "Session branched successfully",
                 "content": {
                     "application/json": {
                         "example": {
                             "session_id": "new-uuid",
-                            "forked_from": "original-session-id",
+                            "branched_from": "original-session-id",
                         }
                     }
                 },
@@ -765,11 +765,11 @@ def get_agent_router(
         },
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
-    async def fork_agent_session(
+    async def branch_agent_session(
         agent_id: str,
         session_id: str,
         request: Request,
-        user_id: Optional[str] = Form(None, description="User identifier for the new session"),
+        user_id: Optional[str] = Query(None, description="User performing the branch (must own the source session)"),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -779,10 +779,10 @@ def get_agent_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Session forking is not supported for remote agents")
+            raise HTTPException(status_code=400, detail="Session branching is not supported for remote agents")
 
         try:
-            new_session_id = await agent.afork_session(
+            new_session_id = await agent.abranch_session(
                 source_session_id=session_id,
                 user_id=user_id,
             )
@@ -792,7 +792,7 @@ def get_agent_router(
         return JSONResponse(
             content={
                 "session_id": new_session_id,
-                "forked_from": session_id,
+                "branched_from": session_id,
             },
             status_code=200,
         )

@@ -1,13 +1,13 @@
 """
-Regenerate and Fork
-====================
-Combine regenerate and fork to explore alternative responses
+Regenerate and Branch
+======================
+Combine regenerate and branch to explore alternative responses
 in a branched conversation.
 
 Workflow:
 1. Run a conversation
-2. Fork the session at a checkpoint
-3. Regenerate the last response in the forked session
+2. Branch the session at a checkpoint
+3. Regenerate the last response in the branched session
 4. Continue each branch independently
 """
 
@@ -31,7 +31,7 @@ agent = Agent(
 # Run Demo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    session_id = "regen-fork-demo"
+    session_id = "regen-branch-demo"
     user_id = "demo-user"
 
     # 1. Build a conversation
@@ -43,18 +43,18 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # 2. Fork the session before regenerating
-    forked_session = agent.fork_session(
+    # 2. Branch the session before regenerating
+    branched_session = agent.branch_session(
         source_session_id=session_id,
         user_id=user_id,
     )
-    print(f"\nForked to: {forked_session}")
+    print(f"\nBranched to: {branched_session}")
 
-    # 3. Regenerate in the forked session with different instructions
-    print("\n--- Regenerated response in forked session ---\n")
+    # 3. Regenerate in the branched session with different instructions
+    print("\n--- Regenerated response in branched session ---\n")
     response = agent.regenerate(
         additional_instructions="Focus on Go and Rust instead. Compare their ecosystems.",
-        session_id=forked_session,
+        session_id=branched_session,
         user_id=user_id,
         stream=False,
     )
@@ -69,11 +69,11 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # 5. Continue the forked session (different direction)
-    print("\n--- Continue forked session ---\n")
+    # 5. Continue the branched session (different direction)
+    print("\n--- Continue branched session ---\n")
     agent.print_response(
         "Which one has better async support?",
-        session_id=forked_session,
+        session_id=branched_session,
         user_id=user_id,
         stream=True,
     )

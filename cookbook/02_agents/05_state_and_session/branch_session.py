@@ -1,7 +1,7 @@
 """
-Fork Session
-=============
-Fork an agent session to branch the conversation into a new independent session.
+Branch Session
+===============
+Branch an agent session to create a new independent conversation.
 
 This is useful when you want to explore a different direction without
 losing the original conversation, or let multiple users continue from
@@ -28,7 +28,7 @@ agent = Agent(
 # Run Demo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    original_session = "fork-demo-original"
+    original_session = "branch-demo-original"
     user_id = "demo-user"
 
     # 1. Build up a conversation
@@ -46,15 +46,15 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # 2. Fork the session
-    new_session_id = agent.fork_session(
+    # 2. Branch the session
+    new_session_id = agent.branch_session(
         source_session_id=original_session,
         user_id=user_id,
     )
-    print(f"\nForked session: {original_session} -> {new_session_id}\n")
+    print(f"\nBranched session: {original_session} -> {new_session_id}\n")
 
-    # 3. Continue the forked session in a different direction
-    print("\n--- Continuing forked session (different direction) ---\n")
+    # 3. Continue the branched session in a different direction
+    print("\n--- Continuing branched session (different direction) ---\n")
     agent.print_response(
         "Actually, I changed my mind. Tell me about Osaka's street food scene instead.",
         session_id=new_session_id,

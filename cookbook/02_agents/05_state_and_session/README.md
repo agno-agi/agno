@@ -17,8 +17,8 @@ Examples for session state management, chat history, and session persistence.
 - `search_session_history.py` - Search and read previous sessions (two-step pattern).
 - `session_summary.py` - Enable session summaries for context compression.
 - `regenerate_response.py` - Regenerate the last agent response with optional instructions.
-- `fork_session.py` - Fork a session to branch conversations independently.
-- `regenerate_and_fork.py` - Combine regenerate and fork for exploring alternative responses.
+- `branch_session.py` - Branch a session to create independent conversations.
+- `regenerate_and_branch.py` - Combine regenerate and branch for exploring alternative responses.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
