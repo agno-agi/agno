@@ -65,11 +65,8 @@ async def test_session_id_namespaced_with_entity_id():
 
 
 @pytest.mark.asyncio
-async def test_user_id_resolved_to_email():
-    """user_id passed to arun should be the resolved email, not the raw Slack ID."""
-    from agno.os.interfaces.slack.helpers import _user_cache
-
-    _user_cache.clear()
+async def test_user_id_is_raw_slack_id_by_default():
+    """Without resolve_user_identity, user_id should be the raw Slack ID."""
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
     with (
@@ -98,16 +95,12 @@ async def test_user_id_resolved_to_email():
 
         call_kwargs = agent_mock.arun.call_args
         user_id = call_kwargs.kwargs.get("user_id") or call_kwargs[1].get("user_id")
-        # The conftest mock returns email "test@example.com"
-        assert user_id == "test@example.com"
+        assert user_id == "U456"
 
 
 @pytest.mark.asyncio
-async def test_user_name_passed_as_metadata():
-    """Display name should be passed as metadata so agents can use {user_name}."""
-    from agno.os.interfaces.slack.helpers import _user_cache
-
-    _user_cache.clear()
+async def test_user_id_resolved_to_email_when_opted_in():
+    """With resolve_user_identity=True, user_id should be the resolved email."""
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
     with (
@@ -115,7 +108,41 @@ async def test_user_name_passed_as_metadata():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False)
+        app = build_app(agent_mock, reply_to_mentions_only=False, resolve_user_identity=True)
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        body = {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "text": "hello",
+                "user": "U456",
+                "channel": "C123",
+                "ts": str(time.time()),
+            },
+        }
+        resp = make_signed_request(client, body)
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+
+        call_kwargs = agent_mock.arun.call_args
+        user_id = call_kwargs.kwargs.get("user_id") or call_kwargs[1].get("user_id")
+        assert user_id == "test@example.com"
+
+
+@pytest.mark.asyncio
+async def test_user_name_passed_as_metadata_when_opted_in():
+    """Display name should be passed as metadata when resolve_user_identity=True."""
+    agent_mock = make_agent_mock()
+    mock_slack = make_slack_mock()
+    with (
+        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
+    ):
+        app = build_app(agent_mock, reply_to_mentions_only=False, resolve_user_identity=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
@@ -136,15 +163,12 @@ async def test_user_name_passed_as_metadata():
 
         call_kwargs = agent_mock.arun.call_args
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
-        assert metadata == {"user_name": "Test User"}
+        assert metadata == {"user_name": "Test User", "user_email": "test@example.com"}
 
 
 @pytest.mark.asyncio
 async def test_bot_mention_stripped_from_message():
     """The bot's own @mention should be stripped from the message text."""
-    from agno.os.interfaces.slack.helpers import _user_cache
-
-    _user_cache.clear()
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock()
     with (
@@ -572,7 +596,7 @@ class TestRecipientUserId:
 
 class TestStreamingUserIsolation:
     @pytest.mark.asyncio
-    async def test_user_id_resolved_to_email(self):
+    async def test_user_id_resolved_to_email_when_opted_in(self):
         captured: Dict = {}
 
         async def _capturing_arun(*args, **kwargs):
@@ -591,7 +615,7 @@ class TestStreamingUserIsolation:
             patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
-            app = build_app(agent, streaming=True, reply_to_mentions_only=False)
+            app = build_app(agent, streaming=True, reply_to_mentions_only=False, resolve_user_identity=True)
             from fastapi.testclient import TestClient
 
             client = TestClient(app)
@@ -600,9 +624,8 @@ class TestStreamingUserIsolation:
             assert resp.status_code == 200
 
             await wait_for_call(mock_stream.stop)
-            # user_id should be resolved email from the mock, not raw Slack ID
             assert captured.get("user_id") == "test@example.com"
-            assert captured.get("metadata") == {"user_name": "Test User"}
+            assert captured.get("metadata") == {"user_name": "Test User", "user_email": "test@example.com"}
 
 
 class TestStreamingFallbacks:

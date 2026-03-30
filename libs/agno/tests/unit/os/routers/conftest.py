@@ -11,16 +11,6 @@ from fastapi.testclient import TestClient
 SIGNING_SECRET = "test-secret"
 
 
-@pytest.fixture(autouse=True)
-def _clear_slack_user_cache():
-    """Clear the resolve_slack_user cache between tests to prevent cross-contamination."""
-    from agno.os.interfaces.slack.helpers import _user_cache
-
-    _user_cache.clear()
-    yield
-    _user_cache.clear()
-
-
 def make_signed_request(client: TestClient, body: dict, signing_secret: str = SIGNING_SECRET):
     body_bytes = json.dumps(body).encode()
     timestamp = str(int(time.time()))

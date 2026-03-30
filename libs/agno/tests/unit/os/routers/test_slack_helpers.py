@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from agno.os.interfaces.slack.helpers import (
-    _user_cache,
     download_event_files_async,
     extract_event_context,
     member_name,
@@ -204,9 +203,6 @@ class TestStreamState:
 
 
 class TestResolveSlackUser:
-    def setup_method(self):
-        _user_cache.clear()
-
     @pytest.mark.asyncio
     async def test_returns_email_and_display_name(self):
         client = AsyncMock()
@@ -225,21 +221,6 @@ class TestResolveSlackUser:
         resolved_id, display_name = await resolve_slack_user(client, "U123")
         assert resolved_id == "ashpreet@example.com"
         assert display_name == "Ashpreet"
-
-    @pytest.mark.asyncio
-    async def test_cache_hit_skips_api_call(self):
-        client = AsyncMock()
-        client.users_info = AsyncMock(
-            return_value={
-                "user": {
-                    "name": "alice",
-                    "profile": {"email": "alice@co.com", "display_name": "Alice", "real_name": "Alice Smith"},
-                }
-            }
-        )
-        await resolve_slack_user(client, "U999")
-        await resolve_slack_user(client, "U999")
-        client.users_info.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_email_falls_back_to_slack_id(self):
@@ -293,15 +274,6 @@ class TestResolveSlackUser:
         resolved_id, display_name = await resolve_slack_user(client, "UFAIL")
         assert resolved_id == "UFAIL"
         assert display_name is None
-
-    @pytest.mark.asyncio
-    async def test_error_results_are_not_cached(self):
-        """Transient failures should retry on the next message, not be cached permanently."""
-        client = AsyncMock()
-        client.users_info = AsyncMock(side_effect=RuntimeError("Slack API error"))
-        await resolve_slack_user(client, "UFAIL2")
-        await resolve_slack_user(client, "UFAIL2")
-        assert client.users_info.call_count == 2
 
 
 # -- strip_bot_mention --

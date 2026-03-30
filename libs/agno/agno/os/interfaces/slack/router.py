@@ -66,6 +66,7 @@ def attach_routes(
     ssl: Optional[SSLContext] = None,
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
+    resolve_user_identity: bool = False,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -168,7 +169,11 @@ def attach_routes(
             pass
 
         try:
-            resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
+            # Resolve Slack user ID to email + display name when opted in
+            resolved_user_id = ctx["user"]
+            display_name = None
+            if resolve_user_identity:
+                resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
 
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
@@ -182,7 +187,7 @@ def attach_routes(
             run_kwargs: Dict[str, Any] = {
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name} if display_name else None,
+                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
@@ -278,7 +283,11 @@ def attach_routes(
             except Exception:
                 pass
 
-            resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
+            # Resolve Slack user ID to email + display name when opted in
+            resolved_user_id = ctx["user"]
+            display_name = None
+            if resolve_user_identity:
+                resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
 
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
@@ -295,7 +304,7 @@ def attach_routes(
                 "stream_events": True,
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name} if display_name else None,
+                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
