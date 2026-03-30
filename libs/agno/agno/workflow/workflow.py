@@ -1881,8 +1881,6 @@ class Workflow:
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        from agno.workflow.condition import Condition
-
                         step_on_error = (
                             getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
                         )
@@ -2607,8 +2605,6 @@ class Workflow:
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        from agno.workflow.condition import Condition
-
                         step_on_error = (
                             getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
                         )

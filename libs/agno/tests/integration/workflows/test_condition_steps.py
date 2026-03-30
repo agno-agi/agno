@@ -252,7 +252,8 @@ def test_condition_streaming(shared_db):
 
 
 def test_condition_error_handling(shared_db):
-    """Test condition error handling."""
+    """Test condition error handling with evaluator failure."""
+    from agno.workflow.types import OnError
 
     def failing_evaluator(_: StepInput) -> bool:
         raise ValueError("Evaluator failed")
@@ -260,7 +261,14 @@ def test_condition_error_handling(shared_db):
     workflow = Workflow(
         name="Error Condition",
         db=shared_db,
-        steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
+        steps=[
+            Condition(
+                name="failing_check",
+                evaluator=failing_evaluator,
+                steps=[research_step],
+                on_error=OnError.fail,  # Explicitly fail on error
+            )
+        ],
     )
 
     with pytest.raises(ValueError):
@@ -948,14 +956,12 @@ def success_step(step_input: StepInput) -> StepOutput:
 
 
 def test_condition_on_error_skip_default():
-    """Test that on_error='skip' logs error and breaks execution."""
-    from agno.workflow.types import OnError
-
+    """Test that on_error='skip' (default) logs error and breaks execution."""
     condition = Condition(
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.skip,  # Explicitly set to skip
+        # on_error defaults to OnError.skip
     )
     step_input = StepInput(input="test")
 

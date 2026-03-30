@@ -75,8 +75,8 @@ class Condition:
 
     Error Handling:
         The `on_error` field controls what happens when a sub-step within the condition fails:
-        - "fail" (default): Re-raise the exception, causing the entire workflow to fail
-        - "skip": Log the error, add it to results, and stop executing remaining sub-steps
+        - "skip" (default): Log the error, add it to results, and stop executing remaining sub-steps
+        - "fail": Re-raise the exception, causing the entire workflow to fail
         - "pause": Pause the workflow and allow user to decide (retry or skip) via HITL
     """
 
@@ -111,10 +111,10 @@ class Condition:
     # - "cancel": Cancel the workflow
     on_reject: Union[OnReject, str] = OnReject.else_branch
     # What to do when a sub-step encounters an error:
-    # - "fail" (default): Re-raise the exception, causing workflow to fail
-    # - "skip": Log error, add to results, and break execution
+    # - "skip" (default): Log error, add to results, and break execution
+    # - "fail": Re-raise the exception, causing workflow to fail
     # - "pause": Pause workflow and allow user to decide (retry or skip) via HITL
-    on_error: Union[OnError, str] = OnError.fail
+    on_error: Union[OnError, str] = OnError.skip
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
