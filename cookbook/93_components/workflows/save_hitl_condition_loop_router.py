@@ -33,24 +33,28 @@ db = PostgresDb(db_url=db_url)
 # Create Agents
 # ---------------------------------------------------------------------------
 analysis_agent = Agent(
+    id="hitl-analyst",
     name="Analyst",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Perform detailed data analysis.",
 )
 
 summary_agent = Agent(
+    id="hitl-summarizer",
     name="Summarizer",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Provide a quick summary of the data.",
 )
 
 research_agent = Agent(
+    id="hitl-researcher",
     name="Researcher",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Research the given topic thoroughly.",
 )
 
 writer_agent = Agent(
+    id="hitl-writer",
     name="Writer",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Write a report from the findings.",
@@ -67,6 +71,7 @@ def refine_analysis(step_input: StepInput) -> StepOutput:
 
 registry = Registry(
     name="HITL Components Registry",
+    agents=[analysis_agent, summary_agent, research_agent, writer_agent],
     functions=[refine_analysis],
 )
 

@@ -11,6 +11,7 @@ through to_dict / from_dict automatically.
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
+from agno.registry import Registry
 from agno.workflow import OnReject
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow, get_workflow_by_id
@@ -25,21 +26,32 @@ db = PostgresDb(db_url=db_url)
 # Create Agents
 # ---------------------------------------------------------------------------
 research_agent = Agent(
+    id="hitl-confirm-researcher",
     name="Researcher",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Research the given topic and provide key findings.",
 )
 
 processor_agent = Agent(
+    id="hitl-confirm-processor",
     name="Processor",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Process and validate the research data.",
 )
 
 writer_agent = Agent(
+    id="hitl-confirm-writer",
     name="Writer",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Write a summary report from processed research.",
+)
+
+# ---------------------------------------------------------------------------
+# Registry (required to resolve agents when loading from DB)
+# ---------------------------------------------------------------------------
+registry = Registry(
+    name="HITL Confirmation Registry",
+    agents=[research_agent, processor_agent, writer_agent],
 )
 
 # ---------------------------------------------------------------------------
@@ -85,6 +97,7 @@ if __name__ == "__main__":
     loaded_workflow = get_workflow_by_id(
         db=db,
         id="hitl-confirmation-workflow",
+        registry=registry,
     )
 
     if loaded_workflow is None:

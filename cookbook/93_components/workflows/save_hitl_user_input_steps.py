@@ -10,6 +10,7 @@ input, saving it to the database, and loading it back. The user_input_schema
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
+from agno.registry import Registry
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, UserInputField
 from agno.workflow.workflow import Workflow, get_workflow_by_id
@@ -24,6 +25,7 @@ db = PostgresDb(db_url=db_url)
 # Create Agents and Functions
 # ---------------------------------------------------------------------------
 content_agent = Agent(
+    id="hitl-input-content-gen",
     name="Content Generator",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=[
@@ -38,6 +40,15 @@ def format_output(step_input: StepInput) -> StepOutput:
     content = step_input.previous_step_content or "No content generated"
     return StepOutput(content=f"=== GENERATED CONTENT ===\n\n{content}\n\n=== END ===")
 
+
+# ---------------------------------------------------------------------------
+# Registry (required to resolve agents when loading from DB)
+# ---------------------------------------------------------------------------
+registry = Registry(
+    name="HITL User Input Registry",
+    agents=[content_agent],
+    functions=[format_output],
+)
 
 # ---------------------------------------------------------------------------
 # Create Workflow with HITL User Input
@@ -96,6 +107,7 @@ if __name__ == "__main__":
     loaded_workflow = get_workflow_by_id(
         db=db,
         id="hitl-user-input-workflow",
+        registry=registry,
     )
 
     if loaded_workflow is None:
