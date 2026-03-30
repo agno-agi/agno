@@ -359,10 +359,7 @@ class RunSchema(BaseModel):
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
-    fork_id: Optional[str] = Field(
-        None,
-        description="Source session ID this run was forked from. Null for runs created natively in this session.",
-    )
+    fork_id: Optional[str] = Field(None, description="Source session ID this run was forked from. ")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
@@ -428,10 +425,7 @@ class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
-    fork_id: Optional[str] = Field(
-        None,
-        description="Source session ID this run was forked from. Null for runs created natively in this session.",
-    )
+    fork_id: Optional[str] = Field(None, description="Source session ID this run was forked from.")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")

@@ -5230,7 +5230,6 @@ def branch_session_dispatch(
 
     now = int(time.time())
     new_session_id = str(uuid4())
-
     new_user_id = user_id or source_session.user_id
     branched_runs = copy.deepcopy(source_session.runs)
 
@@ -5307,7 +5306,6 @@ async def abranch_session_dispatch(
 
     now = int(time.time())
     new_session_id = str(uuid4())
-
     new_user_id = user_id or source_session.user_id
     branched_runs = copy.deepcopy(source_session.runs)
 
