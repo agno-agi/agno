@@ -948,12 +948,14 @@ def success_step(step_input: StepInput) -> StepOutput:
 
 
 def test_condition_on_error_skip_default():
-    """Test that on_error='skip' (default) logs error and breaks execution."""
+    """Test that on_error='skip' logs error and breaks execution."""
+    from agno.workflow.types import OnError
+
     condition = Condition(
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        # on_error defaults to OnError.skip
+        on_error=OnError.skip,  # Explicitly set to skip
     )
     step_input = StepInput(input="test")
 
@@ -1195,3 +1197,67 @@ def test_condition_on_error_in_else_branch():
     assert "failed" in result.steps[0].content
     # else branch should stop after failure
     assert "else branch" in result.content
+
+
+def test_condition_on_error_pause_in_workflow(shared_db):
+    """Test condition with on_error='pause' in a workflow."""
+    from agno.workflow.types import OnError
+
+    workflow = Workflow(
+        name="Test on_error pause",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="ConditionalStep",
+                evaluator=True,
+                steps=[failing_step, success_step],
+                on_error=OnError.pause,
+            ),
+            success_step,  # This should not execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    # Workflow should be paused
+    assert isinstance(response, WorkflowRunOutput)
+    assert response.status == RunStatus.paused
+    assert response.error_requirements is not None
+    assert len(response.error_requirements) == 1
+    assert response.error_requirements[0].step_name == "ConditionalStep"
+    assert "Node failed!" in response.error_requirements[0].error_message
+
+
+def test_condition_on_error_pause_direct():
+    """Test that on_error='pause' re-raises exception in direct execution."""
+    from agno.workflow.types import OnError
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.pause,
+    )
+    step_input = StepInput(input="test")
+
+    # Should re-raise the exception (same as fail)
+    with pytest.raises(ValueError, match="Node failed!"):
+        condition.execute(step_input)
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_pause_async():
+    """Test async condition with on_error='pause' re-raises exception."""
+    from agno.workflow.types import OnError
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.pause,
+    )
+    step_input = StepInput(input="test")
+
+    # Should re-raise the exception (same as fail)
+    with pytest.raises(ValueError, match="Node failed!"):
+        await condition.aexecute(step_input)

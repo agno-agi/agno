@@ -1881,13 +1881,19 @@ class Workflow:
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        from agno.workflow.condition import Condition
+
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2216,7 +2222,9 @@ class Workflow:
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error_exception
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2599,13 +2607,19 @@ class Workflow:
                         )
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        from agno.workflow.condition import Condition
+
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2959,7 +2973,9 @@ class Workflow:
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error_exception
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
