@@ -463,7 +463,14 @@ class Model(ABC):
             "stream": stream,
         }
 
-        cache_str = json.dumps(cache_data, sort_keys=True)
+        def _cache_default(obj: Any) -> Any:
+            if isinstance(obj, type):
+                return obj.__name__
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        cache_str = json.dumps(cache_data, sort_keys=True, default=_cache_default)
         return md5(cache_str.encode()).hexdigest()
 
     def _get_model_cache_file_path(self, cache_key: str) -> Path:
@@ -1917,7 +1924,13 @@ class Model(ABC):
         if model_response_delta.provider_data:
             if stream_data.response_provider_data is None:
                 stream_data.response_provider_data = {}
-            stream_data.response_provider_data.update(model_response_delta.provider_data)
+            # List-aware merge: extend lists (e.g. server_tool_blocks), replace scalars
+            for key, value in model_response_delta.provider_data.items():
+                existing = stream_data.response_provider_data.get(key)
+                if isinstance(existing, list) and isinstance(value, list):
+                    existing.extend(value)
+                else:
+                    stream_data.response_provider_data[key] = value
 
         # Update stream_data tool calls
         if model_response_delta.tool_calls is not None:
