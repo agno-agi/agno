@@ -344,6 +344,53 @@ async def workflow_response_streamer(
         return
 
 
+async def workflow_continue_response_streamer(
+    workflow: Workflow,
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    step_requirements: Optional[List[Any]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    **kwargs: Any,
+) -> AsyncGenerator:
+    try:
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
+        run_response = workflow.acontinue_run(  # type: ignore
+            run_id=run_id,
+            session_id=session_id,
+            step_requirements=step_requirements,
+            stream=True,
+            stream_events=True,
+            **kwargs,
+        )
+
+        async for run_response_chunk in run_response:
+            yield format_sse_event(run_response_chunk)  # type: ignore
+
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = WorkflowErrorEvent(
+            error=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = WorkflowErrorEvent(
+            error=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+        return
+
+
 def get_websocket_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -738,6 +785,126 @@ def get_workflow_router(
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+
+    @router.post(
+        "/workflows/{workflow_id}/runs/{run_id}/continue",
+        tags=["Workflows"],
+        operation_id="continue_workflow_run",
+        response_model_exclude_none=True,
+        summary="Continue Workflow Run",
+        description=(
+            "Continue a paused workflow run with resolved requirements.\n\n"
+            "**Use Cases:**\n"
+            "- Resume after step-level HITL (confirmation, user input, router selection)\n"
+            "- Resume after executor-level HITL (agent/team tool confirmation within a step)\n\n"
+            "**Requirements Parameter:**\n"
+            "JSON string containing the resolved step requirements."
+        ),
+        responses={
+            200: {
+                "description": "Workflow run continued successfully",
+                "content": {
+                    "text/event-stream": {"example": 'event: StepCompleted\ndata: {"step_name": "step1"}\n\n'},
+                },
+            },
+            400: {"description": "Invalid JSON in requirements field", "model": BadRequestResponse},
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+            409: {
+                "description": "Run is not paused. Only PAUSED runs can be continued.",
+            },
+        },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+    )
+    async def continue_workflow_run(
+        workflow_id: str,
+        run_id: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        requirements: str = Form("", description="JSON string of resolved step requirements"),
+        session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
+        user_id: Optional[str] = Form(None, description="User identifier"),
+        stream: bool = Form(True, description="Enable streaming responses via SSE"),
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            session_id = request.state.session_id
+
+        # Parse the JSON requirements string
+        try:
+            requirements_data = json.loads(requirements) if requirements else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in requirements field")
+
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        if isinstance(workflow, RemoteWorkflow):
+            raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
+
+        if session_id is None or session_id == "":
+            log_warning("Continuing workflow run without session_id. This might lead to unexpected behavior.")
+
+        # Fetch existing run and validate it's paused
+        existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        if existing_run is not None:
+            is_paused = getattr(existing_run, "is_paused", False)
+            if not is_paused:
+                status = getattr(existing_run, "status", None)
+                _status_to_detail = {
+                    RunStatus.running: "run is already running",
+                    RunStatus.completed: "run is already completed",
+                    RunStatus.error: "run is already errored",
+                    RunStatus.cancelled: "run is already cancelled",
+                    RunStatus.pending: "run is already pending",
+                }
+                detail = _status_to_detail.get(
+                    status,  # type: ignore[arg-type]
+                    f"run is not paused (status={getattr(status, 'value', status)})",
+                )
+                raise HTTPException(status_code=409, detail=detail)
+
+        # Deserialize step requirements if provided
+        step_requirements = None
+        if requirements_data:
+            try:
+                from agno.workflow.types import StepRequirement
+
+                step_requirements = [StepRequirement.from_dict(req) for req in requirements_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure for requirements: {str(e)}")
+
+        if stream:
+            return StreamingResponse(
+                workflow_continue_response_streamer(
+                    workflow,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    step_requirements=step_requirements,
+                    background_tasks=background_tasks,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            try:
+                run_response = await workflow.acontinue_run(
+                    run_id=run_id,
+                    session_id=session_id,
+                    step_requirements=step_requirements,
+                    stream=False,
+                    background_tasks=background_tasks,
+                )
+                return run_response.to_dict()
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/cancel",

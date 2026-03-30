@@ -360,6 +360,11 @@ class StepOutput:
 
     stop: bool = False
 
+    # Executor HITL: indicates the step's agent/team is paused for tool-level HITL
+    is_paused: bool = False
+    # Internal reference to the paused RunOutput/TeamRunOutput (not serialized)
+    _executor_run_response: Optional[Any] = None
+
     steps: Optional[List["StepOutput"]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -390,6 +395,7 @@ class StepOutput:
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
+            "is_paused": self.is_paused,
         }
 
         # Add nested steps if they exist
@@ -437,6 +443,7 @@ class StepOutput:
             success=data.get("success", True),
             error=data.get("error"),
             stop=data.get("stop", False),
+            is_paused=data.get("is_paused", False),
             steps=steps,
         )
 
@@ -623,6 +630,16 @@ class StepRequirement:
     # The step input that was prepared before pausing
     step_input: Optional["StepInput"] = None
 
+    # Executor HITL fields (for agent/team tool-level pauses within a step)
+    requires_executor_input: bool = False
+    executor_requirements: Optional[List[Any]] = None  # List of RunRequirement dicts
+    executor_agent_id: Optional[str] = None
+    executor_agent_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[str] = None  # "agent" or "team"
+    # Internal reference to the paused RunOutput/TeamRunOutput (not serialized)
+    _executor_run_response: Optional[Any] = None
+
     def confirm(self) -> None:
         """Confirm the step execution"""
         self.confirmed = True
@@ -754,6 +771,11 @@ class StepRequirement:
         return self.selected_choices is None or len(self.selected_choices) == 0
 
     @property
+    def needs_executor_resolution(self) -> bool:
+        """Check if this requirement needs executor (agent/team) HITL resolution"""
+        return self.requires_executor_input and self.executor_requirements is not None
+
+    @property
     def is_resolved(self) -> bool:
         """Check if this requirement has been resolved"""
         if self.requires_confirmation and self.confirmed is None:
@@ -762,6 +784,8 @@ class StepRequirement:
             return False
         if self.requires_route_selection and self.needs_route_selection:
             return False
+        # Executor HITL requirements are resolved externally via continue_run routing
+        # so we don't check them here - they are always "pending" until routed back
         return True
 
     def to_dict(self) -> Dict[str, Any]:
@@ -791,6 +815,16 @@ class StepRequirement:
             result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
         if self.step_input is not None:
             result["step_input"] = self.step_input.to_dict()
+
+        # Executor HITL fields
+        if self.requires_executor_input:
+            result["requires_executor_input"] = self.requires_executor_input
+            result["executor_requirements"] = self.executor_requirements
+            result["executor_agent_id"] = self.executor_agent_id
+            result["executor_agent_name"] = self.executor_agent_name
+            result["executor_run_id"] = self.executor_run_id
+            result["executor_type"] = self.executor_type
+
         return result
 
     @classmethod
@@ -822,6 +856,12 @@ class StepRequirement:
             allow_multiple_selections=data.get("allow_multiple_selections", False),
             selected_choices=data.get("selected_choices"),
             step_input=step_input,
+            requires_executor_input=data.get("requires_executor_input", False),
+            executor_requirements=data.get("executor_requirements"),
+            executor_agent_id=data.get("executor_agent_id"),
+            executor_agent_name=data.get("executor_agent_name"),
+            executor_run_id=data.get("executor_run_id"),
+            executor_type=data.get("executor_type"),
         )
 
 

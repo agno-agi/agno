@@ -56,6 +56,7 @@ from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     RouterPausedEvent,
     StepErrorEvent,
+    StepExecutorPausedEvent,
     StepOutputEvent,
     StepPausedEvent,
     WorkflowCancelledEvent,
@@ -1912,6 +1913,19 @@ class Workflow:
                             # Default behavior: re-raise the exception
                             raise
 
+                    # Check if executor (agent/team) is paused for tool-level HITL
+                    if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                        step_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.paused_step_index = i
+                        workflow_run_response.paused_step_name = step_name
+                        workflow_run_response.step_requirements = [step_req]
+                        workflow_run_response.step_results = collected_step_outputs
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+                        return workflow_run_response
+
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2146,6 +2160,40 @@ class Workflow:
                             # Handle events
                             if isinstance(event, StepOutput):
                                 step_output = event
+
+                                # Check if executor is paused for tool-level HITL
+                                if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                                    step_req = step._create_executor_step_requirement(
+                                        i, step_output._executor_run_response
+                                    )
+                                    workflow_run_response.status = RunStatus.paused
+                                    workflow_run_response.paused_step_index = i
+                                    workflow_run_response.paused_step_name = step_name
+                                    workflow_run_response.step_requirements = [step_req]
+                                    workflow_run_response.step_results = collected_step_outputs
+                                    # Emit executor paused event
+                                    yield StepExecutorPausedEvent(
+                                        run_id=workflow_run_response.run_id or "",
+                                        workflow_name=workflow_run_response.workflow_name or "",
+                                        workflow_id=workflow_run_response.workflow_id or "",
+                                        session_id=workflow_run_response.session_id or "",
+                                        step_name=step_name,
+                                        step_index=i,
+                                        step_id=getattr(step, "step_id", None),
+                                        executor_agent_id=step_req.executor_agent_id,
+                                        executor_agent_name=step_req.executor_agent_name,
+                                        executor_run_id=step_req.executor_run_id,
+                                        executor_type=step_req.executor_type,
+                                        executor_requirements=step_req.executor_requirements,
+                                    )
+                                    self._update_session_metrics(
+                                        session=session, workflow_run_response=workflow_run_response
+                                    )
+                                    session.upsert_run(run=workflow_run_response)
+                                    self.save_session(session=session)
+                                    yield workflow_run_response
+                                    return
+
                                 collected_step_outputs.append(step_output)
 
                                 # Update the workflow-level previous_step_outputs dictionary
@@ -2635,6 +2683,24 @@ class Workflow:
                             # Default behavior: re-raise the exception
                             raise
 
+                    # Check if executor (agent/team) is paused for tool-level HITL
+                    if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                        step_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.paused_step_index = i
+                        workflow_run_response.paused_step_name = step_name
+                        workflow_run_response.step_requirements = [step_req]
+                        workflow_run_response.step_results = collected_step_outputs
+                        self._update_session_metrics(
+                            session=workflow_session, workflow_run_response=workflow_run_response
+                        )
+                        workflow_session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=workflow_session)
+                        else:
+                            self.save_session(session=workflow_session)
+                        return workflow_run_response
+
                     # Check for cancellation after step execution
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2886,6 +2952,42 @@ class Workflow:
 
                             if isinstance(event, StepOutput):
                                 step_output = event
+
+                                # Check if executor is paused for tool-level HITL
+                                if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                                    step_req = step._create_executor_step_requirement(
+                                        i, step_output._executor_run_response
+                                    )
+                                    workflow_run_response.status = RunStatus.paused
+                                    workflow_run_response.paused_step_index = i
+                                    workflow_run_response.paused_step_name = step_name
+                                    workflow_run_response.step_requirements = [step_req]
+                                    workflow_run_response.step_results = collected_step_outputs
+                                    yield StepExecutorPausedEvent(
+                                        run_id=workflow_run_response.run_id or "",
+                                        workflow_name=workflow_run_response.workflow_name or "",
+                                        workflow_id=workflow_run_response.workflow_id or "",
+                                        session_id=workflow_run_response.session_id or "",
+                                        step_name=step_name,
+                                        step_index=i,
+                                        step_id=getattr(step, "step_id", None),
+                                        executor_agent_id=step_req.executor_agent_id,
+                                        executor_agent_name=step_req.executor_agent_name,
+                                        executor_run_id=step_req.executor_run_id,
+                                        executor_type=step_req.executor_type,
+                                        executor_requirements=step_req.executor_requirements,
+                                    )
+                                    self._update_session_metrics(
+                                        session=workflow_session, workflow_run_response=workflow_run_response
+                                    )
+                                    workflow_session.upsert_run(run=workflow_run_response)
+                                    if self._has_async_db():
+                                        await self.asave_session(session=workflow_session)
+                                    else:
+                                        self.save_session(session=workflow_session)
+                                    yield workflow_run_response
+                                    return
+
                                 collected_step_outputs.append(step_output)
 
                                 # Update the workflow-level previous_step_outputs dictionary
@@ -4406,8 +4508,16 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all step requirements are resolved
-        if run_response.active_step_requirements:
+        # Check for executor HITL requirements (these bypass normal resolution checks)
+        executor_step_req = None
+        if run_response.step_requirements:
+            for step_req in run_response.step_requirements:
+                if step_req.requires_executor_input:
+                    executor_step_req = step_req
+                    break
+
+        # Validate that all step requirements are resolved (skip for executor HITL)
+        if not executor_step_req and run_response.active_step_requirements:
             unresolved = [req.step_name for req in run_response.active_step_requirements]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
@@ -4512,6 +4622,10 @@ class Workflow:
         # Note: We do NOT modify step.requires_confirmation directly as that would
         # mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
+
+        # Pass executor requirement through for routing back to the paused agent/team
+        if executor_step_req:
+            kwargs["executor_step_requirement"] = executor_step_req
 
         # Resume execution
         session_id = run_response.session_id or self.session_id
@@ -4639,6 +4753,47 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Handle executor HITL - route requirements back to paused agent/team
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    step_output = self._route_executor_requirements(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                    )
+
+                    if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                        # Executor still paused (chained HITL) - re-pause workflow
+                        new_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.paused_step_index = i
+                        workflow_run_response.paused_step_name = step_name
+                        workflow_run_response.step_requirements = [new_req]
+                        workflow_run_response.step_results = collected_step_outputs
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+                        return workflow_run_response
+
+                    # Executor completed - continue with result
+                    if workflow_run_response is not None and hasattr(step, "_store_executor_response"):
+                        self._store_continue_executor_response(workflow_run_response, step_output)
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+                    kwargs["executor_step_requirement"] = None
+                    continue
 
                 # Handle Condition with on_reject="else" - execute else branch directly
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -4840,6 +4995,19 @@ class Workflow:
                         # Default behavior: re-raise the exception
                         raise
 
+                # Check if executor (agent/team) is paused for tool-level HITL
+                if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                    step_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.paused_step_index = i
+                    workflow_run_response.paused_step_name = step_name
+                    workflow_run_response.step_requirements = [step_req]
+                    workflow_run_response.step_results = collected_step_outputs
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                    return workflow_run_response
+
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 previous_step_outputs[step_name] = step_output
@@ -4887,6 +5055,298 @@ class Workflow:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
+
+    def _route_executor_requirements(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+    ) -> "StepOutput":
+        """Route resolved requirements back to a paused executor (agent/team) within a step.
+
+        This is analogous to _route_requirements_to_members in teams.
+        """
+        from agno.run.requirement import RunRequirement
+
+        executor = getattr(step, "agent", None) or getattr(step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(step, 'name', 'unknown')}' has no agent or team executor")
+
+        executor_response = step_req._executor_run_response
+
+        # Fallback: try to find the paused run in step_executor_runs
+        if executor_response is None and workflow_run_response.step_executor_runs:
+            for run in workflow_run_response.step_executor_runs:
+                if getattr(run, "run_id", None) == step_req.executor_run_id:
+                    executor_response = run
+                    break
+
+        if executor_response is None:
+            raise ValueError(f"Could not find paused executor run {step_req.executor_run_id}")
+
+        # Deserialize and apply resolved requirements
+        requirements = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Apply resolved requirements to the executor_response so continue_run picks them up
+        # (agent continue_run uses run_response.tools when run_response is passed directly)
+        if requirements:
+            executor_response.requirements = requirements
+            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+            if updated_tools and getattr(executor_response, "tools", None):
+                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                executor_response.tools = [
+                    updated_tools_map.get(tool.tool_call_id, tool) for tool in executor_response.tools
+                ]
+            elif updated_tools:
+                executor_response.tools = updated_tools
+
+        # Call executor's continue_run
+        continued_response = executor.continue_run(
+            run_response=executor_response,
+            requirements=requirements,
+        )
+
+        # Process into StepOutput
+        step_output = step._process_step_output(continued_response)
+
+        if hasattr(continued_response, "is_paused") and continued_response.is_paused:
+            step_output.is_paused = True
+            step_output._executor_run_response = continued_response
+
+        return step_output
+
+    def _route_executor_requirements_stream(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+        stream_executor_events: bool = True,
+        step_index: Optional[int] = None,
+    ) -> Iterator[Union["WorkflowRunOutputEvent", "StepOutput"]]:
+        """Streaming variant: Route resolved requirements back to a paused executor.
+
+        Yields streaming events (token chunks) from the executor, then yields a StepOutput.
+        """
+        from agno.run.agent import RunOutput
+        from agno.run.requirement import RunRequirement
+        from agno.run.team import TeamRunOutput
+
+        executor = getattr(step, "agent", None) or getattr(step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(step, 'name', 'unknown')}' has no agent or team executor")
+
+        executor_response = step_req._executor_run_response
+
+        # Fallback: try to find the paused run in step_executor_runs
+        if executor_response is None and workflow_run_response.step_executor_runs:
+            for run in workflow_run_response.step_executor_runs:
+                if getattr(run, "run_id", None) == step_req.executor_run_id:
+                    executor_response = run
+                    break
+
+        if executor_response is None:
+            raise ValueError(f"Could not find paused executor run {step_req.executor_run_id}")
+
+        # Deserialize and apply resolved requirements
+        requirements: list = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Apply resolved requirements to the executor_response so continue_run picks them up
+        if requirements:
+            executor_response.requirements = requirements
+            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+            if updated_tools and getattr(executor_response, "tools", None):
+                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                executor_response.tools = [
+                    updated_tools_map.get(tool.tool_call_id, tool) for tool in executor_response.tools
+                ]
+            elif updated_tools:
+                executor_response.tools = updated_tools
+
+        # Call executor's continue_run with streaming
+        response_stream = executor.continue_run(
+            run_response=executor_response,
+            requirements=requirements,
+            stream=True,
+            yield_run_output=True,
+        )
+
+        # Iterate over stream events, yielding them for the user to see
+        active_executor_run_response = None
+        for event in response_stream:
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                active_executor_run_response = event
+                continue
+            # Yield executor events so the workflow stream can forward them
+            if stream_executor_events:
+                enriched_event = step._enrich_event_with_context(event, workflow_run_response, step_index)
+                yield enriched_event
+
+        # Process the final response into a StepOutput
+        if active_executor_run_response is None:
+            step_output = StepOutput(content="")
+        else:
+            step_output = step._process_step_output(active_executor_run_response)
+            if hasattr(active_executor_run_response, "is_paused") and active_executor_run_response.is_paused:
+                step_output.is_paused = True
+                step_output._executor_run_response = active_executor_run_response
+
+        yield step_output
+
+    async def _aroute_executor_requirements_stream(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+        stream_executor_events: bool = True,
+        step_index: Optional[int] = None,
+    ) -> AsyncIterator[Union["WorkflowRunOutputEvent", "StepOutput"]]:
+        """Async streaming variant: Route resolved requirements back to a paused executor."""
+        from agno.run.agent import RunOutput
+        from agno.run.requirement import RunRequirement
+        from agno.run.team import TeamRunOutput
+
+        executor = getattr(step, "agent", None) or getattr(step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(step, 'name', 'unknown')}' has no agent or team executor")
+
+        executor_response = step_req._executor_run_response
+
+        if executor_response is None and workflow_run_response.step_executor_runs:
+            for run in workflow_run_response.step_executor_runs:
+                if getattr(run, "run_id", None) == step_req.executor_run_id:
+                    executor_response = run
+                    break
+
+        if executor_response is None:
+            raise ValueError(f"Could not find paused executor run {step_req.executor_run_id}")
+
+        # Deserialize and apply resolved requirements
+        requirements: list = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        if requirements:
+            executor_response.requirements = requirements
+            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+            if updated_tools and getattr(executor_response, "tools", None):
+                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                executor_response.tools = [
+                    updated_tools_map.get(tool.tool_call_id, tool) for tool in executor_response.tools
+                ]
+            elif updated_tools:
+                executor_response.tools = updated_tools
+
+        # Call executor's acontinue_run with streaming
+        response_stream = await executor.acontinue_run(
+            run_response=executor_response,
+            requirements=requirements,
+            stream=True,
+            yield_run_output=True,
+        )
+
+        active_executor_run_response = None
+        async for event in response_stream:
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                active_executor_run_response = event
+                continue
+            if stream_executor_events:
+                enriched_event = step._enrich_event_with_context(event, workflow_run_response, step_index)
+                yield enriched_event
+
+        if active_executor_run_response is None:
+            step_output = StepOutput(content="")
+        else:
+            step_output = step._process_step_output(active_executor_run_response)
+            if hasattr(active_executor_run_response, "is_paused") and active_executor_run_response.is_paused:
+                step_output.is_paused = True
+                step_output._executor_run_response = active_executor_run_response
+
+        yield step_output
+
+    async def _aroute_executor_requirements(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+    ) -> "StepOutput":
+        """Async variant: Route resolved requirements back to a paused executor."""
+        from agno.run.requirement import RunRequirement
+
+        executor = getattr(step, "agent", None) or getattr(step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(step, 'name', 'unknown')}' has no agent or team executor")
+
+        executor_response = step_req._executor_run_response
+
+        # Fallback: try to find the paused run in step_executor_runs
+        if executor_response is None and workflow_run_response.step_executor_runs:
+            for run in workflow_run_response.step_executor_runs:
+                if getattr(run, "run_id", None) == step_req.executor_run_id:
+                    executor_response = run
+                    break
+
+        if executor_response is None:
+            raise ValueError(f"Could not find paused executor run {step_req.executor_run_id}")
+
+        # Deserialize and apply resolved requirements
+        requirements = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Apply resolved requirements to the executor_response so continue_run picks them up.
+        # Agent's continue_run_dispatch only processes `requirements` when `run_response is None`,
+        # so we must update the response's tools directly (mirrors agent._run.py logic).
+        if requirements:
+            executor_response.requirements = requirements
+            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+            if updated_tools and getattr(executor_response, "tools", None):
+                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                executor_response.tools = [
+                    updated_tools_map.get(tool.tool_call_id, tool) for tool in executor_response.tools
+                ]
+            elif updated_tools:
+                executor_response.tools = updated_tools
+
+        # Call executor's acontinue_run
+        continued_response = await executor.acontinue_run(
+            run_response=executor_response,
+            requirements=requirements,
+        )
+
+        # Process into StepOutput
+        step_output = step._process_step_output(continued_response)
+
+        if hasattr(continued_response, "is_paused") and continued_response.is_paused:
+            step_output.is_paused = True
+            step_output._executor_run_response = continued_response
+
+        return step_output
+
+    def _store_continue_executor_response(
+        self, workflow_run_response: WorkflowRunOutput, step_output: "StepOutput"
+    ) -> None:
+        """Store executor response from continue_run in workflow run response."""
+        pass  # step_executor_runs is already populated by the initial run
 
     def _continue_execute_stream(
         self,
@@ -4943,6 +5403,71 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Handle executor HITL - route requirements back to paused agent/team (streaming)
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    step_output = None
+                    for event in self._route_executor_requirements_stream(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                        stream_executor_events=self.stream_executor_events,
+                        step_index=i,
+                    ):
+                        if isinstance(event, StepOutput):
+                            step_output = event
+                        else:
+                            # Forward streaming events (token chunks) to the caller
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    if step_output is None:
+                        step_output = StepOutput(content="")
+
+                    if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                        new_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.paused_step_index = i
+                        workflow_run_response.paused_step_name = step_name
+                        workflow_run_response.step_requirements = [new_req]
+                        workflow_run_response.step_results = collected_step_outputs
+                        yield StepExecutorPausedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name or "",
+                            workflow_id=workflow_run_response.workflow_id or "",
+                            session_id=workflow_run_response.session_id or "",
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            executor_agent_id=new_req.executor_agent_id,
+                            executor_agent_name=new_req.executor_agent_name,
+                            executor_run_id=new_req.executor_run_id,
+                            executor_type=new_req.executor_type,
+                            executor_requirements=new_req.executor_requirements,
+                        )
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        self.save_session(session=session)
+                        yield workflow_run_response
+                        return
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+                    kwargs["executor_step_requirement"] = None
+                    continue
 
                 # Handle Condition with on_reject="else" - execute else branch directly (streaming)
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -5196,6 +5721,37 @@ class Workflow:
 
                         if isinstance(event, StepOutput):
                             step_output = event
+
+                            # Check if executor is paused for tool-level HITL
+                            if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                                step_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                                workflow_run_response.status = RunStatus.paused
+                                workflow_run_response.paused_step_index = i
+                                workflow_run_response.paused_step_name = step_name
+                                workflow_run_response.step_requirements = [step_req]
+                                workflow_run_response.step_results = collected_step_outputs
+                                yield StepExecutorPausedEvent(
+                                    run_id=workflow_run_response.run_id or "",
+                                    workflow_name=workflow_run_response.workflow_name or "",
+                                    workflow_id=workflow_run_response.workflow_id or "",
+                                    session_id=workflow_run_response.session_id or "",
+                                    step_name=step_name,
+                                    step_index=i,
+                                    step_id=getattr(step, "step_id", None),
+                                    executor_agent_id=step_req.executor_agent_id,
+                                    executor_agent_name=step_req.executor_agent_name,
+                                    executor_run_id=step_req.executor_run_id,
+                                    executor_type=step_req.executor_type,
+                                    executor_requirements=step_req.executor_requirements,
+                                )
+                                self._update_session_metrics(
+                                    session=session, workflow_run_response=workflow_run_response
+                                )
+                                session.upsert_run(run=workflow_run_response)
+                                self.save_session(session=session)
+                                yield workflow_run_response
+                                return
+
                             collected_step_outputs.append(step_output)
                             previous_step_outputs[step_name] = step_output
 
@@ -5437,8 +5993,16 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all requirements are resolved
-        if run_response.active_step_requirements:
+        # Check for executor HITL requirements (these bypass normal resolution checks)
+        executor_step_req = None
+        if run_response.step_requirements:
+            for step_req in run_response.step_requirements:
+                if step_req.requires_executor_input:
+                    executor_step_req = step_req
+                    break
+
+        # Validate that all requirements are resolved (skip for executor HITL)
+        if not executor_step_req and run_response.active_step_requirements:
             unresolved = [req.step_name for req in run_response.active_step_requirements]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
@@ -5543,6 +6107,10 @@ class Workflow:
         # Note: We do NOT modify step.requires_confirmation directly as that would
         # mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
+
+        # Pass executor requirement through for routing back to the paused agent/team
+        if executor_step_req:
+            kwargs["executor_step_requirement"] = executor_step_req
 
         # Resume execution
         session_id = run_response.session_id or self.session_id
@@ -5669,6 +6237,45 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Handle executor HITL - route requirements back to paused agent/team (async)
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    step_output = await self._aroute_executor_requirements(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                    )
+
+                    if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                        new_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.paused_step_index = i
+                        workflow_run_response.paused_step_name = step_name
+                        workflow_run_response.step_requirements = [new_req]
+                        workflow_run_response.step_results = collected_step_outputs
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=session)
+                        else:
+                            self.save_session(session=session)
+                        return workflow_run_response
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+                    kwargs["executor_step_requirement"] = None
+                    continue
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -5858,6 +6465,22 @@ class Workflow:
                     else:
                         raise
 
+                # Check if executor (agent/team) is paused for tool-level HITL
+                if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                    step_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                    workflow_run_response.status = RunStatus.paused
+                    workflow_run_response.paused_step_index = i
+                    workflow_run_response.paused_step_name = step_name
+                    workflow_run_response.step_requirements = [step_req]
+                    workflow_run_response.step_results = collected_step_outputs
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=session)
+                    else:
+                        self.save_session(session=session)
+                    return workflow_run_response
+
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 previous_step_outputs[step_name] = step_output
@@ -5961,6 +6584,73 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Handle executor HITL - route requirements back to paused agent/team (async streaming)
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    step_output = None
+                    async for event in self._aroute_executor_requirements_stream(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                        stream_executor_events=self.stream_executor_events,
+                        step_index=i,
+                    ):
+                        if isinstance(event, StepOutput):
+                            step_output = event
+                        else:
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    if step_output is None:
+                        step_output = StepOutput(content="")
+
+                    if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                        new_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                        workflow_run_response.status = RunStatus.paused
+                        workflow_run_response.paused_step_index = i
+                        workflow_run_response.paused_step_name = step_name
+                        workflow_run_response.step_requirements = [new_req]
+                        workflow_run_response.step_results = collected_step_outputs
+                        yield StepExecutorPausedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name or "",
+                            workflow_id=workflow_run_response.workflow_id or "",
+                            session_id=workflow_run_response.session_id or "",
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            executor_agent_id=new_req.executor_agent_id,
+                            executor_agent_name=new_req.executor_agent_name,
+                            executor_run_id=new_req.executor_run_id,
+                            executor_type=new_req.executor_type,
+                            executor_requirements=new_req.executor_requirements,
+                        )
+                        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                        session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=session)
+                        else:
+                            self.save_session(session=session)
+                        yield workflow_run_response
+                        return
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+                    kwargs["executor_step_requirement"] = None
+                    continue
 
                 # Handle Condition with on_reject="else" - execute else branch directly (async streaming)
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -6216,6 +6906,40 @@ class Workflow:
 
                         if isinstance(event, StepOutput):
                             step_output = event
+
+                            # Check if executor is paused for tool-level HITL
+                            if getattr(step_output, "is_paused", False) and isinstance(step, Step):
+                                step_req = step._create_executor_step_requirement(i, step_output._executor_run_response)
+                                workflow_run_response.status = RunStatus.paused
+                                workflow_run_response.paused_step_index = i
+                                workflow_run_response.paused_step_name = step_name
+                                workflow_run_response.step_requirements = [step_req]
+                                workflow_run_response.step_results = collected_step_outputs
+                                yield StepExecutorPausedEvent(
+                                    run_id=workflow_run_response.run_id or "",
+                                    workflow_name=workflow_run_response.workflow_name or "",
+                                    workflow_id=workflow_run_response.workflow_id or "",
+                                    session_id=workflow_run_response.session_id or "",
+                                    step_name=step_name,
+                                    step_index=i,
+                                    step_id=getattr(step, "step_id", None),
+                                    executor_agent_id=step_req.executor_agent_id,
+                                    executor_agent_name=step_req.executor_agent_name,
+                                    executor_run_id=step_req.executor_run_id,
+                                    executor_type=step_req.executor_type,
+                                    executor_requirements=step_req.executor_requirements,
+                                )
+                                self._update_session_metrics(
+                                    session=session, workflow_run_response=workflow_run_response
+                                )
+                                session.upsert_run(run=workflow_run_response)
+                                if self._has_async_db():
+                                    await self.asave_session(session=session)
+                                else:
+                                    self.save_session(session=session)
+                                yield workflow_run_response
+                                return
+
                             collected_step_outputs.append(step_output)
                             previous_step_outputs[step_name] = step_output
 
