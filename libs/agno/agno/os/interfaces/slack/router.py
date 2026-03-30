@@ -11,8 +11,10 @@ from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
+    resolve_slack_user,
     send_slack_message_async,
     should_respond,
+    strip_bot_mention,
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.security import verify_slack_signature
@@ -135,17 +137,23 @@ def attach_routes(
             elif streaming:
                 background_tasks.add_task(_stream_slack_response, data)
             else:
-                background_tasks.add_task(_process_slack_event, event)
+                background_tasks.add_task(_process_slack_event, data)
 
         return SlackEventResponse(status="ok")
 
-    async def _process_slack_event(event: dict):
+    async def _process_slack_event(data: dict):
+        event = data["event"]
         if not should_respond(event, reply_to_mentions_only):
             return
 
         from slack_sdk.web.async_client import AsyncWebClient
 
         ctx = extract_event_context(event)
+
+        # Strip the bot's own @mention from the message text
+        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id)
+
         # Namespace with entity_id so threads don't collide across mounted interfaces
         session_id = f"{entity_id}:{ctx['thread_id']}"
         async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
@@ -160,6 +168,8 @@ def attach_routes(
             pass
 
         try:
+            resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -170,8 +180,9 @@ def attach_routes(
                 message_text = f"{notice}\n{message_text}"
 
             run_kwargs: Dict[str, Any] = {
-                "user_id": ctx["user"],
+                "user_id": resolved_user_id,
                 "session_id": session_id,
+                "metadata": {"user_name": display_name} if display_name else None,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
@@ -235,6 +246,11 @@ def attach_routes(
             return
 
         ctx = extract_event_context(event)
+
+        # Strip the bot's own @mention from the message text
+        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id)
+
         session_id = f"{entity_id}:{ctx['thread_id']}"
 
         # Not consistently placed across Slack event envelope shapes
@@ -262,6 +278,8 @@ def attach_routes(
             except Exception:
                 pass
 
+            resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -275,8 +293,9 @@ def attach_routes(
                 "stream": True,
                 # Enables event-level chunks for task card and tool lifecycle rendering
                 "stream_events": True,
-                "user_id": ctx["user"],
+                "user_id": resolved_user_id,
                 "session_id": session_id,
+                "metadata": {"user_name": display_name} if display_name else None,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
