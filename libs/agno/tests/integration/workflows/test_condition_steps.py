@@ -252,7 +252,7 @@ def test_condition_streaming(shared_db):
 
 
 def test_condition_error_handling(shared_db):
-    """Test condition error handling with evaluator failure."""
+    """Test condition error handling """
 
     def failing_evaluator(_: StepInput) -> bool:
         raise ValueError("Evaluator failed")
