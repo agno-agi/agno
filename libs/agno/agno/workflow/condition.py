@@ -17,7 +17,7 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import OnError, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 # Constants for condition branch identifiers
 CONDITION_BRANCH_IF = "if"
@@ -72,6 +72,12 @@ class Condition:
             - "else" (default): Execute `else_steps` if provided, otherwise skip
             - "skip": Skip the entire condition (both branches)
             - "cancel": Cancel the workflow
+
+    Error Handling:
+        The `on_error` field controls what happens when a sub-step within the condition fails:
+        - "skip" (default): Log the error, add it to results, and stop executing remaining sub-steps
+        - "fail": Re-raise the exception, causing the entire workflow to fail
+        - "pause": Pause for user decision (not yet implemented)
     """
 
     steps: WorkflowSteps
@@ -104,6 +110,11 @@ class Condition:
     # - "skip": Skip entire condition (both branches)
     # - "cancel": Cancel the workflow
     on_reject: Union[OnReject, str] = OnReject.else_branch
+    # What to do when a sub-step encounters an error:
+    # - "skip" (default): Log error, add to results, and break execution
+    # - "fail": Re-raise the exception
+    # - "pause": Pause for user decision (not yet implemented)
+    on_error: Union[OnError, str] = OnError.skip
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -130,6 +141,7 @@ class Condition:
         result["requires_confirmation"] = self.requires_confirmation
         result["confirmation_message"] = self.confirmation_message
         result["on_reject"] = str(self.on_reject)
+        result["on_error"] = str(self.on_error)
 
         return result
 
@@ -221,6 +233,7 @@ class Condition:
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             on_reject=data.get("on_reject", OnReject.skip),
+            on_error=data.get("on_error", OnError.skip),
         )
 
     def _prepare_steps(self):
@@ -527,6 +540,11 @@ class Condition:
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} failed: {e}")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail:
+                    raise
+
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -750,6 +768,11 @@ class Condition:
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} streaming failed: {e}")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail:
+                    raise
+
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -918,6 +941,10 @@ class Condition:
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} async failed: {e}")
+
+                if self.on_error == OnError.fail:
+                    raise
+
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1142,6 +1169,11 @@ class Condition:
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} async streaming failed: {e}")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail:
+                    raise
+
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
