@@ -260,14 +260,7 @@ def test_condition_error_handling(shared_db):
     workflow = Workflow(
         name="Error Condition",
         db=shared_db,
-        steps=[
-            Condition(
-                name="failing_check",
-                evaluator=failing_evaluator,
-                steps=[research_step],
-                on_error=OnError.fail,  # Explicitly fail on error
-            )
-        ],
+        steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
     )
 
     with pytest.raises(ValueError):
