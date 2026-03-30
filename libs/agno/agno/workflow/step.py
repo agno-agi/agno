@@ -995,7 +995,7 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        if store_executor_outputs and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None and active_executor_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
@@ -1564,7 +1564,7 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        if store_executor_outputs and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None and active_executor_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
