@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("wikipedia")
+
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 
 
