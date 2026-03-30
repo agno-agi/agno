@@ -333,4 +333,4 @@ class TestStripBotMention:
 
     def test_mention_in_middle(self):
         result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH")
-        assert result == "hey  what's up"
+        assert result == "hey what's up"

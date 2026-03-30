@@ -63,7 +63,9 @@ def strip_bot_mention(text: str, bot_user_id: Optional[str]) -> str:
         return text
     import re
 
-    return re.sub(rf"<@{re.escape(bot_user_id)}>", "", text).strip()
+    # Replace the mention and any surrounding whitespace with a single space,
+    # then strip leading/trailing whitespace left at the edges.
+    return re.sub(rf"\s*<@{re.escape(bot_user_id)}>\s*", " ", text).strip()
 
 
 # Module-level cache: Slack user ID -> (resolved_user_id, display_name or None)
