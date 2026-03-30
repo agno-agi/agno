@@ -114,7 +114,7 @@ def get_mcp_server(
     )  # type: ignore
     async def get_sessions(
         db_id: str,
-        session_type: str = "agent",
+        session_type: Optional[str] = None,
         component_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -124,7 +124,7 @@ def get_mcp_server(
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type)
+        session_type_enum = SessionType(session_type) if session_type else None
         if isinstance(db, RemoteDb):
             result = await db.get_sessions(
                 session_type=session_type_enum,

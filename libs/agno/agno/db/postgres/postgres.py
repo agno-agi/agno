@@ -874,6 +874,17 @@ class PostgresDb(BaseDb):
                 return [TeamSession.from_dict(record) for record in session]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
+            elif session_type is None:
+                sessions: List[Session] = []
+                for record in session:
+                    st = record.get("session_type")
+                    if st == SessionType.AGENT.value:
+                        sessions.append(AgentSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.TEAM.value:
+                        sessions.append(TeamSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.WORKFLOW.value:
+                        sessions.append(WorkflowSession.from_dict(record))  # type: ignore
+                return sessions
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 

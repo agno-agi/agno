@@ -414,10 +414,23 @@ class SurrealDb(BaseDb):
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
-        if session_type is None:
-            raise ValueError("session_type is required when deserialize=True")
+        if session_type is not None:
+            return deserialize_sessions(session_type, list(sessions_raw))
 
-        return deserialize_sessions(session_type, list(sessions_raw))
+        result_sessions: List[Session] = []
+        for raw in sessions_raw:
+            st = raw.get("session_type")
+            if st == SessionType.AGENT.value:
+                s = deserialize_session(SessionType.AGENT, raw)
+            elif st == SessionType.TEAM.value:
+                s = deserialize_session(SessionType.TEAM, raw)
+            elif st == SessionType.WORKFLOW.value:
+                s = deserialize_session(SessionType.WORKFLOW, raw)
+            else:
+                continue
+            if s is not None:
+                result_sessions.append(s)
+        return result_sessions
 
     def rename_session(
         self,

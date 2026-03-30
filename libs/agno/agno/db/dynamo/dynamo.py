@@ -340,7 +340,7 @@ class DynamoDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -357,18 +357,27 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
-            # Build filter expression for additional filters
             filter_expression = None
-            expression_attribute_names = {}
-            expression_attribute_values = {":session_type": {"S": session_type.value}}
+            expression_attribute_names: Dict[str, str] = {}
+            expression_attribute_values: Dict[str, Any] = {}
+
+            if session_type is not None:
+                session_type_filter = "#session_type = :session_type"
+                expression_attribute_names["#session_type"] = "session_type"
+                expression_attribute_values[":session_type"] = {"S": session_type.value}
+                filter_expression = session_type_filter
 
             if user_id is not None:
-                filter_expression = "#user_id = :user_id"
+                user_filter = "#user_id = :user_id"
                 expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
+                if filter_expression:
+                    filter_expression += f" AND {user_filter}"
+                else:
+                    filter_expression = user_filter
 
-            if component_id:
-                # Map component_id to the appropriate field based on session type
+            if component_id and session_type is not None:
+                component_filter = None
                 if session_type == SessionType.AGENT:
                     component_filter = "#agent_id = :component_id"
                     expression_attribute_names["#agent_id"] = "agent_id"
@@ -395,29 +404,44 @@ class DynamoDb(BaseDb):
                 else:
                     filter_expression = name_filter
 
-            # Use GSI query for session_type
-            query_kwargs = {
-                "TableName": table_name,
-                "IndexName": "session_type-created_at-index",
-                "KeyConditionExpression": "session_type = :session_type",
-                "ExpressionAttributeValues": expression_attribute_values,
-            }
-            if filter_expression:
-                query_kwargs["FilterExpression"] = filter_expression
-            if expression_attribute_names:
-                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
-
-            # Apply sorting
-            if sort_by == "created_at":
-                query_kwargs["ScanIndexForward"] = sort_order != "desc"  # type: ignore
-
-            # Apply limit at DynamoDB level
-            if limit and not page:
-                query_kwargs["Limit"] = limit  # type: ignore
-
             items = []
-            response = self.client.query(**query_kwargs)
-            items.extend(response.get("Items", []))
+            if session_type is not None:
+                query_kwargs: Dict[str, Any] = {
+                    "TableName": table_name,
+                    "IndexName": "session_type-created_at-index",
+                    "KeyConditionExpression": "session_type = :session_type",
+                    "ExpressionAttributeValues": expression_attribute_values,
+                }
+                if filter_expression:
+                    non_key_filters = filter_expression.replace("#session_type = :session_type", "").strip()
+                    if non_key_filters.startswith("AND "):
+                        non_key_filters = non_key_filters[4:]
+                    if non_key_filters:
+                        query_kwargs["FilterExpression"] = non_key_filters
+                if expression_attribute_names:
+                    expression_attribute_names.pop("#session_type", None)
+                    if expression_attribute_names:
+                        query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+                if sort_by == "created_at":
+                    query_kwargs["ScanIndexForward"] = sort_order != "desc"
+
+                if limit and not page:
+                    query_kwargs["Limit"] = limit
+
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+            else:
+                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+                if filter_expression:
+                    scan_kwargs["FilterExpression"] = filter_expression
+                if expression_attribute_names:
+                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+                if expression_attribute_values:
+                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values
+
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
 
             # Handle pagination
             while "LastEvaluatedKey" in response:

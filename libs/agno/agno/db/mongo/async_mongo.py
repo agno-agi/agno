@@ -721,15 +721,16 @@ class AsyncMongoDb(AsyncBaseDb):
 
             sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for record in sessions_raw:
-                if session_type == SessionType.AGENT.value:
+                st = session_type if session_type is not None else record.get("session_type")
+                if st in (SessionType.AGENT, SessionType.AGENT.value):
                     agent_session = AgentSession.from_dict(record)
                     if agent_session is not None:
                         sessions.append(agent_session)
-                elif session_type == SessionType.TEAM.value:
+                elif st in (SessionType.TEAM, SessionType.TEAM.value):
                     team_session = TeamSession.from_dict(record)
                     if team_session is not None:
                         sessions.append(team_session)
-                elif session_type == SessionType.WORKFLOW.value:
+                elif st in (SessionType.WORKFLOW, SessionType.WORKFLOW.value):
                     workflow_session = WorkflowSession.from_dict(record)
                     if workflow_session is not None:
                         sessions.append(workflow_session)

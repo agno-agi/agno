@@ -156,7 +156,7 @@ class InMemoryDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -212,9 +212,10 @@ class InMemoryDb(BaseDb):
                     stored_name = session_data.get("session_data", {}).get("session_name", "")
                     if session_name.lower() not in stored_name.lower():
                         continue
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                if session_data.get("session_type") != session_type_value:
-                    continue
+                if session_type is not None:
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    if session_data.get("session_type") != session_type_value:
+                        continue
 
                 filtered_sessions.append(deepcopy(session_data))
 
@@ -239,6 +240,17 @@ class InMemoryDb(BaseDb):
                 return [TeamSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(session) for session in filtered_sessions]  # type: ignore
+            elif session_type is None:
+                sessions: List[Session] = []
+                for record in filtered_sessions:
+                    st = record.get("session_type")
+                    if st == SessionType.AGENT.value:
+                        sessions.append(AgentSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.TEAM.value:
+                        sessions.append(TeamSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.WORKFLOW.value:
+                        sessions.append(WorkflowSession.from_dict(record))  # type: ignore
+                return sessions
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 

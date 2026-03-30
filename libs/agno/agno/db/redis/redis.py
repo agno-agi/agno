@@ -458,6 +458,17 @@ class RedisDb(BaseDb):
                 return [TeamSession.from_dict(record) for record in sessions]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(record) for record in sessions]  # type: ignore
+            elif session_type is None:
+                deserialized: List[Session] = []
+                for record in sessions:
+                    st = record.get("session_type")
+                    if st == SessionType.AGENT.value:
+                        deserialized.append(AgentSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.TEAM.value:
+                        deserialized.append(TeamSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.WORKFLOW.value:
+                        deserialized.append(WorkflowSession.from_dict(record))  # type: ignore
+                return deserialized
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
