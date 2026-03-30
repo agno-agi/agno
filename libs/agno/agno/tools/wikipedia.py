@@ -53,7 +53,7 @@ class WikipediaTools(Toolkit):
         :return: Relevant documents from wikipedia.
         """
         try:
-            import wikipedia  # noqa: F401
+            import wikipedia
             from wikipedia.exceptions import DisambiguationError, PageError
         except ImportError:
             raise ImportError(
