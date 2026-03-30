@@ -2141,6 +2141,12 @@ class Model(ABC):
         function_call_output: str = ""
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
+            # RunContentEvent/TeamRunContentEvent items are intermediate streaming
+            # display tokens.  We buffer them separately so that clean final output
+            # (yielded as a plain string by delegate_task_to_member after the
+            # streaming loop) can take precedence.
+            _streaming_token_output: str = ""
+            _clean_output: str = ""
             try:
                 for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
@@ -2149,19 +2155,18 @@ class Model(ABC):
                         or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
                     ):
-                        # We only capture content events for output accumulation
+                        # Buffer streaming content tokens separately; do NOT add to
+                        # function_call_output yet — clean output may supersede them.
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
+                                _streaming_token_output += item.content.model_dump_json()
                             else:
-                                # Capture output
-                                function_call_output += item.content or ""
+                                _streaming_token_output += item.content or ""
 
                             if function_call.function.show_result and item.content is not None:
                                 yield ModelResponse(content=item.content)
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
@@ -2170,21 +2175,28 @@ class Model(ABC):
                         if isinstance(item, WorkflowCompletedEvent):
                             if item.content is not None:
                                 if isinstance(item.content, BaseModel):
-                                    function_call_output += item.content.model_dump_json()
+                                    _clean_output += item.content.model_dump_json()
                                 else:
-                                    function_call_output += str(item.content)
+                                    _clean_output += str(item.content)
 
                         # Yield the event itself to bubble it up
                         yield item
 
                     else:
-                        function_call_output += str(item)
+                        # Plain string — this is the clean final output from tools
+                        # like delegate_task_to_member (yielded after the streaming loop).
+                        _clean_output += str(item)
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
+
             except Exception as e:
                 log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                 function_call.error = str(e)
                 function_call_success = False
+
+            # Prefer clean structured output; fall back to streaming tokens only
+            # when no clean output was produced (e.g. a simple streaming tool).
+            function_call_output = _clean_output if _clean_output else _streaming_token_output
 
             # For generators, re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
@@ -2669,6 +2681,9 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
+            # Buffer streaming display tokens separately; prefer clean final output.
+            _streaming_token_output: str = ""
+            _clean_output: str = ""
 
             try:
                 async for item in function_call.result:
@@ -2679,20 +2694,19 @@ class Model(ABC):
                         + tuple(get_args(TeamRunOutputEvent))
                         + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
-                        # We only capture content events
+                        # Buffer streaming display tokens; do NOT add to the final
+                        # function_call_output yet — clean output may supersede them.
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
+                                _streaming_token_output += item.content.model_dump_json()
                             else:
-                                # Capture output
-                                function_call_output += item.content or ""
+                                _streaming_token_output += item.content or ""
 
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
@@ -2701,18 +2715,22 @@ class Model(ABC):
                             if isinstance(item, WorkflowCompletedEvent):
                                 if item.content is not None:
                                     if isinstance(item.content, BaseModel):
-                                        function_call_output += item.content.model_dump_json()
+                                        _clean_output += item.content.model_dump_json()
                                     else:
-                                        function_call_output += str(item.content)
+                                        _clean_output += str(item.content)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
 
-                    # Yield custom events emitted by the tool
+                    # Plain string — clean final output from delegate_task_to_member
                     else:
-                        function_call_output += str(item)
+                        _clean_output += str(item)
                         if function_call.function.show_result and item is not None:
                             await event_queue.put(ModelResponse(content=str(item)))
+
+                # Prefer clean structured output; fall back to streaming tokens only
+                # when no clean output was produced (e.g. a simple streaming tool).
+                function_call_output = _clean_output if _clean_output else _streaming_token_output
 
                 # Store the final output for this generator
                 async_generator_outputs[generator_id] = (result, function_call_output, None)
