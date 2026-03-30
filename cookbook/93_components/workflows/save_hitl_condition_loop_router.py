@@ -73,6 +73,7 @@ registry = Registry(
     name="HITL Components Registry",
     agents=[analysis_agent, summary_agent, research_agent, writer_agent],
     functions=[refine_analysis],
+    dbs=[db],
 )
 
 

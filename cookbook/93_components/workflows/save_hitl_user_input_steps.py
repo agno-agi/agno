@@ -48,6 +48,7 @@ registry = Registry(
     name="HITL User Input Registry",
     agents=[content_agent],
     functions=[format_output],
+    dbs=[db],
 )
 
 # ---------------------------------------------------------------------------

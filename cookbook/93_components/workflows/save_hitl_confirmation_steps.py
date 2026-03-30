@@ -52,6 +52,7 @@ writer_agent = Agent(
 registry = Registry(
     name="HITL Confirmation Registry",
     agents=[research_agent, processor_agent, writer_agent],
+    dbs=[db],
 )
 
 # ---------------------------------------------------------------------------
