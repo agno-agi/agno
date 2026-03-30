@@ -635,33 +635,36 @@ def _get_delegate_task_function(
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
-        if not stream:
-            try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    content = member_agent_run_response.content.strip()  # type: ignore
-                    if len(content) > 0:
-                        yield content
+        # Yield the clean final output from the member run for both streaming and
+        # non-streaming paths.  When stream=True the loop above only yielded
+        # RunOutputEvent items for display; the tool-call result must still be
+        # the member's structured content (not the concatenated streaming tokens).
+        try:
+            if member_agent_run_response.content is None and (  # type: ignore
+                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
+            ):
+                yield "No response from the member agent."
+            elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                content = member_agent_run_response.content.strip()  # type: ignore
+                if len(content) > 0:
+                    yield content
 
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
-                        tool_str = ""
-                        for tool in member_agent_run_response.tools:  # type: ignore
-                            if tool.result:
-                                tool_str += f"{tool.result},"
-                        yield tool_str.rstrip(",")
+                # If the content is empty but we have tool calls
+                elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
+                    tool_str = ""
+                    for tool in member_agent_run_response.tools:  # type: ignore
+                        if tool.result:
+                            tool_str += f"{tool.result},"
+                    yield tool_str.rstrip(",")
 
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
+            elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
+            else:
+                import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-            except Exception as e:
-                yield str(e)
+                yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+        except Exception as e:
+            yield str(e)
 
         # Afterward, switch back to the team logger
         use_team_logger()
@@ -774,30 +777,33 @@ def _get_delegate_task_function(
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
-        if not stream:
-            try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
+        # Yield the clean final output from the member run for both streaming and
+        # non-streaming paths.  When stream=True the loop above only yielded
+        # RunOutputEvent items for display; the tool-call result must still be
+        # the member's structured content (not the concatenated streaming tokens).
+        try:
+            if member_agent_run_response.content is None and (  # type: ignore
+                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
+            ):
+                yield "No response from the member agent."
+            elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
+                    yield member_agent_run_response.content  # type: ignore
+
+                # If the content is empty but we have tool calls
+                elif (
+                    member_agent_run_response.tools is not None  # type: ignore
+                    and len(member_agent_run_response.tools) > 0  # type: ignore
                 ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                        yield member_agent_run_response.content  # type: ignore
+                    yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
+            elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
+            else:
+                import json
 
-                    # If the content is empty but we have tool calls
-                    elif (
-                        member_agent_run_response.tools is not None  # type: ignore
-                        and len(member_agent_run_response.tools) > 0  # type: ignore
-                    ):
-                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
-
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-            except Exception as e:
-                yield str(e)
+                yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+        except Exception as e:
+            yield str(e)
 
         # Afterward, switch back to the team logger
         use_team_logger()
