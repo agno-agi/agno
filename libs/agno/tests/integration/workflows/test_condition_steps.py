@@ -13,7 +13,7 @@ from agno.run.workflow import (
 )
 from agno.workflow import Condition, Parallel, Workflow
 from agno.workflow.cel import CEL_AVAILABLE
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import OnError, StepInput, StepOutput
 
 
 # Helper functions
@@ -253,7 +253,6 @@ def test_condition_streaming(shared_db):
 
 def test_condition_error_handling(shared_db):
     """Test condition error handling with evaluator failure."""
-    from agno.workflow.types import OnError
 
     def failing_evaluator(_: StepInput) -> bool:
         raise ValueError("Evaluator failed")
@@ -978,7 +977,6 @@ def test_condition_on_error_skip_default():
 
 def test_condition_on_error_fail_raises_exception():
     """Test that on_error='fail' re-raises the exception."""
-    from agno.workflow.types import OnError
 
     condition = Condition(
         name="ConditionalStep",
@@ -1023,7 +1021,6 @@ def test_condition_on_error_skip_in_workflow(shared_db):
 
 def test_condition_on_error_fail_in_workflow(shared_db):
     """Test condition with on_error='fail' in a workflow."""
-    from agno.workflow.types import OnError
 
     workflow = Workflow(
         name="Test on_error fail",
@@ -1066,7 +1063,6 @@ async def test_condition_on_error_skip_async():
 @pytest.mark.asyncio
 async def test_condition_on_error_fail_async():
     """Test async condition with on_error='fail'."""
-    from agno.workflow.types import OnError
 
     condition = Condition(
         name="ConditionalStep",
@@ -1151,7 +1147,6 @@ async def test_condition_on_error_skip_async_streaming():
 
 def test_condition_on_error_applies_to_all_execution_methods():
     """Test that on_error setting is respected across all execution methods."""
-    from agno.workflow.types import OnError
 
     # Test with on_error=fail - should raise in all execution modes
     condition_fail = Condition(
@@ -1183,7 +1178,6 @@ def test_condition_on_error_applies_to_all_execution_methods():
 
 def test_condition_on_error_in_else_branch():
     """Test that on_error applies to else_steps as well."""
-    from agno.workflow.types import OnError
 
     condition = Condition(
         name="ConditionalStep",
@@ -1207,7 +1201,6 @@ def test_condition_on_error_in_else_branch():
 
 def test_condition_on_error_pause_in_workflow(shared_db):
     """Test condition with on_error='pause' in a workflow."""
-    from agno.workflow.types import OnError
 
     workflow = Workflow(
         name="Test on_error pause",
@@ -1236,7 +1229,6 @@ def test_condition_on_error_pause_in_workflow(shared_db):
 
 def test_condition_on_error_pause_direct():
     """Test that on_error='pause' re-raises exception in direct execution."""
-    from agno.workflow.types import OnError
 
     condition = Condition(
         name="ConditionalStep",
@@ -1254,7 +1246,6 @@ def test_condition_on_error_pause_direct():
 @pytest.mark.asyncio
 async def test_condition_on_error_pause_async():
     """Test async condition with on_error='pause' re-raises exception."""
-    from agno.workflow.types import OnError
 
     condition = Condition(
         name="ConditionalStep",
