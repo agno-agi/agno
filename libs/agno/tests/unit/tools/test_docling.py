@@ -29,8 +29,8 @@ def _build_mock_result(
     document = Mock()
     document.export_to_markdown.return_value = markdown
     document.export_to_text.return_value = text
-    document.export_to_html.side_effect = (
-        lambda *args, **kwargs: html_split_page if kwargs.get("split_page_view") else html
+    document.export_to_html.side_effect = lambda *args, **kwargs: (
+        html_split_page if kwargs.get("split_page_view") else html
     )
     document.export_to_dict.return_value = {"title": "Docling"}
     document.export_to_doctags.return_value = doctags

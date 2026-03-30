@@ -69,7 +69,7 @@ class SchedulerTools(Toolkit):
             self.get_schedule_runs,
         ]
 
-        async_tools = [
+        async_tools: List[tuple[Callable[..., Any], str]] = [
             (self.acreate_schedule, "create_schedule"),
             (self.alist_schedules, "list_schedules"),
             (self.aget_schedule, "get_schedule"),
@@ -88,10 +88,17 @@ class SchedulerTools(Toolkit):
                 "When a user asks you to do something on a recurring basis (daily, weekly, etc.), "
                 "convert their request into a cron expression and create a schedule. "
                 "Common cron patterns: '0 9 * * *' (daily at 9am), '0 9 * * 1' (every Monday at 9am), "
-                "'0 */6 * * *' (every 6 hours), '0 9 * * 1-5' (weekdays at 9am)."
+                "'0 */6 * * *' (every 6 hours), '0 9 * * 1-5' (weekdays at 9am). "
+                "When creating schedules for run endpoints (ending in /runs), you MUST include a "
+                '\'message\' field in the payload, e.g. {"message": "Run the daily health check"}.'
             ),
             **kwargs,
         )
+
+    @staticmethod
+    def _is_run_endpoint(endpoint: str, method: str) -> bool:
+        """Check if the endpoint targets an agent/team/workflow run route."""
+        return method.upper() == "POST" and endpoint.rstrip("/").endswith("/runs")
 
     # ------------------------------------------------------------------
     # Sync tools
@@ -132,12 +139,23 @@ class SchedulerTools(Toolkit):
             except json.JSONDecodeError:
                 return json.dumps({"error": "Invalid JSON in payload parameter"})
 
+        # Run endpoints require a "message" field in the payload
+        resolved_method = method or self.default_method
+        if self._is_run_endpoint(resolved_endpoint, resolved_method):
+            if not resolved_payload or "message" not in resolved_payload:
+                return json.dumps(
+                    {
+                        "error": "Schedules targeting run endpoints require a 'message' field in the payload. "
+                        'Provide payload with at least: {"message": "your prompt here"}'
+                    }
+                )
+
         try:
             schedule = self.manager.create(
                 name=name,
                 cron=cron,
                 endpoint=resolved_endpoint,
-                method=method or self.default_method,
+                method=resolved_method,
                 description=description,
                 payload=resolved_payload,
                 timezone=timezone or self.default_timezone,
@@ -353,12 +371,23 @@ class SchedulerTools(Toolkit):
             except json.JSONDecodeError:
                 return json.dumps({"error": "Invalid JSON in payload parameter"})
 
+        # Run endpoints require a "message" field in the payload
+        resolved_method = method or self.default_method
+        if self._is_run_endpoint(resolved_endpoint, resolved_method):
+            if not resolved_payload or "message" not in resolved_payload:
+                return json.dumps(
+                    {
+                        "error": "Schedules targeting run endpoints require a 'message' field in the payload. "
+                        'Provide payload with at least: {"message": "your prompt here"}'
+                    }
+                )
+
         try:
             schedule = await self.manager.acreate(
                 name=name,
                 cron=cron,
                 endpoint=resolved_endpoint,
-                method=method or self.default_method,
+                method=resolved_method,
                 description=description,
                 payload=resolved_payload,
                 timezone=timezone or self.default_timezone,
