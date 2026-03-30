@@ -293,6 +293,10 @@ class Groq(Model):
         """
         Send a chat completion request to the Groq API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
@@ -331,6 +335,10 @@ class Groq(Model):
         """
         Sends an asynchronous chat completion request to the Groq API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
@@ -369,6 +377,10 @@ class Groq(Model):
         """
         Send a streaming chat completion request to the Groq API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             assistant_message.metrics.start_timer()
 
@@ -407,6 +419,9 @@ class Groq(Model):
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
 
         try:
             assistant_message.metrics.start_timer()
@@ -466,7 +481,7 @@ class Groq(Model):
                 }
             else:
                 if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
+                    tool_call_entry["function"]["name"] = _function_name
                 if _function_arguments:
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
