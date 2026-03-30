@@ -69,7 +69,7 @@ class SchedulerTools(Toolkit):
             self.get_schedule_runs,
         ]
 
-        async_tools = [
+        async_tools: List[tuple[Callable[..., Any], str]] = [
             (self.acreate_schedule, "create_schedule"),
             (self.alist_schedules, "list_schedules"),
             (self.aget_schedule, "get_schedule"),
