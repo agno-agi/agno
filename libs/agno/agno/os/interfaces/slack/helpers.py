@@ -98,11 +98,12 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
             display_name = None
 
         result = (resolved_id, display_name)
+        _user_cache[slack_user_id] = result
     except Exception:
         log_warning(f"Failed to resolve Slack user {slack_user_id}")
+        # Don't cache errors — transient failures should retry on the next message
         result = (slack_user_id, None)
 
-    _user_cache[slack_user_id] = result
     return result
 
 

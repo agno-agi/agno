@@ -295,12 +295,13 @@ class TestResolveSlackUser:
         assert display_name is None
 
     @pytest.mark.asyncio
-    async def test_error_results_are_cached(self):
+    async def test_error_results_are_not_cached(self):
+        """Transient failures should retry on the next message, not be cached permanently."""
         client = AsyncMock()
         client.users_info = AsyncMock(side_effect=RuntimeError("Slack API error"))
         await resolve_slack_user(client, "UFAIL2")
         await resolve_slack_user(client, "UFAIL2")
-        client.users_info.assert_called_once()
+        assert client.users_info.call_count == 2
 
 
 # -- strip_bot_mention --
