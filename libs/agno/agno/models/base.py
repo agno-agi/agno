@@ -1924,7 +1924,13 @@ class Model(ABC):
         if model_response_delta.provider_data:
             if stream_data.response_provider_data is None:
                 stream_data.response_provider_data = {}
-            stream_data.response_provider_data.update(model_response_delta.provider_data)
+            # List-aware merge: extend lists (e.g. server_tool_blocks), replace scalars
+            for key, value in model_response_delta.provider_data.items():
+                existing = stream_data.response_provider_data.get(key)
+                if isinstance(existing, list) and isinstance(value, list):
+                    existing.extend(value)
+                else:
+                    stream_data.response_provider_data[key] = value
 
         # Update stream_data tool calls
         if model_response_delta.tool_calls is not None:
