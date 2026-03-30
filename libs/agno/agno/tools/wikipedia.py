@@ -5,7 +5,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_info, logger
 
 
 class WikipediaTools(Toolkit):
@@ -54,10 +54,20 @@ class WikipediaTools(Toolkit):
         """
         try:
             import wikipedia  # noqa: F401
+            from wikipedia.exceptions import DisambiguationError, PageError
         except ImportError:
             raise ImportError(
                 "The `wikipedia` package is not installed. Please install it via `pip install wikipedia`."
             )
 
         log_info(f"Searching wikipedia for: {query}")
-        return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())
+        try:
+            content = wikipedia.summary(query, auto_suggest=False)
+            return json.dumps(Document(name=query, content=content).to_dict())
+        except DisambiguationError as e:
+            return json.dumps({"disambiguation": query, "options": e.options[:10]})
+        except PageError:
+            return json.dumps({"error": "page_not_found", "query": query})
+        except Exception as e:
+            logger.error(f"Error searching Wikipedia: {e}")
+            return json.dumps({"error": str(e)})
