@@ -1,7 +1,7 @@
 """Unit tests for SchedulerTools toolkit."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
