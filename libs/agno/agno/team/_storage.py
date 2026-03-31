@@ -466,10 +466,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_team_history_runs"] = team.num_team_history_runs
     if team.share_member_interactions:
         config["share_member_interactions"] = team.share_member_interactions
-    if team.search_session_history:
-        config["search_session_history"] = team.search_session_history
-    if team.num_history_sessions is not None:
-        config["num_history_sessions"] = team.num_history_sessions
+    if team.search_past_sessions:
+        config["search_past_sessions"] = team.search_past_sessions
+    if team.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = team.num_past_sessions_to_search
+    if team.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = team.num_past_session_runs_in_search
     if team.read_chat_history:
         config["read_chat_history"] = team.read_chat_history
 
@@ -494,6 +496,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_datetime_to_context"] = team.add_datetime_to_context
     if team.add_location_to_context:
         config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
     if team.timezone_identifier is not None:
         config["timezone_identifier"] = team.timezone_identifier
     if team.add_name_to_context:
@@ -899,8 +903,11 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_session_history=config.get("search_session_history", False),
-            num_history_sessions=config.get("num_history_sessions"),
+            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+            num_past_session_runs_in_search=config.get(
+                "num_past_session_runs_in_search", config.get("num_past_session_runs")
+            ),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
@@ -912,6 +919,7 @@ def from_dict(
             markdown=config.get("markdown", False),
             add_datetime_to_context=config.get("add_datetime_to_context", False),
             add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),

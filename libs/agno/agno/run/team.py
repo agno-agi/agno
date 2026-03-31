@@ -171,6 +171,9 @@ class TeamRunEvent(str, Enum):
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
 
+    followups_started = "TeamFollowupsStarted"
+    followups_completed = "TeamFollowupsCompleted"
+
     run_paused = "TeamRunPaused"
     run_continued = "TeamRunContinued"
 
@@ -492,6 +495,17 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class FollowupsStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
+
+
+@dataclass
 class TaskIterationStartedEvent(BaseTeamRunEvent):
     """Event sent when a task iteration starts in tasks mode"""
 
@@ -638,6 +652,8 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     TaskIterationStartedEvent,
     TaskIterationCompletedEvent,
     TaskStateUpdatedEvent,
@@ -680,6 +696,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.followups_started.value: FollowupsStartedEvent,
+    TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
     TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
     TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
@@ -736,6 +754,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
+    followups: Optional[List[str]] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
@@ -796,6 +815,7 @@ class TeamRunOutput:
                 "reasoning_messages",
                 "references",
                 "requirements",
+                "followups",
             ]
         }
         if self.events is not None:
@@ -824,6 +844,9 @@ class TeamRunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
