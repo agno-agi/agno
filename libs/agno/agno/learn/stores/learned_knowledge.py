@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
 from agno.learn.config import LearnedKnowledgeConfig, LearningMode
 from agno.learn.schemas import LearnedKnowledge
@@ -41,6 +41,9 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 @dataclass
@@ -193,6 +196,7 @@ class LearnedKnowledgeStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=namespace,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -220,6 +224,7 @@ class LearnedKnowledgeStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=namespace,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -248,10 +253,13 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## CRITICAL RULES - ALWAYS FOLLOW
 
-            **RULE 1: ALWAYS search before answering substantive questions.**
-            When the user asks for advice, recommendations, how-to guidance, or best practices:
+            **RULE 1: Search before answering knowledge-dependent questions.**
+            When the user asks for advice, recommendations, how-to guidance, best practices,
+            or questions about conventions and preferences:
             → First call `search_learnings` with relevant keywords
             → Then incorporate any relevant findings into your response
+            Skip searching for straightforward operational tasks (fetching data, running tools,
+            executing actions) where prior learnings are unlikely to be relevant.
 
             **RULE 2: ALWAYS search before saving.**
             Before saving anything, first call `search_learnings` to check if similar knowledge exists.
@@ -313,10 +321,13 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## CRITICAL RULES - ALWAYS FOLLOW
 
-            **RULE 1: ALWAYS search before answering substantive questions.**
-            When the user asks for advice, recommendations, how-to guidance, or best practices:
+            **RULE 1: Search before answering knowledge-dependent questions.**
+            When the user asks for advice, recommendations, how-to guidance, best practices,
+            or questions about conventions and preferences:
             → First call `search_learnings` with relevant keywords
             → Then incorporate any relevant findings into your response
+            Skip searching for straightforward operational tasks (fetching data, running tools,
+            executing actions) where prior learnings are unlikely to be relevant.
 
             **RULE 2: Propose learnings, don't save directly.**
             If you discover something worth preserving, propose it at the end of your response:
@@ -1083,6 +1094,7 @@ class LearnedKnowledgeStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Extract learnings from messages (sync)."""
         if not self.model or not self.knowledge:
@@ -1114,6 +1126,11 @@ class LearnedKnowledgeStore(LearningStore):
                 tools=functions,
             )
 
+            if run_metrics is not None and response.response_usage is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+
             if response.tool_executions:
                 self.learning_saved = True
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
@@ -1128,6 +1145,7 @@ class LearnedKnowledgeStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Extract learnings from messages (async)."""
         if not self.model or not self.knowledge:
@@ -1158,6 +1176,11 @@ class LearnedKnowledgeStore(LearningStore):
                 messages=extraction_messages,
                 tools=functions,
             )
+
+            if run_metrics is not None and response.response_usage is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
             if response.tool_executions:
                 self.learning_saved = True

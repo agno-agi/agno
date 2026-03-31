@@ -108,10 +108,10 @@ def test_is_valid_header_provider_with_http_transport():
     assert tools.header_provider is not None
 
 
-def test_is_valid_header_provider_ignored_for_stdio():
-    """Test that header_provider is ignored for stdio transport."""
-    tools = MCPTools(command="npx foo", header_provider=lambda: {})
-    assert tools.header_provider is None
+def test_header_provider_with_stdio_transport_raises_error():
+    """Test that ValueError is raised when header_provider is used with stdio transport."""
+    with pytest.raises(ValueError, match="header_provider is not supported with 'stdio' transport"):
+        MCPTools(command="npx foo", transport="stdio", header_provider=lambda: {})
 
 
 def test_call_header_provider_no_params():
@@ -302,10 +302,10 @@ async def test_stale_sessions_cleaned_up_on_new_run():
     tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
     tools._session_ttl_seconds = 0.1  # 100ms TTL for testing
 
-    # Simulate an old session from a previous run
+    # Simulate an old session from a previous run (use AsyncMock for async __aexit__)
     old_session = MagicMock()
-    old_context = MagicMock()
-    old_session_context = MagicMock()
+    old_context = AsyncMock()
+    old_session_context = AsyncMock()
     tools._run_sessions["old-run-id"] = (old_session, time.time() - 1.0)  # 1 second ago
     tools._run_session_contexts["old-run-id"] = (old_context, old_session_context)
 
@@ -460,3 +460,154 @@ async def test_hitl_params_with_tool_name_prefix():
     assert "myprefix_SearchTool" in tools.functions
     # HITL setting should still be applied (matched by original name)
     assert tools.functions["myprefix_SearchTool"].requires_confirmation is True
+
+
+# =============================================================================
+# Parallel tool call session tests (issue #6094)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_parallel_get_session_for_run_creates_single_session():
+    """Parallel calls to get_session_for_run with the same run_id must
+    create exactly one session (not one per concurrent coroutine)."""
+    import asyncio
+
+    creation_count = {"count": 0}
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Token": "t"})
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+        mock_context = AsyncMock()
+        mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
+        mock_client.return_value = mock_context
+
+        with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
+            mock_session = AsyncMock()
+            mock_session.initialize = AsyncMock()
+            mock_session_context = AsyncMock()
+            mock_session_context.__aenter__.return_value = mock_session
+            mock_session_cls.return_value = mock_session_context
+
+            original_aenter = mock_context.__aenter__
+
+            async def slow_aenter(*args, **kwargs):
+                creation_count["count"] += 1
+                await asyncio.sleep(0.05)
+                return await original_aenter(*args, **kwargs)
+
+            mock_context.__aenter__ = slow_aenter
+
+            run_context = MagicMock()
+            run_context.run_id = "parallel-run"
+
+            # Fire 5 parallel requests for the same run_id
+            sessions = await asyncio.gather(
+                tools.get_session_for_run(run_context=run_context),
+                tools.get_session_for_run(run_context=run_context),
+                tools.get_session_for_run(run_context=run_context),
+                tools.get_session_for_run(run_context=run_context),
+                tools.get_session_for_run(run_context=run_context),
+            )
+
+            # All 5 must receive the same session object
+            assert all(s is sessions[0] for s in sessions)
+            # The transport context should only have been entered once
+            assert creation_count["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_get_session_different_run_ids():
+    """Parallel calls with different run_ids should create separate sessions."""
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Token": "t"})
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+
+        def make_mock_context():
+            ctx = AsyncMock()
+            ctx.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
+            return ctx
+
+        mock_client.side_effect = lambda **kw: make_mock_context()
+
+        with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
+            call_count = {"n": 0}
+
+            def make_mock_session_ctx(*args, **kwargs):
+                call_count["n"] += 1
+                sess = AsyncMock()
+                sess.initialize = AsyncMock()
+                sess._id = call_count["n"]
+                ctx = AsyncMock()
+                ctx.__aenter__.return_value = sess
+                return ctx
+
+            mock_session_cls.side_effect = make_mock_session_ctx
+
+            rc1 = MagicMock()
+            rc1.run_id = "run-a"
+            rc2 = MagicMock()
+            rc2.run_id = "run-b"
+
+            s1, s2 = await asyncio.gather(
+                tools.get_session_for_run(run_context=rc1),
+                tools.get_session_for_run(run_context=rc2),
+            )
+
+            # Different run_ids get different sessions
+            assert s1 is not s2
+            assert "run-a" in tools._run_sessions
+            assert "run-b" in tools._run_sessions
+
+
+@pytest.mark.asyncio
+async def test_session_creation_lock_exists_after_first_call():
+    """Verify the lock is lazily created on first access."""
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
+    assert tools._session_lock is None
+
+    lock = tools._session_creation_lock
+    assert isinstance(lock, asyncio.Lock)
+    # Same instance on second access
+    assert tools._session_creation_lock is lock
+
+
+@pytest.mark.asyncio
+async def test_parallel_calls_no_deadlock_with_timeout():
+    """Ensure parallel get_session_for_run completes within a reasonable time
+    (regression test for the hang described in issue #6094)."""
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Token": "t"})
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+        mock_context = AsyncMock()
+        mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
+        mock_client.return_value = mock_context
+
+        with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
+            mock_session = AsyncMock()
+            mock_session.initialize = AsyncMock()
+            mock_session_context = AsyncMock()
+            mock_session_context.__aenter__.return_value = mock_session
+            mock_session_cls.return_value = mock_session_context
+
+            run_context = MagicMock()
+            run_context.run_id = "timeout-test-run"
+
+            # Must complete within 5 seconds (would hang indefinitely before fix)
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    tools.get_session_for_run(run_context=run_context),
+                    tools.get_session_for_run(run_context=run_context),
+                    tools.get_session_for_run(run_context=run_context),
+                ),
+                timeout=5.0,
+            )
+
+            assert len(results) == 3
+            assert all(s is results[0] for s in results)

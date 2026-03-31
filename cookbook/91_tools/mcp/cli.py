@@ -16,6 +16,10 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent(message: str) -> None:
     """Run an interactive CLI for the GitHub agent with the given message."""
@@ -36,6 +40,10 @@ async def run_agent(message: str) -> None:
         # Run an interactive command-line interface to interact with the agent.
         await agent.acli_app(input=message, stream=True)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Pull request example

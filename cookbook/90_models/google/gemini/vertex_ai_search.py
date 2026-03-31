@@ -16,6 +16,10 @@ Run `uv pip install google-generativeai` to install dependencies.
 from agno.agent import Agent
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Replace with your actual Vertex AI Search datastore ID
 # Format: "projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{datastore_id}"
 datastore_id = "projects/your-project-id/locations/global/collections/default_collection/dataStores/your-datastore-id"
@@ -32,3 +36,10 @@ agent = Agent(
 
 # Ask questions that can be answered from your knowledge base
 agent.print_response("What are our company's policies regarding remote work?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

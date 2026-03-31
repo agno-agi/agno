@@ -112,11 +112,13 @@ class TeamSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the team")
     description: Optional[str] = Field(None, description="Description of the team")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
         db_id = team.db.id if team.db else None
-        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
+        mode = team.mode.value if hasattr(team, "mode") and team.mode else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -124,15 +126,25 @@ class WorkflowSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    is_component: bool = Field(False, description="Whether this workflow was created via Builder")
+    current_version: Optional[int] = Field(None, description="Current published version number")
+    stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod
-    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+    def from_workflow(
+        cls,
+        workflow: Union[Workflow, RemoteWorkflow],
+        is_component: bool = False,
+    ) -> "WorkflowSummaryResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             db_id=db_id,
+            is_component=is_component,
+            current_version=getattr(workflow, "_version", None),
+            stage=getattr(workflow, "_stage", None),
         )
 
 
@@ -374,6 +386,7 @@ class RunSchema(BaseModel):
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
     run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
@@ -396,6 +409,7 @@ class RunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -407,6 +421,7 @@ class RunSchema(BaseModel):
             parent_run_id=run_dict.get("parent_run_id", ""),
             agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
+            status=run_dict.get("status"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -426,6 +441,7 @@ class RunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
         )
 
@@ -434,6 +450,7 @@ class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
@@ -456,6 +473,7 @@ class TeamRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -465,6 +483,7 @@ class TeamRunSchema(BaseModel):
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
+            status=run_dict.get("status"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -485,6 +504,7 @@ class TeamRunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            followups=run_dict.get("followups", None),
         )
 
 
@@ -645,6 +665,8 @@ class RegistryResourceType(str, Enum):
     VECTOR_DB = "vector_db"
     SCHEMA = "schema"
     FUNCTION = "function"
+    AGENT = "agent"
+    TEAM = "team"
 
 
 class CallableMetadata(BaseModel):
@@ -735,5 +757,6 @@ RegistryMetadata = Union[
 class RegistryContentResponse(BaseModel):
     name: str
     type: RegistryResourceType
+    id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
