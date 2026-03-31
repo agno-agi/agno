@@ -166,24 +166,51 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.conversations_history(channel=channel, limit=limit)
-            messages: List[Dict[str, Any]] = []  # type: ignore
-            for msg in response.get("messages", []):
+
+            raw_messages = response.get("messages", [])
+            # Resolve unique human user IDs to display names
+            human_ids = list({m.get("user", "") for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")})
+            user_names = self._resolve_user_names(human_ids)
+
+            messages: List[Dict[str, Any]] = []
+            for msg in raw_messages:
+                user_id = msg.get("user", "")
+                # Bot messages carry display name in "username"; humans resolved above
+                user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
                 entry: Dict[str, Any] = {
                     "text": msg.get("text", ""),
-                    "user": "webhook" if msg.get("subtype") == "bot_message" else msg.get("user", "unknown"),
+                    "user": user_label,
                     "ts": msg.get("ts", ""),
-                    "sub_type": msg.get("subtype", "unknown"),
-                    "attachments": msg.get("attachments", []) if msg.get("subtype") == "bot_message" else "n/a",
                 }
-                # Expose thread info so the agent can discover and expand threads
-                if msg.get("thread_ts"):
-                    entry["thread_ts"] = msg["thread_ts"]
+                # Bots (GitHub, Jira, etc.) often put content in attachments, not text
+                if msg.get("attachments"):
+                    entry["attachments"] = msg["attachments"]
+                # Thread metadata lets the agent discover and expand threads
+                thread_ts = msg.get("thread_ts")
+                if thread_ts:
+                    entry["thread_ts"] = thread_ts
                     entry["reply_count"] = msg.get("reply_count", 0)
                 messages.append(entry)
             return json.dumps(messages)
         except SlackApiError as e:
             logger.error(f"Error getting channel history: {e}")
             return json.dumps({"error": str(e)})
+
+    def _resolve_user_names(self, user_ids: List[str]) -> Dict[str, str]:
+        """Resolve a list of Slack user IDs to display names.
+
+        Uses individual users.info calls — efficient for small sets (threads, channels)
+        since most have <10 unique participants.
+        """
+        names: Dict[str, str] = {}
+        for uid in user_ids:
+            try:
+                resp = self.client.users_info(user=uid)
+                profile = resp.get("user", {}).get("profile", {})
+                names[uid] = profile.get("real_name") or profile.get("display_name") or uid
+            except SlackApiError:
+                names[uid] = uid
+        return names
 
     def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
         """Save file to disk if output_directory is set. Return file path or None."""
@@ -403,14 +430,22 @@ class SlackTools(Toolkit):
                 ts=thread_ts,
                 limit=min(limit, self.thread_message_limit),
             )
-            messages = [
-                {
+            raw_messages = response.get("messages", [])
+            human_ids = list({m.get("user", "") for m in raw_messages if m.get("user")})
+            user_names = self._resolve_user_names(human_ids)
+
+            messages: List[Dict[str, Any]] = []
+            for msg in raw_messages:
+                user_id = msg.get("user", "")
+                user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
+                entry: Dict[str, Any] = {
                     "text": msg.get("text", ""),
-                    "user": msg.get("user", "unknown"),
+                    "user": user_label,
                     "ts": msg.get("ts", ""),
                 }
-                for msg in response.get("messages", [])
-            ]
+                if msg.get("attachments"):
+                    entry["attachments"] = msg["attachments"]
+                messages.append(entry)
             return json.dumps(
                 {
                     "thread_ts": thread_ts,
