@@ -410,7 +410,6 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
         run_id = message.get("run_id")
         session_id = message.get("session_id")
         step_requirements_data = message.get("step_requirements")
-        user_id = message.get("user_id")
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -419,9 +418,8 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}))
             return
 
-        # Use create_fresh=False for continue — need session ownership from the paused run
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=False
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
         )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
@@ -986,10 +984,8 @@ def get_workflow_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in step_requirements field")
 
-        # Retrieve the workflow — use create_fresh=False for continue since we need
-        # the workflow to load and own the existing session from the paused run
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=False
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
