@@ -204,22 +204,20 @@ def run_workflow(loaded: Workflow, input_text: str):
             else:
                 req.reject()
 
-        # Handle user input (router selections)
-        for req in run_output.steps_requiring_user_input:
+        # Handle router route selections
+        for req in run_output.steps_requiring_route:
             print(f"\n[HITL] {req.step_name}: {req.user_input_message}")
             if req.available_choices:
                 for i, choice in enumerate(req.available_choices, 1):
                     print(f"  {i}. {choice}")
                 selections = input("Select (comma-separated numbers): ").strip()
-                indices = [
-                    int(s.strip()) - 1 for s in selections.split(",") if s.strip()
-                ]
                 chosen = [
-                    req.available_choices[i]
-                    for i in indices
-                    if i < len(req.available_choices)
+                    s.strip() for s in selections.split(",") if s.strip()
                 ]
-                req.select_choices(chosen)
+                if len(chosen) > 1:
+                    req.select_multiple(chosen)
+                else:
+                    req.select(chosen[0])
 
         run_output = loaded.continue_run(run_output)
 
