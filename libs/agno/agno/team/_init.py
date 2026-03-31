@@ -26,6 +26,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -160,6 +161,7 @@ def __init__(
     followups: bool = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
+    followup_config: Optional[FollowupConfig] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     store_events: bool = False,
@@ -347,6 +349,7 @@ def __init__(
         raise ValueError("num_followups must be at least 1")
     team.num_followups = num_followups
     team.followup_model = followup_model  # type: ignore[assignment]
+    team.followup_config = followup_config
 
     team.stream = stream
     team.stream_events = stream_events
