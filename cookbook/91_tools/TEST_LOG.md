@@ -1,5 +1,15 @@
 # Test Log
 
+### docling_tools/run.py
+
+**Status:** PASS
+
+**Description:** Refactored the original single-file Docling cookbook into a modular folder (`docling_tools/`) with separate files for shared paths, basic conversion examples, and OCR examples. Added PPTX and image conversion examples using static resources (`ai_presentation.pptx` and `restaurant_invoice.png`).
+
+**Result:** Syntax validation passed for `paths.py`, `basic_examples.py`, `ocr_example.py`, and `run.py` using `python -m py_compile`. Re-ran Docling unit tests with `pytest libs/agno/tests/unit/tools/test_docling.py -q` and all 24 tests passed. Full cookbook runtime execution was not performed because agent model credentials are required.
+
+---
+
 ### gitlab_tools.py
 
 **Status:** PASS
