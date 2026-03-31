@@ -16,6 +16,7 @@ from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
     ConfigResponse,
+    InfoResponse,
     InterfaceResponse,
     InternalServerErrorResponse,
     Model,
@@ -246,23 +247,14 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         operation_id="get_info",
         summary="Get OS Info",
         description="Return lightweight, unauthenticated metadata about this AgentOS instance.",
-        responses={
-            200: {
-                "description": "OS info retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": {"agent_count": 2, "team_count": 1, "workflow_count": 0}
-                    }
-                },
-            }
-        },
+        response_model=InfoResponse,
     )
-    async def get_info() -> dict:
-        return {
-            "agent_count": len(os.agents) if os.agents else 0,
-            "team_count": len(os.teams) if os.teams else 0,
-            "workflow_count": len(os.workflows) if os.workflows else 0,
-        }
+    async def get_info() -> InfoResponse:
+        return InfoResponse(
+            agent_count=len(os.agents or []),
+            team_count=len(os.teams or []),
+            workflow_count=len(os.workflows or []),
+        )
 
     return router
 
