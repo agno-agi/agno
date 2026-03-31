@@ -41,8 +41,9 @@ _IGNORED_SUBTYPES = frozenset(
 # User-facing error message for failed requests
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
-# Slack caps streamed messages at ~40K chars; rotate before hitting the limit
+# Slack caps streamed messages at ~40K total payload (text + task card blocks)
 _STREAM_CHAR_LIMIT = 39000
+_STREAM_CARD_LIMIT = 45
 
 
 class SlackEventResponse(BaseModel):
@@ -377,6 +378,10 @@ def attach_routes(
                     if await process_event(ev, chunk, state, stream):
                         break
 
+                # Card overflow: rotate before Slack rejects the payload
+                if len(state.task_cards) >= _STREAM_CARD_LIMIT:
+                    await _rotate_stream(state.flush() if state.has_content() else "")
+
                 if state.has_content():
                     if not state.title_set:
                         state.title_set = True
@@ -395,7 +400,6 @@ def attach_routes(
                         state.stream_chars_sent += content_len
                     else:
                         await _rotate_stream(content)
-
             # Default to complete when no terminal error/cancel event arrived
             final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
