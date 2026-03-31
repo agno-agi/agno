@@ -41,15 +41,9 @@ class E2BTools(Toolkit):
         if not self.api_key:
             raise ValueError("E2B_API_KEY not set. Please set the E2B_API_KEY environment variable.")
 
-        # Create the sandbox once and reuse it
         self.sandbox_options = sandbox_options or {}
-
-        # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
-        try:
-            self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
-        except Exception as e:
-            logger.error(f"Warning: Could not create sandbox: {e}")
-            raise e
+        self._timeout = timeout
+        self._sandbox: Optional[Any] = None  # created lazily on first tool call
 
         # Last execution result for reference
         self.last_execution = None
@@ -84,6 +78,44 @@ class E2BTools(Toolkit):
         ]
 
         super().__init__(name="e2b_tools", tools=tools, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Lazy sandbox access
+    # ------------------------------------------------------------------
+
+    @property
+    def sandbox(self) -> Any:
+        """Return the sandbox, creating it on first access (lazy init)."""
+        if self._sandbox is None:
+            try:
+                self._sandbox = Sandbox.create(
+                    api_key=self.api_key,
+                    timeout=self._timeout,
+                    **self.sandbox_options,
+                )
+                logger.debug("E2B sandbox created: %s", self._sandbox.id)
+            except Exception as e:
+                logger.error("Could not create E2B sandbox: %s", e)
+                raise
+        return self._sandbox
+
+    def close(self) -> str:
+        """Kill the sandbox if it was ever started. Safe to call multiple times."""
+        if self._sandbox is not None:
+            try:
+                self._sandbox.kill()
+                logger.debug("E2B sandbox killed.")
+            except Exception as e:
+                return f"Error killing sandbox: {e}"
+            finally:
+                self._sandbox = None
+        return "Sandbox closed (or was never started)."
+
+    def __enter__(self) -> "E2BTools":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.close()
 
     # Code Execution Functions
     def run_python_code(self, code: str) -> str:
