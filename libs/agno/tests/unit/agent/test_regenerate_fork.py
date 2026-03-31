@@ -648,9 +648,12 @@ class TestBranchSessionDispatch:
         saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
         for run in saved_session.runs:
             assert run.session_id == new_id, f"Run {run.run_id} still has old session_id"
+            assert run.run_id not in ("r1", "r2"), "Branched run must get a new run_id"
         # Source runs must be unchanged
         assert run1.session_id == "original"
+        assert run1.run_id == "r1"
         assert run2.session_id == "original"
+        assert run2.run_id == "r2"
 
     def test_branch_reads_source_session_scoped_to_caller(self, monkeypatch: pytest.MonkeyPatch):
         """Branch must read the source session scoped to the caller's user_id for access control."""

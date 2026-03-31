@@ -5235,7 +5235,9 @@ def branch_session_dispatch(
 
     # Rewrite session_id on each copied run so the new session's run metadata
     # is internally consistent (runs should reference their owning session).
+    # Also assign new run_ids so they are globally unique.
     for run in branched_runs or []:
+        run.run_id = str(uuid4())
         run.session_id = new_session_id
 
     new_session = AgentSession(
@@ -5310,8 +5312,9 @@ async def abranch_session_dispatch(
     new_user_id = user_id or source_session.user_id
     branched_runs = copy.deepcopy(source_session.runs)
 
-    # Rewrite session_id on each copied run so run metadata is consistent.
+    # Rewrite session_id and run_id on each copied run so run metadata is consistent.
     for run in branched_runs or []:
+        run.run_id = str(uuid4())
         run.session_id = new_session_id
 
     new_session = AgentSession(
