@@ -11,6 +11,7 @@ from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
+    resolve_channel_name,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -179,6 +180,8 @@ def attach_routes(
             if resolve_user_identity:
                 resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
 
+            channel_name = await resolve_channel_name(async_client, ctx["channel_id"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -191,8 +194,12 @@ def attach_routes(
                 "user_id": resolved_user_id,
                 "session_id": session_id,
                 "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
-                # Let the agent know which channel/thread it's responding in
-                "dependencies": {"Slack channel_id": ctx["channel_id"], "Slack thread_ts": ctx["thread_id"]},
+                # Channel name for LLM context, channel_id for tool calls
+                "dependencies": {
+                    "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
+                    "Slack channel_id": ctx["channel_id"],
+                    "Slack thread_ts": ctx["thread_id"],
+                },
                 "add_dependencies_to_context": True,
                 "files": files or None,
                 "images": images or None,
@@ -295,6 +302,8 @@ def attach_routes(
             if resolve_user_identity:
                 resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
 
+            channel_name = await resolve_channel_name(async_client, ctx["channel_id"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -310,8 +319,12 @@ def attach_routes(
                 "user_id": resolved_user_id,
                 "session_id": session_id,
                 "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
-                # Let the agent know which channel/thread it's responding in
-                "dependencies": {"Slack channel_id": ctx["channel_id"], "Slack thread_ts": ctx["thread_id"]},
+                # Channel name for LLM context, channel_id for tool calls
+                "dependencies": {
+                    "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
+                    "Slack channel_id": ctx["channel_id"],
+                    "Slack thread_ts": ctx["thread_id"],
+                },
                 "add_dependencies_to_context": True,
                 "files": files or None,
                 "images": images or None,
