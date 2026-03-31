@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -57,6 +57,8 @@ class MySQLDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -81,6 +83,8 @@ class MySQLDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            schedules_table (Optional[str]): Name of the table to store schedules.
+            schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
@@ -105,6 +109,8 @@ class MySQLDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            schedules_table=schedules_table,
+            schedule_runs_table=schedule_runs_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -156,9 +162,12 @@ class MySQLDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            # Pass traces_table_name, db_schema, and schedules_table_name for FK resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedules_table_name=self.schedules_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -267,6 +276,8 @@ class MySQLDb(BaseDb):
             (self.trace_table_name, "traces"),
             (self.span_table_name, "spans"),
             (self.versions_table_name, "versions"),
+            (self.schedules_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -348,6 +359,26 @@ class MySQLDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.spans_table
+
+        if table_type == "schedules":
+            self.schedules_table = self._get_or_create_table(
+                table_name=self.schedules_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedules_table
+
+        if table_type == "schedule_runs":
+            # Ensure schedules table exists first (schedule_runs has FK to schedules)
+            if create_table_if_not_found:
+                self._get_table(table_type="schedules", create_table_if_not_found=True)
+
+            self.schedule_runs_table = self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -3027,3 +3058,215 @@ class MySQLDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for MySQLDb")
+
+    # -- Schedule methods --
+
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                offset = (page - 1) * limit
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {e}")
+            raise
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="schedule_runs")
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim the next due schedule for this worker.
+
+        MySQL does not support UPDATE...RETURNING, so we use a SELECT FOR UPDATE
+        in a transaction followed by an UPDATE to achieve the same atomicity.
+        """
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            with self.Session() as sess, sess.begin():
+                # SELECT FOR UPDATE SKIP LOCKED to grab the next eligible row atomically
+                candidate = sess.execute(
+                    select(table)
+                    .where(
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .order_by(table.c.next_run_at.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                ).fetchone()
+                if candidate is None:
+                    return None
+                schedule_id = candidate._mapping["id"]
+                sess.execute(
+                    table.update()
+                    .where(table.c.id == schedule_id)
+                    .values(locked_by=worker_id, locked_at=now)
+                )
+                # Re-read within the same transaction to return final state
+                updated = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                return dict(updated._mapping) if updated else None
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {e}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                total_count = sess.execute(count_stmt).scalar() or 0
+                offset = (page - 1) * limit
+                stmt = (
+                    select(table)
+                    .where(table.c.schedule_id == schedule_id)
+                    .order_by(table.c.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
