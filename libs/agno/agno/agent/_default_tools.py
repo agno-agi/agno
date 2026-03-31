@@ -408,100 +408,120 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
-def get_previous_sessions_messages_function(
-    agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+def _get_message_text(msg: Message) -> Optional[str]:
+    """Safely extract text content from a Message."""
+    if isinstance(msg.content, str):
+        return msg.content
+    if isinstance(msg.content, list):
+        parts = []
+        for part in msg.content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and "text" in part:
+                parts.append(part["text"])
+        return " ".join(parts) if parts else None
+    return None
+
+
+def _truncate(text: str, limit: int = 200) -> str:
+    """Truncate text to *limit* characters, appending '...' if trimmed."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _extract_session_preview(session: Union[AgentSession, Any], num_runs: int = 3) -> Dict[str, Any]:
+    """Extract session_id, created_at, and per-run user/assistant previews."""
+    runs_preview: List[Dict[str, str]] = []
+    for run in (session.runs or [])[:num_runs]:
+        user_text = ""
+        assistant_text = ""
+        for msg in run.messages or []:
+            if msg.role == "user" and not user_text:
+                text = _get_message_text(msg)
+                if text:
+                    user_text = _truncate(text)
+            elif msg.role == "assistant" and not assistant_text:
+                text = _get_message_text(msg)
+                if text:
+                    assistant_text = _truncate(text)
+            if user_text and assistant_text:
+                break
+        if user_text or assistant_text:
+            runs_preview.append({"user": user_text, "assistant": assistant_text})
+    return {
+        "session_id": session.session_id,
+        "created_at": str(session.created_at) if session.created_at else None,
+        "runs": runs_preview,
+    }
+
+
+def get_search_past_sessions_function(
+    agent: Agent,
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    user_id: Optional[str] = None,
+    current_session_id: Optional[str] = None,
 ) -> Callable:
-    """Factory function to create a get_previous_session_messages function.
+    """Factory for search_past_sessions tool."""
 
-    Args:
-        agent: The Agent instance.
-        num_history_sessions: The last n sessions to be taken from db.
-        user_id: The user ID to filter sessions by.
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
+    _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
 
-    Returns:
-        Callable: A function that retrieves messages from previous sessions.
-    """
-
-    def get_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        # TODO: Review and Test this function
         import json
 
         if agent.db is None:
             return json.dumps([])
 
         agent.db = cast(BaseDb, agent.db)
-
         selected_sessions = agent.db.get_sessions(
             session_type=SessionType.AGENT,
-            limit=num_history_sessions,
+            limit=_limit,
             user_id=user_id,
             sort_by="created_at",
             sort_order="desc",
         )
 
-        all_messages: list = []
-        seen_message_pairs: set = set()
-
+        results: List[Dict[str, Any]] = []
         for session in selected_sessions:
-            if isinstance(session, AgentSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        last_user = None
-                        for msg in messages:
-                            try:
-                                if msg.role == "user":
-                                    last_user = msg
-                                elif msg.role == "assistant" and last_user is not None:
-                                    user_content = last_user.content
-                                    assistant_content = msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue
+            if not isinstance(session, AgentSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(last_user))
-                                        all_messages.append(Message.model_validate(msg))
-                                    last_user = None
-                            except Exception as e:
-                                log_warning(f"Error processing message pair: {e}")
-                                last_user = None
-                                continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else json.dumps([])
-
-    return get_previous_session_messages
+    return search_past_sessions
 
 
-async def aget_previous_sessions_messages_function(
-    agent: Agent, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+async def aget_search_past_sessions_function(
+    agent: Agent,
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    user_id: Optional[str] = None,
+    current_session_id: Optional[str] = None,
 ) -> Function:
-    """Factory function to create a get_previous_session_messages function (async).
-
-    Args:
-        agent: The Agent instance.
-        num_history_sessions: The last n sessions to be taken from db.
-        user_id: The user ID to filter sessions by.
-    Returns:
-        Function: An async function that retrieves messages from previous sessions.
-    """
+    """Async factory for search_past_sessions tool."""
     from agno.agent import _init
 
-    async def aget_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
+    _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
+
+    async def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        # TODO: Review and Test this function
         import json
 
         if agent.db is None:
@@ -510,7 +530,7 @@ async def aget_previous_sessions_messages_function(
         if _init.has_async_db(agent):
             selected_sessions = await agent.db.get_sessions(  # type: ignore
                 session_type=SessionType.AGENT,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
@@ -518,42 +538,131 @@ async def aget_previous_sessions_messages_function(
         else:
             selected_sessions = agent.db.get_sessions(
                 session_type=SessionType.AGENT,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
             )
 
-        all_messages: list = []
-        seen_message_pairs: set = set()
-
+        results: List[Dict[str, Any]] = []
         for session in selected_sessions:  # type: ignore
-            if isinstance(session, AgentSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        last_user = None
-                        for msg in messages:
-                            try:
-                                if msg.role == "user":
-                                    last_user = msg
-                                elif msg.role == "assistant" and last_user is not None:
-                                    user_content = last_user.content
-                                    assistant_content = msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue
+            if not isinstance(session, AgentSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(last_user))
-                                        all_messages.append(Message.model_validate(msg))
-                                    last_user = None
-                            except Exception as e:
-                                log_warning(f"Error processing message pair: {e}")
-                                last_user = None
-                                continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else json.dumps([])
+    return Function.from_callable(search_past_sessions, name="search_past_sessions")
 
-    return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
+
+def get_read_past_session_function(
+    agent: Agent,
+    user_id: Optional[str] = None,
+) -> Callable:
+    """Factory for read_past_session tool."""
+
+    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if agent.db is None:
+            return "No database configured."
+
+        agent.db = cast(BaseDb, agent.db)
+        session = agent.db.get_session(
+            session_id=session_id,
+            session_type=SessionType.AGENT,
+            user_id=user_id,
+        )
+
+        if session is None or not isinstance(session, AgentSession) or not session.runs:
+            return "Session not found."
+
+        lines: List[str] = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    return read_past_session
+
+
+async def aget_read_past_session_function(
+    agent: Agent,
+    user_id: Optional[str] = None,
+) -> Function:
+    """Async factory for read_past_session tool."""
+    from agno.agent import _init
+
+    async def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if agent.db is None:
+            return "No database configured."
+
+        if _init.has_async_db(agent):
+            session = await agent.db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.AGENT,
+                user_id=user_id,
+            )
+        else:
+            session = agent.db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.AGENT,
+                user_id=user_id,
+            )
+
+        if session is None or not isinstance(session, AgentSession) or not session.runs:
+            return "Session not found."
+
+        lines: List[str] = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    return Function.from_callable(read_past_session, name="read_past_session")

@@ -1,8 +1,18 @@
 """
-Search Session History
-======================
+Search Session History (Team)
+=============================
 
-Demonstrates searching prior sessions with user-scoped history access.
+Demonstrates the two-step list-then-read pattern for accessing previous
+team sessions with user-scoped history access.
+
+The team gets two tools:
+  - search_past_sessions() -- lightweight per-run previews of recent sessions
+  - read_past_session(session_id) -- full conversation for a specific session
+
+Enable with `search_past_sessions=True`. Optionally set
+`num_past_sessions_to_search` to control how many past sessions are searched (default 20)
+and `num_past_session_runs_in_search` to control how many runs per session appear in
+the preview (default 3).
 """
 
 import asyncio
@@ -13,27 +23,31 @@ from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 # ---------------------------------------------------------------------------
-# Setup
+# Setup -- fresh DB each run
 # ---------------------------------------------------------------------------
-if os.path.exists("tmp/data.db"):
-    os.remove("tmp/data.db")
+DB_FILE = "tmp/team_session_history.db"
+if os.path.exists(DB_FILE):
+    os.remove(DB_FILE)
+
+db = AsyncSqliteDb(db_file=DB_FILE)
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
 team = Team(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-4o"),
     members=[],
-    db=AsyncSqliteDb(db_file="tmp/data.db"),
-    search_session_history=True,
-    num_history_sessions=2,
+    db=db,
+    search_past_sessions=True,
+    num_past_sessions_to_search=10,
 )
 
 
 # ---------------------------------------------------------------------------
-# Run Team
+# Run
 # ---------------------------------------------------------------------------
 async def main() -> None:
+    # --- User 1 sessions ---
     print("=== User 1 Sessions ===")
     await team.aprint_response(
         "What is the capital of South Africa?",
@@ -51,6 +65,7 @@ async def main() -> None:
         user_id="user_1",
     )
 
+    # --- User 2 sessions ---
     print("\n=== User 2 Sessions ===")
     await team.aprint_response(
         "What is the population of India?",
@@ -63,23 +78,28 @@ async def main() -> None:
         user_id="user_2",
     )
 
-    print("\n=== Testing Session History Search ===")
-    print(
-        "User 1 asking about previous conversations (should only see capitals, not population/currency):"
-    )
+    # --- Search: User 1 should only see their own sessions ---
+    print("\n=== User 1: Browse all past sessions ===")
     await team.aprint_response(
         "What did I discuss in my previous conversations?",
         session_id="user1_session_4",
         user_id="user_1",
     )
 
-    print(
-        "\nUser 2 asking about previous conversations (should only see population/currency, not capitals):"
-    )
+    # --- Search: User 2 should only see their own sessions ---
+    print("\n=== User 2: Browse all past sessions ===")
     await team.aprint_response(
         "What did I discuss in my previous conversations?",
         session_id="user2_session_3",
         user_id="user_2",
+    )
+
+    # --- Read a specific session ---
+    print("\n=== User 1: Read session about China ===")
+    await team.aprint_response(
+        "Read the full conversation from the session where we discussed China",
+        session_id="user1_session_5",
+        user_id="user_1",
     )
 
 

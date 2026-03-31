@@ -255,6 +255,10 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
@@ -286,6 +290,10 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -317,6 +325,10 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat.completions.create(
@@ -348,6 +360,10 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         async_stream = await self.get_async_client().chat.completions.create(
@@ -553,11 +569,11 @@ class Cerebras(Model):
             if tool_call_delta.get("type"):
                 tool_call_entry["type"] = tool_call_delta["type"]
 
-            # Update function name and arguments (concatenate for streaming)
+            # Assign function name (atomic); concatenate arguments (streamed incrementally)
             if tool_call_delta.get("function"):
                 func_delta = tool_call_delta["function"]
                 if func_delta.get("name"):
-                    tool_call_entry["function"]["name"] += func_delta["name"]
+                    tool_call_entry["function"]["name"] = func_delta["name"]
                 if func_delta.get("arguments"):
                     tool_call_entry["function"]["arguments"] += func_delta["arguments"]
 

@@ -116,6 +116,11 @@ class LiteLLM(Model):
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages = []
         for m in messages:
             # Use compressed content for tool messages if compression is active
@@ -438,8 +443,7 @@ class LiteLLM(Model):
             if not isinstance(function_data, dict):
                 function_data = {}
 
-            # Update function name if provided
-            if function_data.get("name") is not None:
+            if function_data.get("name"):
                 name = function_data.get("name", "")
                 if isinstance(tool_calls_by_index[index]["function"], dict):
                     # type: ignore

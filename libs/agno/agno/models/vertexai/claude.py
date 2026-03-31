@@ -126,6 +126,8 @@ class Claude(AnthropicClaude):
             _request_params["max_tokens"] = self.max_tokens
         if self.thinking:
             _request_params["thinking"] = self.thinking
+        if self.output_config:
+            _request_params["output_config"] = self.output_config
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:

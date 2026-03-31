@@ -267,3 +267,73 @@ def test_complex_nested_schema():
     }
     nested_properties = inner_properties["nested_param"]["properties"]
     assert nested_properties["nested_field"] == {"title": "Nested Field", "type": "boolean"}
+
+
+def test_mcp_schema_with_defs_preserved():
+    """Test that $defs from MCP tool schemas are preserved alongside $ref pointers."""
+    # MCP tools pass raw JSON schemas from external servers (skip_entrypoint_processing=True)
+    mcp_tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "get_data",
+            "description": "Get data for a device",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request": {
+                        "anyOf": [{"$ref": "#/$defs/DynamicData"}, {"type": "string"}],
+                        "description": "The request data",
+                    }
+                },
+                "required": ["request"],
+                "$defs": {
+                    "DynamicData": {
+                        "type": "object",
+                        "properties": {
+                            "dev": {"type": "string", "minLength": 1},
+                            "startTime": {"type": "string"},
+                            "endTime": {"type": "string"},
+                        },
+                        "required": ["dev", "startTime", "endTime"],
+                    }
+                },
+            },
+        },
+    }
+
+    result = format_tools_for_model([mcp_tool_schema])
+    input_schema = result[0]["input_schema"]
+
+    # $defs container preserved with full content
+    assert input_schema["$defs"]["DynamicData"]["properties"]["dev"] == {"type": "string", "minLength": 1}
+    # $ref pointer inside properties survived so it can resolve against $defs
+    assert input_schema["properties"]["request"]["anyOf"][0] == {"$ref": "#/$defs/DynamicData"}
+    # Standard fields still correct
+    assert input_schema["type"] == "object"
+    assert input_schema["required"] == ["request"]
+
+
+def test_mcp_schema_with_definitions_preserved():
+    """Test that definitions (legacy JSON Schema draft-04 style) are preserved."""
+    # MCP tools pass raw JSON schemas from external servers (skip_entrypoint_processing=True)
+    mcp_tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "legacy_tool",
+            "description": "A tool using older JSON Schema style",
+            "parameters": {
+                "type": "object",
+                "properties": {"data": {"$ref": "#/definitions/MyModel"}},
+                "required": ["data"],
+                "definitions": {"MyModel": {"type": "object", "properties": {"field": {"type": "string"}}}},
+            },
+        },
+    }
+
+    result = format_tools_for_model([mcp_tool_schema])
+    input_schema = result[0]["input_schema"]
+
+    # definitions container preserved with full content
+    assert input_schema["definitions"]["MyModel"] == {"type": "object", "properties": {"field": {"type": "string"}}}
+    # $ref pointer survived
+    assert input_schema["properties"]["data"] == {"$ref": "#/definitions/MyModel", "description": ""}

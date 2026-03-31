@@ -15,7 +15,7 @@ except ImportError:
 
 class ExaTools(Toolkit):
     """
-    ExaTools is a toolkit for interfacing with the Exa web search engine, providing
+    ExaTools is a toolkit for interfacing with Exa, one of the best web search APIs for AI, providing
     functionalities to perform categorized searches and retrieve structured results.
 
     Args:
@@ -139,7 +139,7 @@ class ExaTools(Toolkit):
         return json.dumps(exa_results_parsed, indent=4, ensure_ascii=False)
 
     def search_exa(self, query: str, num_results: int = 5, category: Optional[str] = None) -> str:
-        """Use this function to search Exa (a web search engine) for a query.
+        """Use this function to search the web using Exa for a query.
 
         Args:
             query (str): The query to search for.

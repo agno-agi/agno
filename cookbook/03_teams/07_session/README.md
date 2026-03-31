@@ -12,7 +12,7 @@ Examples for team workflows in session.
 
 - chat_history.py - Demonstrates chat history.
 - persistent_session.py - Demonstrates persistent session.
-- search_session_history.py - Demonstrates search session history.
+- search_session_history.py - Search and read previous team sessions (two-step pattern).
 - custom_session_summary.py - Demonstrates session_summary_manager and summary context.
 - session_options.py - Demonstrates session options.
 - session_summary.py - Demonstrates session summary.

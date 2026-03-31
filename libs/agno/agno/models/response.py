@@ -59,6 +59,8 @@ class ToolExecution:
 
     # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
     approval_type: Optional[str] = None
+    # ID of the approval record created for this tool (set when the run pauses).
+    approval_id: Optional[str] = None
 
     @property
     def is_paused(self) -> bool:
@@ -100,6 +102,7 @@ class ToolExecution:
             external_execution_required=data.get("external_execution_required"),
             external_execution_silent=data.get("external_execution_silent"),
             approval_type=data.get("approval_type"),
+            approval_id=data.get("approval_id"),
             metrics=ToolCallMetrics.from_dict(data["metrics"]) if data.get("metrics") else None,
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )

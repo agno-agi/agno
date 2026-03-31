@@ -1,4 +1,6 @@
 from agno.run.team import (
+    FollowupsCompletedEvent,
+    FollowupsStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -30,6 +32,8 @@ __all__ = [
     "TeamRunOutput",
     "TeamRunOutputEvent",
     "TeamRunEvent",
+    "FollowupsStartedEvent",
+    "FollowupsCompletedEvent",
     "RunContentEvent",
     "RunCancelledEvent",
     "RunErrorEvent",

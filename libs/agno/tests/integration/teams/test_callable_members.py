@@ -274,7 +274,7 @@ def test_callable_members_delegation(shared_db):
     # Verify delegation happened by checking member_responses
     # The writer should have been called
     if response.member_responses:
-        member_names = [mr.member_name for mr in response.member_responses]
+        member_names = [mr.agent_name or mr.team_name for mr in response.member_responses]
         assert "Writer" in member_names
 
 
@@ -373,5 +373,6 @@ async def test_callable_members_delegation_async(shared_db):
 
     # Check delegation happened
     if response.member_responses:
-        member_names = [mr.member_name for mr in response.member_responses]
+        # member_responses contains RunOutput (has agent_name) or TeamRunOutput (has team_name)
+        member_names = [mr.agent_name or mr.team_name for mr in response.member_responses]
         assert "AsyncWriter" in member_names

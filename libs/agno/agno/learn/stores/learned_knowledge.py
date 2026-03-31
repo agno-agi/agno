@@ -253,10 +253,13 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## CRITICAL RULES - ALWAYS FOLLOW
 
-            **RULE 1: ALWAYS search before answering substantive questions.**
-            When the user asks for advice, recommendations, how-to guidance, or best practices:
+            **RULE 1: Search before answering knowledge-dependent questions.**
+            When the user asks for advice, recommendations, how-to guidance, best practices,
+            or questions about conventions and preferences:
             → First call `search_learnings` with relevant keywords
             → Then incorporate any relevant findings into your response
+            Skip searching for straightforward operational tasks (fetching data, running tools,
+            executing actions) where prior learnings are unlikely to be relevant.
 
             **RULE 2: ALWAYS search before saving.**
             Before saving anything, first call `search_learnings` to check if similar knowledge exists.
@@ -318,10 +321,13 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## CRITICAL RULES - ALWAYS FOLLOW
 
-            **RULE 1: ALWAYS search before answering substantive questions.**
-            When the user asks for advice, recommendations, how-to guidance, or best practices:
+            **RULE 1: Search before answering knowledge-dependent questions.**
+            When the user asks for advice, recommendations, how-to guidance, best practices,
+            or questions about conventions and preferences:
             → First call `search_learnings` with relevant keywords
             → Then incorporate any relevant findings into your response
+            Skip searching for straightforward operational tasks (fetching data, running tools,
+            executing actions) where prior learnings are unlikely to be relevant.
 
             **RULE 2: Propose learnings, don't save directly.**
             If you discover something worth preserving, propose it at the end of your response:

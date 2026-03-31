@@ -172,6 +172,10 @@ class WatsonX(Model):
         """
         Send a chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
 
@@ -205,6 +209,10 @@ class WatsonX(Model):
         """
         Sends an asynchronous chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -238,6 +246,10 @@ class WatsonX(Model):
         """
         Send a streaming chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -270,6 +282,10 @@ class WatsonX(Model):
         """
         Sends an asynchronous streaming chat completion request to the WatsonX API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -312,7 +328,7 @@ class WatsonX(Model):
             _function_arguments = _tool_call.get("function", {}).get("arguments")
 
             if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+                tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
             tool_call_entry = tool_calls[_index]
             if not tool_call_entry:
                 tool_call_entry["id"] = _tool_call_id
@@ -323,7 +339,7 @@ class WatsonX(Model):
                 }
             else:
                 if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
+                    tool_call_entry["function"]["name"] = _function_name
                 if _function_arguments:
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:

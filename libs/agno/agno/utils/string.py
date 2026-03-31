@@ -269,7 +269,7 @@ def generate_id(seed: Optional[str] = None) -> str:
 def generate_id_from_name(name: Optional[str] = None) -> str:
     """
     Generate a deterministic ID from a name string.
-    If no name is provided, generate a random UUID4.
+    If no name is provided, generate a human-readable random ID.
 
     Args:
         name (str): The name string to generate the ID from.
@@ -277,7 +277,9 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
     if name:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
-        return str(uuid4())
+        from agno.utils.names import generate_human_readable_id
+
+        return generate_human_readable_id()
 
 
 def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:

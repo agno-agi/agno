@@ -36,6 +36,7 @@ class SlackTools(Toolkit):
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
+        thread_message_limit: int = 20,
         **kwargs,
     ):
         """
@@ -58,6 +59,7 @@ class SlackTools(Toolkit):
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
+            thread_message_limit (int): Maximum number of messages to fetch in get_thread. Defaults to 20.
         """
         _token = token or getenv("SLACK_TOKEN")
         if not _token:
@@ -66,6 +68,7 @@ class SlackTools(Toolkit):
         self.client = WebClient(token=self.token, ssl=ssl)
         self.markdown = markdown
         self.max_file_size = max_file_size
+        self.thread_message_limit = thread_message_limit
         self.output_directory = Path(output_directory) if output_directory else None
 
         if self.output_directory:
@@ -375,13 +378,13 @@ class SlackTools(Toolkit):
             logger.error(f"Error searching messages: {e}")
             return json.dumps({"error": str(e)})
 
-    def get_thread(self, channel: str, thread_ts: str, limit: int = 100) -> str:
+    def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
         """Get all messages in a thread by the parent message's timestamp.
 
         Args:
             channel (str): The channel ID where the thread exists.
             thread_ts (str): The timestamp of the parent message.
-            limit (int): The maximum number of replies to fetch. Defaults to 100, max 200.
+            limit (int): The maximum number of replies to fetch. Defaults to 20. Capped by thread_message_limit.
 
         Returns:
             str: A JSON string containing the thread timestamp, reply count, and list of messages.
@@ -390,7 +393,7 @@ class SlackTools(Toolkit):
             response = self.client.conversations_replies(
                 channel=channel,
                 ts=thread_ts,
-                limit=min(limit, 200),
+                limit=min(limit, self.thread_message_limit),
             )
             messages = [
                 {

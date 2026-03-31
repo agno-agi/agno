@@ -463,7 +463,14 @@ class Model(ABC):
             "stream": stream,
         }
 
-        cache_str = json.dumps(cache_data, sort_keys=True)
+        def _cache_default(obj: Any) -> Any:
+            if isinstance(obj, type):
+                return obj.__name__
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        cache_str = json.dumps(cache_data, sort_keys=True, default=_cache_default)
         return md5(cache_str.encode()).hexdigest()
 
     def _get_model_cache_file_path(self, cache_key: str) -> Path:
@@ -1228,6 +1235,10 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
+            # Ensure every tool call has an id — some providers (e.g. Ollama) omit it
+            for tc in provider_response.tool_calls:
+                if not tc.get("id"):
+                    tc["id"] = str(uuid4())
             assistant_message.tool_calls = provider_response.tool_calls
 
         # Add audio to assistant message
@@ -1864,7 +1875,12 @@ class Model(ABC):
         if stream_data.response_file:
             assistant_message.file_output = stream_data.response_file
         if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-            assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+            parsed_tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+            # Ensure every tool call has an id — some providers (e.g. Ollama) omit it
+            for tc in parsed_tool_calls:
+                if not tc.get("id"):
+                    tc["id"] = str(uuid4())
+            assistant_message.tool_calls = parsed_tool_calls
 
     def _populate_stream_data(
         self, stream_data: MessageData, model_response_delta: ModelResponse
@@ -1908,7 +1924,13 @@ class Model(ABC):
         if model_response_delta.provider_data:
             if stream_data.response_provider_data is None:
                 stream_data.response_provider_data = {}
-            stream_data.response_provider_data.update(model_response_delta.provider_data)
+            # List-aware merge: extend lists (e.g. server_tool_blocks), replace scalars
+            for key, value in model_response_delta.provider_data.items():
+                existing = stream_data.response_provider_data.get(key)
+                if isinstance(existing, list) and isinstance(value, list):
+                    existing.extend(value)
+                else:
+                    stream_data.response_provider_data[key] = value
 
         # Update stream_data tool calls
         if model_response_delta.tool_calls is not None:
@@ -1997,19 +2019,26 @@ class Model(ABC):
         if assistant_message.tool_calls is not None:
             for tool_call in assistant_message.tool_calls:
                 _tool_call_id = tool_call.get("id")
+                _tool_call_name = tool_call.get("function", {}).get("name")
                 _function_call = get_function_call_for_tool_call(tool_call, functions)
                 if _function_call is None:
                     messages.append(
                         Message(
                             role=self.tool_message_role,
                             tool_call_id=_tool_call_id,
+                            tool_name=_tool_call_name,
                             content="Error: The requested tool does not exist or is not available.",
                         )
                     )
                     continue
                 if _function_call.error is not None:
                     messages.append(
-                        Message(role=self.tool_message_role, tool_call_id=_tool_call_id, content=_function_call.error)
+                        Message(
+                            role=self.tool_message_role,
+                            tool_call_id=_tool_call_id,
+                            tool_name=_tool_call_name,
+                            content=_function_call.error,
+                        )
                     )
                     continue
                 function_calls_to_run.append(_function_call)

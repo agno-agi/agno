@@ -73,6 +73,10 @@ class Loop:
     max_iterations: int = 3  # Default to 3
     end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None
 
+    # If True, the output of each iteration is forwarded as input to the next iteration.
+    # When False (default), each iteration receives the original step input.
+    forward_iteration_output: bool = False
+
     # HITL configuration - start confirmation
     # If True, the loop will pause before the first iteration and require user confirmation
     requires_confirmation: bool = False
@@ -86,6 +90,7 @@ class Loop:
         description: Optional[str] = None,
         max_iterations: int = 3,
         end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None,
+        forward_iteration_output: bool = False,
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
         on_reject: Union[OnReject, str] = OnReject.skip,
@@ -95,6 +100,7 @@ class Loop:
         self.description = description
         self.max_iterations = max_iterations
         self.end_condition = end_condition
+        self.forward_iteration_output = forward_iteration_output
         self.requires_confirmation = requires_confirmation
         self.confirmation_message = confirmation_message
         self.on_reject = on_reject
@@ -119,6 +125,8 @@ class Loop:
             result["end_condition_type"] = "function"
         else:
             raise ValueError(f"Invalid end_condition type: {type(self.end_condition).__name__}")
+
+        result["forward_iteration_output"] = self.forward_iteration_output
 
         # Add HITL fields
         result["requires_confirmation"] = self.requires_confirmation
@@ -207,6 +215,7 @@ class Loop:
             steps=[deserialize_step(step) for step in data.get("steps", [])],
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
+            forward_iteration_output=data.get("forward_iteration_output", False),
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             on_reject=data.get("on_reject", OnReject.skip),
@@ -350,6 +359,8 @@ class Loop:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for loop orchestration
@@ -381,6 +392,8 @@ class Loop:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -423,6 +436,10 @@ class Loop:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
 
+            # Carry forward output to next iteration
+            if self.forward_iteration_output:
+                step_input = current_step_input
+
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
@@ -457,6 +474,8 @@ class Loop:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -535,6 +554,8 @@ class Loop:
                     workflow_session=workflow_session,
                     num_history_runs=num_history_runs,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -604,6 +625,10 @@ class Loop:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
 
+            # Carry forward output to next iteration
+            if self.forward_iteration_output:
+                step_input = current_step_input
+
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         if stream_events and workflow_run_response:
@@ -649,6 +674,8 @@ class Loop:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
@@ -682,6 +709,8 @@ class Loop:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -724,6 +753,10 @@ class Loop:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
 
+            # Carry forward output to next iteration
+            if self.forward_iteration_output:
+                step_input = current_step_input
+
         log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
@@ -758,6 +791,8 @@ class Loop:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -836,6 +871,8 @@ class Loop:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -904,6 +941,10 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
+
+            # Carry forward output to next iteration
+            if self.forward_iteration_output:
+                step_input = current_step_input
 
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 

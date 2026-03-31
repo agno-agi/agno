@@ -196,15 +196,15 @@ def test_share_member_interactions(shared_db):
 
 
 def test_search_session_history(shared_db):
-    """Test that the team can search through previous sessions when search_session_history=True."""
+    """Test that the team can search through previous sessions when search_past_sessions=True."""
 
     team = Team(
         model=OpenAIChat(id="gpt-5-mini"),
         members=[],
         db=shared_db,
         instructions="You can search through previous sessions using available tools.",
-        search_session_history=True,  # Enable searching previous sessions
-        num_history_sessions=2,  # Include last 2 sessions
+        search_past_sessions=True,  # Enable searching previous sessions
+        num_past_sessions_to_search=2,  # Include last 2 sessions
     )
 
     # Session 1

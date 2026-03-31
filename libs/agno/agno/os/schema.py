@@ -382,6 +382,7 @@ class RunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -413,6 +414,7 @@ class RunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
         )
 
@@ -444,6 +446,7 @@ class TeamRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -474,6 +477,7 @@ class TeamRunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            followups=run_dict.get("followups", None),
         )
 
 

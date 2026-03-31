@@ -17,7 +17,7 @@ Prerequisites:
 
 from agno.agent import Agent
 from agno.tools.crawl4ai import Crawl4aiTools
-from agno.tools.google_maps import GoogleMapTools
+from agno.tools.google.maps import GoogleMapTools
 
 # ---------------------------------------------------------------------------
 # Create Agent

@@ -484,10 +484,11 @@ class Function(BaseModel):
                         param_name = param.arg_name
                         param_type = param.type_name
 
-                        # TODO: We should use type hints first, then map param types in docs to json schema types.
-                        # This is temporary to not lose information
-                        param_descriptions[param_name] = f"({param_type}) {param.description}"
-                        param_descriptions_clean[param_name] = param.description
+                        if param_type:
+                            param_descriptions[param_name] = f"({param_type}) {param.description or ''}"
+                        else:
+                            param_descriptions[param_name] = param.description or ""
+                        param_descriptions_clean[param_name] = param.description or ""
 
             # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
             if self.requires_user_input:
@@ -788,6 +789,39 @@ class FunctionCall(BaseModel):
 
         return call_str
 
+    def _safe_hook_call(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
+        """Call a hook with list-structure-safe messages.
+
+        Temporarily replaces run_context.messages with a shallow copy so the
+        hook cannot corrupt the live message list (e.g. .clear(), .append()).
+        Individual Message objects are still shared references — this protects
+        list structure only, not message contents. The live reference is
+        restored after the hook returns (or raises).
+        """
+        rc = self.function._run_context
+        if rc is not None and rc.messages is not None:
+            live_ref = rc.messages
+            rc.messages = list(live_ref)
+            try:
+                return hook(**hook_args)
+            finally:
+                rc.messages = live_ref
+        else:
+            return hook(**hook_args)
+
+    async def _safe_hook_call_async(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
+        """Async variant of _safe_hook_call."""
+        rc = self.function._run_context
+        if rc is not None and rc.messages is not None:
+            live_ref = rc.messages
+            rc.messages = list(live_ref)
+            try:
+                return await hook(**hook_args)
+            finally:
+                rc.messages = live_ref
+        else:
+            return await hook(**hook_args)
+
     def _handle_pre_hook(self):
         """Handles the pre-hook for the function call."""
         if self.function.pre_hook is not None:
@@ -807,7 +841,7 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
-                self.function.pre_hook(**pre_hook_args)
+                self._safe_hook_call(self.function.pre_hook, pre_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
@@ -835,7 +869,7 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
-                self.function.post_hook(**post_hook_args)
+                self._safe_hook_call(self.function.post_hook, post_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
@@ -956,7 +990,7 @@ class FunctionCall(BaseModel):
 
                 hook_args = self._build_hook_args(hook, name, next_func, args)
 
-                return hook(**hook_args)
+                return self._safe_hook_call(hook, hook_args)
 
             return wrapper
 
@@ -1080,7 +1114,7 @@ class FunctionCall(BaseModel):
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
 
-                await self.function.pre_hook(**pre_hook_args)
+                await self._safe_hook_call_async(self.function.pre_hook, pre_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
@@ -1109,7 +1143,7 @@ class FunctionCall(BaseModel):
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
 
-                await self.function.post_hook(**post_hook_args)
+                await self._safe_hook_call_async(self.function.post_hook, post_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
@@ -1165,9 +1199,9 @@ class FunctionCall(BaseModel):
                 hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 if iscoroutinefunction(hook):
-                    return await hook(**hook_args)
+                    return await self._safe_hook_call_async(hook, hook_args)
                 else:
-                    return hook(**hook_args)
+                    return self._safe_hook_call(hook, hook_args)
 
             return wrapper
 

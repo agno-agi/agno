@@ -249,10 +249,21 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -338,11 +349,20 @@ class ChromaDb(VectorDb):
             except Exception as e:
                 logger.error(f"Error processing document: {e}")
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
             doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -408,10 +428,21 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -499,11 +530,20 @@ class ChromaDb(VectorDb):
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
             doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}

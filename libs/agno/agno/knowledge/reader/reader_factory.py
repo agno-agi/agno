@@ -76,6 +76,10 @@ class ReaderFactory:
             "name": "WebSearchReader",
             "description": "Executes web searches and processes results with relevance ranking and content extraction",
         },
+        "docling": {
+            "name": "DoclingReader",
+            "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
+        },
     }
 
     @classmethod
@@ -276,6 +280,18 @@ class ReaderFactory:
         return WebSearchReader(**config)
 
     @classmethod
+    def _get_docling_reader(cls, **kwargs) -> Reader:
+        """Get Docling reader instance."""
+        from agno.knowledge.reader.docling_reader import DoclingReader
+
+        config: Dict[str, Any] = {
+            "name": "Docling Reader",
+            "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
+        }
+        config.update(kwargs)
+        return DoclingReader(**config)
+
+    @classmethod
     def _get_reader_method(cls, reader_key: str) -> Callable[[], Reader]:
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"
@@ -318,6 +334,7 @@ class ReaderFactory:
             "arxiv": ("agno.knowledge.reader.arxiv_reader", "ArxivReader"),
             "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
             "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
+            "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
         }
 
         if reader_key not in reader_class_map:
@@ -348,6 +365,7 @@ class ReaderFactory:
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:
         """Get the appropriate reader for a file extension."""
+        # TODO: add docling for unique file extensions eg: images, audios, etc.
         extension = extension.lower()
 
         if extension in [".pdf", "application/pdf"]:

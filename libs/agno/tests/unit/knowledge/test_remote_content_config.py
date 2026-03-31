@@ -367,6 +367,72 @@ def test_github_config_with_metadata():
     assert config.metadata == metadata
 
 
+def test_github_config_with_app_auth():
+    """Test creating a GitHub config with GitHub App authentication."""
+    config = GitHubConfig(
+        id="gh-app",
+        name="App Repo",
+        repo="org/repo",
+        app_id=12345,
+        installation_id=67890,
+        private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+    )
+    assert config.app_id == 12345
+    assert config.installation_id == 67890
+    assert config.private_key is not None
+
+
+def test_github_config_partial_app_auth_raises():
+    """Test that providing only some GitHub App fields raises ValueError."""
+    with pytest.raises(ValidationError, match="Missing"):
+        GitHubConfig(id="gh", name="GH", repo="owner/repo", app_id=123)
+
+    with pytest.raises(ValidationError, match="Missing"):
+        GitHubConfig(id="gh", name="GH", repo="owner/repo", app_id=123, installation_id=456)
+
+
+def test_github_config_app_auth_with_token():
+    """Test that both token and app auth fields can coexist."""
+    config = GitHubConfig(
+        id="gh",
+        name="GH",
+        repo="owner/repo",
+        token="ghp_xxx",
+        app_id=123,
+        installation_id=456,
+        private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+    )
+    assert config.token == "ghp_xxx"
+    assert config.app_id == 123
+
+
+def test_github_config_app_auth_string_ids():
+    """Test GitHub App auth with string-typed IDs."""
+    config = GitHubConfig(
+        id="gh",
+        name="GH",
+        repo="owner/repo",
+        app_id="12345",
+        installation_id="67890",
+        private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+    )
+    assert config.app_id == "12345"
+    assert config.installation_id == "67890"
+
+
+def test_github_config_invalid_private_key_format():
+    """Test that a non-PEM private_key raises ValueError."""
+    with pytest.raises(ValidationError, match="PEM-formatted"):
+        GitHubConfig(
+            id="gh",
+            name="GH",
+            repo="owner/repo",
+            app_id=123,
+            installation_id=456,
+            private_key="not-a-pem-key",
+        )
+
+
 # =============================================================================
 # AzureBlobConfig Tests
 # =============================================================================

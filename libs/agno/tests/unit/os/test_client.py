@@ -198,7 +198,56 @@ async def test_get_workflow():
         mock_get.return_value = mock_data
         workflow = await client.aget_workflow("workflow-1")
 
-        mock_get.assert_called_once_with("/workflows/workflow-1", headers=None)
+        mock_get.assert_called_once_with("/workflows/workflow-1", params={}, headers=None)
+        assert workflow.id == "workflow-1"
+        assert workflow.name == "Test Workflow"
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_with_version():
+    """Verify aget_workflow passes version as query param."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {
+        "id": "workflow-1",
+        "name": "Test Workflow v2",
+    }
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_data
+        workflow = await client.aget_workflow("workflow-1", version=2)
+
+        mock_get.assert_called_once_with("/workflows/workflow-1", params={"version": 2}, headers=None)
+        assert workflow.id == "workflow-1"
+        assert workflow.name == "Test Workflow v2"
+
+
+def test_get_workflow_sync():
+    """Verify sync get_workflow passes version as query param."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {
+        "id": "workflow-1",
+        "name": "Test Workflow v3",
+    }
+    with patch.object(client, "_get") as mock_get:
+        mock_get.return_value = mock_data
+        workflow = client.get_workflow("workflow-1", version=3)
+
+        mock_get.assert_called_once_with("/workflows/workflow-1", params={"version": 3}, headers=None)
+        assert workflow.id == "workflow-1"
+        assert workflow.name == "Test Workflow v3"
+
+
+def test_get_workflow_sync_no_version():
+    """Verify sync get_workflow without version sends empty params."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {
+        "id": "workflow-1",
+        "name": "Test Workflow",
+    }
+    with patch.object(client, "_get") as mock_get:
+        mock_get.return_value = mock_data
+        workflow = client.get_workflow("workflow-1")
+
+        mock_get.assert_called_once_with("/workflows/workflow-1", params={}, headers=None)
         assert workflow.id == "workflow-1"
         assert workflow.name == "Test Workflow"
 

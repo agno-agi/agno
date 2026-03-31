@@ -15,6 +15,7 @@ class MigrationManager:
         ("v2_0_0", packaging_version.parse("2.0.0")),
         ("v2_3_0", packaging_version.parse("2.3.0")),
         ("v2_5_0", packaging_version.parse("2.5.0")),
+        ("v2_5_6", packaging_version.parse("2.5.6")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -49,6 +50,7 @@ class MigrationManager:
             "evals": "eval_table_name",
             "knowledge": "knowledge_table_name",
             "culture": "culture_table_name",
+            "approvals": "approvals_table_name",
         }
 
         # Select tables to migrate
@@ -141,6 +143,7 @@ class MigrationManager:
             "evals": "eval_table_name",
             "knowledge": "knowledge_table_name",
             "culture": "culture_table_name",
+            "approvals": "approvals_table_name",
         }
 
         # Select tables to migrate

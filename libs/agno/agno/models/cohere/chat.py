@@ -32,7 +32,7 @@ class Cohere(Model):
     For more information, see: https://docs.cohere.com/docs/chat-api
     """
 
-    id: str = "command-r-plus"
+    id: str = "command-a-03-2025"
     name: str = "cohere"
     provider: str = "Cohere"
 
