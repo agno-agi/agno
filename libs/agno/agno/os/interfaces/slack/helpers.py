@@ -100,6 +100,7 @@ async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[s
     try:
         resp = await async_client.conversations_info(channel=channel_id)
         channel = resp.get("channel", {}) if resp else {}
+        # API returns "" for unnamed channels; normalize to None
         return channel.get("name") or None
     except Exception:
         log_warning(f"Failed to resolve channel name for {channel_id}")

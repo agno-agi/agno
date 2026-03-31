@@ -168,23 +168,12 @@ class SlackTools(Toolkit):
             response = self.client.conversations_history(channel=channel, limit=limit)
 
             raw_messages = response.get("messages", [])
-            # Resolve unique human user IDs to display names
-            human_ids = list({m.get("user", "") for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")})
-            user_names = self._resolve_user_names(human_ids)
+            human_msgs = [m for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")]
+            user_names = self._resolve_user_names(list({m["user"] for m in human_msgs}))
 
             messages: List[Dict[str, Any]] = []
             for msg in raw_messages:
-                user_id = msg.get("user", "")
-                # Bot messages carry display name in "username"; humans resolved above
-                user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
-                entry: Dict[str, Any] = {
-                    "text": msg.get("text", ""),
-                    "user": user_label,
-                    "ts": msg.get("ts", ""),
-                }
-                # Bots (GitHub, Jira, etc.) often put content in attachments, not text
-                if msg.get("attachments"):
-                    entry["attachments"] = msg["attachments"]
+                entry = self._build_message_entry(msg, user_names)
                 # Thread metadata lets the agent discover and expand threads
                 thread_ts = msg.get("thread_ts")
                 if thread_ts:
@@ -207,10 +196,23 @@ class SlackTools(Toolkit):
             try:
                 resp = self.client.users_info(user=uid)
                 profile = resp.get("user", {}).get("profile", {})
-                names[uid] = profile.get("real_name") or profile.get("display_name") or uid
+                # Prefer display_name (chosen by user), fall back to real_name
+                names[uid] = profile.get("display_name") or profile.get("real_name") or uid
             except SlackApiError:
                 names[uid] = uid
         return names
+
+    def _build_message_entry(self, msg: Dict[str, Any], user_names: Dict[str, str]) -> Dict[str, Any]:
+        user_id = msg.get("user", "")
+        user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
+        entry: Dict[str, Any] = {
+            "text": msg.get("text", ""),
+            "user": user_label,
+            "ts": msg.get("ts", ""),
+        }
+        if msg.get("attachments"):
+            entry["attachments"] = msg["attachments"]
+        return entry
 
     def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
         """Save file to disk if output_directory is set. Return file path or None."""
@@ -431,21 +433,12 @@ class SlackTools(Toolkit):
                 limit=min(limit, self.thread_message_limit),
             )
             raw_messages = response.get("messages", [])
-            human_ids = list({m.get("user", "") for m in raw_messages if m.get("user")})
-            user_names = self._resolve_user_names(human_ids)
+            human_msgs = [m for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")]
+            user_names = self._resolve_user_names(list({m["user"] for m in human_msgs}))
 
             messages: List[Dict[str, Any]] = []
             for msg in raw_messages:
-                user_id = msg.get("user", "")
-                user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
-                entry: Dict[str, Any] = {
-                    "text": msg.get("text", ""),
-                    "user": user_label,
-                    "ts": msg.get("ts", ""),
-                }
-                if msg.get("attachments"):
-                    entry["attachments"] = msg["attachments"]
-                messages.append(entry)
+                messages.append(self._build_message_entry(msg, user_names))
             return json.dumps(
                 {
                     "thread_ts": thread_ts,
