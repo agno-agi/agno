@@ -1764,16 +1764,16 @@ class SurrealDb(BaseDb):
             query = dedent(f"""
                 SELECT
                     session_id,
-                    user_id,
-                    agent_id,
-                    team_id,
-                    workflow_id,
+                    array::first(user_id) AS user_id,
+                    array::first(agent_id) AS agent_id,
+                    array::first(team_id) AS team_id,
+                    array::first(workflow_id) AS workflow_id,
                     count() AS total_traces,
                     time::min(created_at) AS first_trace_at,
                     time::max(created_at) AS last_trace_at
                 FROM {table}
                 {where_clause}
-                GROUP BY session_id, user_id, agent_id, team_id, workflow_id
+                GROUP BY session_id
                 {order_limit_start_clause}
             """)
             results = self._query(query, where_vars, dict)
