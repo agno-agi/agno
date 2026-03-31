@@ -93,10 +93,7 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
 
 
 async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:
-    """Resolve a Slack channel ID to its human-readable name.
-
-    Returns the channel name (without ``#`` prefix) or ``None`` on failure.
-    """
+    """Resolve a Slack channel ID to its human-readable name."""
     try:
         resp = await async_client.conversations_info(channel=channel_id)
         channel = resp.get("channel", {}) if resp else {}
