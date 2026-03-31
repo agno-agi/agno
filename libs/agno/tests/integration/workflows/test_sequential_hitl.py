@@ -1,16 +1,13 @@
 """
-Integration tests for nested Condition HITL (decision tree) behavior.
+Integration tests for sequential top-level HITL in continue_run.
 
 Tests cover:
-- Nested conditions with boolean evaluators (no HITL) — works
-- Nested conditions with requires_confirmation (HITL decision trees)
-- Decision trees: Step -> Condition -> sequential Condition branching
-- else_steps with nested conditions
-- Multiple levels of nesting
-- Sequential top-level Conditions pausing correctly via continue_run
-- Streaming variants of sequential HITL pauses
-- Steps (pipeline) and Router confirmation HITL in continue_run
-- Three-way sequential HITL pauses
+- Nested conditions with boolean evaluators (no HITL) — baseline
+- Top-level Condition HITL (confirm, reject+else, skip, cancel)
+- Sequential top-level HITL: Condition -> Condition, Step -> Condition,
+  Condition -> Loop, Condition -> Loop -> Condition (three pauses)
+- Steps pipeline and Router confirmation HITL in continue_run
+- Streaming variants (sync and async)
 """
 
 import pytest
@@ -644,71 +641,6 @@ class TestSequentialDecisionTree:
         assert final.status == RunStatus.completed
         assert final.step_results[0].steps[0].content == "Left branch executed"
         assert final.step_results[1].steps[0].content == "Surface review complete"
-
-
-# =============================================================================
-# Test: Nested HITL (inside branches) — documents current limitation
-# =============================================================================
-
-
-class TestNestedHITLLimitation:
-    """Nested HITL inside Condition branches does NOT pause.
-
-    When a Condition with requires_confirmation=True is nested inside another
-    Condition's steps/else_steps, the inner Condition's HITL is not checked
-    because Condition.execute() calls step.execute() directly without
-    checking step_pause_status. The inner Condition's evaluator is used instead.
-
-    This is a known limitation tracked for future enhancement.
-    """
-
-    def test_nested_hitl_inner_confirmation_not_triggered(self, shared_db):
-        """Inner Condition's requires_confirmation is NOT checked during execution."""
-        workflow = Workflow(
-            name="Nested HITL - Inner Not Triggered",
-            db=shared_db,
-            steps=[
-                Condition(
-                    name="outer",
-                    requires_confirmation=True,
-                    confirmation_message="First decision?",
-                    on_reject=OnReject.else_branch,
-                    steps=[
-                        # This inner Condition has requires_confirmation=True,
-                        # but it will NOT pause — it will just use its evaluator
-                        Condition(
-                            name="inner",
-                            requires_confirmation=True,
-                            confirmation_message="Second decision?",
-                            on_reject=OnReject.else_branch,
-                            steps=[Step(name="left_a", executor=left_a)],
-                            else_steps=[Step(name="left_b", executor=left_b)],
-                        ),
-                    ],
-                    else_steps=[Step(name="right", executor=right_branch)],
-                ),
-            ],
-        )
-
-        # First pause: outer condition
-        response = workflow.run(input="test")
-        assert response.is_paused is True
-        assert len(response.steps_requiring_confirmation) == 1
-        assert response.steps_requiring_confirmation[0].step_name == "outer"
-
-        # Confirm outer -> inner executes WITHOUT pausing
-        response.steps_requiring_confirmation[0].confirm()
-        final = workflow.continue_run(response)
-
-        # Workflow completes without a second pause
-        # Inner condition used evaluator=True (default), so if-branch ran
-        assert final.status == RunStatus.completed
-        assert final.is_paused is False
-
-        outer = final.step_results[0]
-        inner = outer.steps[0]
-        assert inner.step_name == "inner"
-        assert inner.steps[0].content == "Left-A executed"
 
 
 # =============================================================================
