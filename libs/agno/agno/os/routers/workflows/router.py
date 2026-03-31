@@ -997,10 +997,10 @@ def get_workflow_router(
         # Convert step requirements dicts to StepRequirement objects
         from agno.workflow.types import StepRequirement
 
-        step_requirements = None
+        parsed_requirements: Optional[List[StepRequirement]] = None
         if step_requirements_data:
             try:
-                step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
+                parsed_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
             except Exception as e:
                 raise HTTPException(
                     status_code=400, detail=f"Invalid structure or content for step_requirements: {str(e)}"
@@ -1013,17 +1013,17 @@ def get_workflow_router(
                     run_id=run_id,
                     session_id=session_id,
                     user_id=user_id,
-                    step_requirements=step_requirements,
+                    step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
                 ),
                 media_type="text/event-stream",
             )
         else:
             try:
-                run_response = await workflow.acontinue_run(
+                run_response = await workflow.acontinue_run(  # type: ignore[call-overload]
                     run_id=run_id,
                     session_id=session_id,
-                    step_requirements=step_requirements,
+                    step_requirements=parsed_requirements,
                     stream=False,
                     background_tasks=background_tasks,
                 )
