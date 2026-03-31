@@ -1764,10 +1764,10 @@ class SurrealDb(BaseDb):
             query = dedent(f"""
                 SELECT
                     session_id,
-                    math::max(user_id) AS user_id,
-                    math::max(agent_id) AS agent_id,
-                    math::max(team_id) AS team_id,
-                    math::max(workflow_id) AS workflow_id,
+                    array::first(user_id) AS user_id,
+                    array::first(agent_id) AS agent_id,
+                    array::first(team_id) AS team_id,
+                    array::first(workflow_id) AS workflow_id,
                     count() AS total_traces,
                     time::min(created_at) AS first_trace_at,
                     time::max(created_at) AS last_trace_at
