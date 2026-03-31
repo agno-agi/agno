@@ -1,10 +1,10 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Citations, UrlCitation
 from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
@@ -35,7 +35,7 @@ class xAI(OpenAILike):
     name: str = "xAI"
     provider: str = "xAI"
 
-    api_key: Optional[str] = field(default_factory=lambda: getenv("XAI_API_KEY"))
+    api_key: Optional[str] = None
     base_url: str = "https://api.x.ai/v1"
 
     search_parameters: Optional[Dict[str, Any]] = None
@@ -50,10 +50,9 @@ class xAI(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("XAI_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="XAI_API_KEY not set. Please set the XAI_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()
 

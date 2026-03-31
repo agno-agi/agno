@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -35,9 +35,8 @@ class LiteLLMOpenAI(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()

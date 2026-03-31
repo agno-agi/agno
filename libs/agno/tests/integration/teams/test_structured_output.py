@@ -1,3 +1,4 @@
+import pytest
 from pydantic import BaseModel
 
 from agno.agent import Agent
@@ -21,7 +22,7 @@ def test_output_schemas_on_members():
         model=OpenAIChat("gpt-4o"),
         output_schema=StockAnalysis,
         role="Searches for information on stocks and provides price analysis.",
-        tools=[YFinanceTools(include_tools=["get_current_stock_price", "get_analyst_recommendations"])],
+        tools=[YFinanceTools(enable_stock_price=True, enable_analyst_recommendations=True)],
     )
 
     company_info_agent = Agent(
@@ -31,10 +32,9 @@ def test_output_schemas_on_members():
         output_schema=CompanyAnalysis,
         tools=[
             YFinanceTools(
-                include_tools=[
-                    "get_company_info",
-                    "get_company_news",
-                ]
+                enable_stock_price=False,
+                enable_company_info=True,
+                enable_company_news=True,
             )
         ],
     )
@@ -81,14 +81,14 @@ def test_mixed_structured_output():
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
         output_schema=StockInfo,
-        tools=[YFinanceTools(include_tools=["get_current_stock_price"])],
+        tools=[YFinanceTools(enable_stock_price=True)],
     )
 
     news_agent = Agent(
         name="News Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get company news",
-        tools=[YFinanceTools(include_tools=["get_company_news"])],
+        tools=[YFinanceTools(enable_stock_price=False, enable_company_news=True)],
     )
 
     team = Team(
@@ -150,3 +150,227 @@ def test_delegate_to_all_members_with_structured_output():
     assert response.content.perspective_one is not None
     assert response.content.perspective_two is not None
     assert response.content.conclusion is not None
+
+
+def test_team_with_json_schema():
+    """Test team with JSON schema as output_schema."""
+
+    analysis_schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "StockAnalysis",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Stock ticker symbol"},
+                    "company_name": {"type": "string", "description": "Company name"},
+                    "analysis": {"type": "string", "description": "Brief analysis"},
+                },
+                "required": ["symbol", "company_name", "analysis"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    stock_agent = Agent(
+        name="Stock Analyst",
+        model=OpenAIChat("gpt-4o-mini"),
+        role="Provides stock analysis",
+    )
+
+    team = Team(
+        name="Analysis Team",
+        model=OpenAIChat("gpt-4o-mini"),
+        members=[stock_agent],
+        output_schema=analysis_schema,
+        markdown=False,
+    )
+
+    response = team.run("Analyze NVDA stock briefly")
+
+    # Verify response structure
+    assert response.content is not None
+    assert isinstance(response.content, dict)
+    assert response.content_type == "dict"
+
+    # Verify all required fields are present
+    assert "symbol" in response.content
+    assert "company_name" in response.content
+    assert "analysis" in response.content
+
+    # Verify field types are correct
+    assert isinstance(response.content["symbol"], str)
+    assert isinstance(response.content["company_name"], str)
+    assert isinstance(response.content["analysis"], str)
+
+    # Verify fields have actual content
+    assert len(response.content["symbol"]) > 0
+    assert len(response.content["company_name"]) > 0
+    assert len(response.content["analysis"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_team_arun_with_json_schema():
+    """Test team with JSON schema using async run."""
+
+    analysis_schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "StockAnalysis",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Stock ticker symbol"},
+                    "company_name": {"type": "string", "description": "Company name"},
+                    "analysis": {"type": "string", "description": "Brief analysis"},
+                },
+                "required": ["symbol", "company_name", "analysis"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    stock_agent = Agent(
+        name="Stock Analyst",
+        model=OpenAIChat("gpt-4o-mini"),
+        role="Provides stock analysis",
+    )
+
+    team = Team(
+        name="Analysis Team",
+        model=OpenAIChat("gpt-4o-mini"),
+        members=[stock_agent],
+        output_schema=analysis_schema,
+        markdown=False,
+    )
+
+    response = await team.arun("Analyze AAPL stock briefly")
+
+    # Verify response structure
+    assert response.content is not None
+    assert isinstance(response.content, dict)
+    assert response.content_type == "dict"
+
+    # Verify all required fields are present
+    assert "symbol" in response.content
+    assert "company_name" in response.content
+    assert "analysis" in response.content
+
+    # Verify field types are correct
+    assert isinstance(response.content["symbol"], str)
+    assert isinstance(response.content["company_name"], str)
+    assert isinstance(response.content["analysis"], str)
+
+    # Verify fields have actual content
+    assert len(response.content["symbol"]) > 0
+    assert len(response.content["company_name"]) > 0
+    assert len(response.content["analysis"]) > 0
+
+
+def test_team_delegate_to_all_with_json_schema():
+    """Test collaborate team with JSON schema."""
+
+    debate_schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "DebateResult",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "The debate topic"},
+                    "conclusion": {"type": "string", "description": "Final conclusion"},
+                },
+                "required": ["topic", "conclusion"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    agent1 = Agent(name="Pro", model=OpenAIChat("gpt-4o-mini"), role="Argues in favor")
+    agent2 = Agent(name="Con", model=OpenAIChat("gpt-4o-mini"), role="Argues against")
+
+    team = Team(
+        name="Debate Team",
+        delegate_to_all_members=True,
+        model=OpenAIChat("gpt-4o-mini"),
+        members=[agent1, agent2],
+        instructions=["Get perspectives from both agents and summarize."],
+        output_schema=debate_schema,
+    )
+
+    response = team.run("Should AI be regulated?")
+
+    # Verify response structure
+    assert response.content is not None
+    assert isinstance(response.content, dict)
+    assert response.content_type == "dict"
+
+    # Verify all required fields are present
+    assert "topic" in response.content
+    assert "conclusion" in response.content
+
+    # Verify field types are correct
+    assert isinstance(response.content["topic"], str)
+    assert isinstance(response.content["conclusion"], str)
+
+    # Verify fields have actual content
+    assert len(response.content["topic"]) > 0
+    assert len(response.content["conclusion"]) > 0
+
+    # Verify member responses were collected (delegate_to_all_members=True)
+    assert len(response.member_responses) >= 1
+
+
+@pytest.mark.asyncio
+async def test_team_arun_delegate_to_all_with_json_schema():
+    """Test collaborate team with JSON schema using async run."""
+
+    debate_schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "DebateResult",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "The debate topic"},
+                    "conclusion": {"type": "string", "description": "Final conclusion"},
+                },
+                "required": ["topic", "conclusion"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    agent1 = Agent(name="Pro", model=OpenAIChat("gpt-4o-mini"), role="Argues in favor")
+    agent2 = Agent(name="Con", model=OpenAIChat("gpt-4o-mini"), role="Argues against")
+
+    team = Team(
+        name="Debate Team",
+        delegate_to_all_members=True,
+        model=OpenAIChat("gpt-4o-mini"),
+        members=[agent1, agent2],
+        instructions=["Get perspectives from both agents and summarize."],
+        output_schema=debate_schema,
+    )
+
+    response = await team.arun("Should autonomous vehicles be allowed?")
+
+    # Verify response structure
+    assert response.content is not None
+    assert isinstance(response.content, dict)
+    assert response.content_type == "dict"
+
+    # Verify all required fields are present
+    assert "topic" in response.content
+    assert "conclusion" in response.content
+
+    # Verify field types are correct
+    assert isinstance(response.content["topic"], str)
+    assert isinstance(response.content["conclusion"], str)
+
+    # Verify fields have actual content
+    assert len(response.content["topic"]) > 0
+    assert len(response.content["conclusion"]) > 0
+
+    # Verify member responses were collected (delegate_to_all_members=True)
+    assert len(response.member_responses) >= 1

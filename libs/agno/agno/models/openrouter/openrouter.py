@@ -1,11 +1,14 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
+from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
+from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 
 
@@ -30,7 +33,7 @@ class OpenRouter(OpenAILike):
     name: str = "OpenRouter"
     provider: str = "OpenRouter"
 
-    api_key: Optional[str] = field(default_factory=lambda: getenv("OPENROUTER_API_KEY"))
+    api_key: Optional[str] = None
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
@@ -46,10 +49,9 @@ class OpenRouter(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("OPENROUTER_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="OPENROUTER_API_KEY not set. Please set the OPENROUTER_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
 
         return super()._get_client_params()
@@ -84,3 +86,46 @@ class OpenRouter(OpenAILike):
             request_params["extra_body"] = extra_body
 
         return request_params
+
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
+        message_dict = super()._format_message(message, compress_tool_results)
+
+        if message.role == "assistant" and message.provider_data:
+            if message.provider_data.get("reasoning_details"):
+                message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
+
+        return message_dict
+
+    def _parse_provider_response(
+        self,
+        response: ChatCompletion,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
+        model_response = super()._parse_provider_response(response, response_format)
+
+        if response.choices and len(response.choices) > 0:
+            response_message = response.choices[0].message
+            if hasattr(response_message, "reasoning_details") and response_message.reasoning_details:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["reasoning_details"] = response_message.reasoning_details
+            elif hasattr(response_message, "model_extra"):
+                extra = getattr(response_message, "model_extra", None)
+                if extra and isinstance(extra, dict) and extra.get("reasoning_details"):
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["reasoning_details"] = extra["reasoning_details"]
+
+        return model_response
+
+    def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+        model_response = super()._parse_provider_response_delta(response_delta)
+
+        if response_delta.choices and len(response_delta.choices) > 0:
+            choice_delta = response_delta.choices[0].delta
+            if hasattr(choice_delta, "reasoning_details") and choice_delta.reasoning_details:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["reasoning_details"] = choice_delta.reasoning_details
+
+        return model_response

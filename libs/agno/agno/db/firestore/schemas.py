@@ -122,6 +122,44 @@ CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
     {"key": "updated_at"},
 ]
 
+TRACE_COLLECTION_SCHEMA = [
+    {"key": "trace_id", "unique": True},
+    {"key": "name"},
+    {"key": "status"},
+    {"key": "run_id"},
+    {"key": "session_id"},
+    {"key": "user_id"},
+    {"key": "agent_id"},
+    {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "start_time"},
+    {"key": "end_time"},
+    {"key": "created_at"},
+    # Composite indexes for common query patterns
+    {"key": [("session_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("user_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("agent_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("team_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("workflow_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("run_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("status", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+]
+
+SPAN_COLLECTION_SCHEMA = [
+    {"key": "span_id", "unique": True},
+    {"key": "trace_id"},
+    {"key": "parent_span_id"},
+    {"key": "name"},
+    {"key": "span_kind"},
+    {"key": "status_code"},
+    {"key": "start_time"},
+    {"key": "end_time"},
+    {"key": "created_at"},
+    # Composite indexes for common query patterns
+    {"key": [("trace_id", "ASCENDING"), ("start_time", "ASCENDING")], "collection_group": False},
+    {"key": [("parent_span_id", "ASCENDING"), ("start_time", "ASCENDING")], "collection_group": False},
+]
+
 
 def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
@@ -132,6 +170,8 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
+        "traces": TRACE_COLLECTION_SCHEMA,
+        "spans": SPAN_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)

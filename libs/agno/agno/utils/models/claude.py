@@ -152,9 +152,21 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     Add a document url or base64 encoded content to a message.
     """
 
-    mime_mapping = {
+    mime_mapping: dict[str, str] = {
         "application/pdf": "base64",
+        # All text/* MIME types use the "text" source type
         "text/plain": "text",
+        "text/csv": "text",
+        "text/html": "text",
+        "text/css": "text",
+        "text/md": "text",
+        "text/xml": "text",
+        "text/rtf": "text",
+        "text/javascript": "text",
+        "text/x-python": "text",
+        "application/json": "text",
+        "application/x-javascript": "text",
+        "application/x-python": "text",
     }
 
     # Case 0: File is an Anthropic uploaded file
@@ -184,7 +196,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
         path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
         if path.exists() and path.is_file():
-            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+            raw_bytes = path.read_bytes()
 
             # Determine media type
             media_type = file.mime_type
@@ -193,31 +205,60 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
                 media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
 
-            # Map media type to type, default to "base64" if no mapping exists
-            type = mime_mapping.get(media_type, "base64")
+            # Map media type to source type, default to "base64" if no mapping exists
+            source_type = mime_mapping.get(media_type, "base64")
 
-            return {
-                "type": "document",
-                "source": {
-                    "type": type,
-                    "media_type": media_type,
-                    "data": file_data,
-                },
-                "citations": {"enabled": True},
-            }
+            if source_type == "text":
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": raw_bytes.decode("utf-8", errors="replace"),
+                    },
+                    "citations": {"enabled": True},
+                }
+            else:
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
+                    },
+                    "citations": {"enabled": True},
+                }
         else:
             log_error(f"Document file not found: {file}")
             return None
     # Case 3: Document is bytes content
     elif file.content is not None:
-        import base64
+        media_type = file.mime_type or "application/pdf"
+        # Map media type to source type, default to "base64" if no mapping exists
+        source_type = mime_mapping.get(media_type, "base64")
 
-        file_data = base64.standard_b64encode(file.content).decode("utf-8")
-        return {
-            "type": "document",
-            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
-            "citations": {"enabled": True},
-        }
+        if source_type == "text":
+            return {
+                "type": "document",
+                "source": {
+                    "type": "text",
+                    "media_type": "text/plain",
+                    "data": file.content.decode("utf-8", errors="replace"),
+                },
+                "citations": {"enabled": True},
+            }
+        else:
+            import base64
+
+            return {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(file.content).decode("utf-8"),
+                },
+                "citations": {"enabled": True},
+            }
     return None
 
 
@@ -234,6 +275,11 @@ def format_messages(
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
+    from agno.utils.message import normalize_tool_messages
+
+    # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+    messages = normalize_tool_messages(messages)
+
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
@@ -287,6 +333,12 @@ def format_messages(
                     RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
                 )
 
+            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data
+            # Inserted between thinking and text blocks to match Anthropic's native ordering
+            if message.provider_data and message.provider_data.get("server_tool_blocks"):
+                for block_dict in message.provider_data["server_tool_blocks"]:
+                    content.append(block_dict)
+
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
@@ -307,7 +359,6 @@ def format_messages(
 
             # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
-
             content.append(
                 {
                     "type": "tool_result",
@@ -321,7 +372,35 @@ def format_messages(
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
-    return chat_messages, " ".join(system_messages)
+
+    # Merge consecutive messages with the same role (Claude requires alternating user/assistant roles).
+    # This happens when multiple tool results (mapped to "user") appear in sequence, or when a tool
+    # result is followed by a user message.
+    merged_messages: List[Dict[str, Union[str, list]]] = []
+    for msg in chat_messages:
+        if merged_messages and merged_messages[-1]["role"] == msg["role"]:
+            # Same role as previous → merge contents
+            prev_content = merged_messages[-1]["content"]
+            curr_content = msg["content"]
+
+            # Handle different content type combinations
+            if isinstance(prev_content, list) and isinstance(curr_content, list):
+                prev_content.extend(curr_content)
+            elif isinstance(prev_content, list):
+                prev_content.append({"type": "text", "text": str(curr_content)})
+            elif isinstance(curr_content, list):
+                curr_content.insert(0, {"type": "text", "text": str(prev_content)})
+                merged_messages[-1]["content"] = curr_content
+            else:
+                # Both strings → convert in list
+                merged_messages[-1]["content"] = [
+                    {"type": "text", "text": str(prev_content)},
+                    {"type": "text", "text": str(curr_content)},
+                ]
+        else:
+            merged_messages.append(msg)
+
+    return merged_messages, " ".join(system_messages)
 
 
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
@@ -353,15 +432,23 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             if "description" not in input_properties[param_name]:
                 input_properties[param_name]["description"] = ""
 
+        input_schema: Dict[str, Any] = {
+            "type": parameters.get("type", "object"),
+            "properties": input_properties,
+            "required": required_params,
+            "additionalProperties": False,
+        }
+
+        # MCP tools pass raw JSON Schemas that may use $defs/$ref for nested types
+        if "$defs" in parameters:
+            input_schema["$defs"] = parameters["$defs"]
+        if "definitions" in parameters:
+            input_schema["definitions"] = parameters["definitions"]
+
         tool = {
             "name": func_def.get("name") or "",
             "description": func_def.get("description") or "",
-            "input_schema": {
-                "type": parameters.get("type", "object"),
-                "properties": input_properties,
-                "required": required_params,
-                "additionalProperties": False,
-            },
+            "input_schema": input_schema,
         }
 
         # Add strict mode if specified (check both function dict and tool_def top level)

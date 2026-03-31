@@ -7,11 +7,11 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -43,6 +43,8 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+    # If True, only collect metrics on the final streaming chunk (for providers with cumulative token counts)
+    collect_metrics_on_completion: bool = False
 
     # Request parameters
     store: Optional[bool] = None
@@ -97,15 +99,17 @@ class OpenAIChat(Model):
         "model": "assistant",
     }
 
+    def get_provider(self) -> str:
+        return f"{super().get_provider()} Chat"
+
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
 
         # Define base client params
@@ -249,13 +253,11 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia"]:
+            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
-                        if tool["function"].get("requires_confirmation") is not None:
-                            del tool["function"]["requires_confirmation"]
-                        if tool["function"].get("external_execution") is not None:
-                            del tool["function"]["external_execution"]
+                        for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
+                            tool["function"].pop(_internal_key, None)
 
             request_params["tools"] = tools
 
@@ -305,6 +307,13 @@ class OpenAIChat(Model):
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "OpenAIChat":
+        """
+        Create an OpenAIChat model from a dictionary.
+        """
+        return cls(**data)
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
@@ -373,6 +382,17 @@ class OpenAIChat(Model):
             message_dict["content"] = ""
         return message_dict
 
+    def _format_all_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Format all messages, remapping foreign tool call IDs to call_ prefix first."""
+        from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+        normalized = reformat_tool_call_ids(messages, provider="openai_chat")
+        return [self._format_message(m, compress_tool_results) for m in normalized]
+
     def invoke(
         self,
         messages: List[Message],
@@ -398,14 +418,11 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -451,6 +468,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -480,13 +500,10 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -532,6 +549,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -558,14 +578,11 @@ class OpenAIChat(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -610,6 +627,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -636,14 +656,11 @@ class OpenAIChat(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -690,6 +707,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -714,7 +734,7 @@ class OpenAIChat(Model):
             _function_arguments = _tool_call.function.arguments if _tool_call.function else None
 
             if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+                tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
             tool_call_entry = tool_calls[_index]
             if not tool_call_entry:
                 tool_call_entry["id"] = _tool_call_id
@@ -725,7 +745,7 @@ class OpenAIChat(Model):
                 }
             else:
                 if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
+                    tool_call_entry["function"]["name"] = _function_name
                 if _function_arguments:
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
@@ -733,6 +753,21 @@ class OpenAIChat(Model):
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
+
+    def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:
+        """
+        Determine if metrics should be collected from the response.
+        """
+        if not response.usage:
+            return False
+
+        if not self.collect_metrics_on_completion:
+            return True
+
+        if not response.choices:
+            return False
+
+        return response.choices[0].finish_reason is not None
 
     def _parse_provider_response(
         self,
@@ -757,7 +792,6 @@ class OpenAIChat(Model):
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
-
         # Add content
         if response_message.content is not None:
             model_response.content = response_message.content
@@ -803,9 +837,21 @@ class OpenAIChat(Model):
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
+        elif hasattr(response_message, "reasoning") and response_message.reasoning is not None:  # type: ignore
+            model_response.reasoning_content = response_message.reasoning  # type: ignore
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
+
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+
+        if response.id:
+            model_response.provider_data["id"] = response.id
+        if response.system_fingerprint:
+            model_response.provider_data["system_fingerprint"] = response.system_fingerprint
+        if response.model_extra:
+            model_response.provider_data["model_extra"] = response.model_extra
 
         return model_response
 
@@ -823,11 +869,21 @@ class OpenAIChat(Model):
 
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
-
             if choice_delta:
                 # Add content
                 if choice_delta.content is not None:
                     model_response.content = choice_delta.content
+
+                    # We only want to handle these if content is present
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+
+                    if response_delta.id:
+                        model_response.provider_data["id"] = response_delta.id
+                    if response_delta.system_fingerprint:
+                        model_response.provider_data["system_fingerprint"] = response_delta.system_fingerprint
+                    if response_delta.model_extra:
+                        model_response.provider_data["model_extra"] = response_delta.model_extra
 
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
@@ -835,6 +891,8 @@ class OpenAIChat(Model):
 
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content
+                elif hasattr(choice_delta, "reasoning") and choice_delta.reasoning is not None:
+                    model_response.reasoning_content = choice_delta.reasoning
 
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
@@ -879,23 +937,23 @@ class OpenAIChat(Model):
                         log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
-        if response_delta.usage is not None:
+        if self._should_collect_metrics(response_delta) and response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
 
-    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
+    def _get_metrics(self, response_usage: CompletionUsage) -> MessageMetrics:
         """
-        Parse the given OpenAI-specific usage into an Agno Metrics object.
+        Parse the given OpenAI-specific usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from OpenAI
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
 
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
@@ -910,5 +968,7 @@ class OpenAIChat(Model):
         if completion_tokens_details := response_usage.completion_tokens_details:
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics

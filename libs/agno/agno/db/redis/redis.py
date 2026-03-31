@@ -1,7 +1,10 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.redis.utils import (
@@ -48,6 +51,8 @@ class RedisDb(BaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a Redis database.
@@ -71,6 +76,8 @@ class RedisDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
             culture_table (Optional[str]): Name of the table to store cultural knowledge
+            traces_table (Optional[str]): Name of the table to store traces
+            spans_table (Optional[str]): Name of the table to store spans
 
         Raises:
             ValueError: If neither redis_client nor db_url is provided.
@@ -88,6 +95,8 @@ class RedisDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
 
         self.db_prefix = db_prefix
@@ -125,6 +134,12 @@ class RedisDb(BaseDb):
 
         elif table_type == "culture":
             return self.culture_table_name
+
+        elif table_type == "traces":
+            return self.trace_table_name
+
+        elif table_type == "spans":
+            return self.span_table_name
 
         else:
             raise ValueError(f"Unknown table type: {table_type}")
@@ -264,16 +279,22 @@ class RedisDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from Redis.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the session.
         """
         try:
+            if user_id is not None:
+                session = self._get_record("sessions", session_id)
+                if session is None or session.get("user_id") != user_id:
+                    log_debug(f"No session found to delete with session_id: {session_id} and user_id: {user_id}")
+                    return False
             if self._delete_record(
                 table_type="sessions",
                 record_id=session_id,
@@ -289,11 +310,12 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from Redis.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the sessions.
@@ -301,6 +323,10 @@ class RedisDb(BaseDb):
         try:
             deleted_count = 0
             for session_id in session_ids:
+                if user_id is not None:
+                    session = self._get_record("sessions", session_id)
+                    if session is None or session.get("user_id") != user_id:
+                        continue
                 if self._delete_record(
                     "sessions",
                     session_id,
@@ -440,7 +466,12 @@ class RedisDb(BaseDb):
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in Redis.
 
@@ -448,6 +479,7 @@ class RedisDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[Session]: The renamed session if successful, None otherwise.
@@ -458,6 +490,9 @@ class RedisDb(BaseDb):
         try:
             session = self._get_record("sessions", session_id)
             if session is None:
+                return None
+
+            if user_id is not None and session.get("user_id") != user_id:
                 return None
 
             # Update session_name, in session_data
@@ -505,6 +540,14 @@ class RedisDb(BaseDb):
         """
         try:
             session_dict = session.to_dict()
+
+            existing = self._get_record(table_type="sessions", record_id=session.session_id)
+            if (
+                existing
+                and existing.get("user_id") is not None
+                and existing.get("user_id") != session_dict.get("user_id")
+            ):
+                return None
 
             if isinstance(session, AgentSession):
                 data = {
@@ -1224,6 +1267,7 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1232,12 +1276,10 @@ class RedisDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
 
         Raises:
             Exception: If any error occurs while getting the knowledge contents.
@@ -1246,6 +1288,10 @@ class RedisDb(BaseDb):
             all_documents = self._get_all_records("knowledge")
             if len(all_documents) == 0:
                 return [], 0
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
 
             total_count = len(all_documents)
 
@@ -1676,3 +1722,498 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
+
+    # --- Traces ---
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            # Check if trace already exists
+            existing = self._get_record("traces", trace.trace_id)
+
+            if existing:
+                # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+                def get_component_level(
+                    workflow_id: Optional[str], team_id: Optional[str], agent_id: Optional[str], name: str
+                ) -> int:
+                    # Check if name indicates a root span
+                    is_root_name = ".run" in name or ".arun" in name
+
+                    if not is_root_name:
+                        return 0  # Child span (not a root)
+                    elif workflow_id:
+                        return 3  # Workflow root
+                    elif team_id:
+                        return 2  # Team root
+                    elif agent_id:
+                        return 1  # Agent root
+                    else:
+                        return 0  # Unknown
+
+                existing_level = get_component_level(
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
+                )
+                new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                # Only update name if new trace is from a higher or equal level
+                should_update_name = new_level > existing_level
+
+                # Parse existing start_time to calculate correct duration
+                existing_start_time_str = existing.get("start_time")
+                if isinstance(existing_start_time_str, str):
+                    existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                else:
+                    existing_start_time = trace.start_time
+
+                recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                # Update existing record
+                existing["end_time"] = trace.end_time.isoformat()
+                existing["duration_ms"] = recalculated_duration_ms
+                existing["status"] = trace.status
+                if should_update_name:
+                    existing["name"] = trace.name
+
+                # Update context fields ONLY if new value is not None (preserve non-null values)
+                if trace.run_id is not None:
+                    existing["run_id"] = trace.run_id
+                if trace.session_id is not None:
+                    existing["session_id"] = trace.session_id
+                if trace.user_id is not None:
+                    existing["user_id"] = trace.user_id
+                if trace.agent_id is not None:
+                    existing["agent_id"] = trace.agent_id
+                if trace.team_id is not None:
+                    existing["team_id"] = trace.team_id
+                if trace.workflow_id is not None:
+                    existing["workflow_id"] = trace.workflow_id
+
+                log_debug(
+                    f"  Updating trace with context: run_id={existing.get('run_id', 'unchanged')}, "
+                    f"session_id={existing.get('session_id', 'unchanged')}, "
+                    f"user_id={existing.get('user_id', 'unchanged')}, "
+                    f"agent_id={existing.get('agent_id', 'unchanged')}, "
+                    f"team_id={existing.get('team_id', 'unchanged')}, "
+                )
+
+                self._store_record(
+                    "traces",
+                    trace.trace_id,
+                    existing,
+                    index_fields=["run_id", "session_id", "user_id", "agent_id", "team_id", "workflow_id", "status"],
+                )
+            else:
+                trace_dict = trace.to_dict()
+                trace_dict.pop("total_spans", None)
+                trace_dict.pop("error_count", None)
+                self._store_record(
+                    "traces",
+                    trace.trace_id,
+                    trace_dict,
+                    index_fields=["run_id", "session_id", "user_id", "agent_id", "team_id", "workflow_id", "status"],
+                )
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace as TraceSchema
+
+            if trace_id:
+                result = self._get_record("traces", trace_id)
+                if result:
+                    # Calculate total_spans and error_count
+                    all_spans = self._get_all_records("spans")
+                    trace_spans = [s for s in all_spans if s.get("trace_id") == trace_id]
+                    result["total_spans"] = len(trace_spans)
+                    result["error_count"] = len([s for s in trace_spans if s.get("status_code") == "ERROR"])
+                    return TraceSchema.from_dict(result)
+                return None
+
+            elif run_id:
+                all_traces = self._get_all_records("traces")
+                matching = [t for t in all_traces if t.get("run_id") == run_id]
+                if matching:
+                    # Sort by start_time descending and get most recent
+                    matching.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+                    result = matching[0]
+                    # Calculate total_spans and error_count
+                    all_spans = self._get_all_records("spans")
+                    trace_spans = [s for s in all_spans if s.get("trace_id") == result.get("trace_id")]
+                    result["total_spans"] = len(trace_spans)
+                    result["error_count"] = len([s for s in trace_spans if s.get("status_code") == "ERROR"])
+                    return TraceSchema.from_dict(result)
+                return None
+
+            else:
+                log_debug("get_trace called without any filter parameters")
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace as TraceSchema
+
+            log_debug(
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, "
+                f"user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            all_traces = self._get_all_records("traces")
+            all_spans = self._get_all_records("spans")
+
+            # Apply filters
+            filtered_traces = []
+            for trace in all_traces:
+                if run_id and trace.get("run_id") != run_id:
+                    continue
+                if session_id and trace.get("session_id") != session_id:
+                    continue
+                if user_id and trace.get("user_id") != user_id:
+                    continue
+                if agent_id and trace.get("agent_id") != agent_id:
+                    continue
+                if team_id and trace.get("team_id") != team_id:
+                    continue
+                if workflow_id and trace.get("workflow_id") != workflow_id:
+                    continue
+                if status and trace.get("status") != status:
+                    continue
+                if start_time:
+                    trace_start = trace.get("start_time", "")
+                    if trace_start and trace_start < start_time.isoformat():
+                        continue
+                if end_time:
+                    trace_end = trace.get("end_time", "")
+                    if trace_end and trace_end > end_time.isoformat():
+                        continue
+
+                filtered_traces.append(trace)
+
+            total_count = len(filtered_traces)
+
+            # Sort by start_time descending
+            filtered_traces.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+
+            # Apply pagination
+            paginated_traces = apply_pagination(records=filtered_traces, limit=limit, page=page)
+
+            traces = []
+            for row in paginated_traces:
+                # Calculate total_spans and error_count
+                trace_spans = [s for s in all_spans if s.get("trace_id") == row.get("trace_id")]
+                row["total_spans"] = len(trace_spans)
+                row["error_count"] = len([s for s in trace_spans if s.get("status_code") == "ERROR"])
+                traces.append(TraceSchema.from_dict(row))
+
+            return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        try:
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
+            )
+
+            all_traces = self._get_all_records("traces")
+
+            # Filter traces and group by session_id
+            session_stats: Dict[str, Dict[str, Any]] = {}
+            for trace in all_traces:
+                trace_session_id = trace.get("session_id")
+                if not trace_session_id:
+                    continue
+
+                # Apply filters
+                if user_id and trace.get("user_id") != user_id:
+                    continue
+                if agent_id and trace.get("agent_id") != agent_id:
+                    continue
+                if team_id and trace.get("team_id") != team_id:
+                    continue
+                if workflow_id and trace.get("workflow_id") != workflow_id:
+                    continue
+
+                created_at = trace.get("created_at", "")
+                if start_time and created_at < start_time.isoformat():
+                    continue
+                if end_time and created_at > end_time.isoformat():
+                    continue
+
+                if trace_session_id not in session_stats:
+                    session_stats[trace_session_id] = {
+                        "session_id": trace_session_id,
+                        "user_id": trace.get("user_id"),
+                        "agent_id": trace.get("agent_id"),
+                        "team_id": trace.get("team_id"),
+                        "workflow_id": trace.get("workflow_id"),
+                        "total_traces": 0,
+                        "first_trace_at": created_at,
+                        "last_trace_at": created_at,
+                    }
+
+                session_stats[trace_session_id]["total_traces"] += 1
+                if created_at < session_stats[trace_session_id]["first_trace_at"]:
+                    session_stats[trace_session_id]["first_trace_at"] = created_at
+                if created_at > session_stats[trace_session_id]["last_trace_at"]:
+                    session_stats[trace_session_id]["last_trace_at"] = created_at
+
+            # Convert to list and sort by last_trace_at descending
+            stats_list = list(session_stats.values())
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+
+            total_count = len(stats_list)
+
+            # Apply pagination
+            paginated_stats = apply_pagination(records=stats_list, limit=limit, page=page)
+
+            # Convert ISO strings to datetime objects
+            for stat in paginated_stats:
+                first_trace_at_str = stat["first_trace_at"]
+                last_trace_at_str = stat["last_trace_at"]
+                stat["first_trace_at"] = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                stat["last_trace_at"] = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+            return paginated_stats, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            self._store_record(
+                "spans",
+                span.span_id,
+                span.to_dict(),
+                index_fields=["trace_id", "parent_span_id"],
+            )
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            for span in spans:
+                self._store_record(
+                    "spans",
+                    span.span_id,
+                    span.to_dict(),
+                    index_fields=["trace_id", "parent_span_id"],
+                )
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span as SpanSchema
+
+            result = self._get_record("spans", span_id)
+            if result:
+                return SpanSchema.from_dict(result)
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span as SpanSchema
+
+            all_spans = self._get_all_records("spans")
+
+            # Apply filters
+            filtered_spans = []
+            for span in all_spans:
+                if trace_id and span.get("trace_id") != trace_id:
+                    continue
+                if parent_span_id and span.get("parent_span_id") != parent_span_id:
+                    continue
+                filtered_spans.append(span)
+
+            # Apply limit
+            if limit:
+                filtered_spans = filtered_spans[:limit]
+
+            return [SpanSchema.from_dict(s) for s in filtered_spans]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []
+
+    # -- Learning methods (stubs) --
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    def delete_learning(self, id: str) -> bool:
+        raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for RedisDb")

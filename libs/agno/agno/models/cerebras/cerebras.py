@@ -7,14 +7,13 @@ from typing import Any, Dict, Iterator, List, Optional, Type, Union
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from cerebras.cloud.sdk import AsyncCerebras as AsyncCerebrasClient
@@ -78,11 +77,7 @@ class Cerebras(Model):
         if not self.api_key:
             self.api_key = getenv("CEREBRAS_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
-                    message="CEREBRAS_API_KEY not set. Please set the CEREBRAS_API_KEY environment variable.",
-                    model_name=self.name,
-                    model_id=self.id,
-                )
+                log_error("CEREBRAS_API_KEY not set. Please set the CEREBRAS_API_KEY environment variable.")
 
         # Define base client params
         base_params = {
@@ -101,6 +96,35 @@ class Cerebras(Model):
         if self.client_params:
             client_params.update(self.client_params)
         return client_params
+
+    def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
+        """
+        Recursively ensure all object types have additionalProperties: false.
+        Cerebras API requires this for JSON schema validation.
+        """
+        if not isinstance(schema, dict):
+            return
+
+        # Set additionalProperties: false for object types
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+
+        # Recursively process nested schemas
+        if "properties" in schema and isinstance(schema["properties"], dict):
+            for prop_schema in schema["properties"].values():
+                self._ensure_additional_properties_false(prop_schema)
+
+        if "items" in schema:
+            self._ensure_additional_properties_false(schema["items"])
+
+        if "$defs" in schema and isinstance(schema["$defs"], dict):
+            for def_schema in schema["$defs"].values():
+                self._ensure_additional_properties_false(def_schema)
+
+        for key in ["allOf", "anyOf", "oneOf"]:
+            if key in schema and isinstance(schema[key], list):
+                for item in schema[key]:
+                    self._ensure_additional_properties_false(item)
 
     def get_client(self) -> CerebrasClient:
         """
@@ -196,8 +220,11 @@ class Cerebras(Model):
             ):
                 # Ensure json_schema has strict parameter set
                 schema = response_format["json_schema"]
-                if isinstance(schema.get("schema"), dict) and "strict" not in schema:
-                    schema["strict"] = self.strict_output
+                if isinstance(schema.get("schema"), dict):
+                    if "strict" not in schema:
+                        schema["strict"] = self.strict_output
+                    # Cerebras requires additionalProperties: false for all object types
+                    self._ensure_additional_properties_false(schema["schema"])
 
                 request_params["response_format"] = response_format
 
@@ -228,8 +255,9 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
 
         assistant_message.metrics.start_timer()
         provider_response = self.get_client().chat.completions.create(
@@ -262,8 +290,9 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
 
         assistant_message.metrics.start_timer()
         provider_response = await self.get_async_client().chat.completions.create(
@@ -296,8 +325,9 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
 
         assistant_message.metrics.start_timer()
 
@@ -330,8 +360,9 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
 
         assistant_message.metrics.start_timer()
 
@@ -475,18 +506,19 @@ class Cerebras(Model):
                 if choice_delta.content:
                     model_response.content = choice_delta.content
 
-                # Add tool calls
+                # Add tool calls - preserve index for proper aggregation in parse_tool_calls
                 if choice_delta.tool_calls:
                     model_response.tool_calls = [
                         {
+                            "index": tool_call.index if hasattr(tool_call, "index") else idx,
                             "id": tool_call.id,
                             "type": tool_call.type,
                             "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
+                                "name": tool_call.function.name if tool_call.function else None,
+                                "arguments": tool_call.function.arguments if tool_call.function else None,
                             },
                         }
-                        for tool_call in choice_delta.tool_calls
+                        for idx, tool_call in enumerate(choice_delta.tool_calls)
                     ]
 
         # Add usage metrics
@@ -495,20 +527,86 @@ class Cerebras(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[ChatCompletionResponseUsage, ChatChunkResponseUsage]) -> Metrics:
+    def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Parse the given Cerebras usage into an Agno Metrics object.
+        Build complete tool calls from streamed tool call delta data.
+
+        Cerebras streams tool calls incrementally with partial data in each chunk.
+        This method aggregates those chunks by index to produce complete tool calls.
+
+        Args:
+            tool_calls_data: List of tool call deltas from streaming chunks.
+
+        Returns:
+            List[Dict[str, Any]]: List of fully-formed tool call dicts.
+        """
+        tool_calls: List[Dict[str, Any]] = []
+
+        for tool_call_delta in tool_calls_data:
+            # Get the index for this tool call (default to 0 if not present)
+            index = tool_call_delta.get("index", 0)
+
+            # Extend the list if needed
+            while len(tool_calls) <= index:
+                tool_calls.append(
+                    {
+                        "id": None,
+                        "type": None,
+                        "function": {
+                            "name": "",
+                            "arguments": "",
+                        },
+                    }
+                )
+
+            tool_call_entry = tool_calls[index]
+
+            # Update id if present
+            if tool_call_delta.get("id"):
+                tool_call_entry["id"] = tool_call_delta["id"]
+
+            # Update type if present
+            if tool_call_delta.get("type"):
+                tool_call_entry["type"] = tool_call_delta["type"]
+
+            # Assign function name (atomic); concatenate arguments (streamed incrementally)
+            if tool_call_delta.get("function"):
+                func_delta = tool_call_delta["function"]
+                if func_delta.get("name"):
+                    tool_call_entry["function"]["name"] = func_delta["name"]
+                if func_delta.get("arguments"):
+                    tool_call_entry["function"]["arguments"] += func_delta["arguments"]
+
+        # Filter out any incomplete tool calls (missing id or function name)
+        complete_tool_calls = [tc for tc in tool_calls if tc.get("id") and tc.get("function", {}).get("name")]
+
+        return complete_tool_calls
+
+    def _get_metrics(
+        self, response_usage: Union[ChatCompletionResponseUsage, ChatChunkResponseUsage]
+    ) -> MessageMetrics:
+        """
+        Parse the given Cerebras usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Cerebras
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        # Capture Cerebras timing metrics if available
+        provider_metrics: Dict[str, Any] = {}
+        if hasattr(response_usage, "time_system") and response_usage.time_system is not None:
+            provider_metrics["time_system"] = response_usage.time_system
+        if hasattr(response_usage, "time_prompt") and response_usage.time_prompt is not None:
+            provider_metrics["time_prompt"] = response_usage.time_prompt
+        if provider_metrics:
+            metrics.provider_metrics = provider_metrics
 
         return metrics

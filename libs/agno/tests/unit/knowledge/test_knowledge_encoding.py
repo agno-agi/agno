@@ -7,7 +7,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
 
-class FakeVectorDb(VectorDb):
+class MockVectorDb(VectorDb):
     """Minimal in-memory VectorDb stub to capture inserts for assertions."""
 
     def __init__(self) -> None:
@@ -122,7 +122,7 @@ UTF8_SAMPLES = [
 ]
 
 
-def _assert_insert_contains_text(fake_db: FakeVectorDb, expected: str) -> None:
+def _assert_insert_contains_text(fake_db: MockVectorDb, expected: str) -> None:
     docs = fake_db.get_all_inserted_documents()
     assert len(docs) >= 1
     contents = "\n".join([getattr(d, "content", "") for d in docs])
@@ -130,28 +130,28 @@ def _assert_insert_contains_text(fake_db: FakeVectorDb, expected: str) -> None:
 
 
 @pytest.mark.parametrize("text", UTF8_SAMPLES)
-def test_add_content_sync_handles_utf8_samples(text: str) -> None:
-    fake_db = FakeVectorDb()
+def test_insert_sync_handles_utf8_samples(text: str) -> None:
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    kb.add_content(text_content=text)
+    kb.insert(text_content=text)
     _assert_insert_contains_text(fake_db, text)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", UTF8_SAMPLES)
-async def test_add_content_async_handles_utf8_samples(text: str) -> None:
-    fake_db = FakeVectorDb()
+async def test_ainsert_handles_utf8_samples(text: str) -> None:
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    await kb.add_content_async(text_content=text)
+    await kb.ainsert(text_content=text)
     _assert_insert_contains_text(fake_db, text)
 
 
-def test_add_content_sync_replaces_invalid_surrogates() -> None:
+def test_insert_sync_replaces_invalid_surrogates() -> None:
     # Lone surrogate characters are not valid in UTF-8; they should be replaced with U+FFFD
     bad_text = "bad\udffftext"
-    fake_db = FakeVectorDb()
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    kb.add_content(text_content=bad_text)
+    kb.insert(text_content=bad_text)
     docs = fake_db.get_all_inserted_documents()
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     # Some environments render replacement as '?' when logging/printing
@@ -159,11 +159,11 @@ def test_add_content_sync_replaces_invalid_surrogates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_content_async_replaces_invalid_surrogates() -> None:
+async def test_ainsert_replaces_invalid_surrogates() -> None:
     bad_text = "\ud800orphan"
-    fake_db = FakeVectorDb()
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    await kb.add_content_async(text_content=bad_text)
+    await kb.ainsert(text_content=bad_text)
     docs = fake_db.get_all_inserted_documents()
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     assert "\ufffd" in contents or "�" in contents or "?" in contents

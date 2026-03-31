@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -23,7 +23,7 @@ class Sambanova(OpenAILike):
     name: str = "Sambanova"
     provider: str = "Sambanova"
 
-    api_key: Optional[str] = field(default_factory=lambda: getenv("SAMBANOVA_API_KEY"))
+    api_key: Optional[str] = None
     base_url: str = "https://api.sambanova.ai/v1"
 
     supports_native_structured_outputs: bool = False
@@ -38,9 +38,8 @@ class Sambanova(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("SAMBANOVA_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="SAMBANOVA_API_KEY not set. Please set the SAMBANOVA_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()

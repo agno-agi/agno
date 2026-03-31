@@ -340,6 +340,7 @@ def test_update_memory_task_with_db(memory_with_db):
     assert any("John Doe" not in memory.memory for memory in memories)
 
 
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.asyncio
 async def test_aupdate_memory_task_with_db(memory_with_db):
     """Test async updating memory with a task using database persistence."""

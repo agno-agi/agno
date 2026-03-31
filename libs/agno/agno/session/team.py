@@ -91,15 +91,12 @@ class TeamSession:
 
     def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
         """Adds a RunOutput, together with some calculated data, to the runs list."""
-
         messages = run_response.messages
-        if messages is None:
-            return
 
-        # Make message duration None
+        # Clear message timer before storage
         for m in messages or []:
-            if m.metrics is not None:
-                m.metrics.duration = None
+            if m.metrics is not None and hasattr(m.metrics, "timer"):
+                m.metrics.timer = None
 
         if not self.runs:
             self.runs = []
@@ -169,7 +166,15 @@ class TeamSession:
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
         if member_ids:
-            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id in member_ids]  # type: ignore
+            filtered_runs = []
+            for run in session_runs:
+                if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
+                    filtered_runs.append(run)
+                elif hasattr(run, "member_responses"):
+                    for member_run in run.member_responses:
+                        if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
+                            filtered_runs.append(member_run)
+            session_runs = filtered_runs
 
         if skip_member_messages:
             # Filter for the top-level runs (main team runs or agent runs when sharing session)

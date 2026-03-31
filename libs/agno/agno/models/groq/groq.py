@@ -6,10 +6,10 @@ from typing import Any, Dict, Iterator, List, Optional, Type, Union
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -74,10 +74,9 @@ class Groq(Model):
         if not self.api_key:
             self.api_key = getenv("GROQ_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
 
         # Define base client params
@@ -294,10 +293,11 @@ class Groq(Model):
         """
         Send a chat completion request to the Groq API.
         """
-        try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
 
+        messages = normalize_tool_messages(messages)
+
+        try:
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
@@ -335,10 +335,11 @@ class Groq(Model):
         """
         Sends an asynchronous chat completion request to the Groq API.
         """
-        try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
 
+        messages = normalize_tool_messages(messages)
+
+        try:
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -376,10 +377,11 @@ class Groq(Model):
         """
         Send a streaming chat completion request to the Groq API.
         """
-        try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+        from agno.utils.message import normalize_tool_messages
 
+        messages = normalize_tool_messages(messages)
+
+        try:
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().chat.completions.create(
@@ -417,11 +419,11 @@ class Groq(Model):
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().chat.completions.create(
@@ -468,7 +470,7 @@ class Groq(Model):
             _function_arguments = _tool_call.function.arguments if _tool_call.function else None
 
             if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+                tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
             tool_call_entry = tool_calls[_index]
             if not tool_call_entry:
                 tool_call_entry["id"] = _tool_call_id
@@ -479,7 +481,7 @@ class Groq(Model):
                 }
             else:
                 if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
+                    tool_call_entry["function"]["name"] = _function_name
                 if _function_arguments:
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
@@ -554,17 +556,17 @@ class Groq(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
+    def _get_metrics(self, response_usage: CompletionUsage) -> MessageMetrics:
         """
-        Parse the given Groq usage into an Agno Metrics object.
+        Parse the given Groq usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Groq
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0

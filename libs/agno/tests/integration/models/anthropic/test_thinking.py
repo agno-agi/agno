@@ -16,7 +16,7 @@ def _get_thinking_agent(**kwargs):
     """Create an agent with thinking enabled using consistent settings."""
     default_config = {
         "model": Claude(
-            id="claude-3-7-sonnet-20250219",
+            id="claude-sonnet-4-20250514",
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         "markdown": True,
@@ -158,7 +158,7 @@ async def test_thinking_with_storage():
     """Test that thinking content is stored and retrievable."""
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
-            model=Claude(id="claude-3-7-sonnet-20250219", thinking={"type": "enabled", "budget_tokens": 1024}),
+            model=Claude(id="claude-sonnet-4-20250514", thinking={"type": "enabled", "budget_tokens": 1024}),
             db=JsonDb(db_path=storage_dir, session_table="test_session"),
             user_id="test_user",
             session_id="test_session",
@@ -200,7 +200,7 @@ async def test_thinking_with_streaming_storage():
     """Test thinking content with streaming and storage."""
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
-            model=Claude(id="claude-3-7-sonnet-20250219", thinking={"type": "enabled", "budget_tokens": 1024}),
+            model=Claude(id="claude-sonnet-4-20250514", thinking={"type": "enabled", "budget_tokens": 1024}),
             db=JsonDb(db_path=storage_dir, session_table="test_session_stream"),
             user_id="test_user_stream",
             session_id="test_session_stream",
@@ -436,8 +436,131 @@ def test_interleaved_thinking_vs_regular_thinking():
     assert interleaved_response.content is not None
 
     # Verify the models are different
-    assert regular_agent.model.id == "claude-3-7-sonnet-20250219"  # type: ignore
+    assert regular_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
     assert interleaved_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
 
     # Verify the headers are different
     assert not hasattr(regular_agent.model, "default_headers") or regular_agent.model.default_headers is None  # type: ignore
+
+
+# ============================================================================
+# STREAMING REASONING TESTS (reasoning_model with stream_events)
+# ============================================================================
+
+
+def _get_reasoning_streaming_agent(**kwargs):
+    """Create an agent with reasoning_model for streaming reasoning tests."""
+    default_config = {
+        "model": Claude(id="claude-sonnet-4-20250514"),
+        "reasoning_model": Claude(
+            id="claude-sonnet-4-20250514",
+            thinking={"type": "enabled", "budget_tokens": 1024},
+        ),
+        "instructions": "You are an expert problem-solving assistant. Think step by step.",
+        "markdown": True,
+        "telemetry": False,
+    }
+    default_config.update(kwargs)
+    return Agent(**default_config)
+
+
+def test_reasoning_model_streams_content_deltas():
+    """Test that reasoning_model streams content via reasoning_content_delta events."""
+    from agno.run.agent import RunEvent
+
+    agent = _get_reasoning_streaming_agent()
+
+    prompt = "What is 25 * 37? Show your reasoning step by step."
+
+    # Track events
+    reasoning_deltas = []
+    reasoning_started = False
+    reasoning_completed = False
+
+    for event in agent.run(prompt, stream=True, stream_events=True):
+        if event.event == RunEvent.reasoning_started:
+            reasoning_started = True
+
+        elif event.event == RunEvent.reasoning_content_delta:
+            if event.reasoning_content:
+                reasoning_deltas.append(event.reasoning_content)
+
+        elif event.event == RunEvent.reasoning_completed:
+            reasoning_completed = True
+
+    # Assertions
+    assert reasoning_started, "Should have received reasoning_started event"
+    assert reasoning_completed, "Should have received reasoning_completed event"
+    assert len(reasoning_deltas) > 1, (
+        f"Should have received multiple reasoning_content_delta events for streaming, but got {len(reasoning_deltas)}"
+    )
+
+    # Verify we got actual content
+    full_reasoning = "".join(reasoning_deltas)
+    assert len(full_reasoning) > 0, "Combined reasoning content should not be empty"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_model_streams_content_deltas_async():
+    """Test that reasoning_model streams content via reasoning_content_delta events (async)."""
+    from agno.run.agent import RunEvent
+
+    agent = _get_reasoning_streaming_agent()
+
+    prompt = "What is 25 * 37? Show your reasoning step by step."
+
+    # Track events
+    reasoning_deltas = []
+    reasoning_started = False
+    reasoning_completed = False
+
+    async for event in agent.arun(prompt, stream=True, stream_events=True):
+        if event.event == RunEvent.reasoning_started:
+            reasoning_started = True
+
+        elif event.event == RunEvent.reasoning_content_delta:
+            if event.reasoning_content:
+                reasoning_deltas.append(event.reasoning_content)
+
+        elif event.event == RunEvent.reasoning_completed:
+            reasoning_completed = True
+
+    # Assertions
+    assert reasoning_started, "Should have received reasoning_started event"
+    assert reasoning_completed, "Should have received reasoning_completed event"
+    assert len(reasoning_deltas) > 1, (
+        f"Should have received multiple reasoning_content_delta events for streaming, but got {len(reasoning_deltas)}"
+    )
+
+    # Verify we got actual content
+    full_reasoning = "".join(reasoning_deltas)
+    assert len(full_reasoning) > 0, "Combined reasoning content should not be empty"
+
+
+def test_reasoning_streaming_delivers_more_events_than_non_streaming():
+    """Test that streaming mode delivers multiple delta events vs single batch in non-streaming."""
+    from agno.run.agent import RunEvent
+
+    agent = _get_reasoning_streaming_agent()
+
+    prompt = "What is 12 * 8?"
+
+    # Non-streaming mode
+    non_streaming_response = agent.run(prompt, stream=False)
+    non_streaming_reasoning = non_streaming_response.reasoning_content or ""
+
+    # Streaming mode - count delta events
+    streaming_deltas = []
+    for event in agent.run(prompt, stream=True, stream_events=True):
+        if event.event == RunEvent.reasoning_content_delta:
+            if event.reasoning_content:
+                streaming_deltas.append(event.reasoning_content)
+
+    streaming_reasoning = "".join(streaming_deltas)
+
+    # Both should have reasoning content
+    assert len(non_streaming_reasoning) > 0, "Non-streaming should have reasoning"
+    assert len(streaming_reasoning) > 0, "Streaming should have reasoning"
+
+    # Streaming should have multiple deltas (the key feature we're testing)
+    assert len(streaming_deltas) > 1, "Streaming should deliver multiple delta events, not just one batch"

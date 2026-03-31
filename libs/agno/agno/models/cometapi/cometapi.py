@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_debug
 
@@ -37,10 +37,9 @@ class CometAPI(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("COMETAPI_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="COMETAPI_KEY not set. Please set the COMETAPI_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()
 

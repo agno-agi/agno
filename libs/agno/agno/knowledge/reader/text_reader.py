@@ -18,9 +18,10 @@ class TextReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Text readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -29,7 +30,7 @@ class TextReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TXT]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -39,10 +40,10 @@ class TextReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading: {file}")
                 file_name = name or file.stem
-                file_contents = file.read_text(self.encoding or "utf-8")
+                file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                file_name = name or file.name.split(".")[0]
-                log_debug(f"Reading uploaded file: {file_name}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "text_file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
@@ -79,10 +80,10 @@ class TextReader(Reader):
                         file_contents = await f.read()
                 except ImportError:
                     log_warning("aiofiles not installed, using synchronous file I/O")
-                    file_contents = file.read_text(self.encoding or "utf-8")
+                    file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                log_debug(f"Reading uploaded file asynchronously: {file.name}")
-                file_name = name or file.name.split(".")[0]
+                log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "text_file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
@@ -109,7 +110,7 @@ class TextReader(Reader):
         chunked_documents = self.chunk_document(document)
 
         if not chunked_documents:
-            return [document]
+            return []
 
         tasks = [process_chunk(chunk_doc) for chunk_doc in chunked_documents]
         return await asyncio.gather(*tasks)
