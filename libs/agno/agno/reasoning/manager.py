@@ -1107,7 +1107,7 @@ class ReasoningManager:
 
     def _stream_native_reasoning_events(self, model: Model, run_messages: RunMessages) -> Iterator[ReasoningEvent]:
         """Stream native reasoning and yield ReasoningEvent objects."""
-        messages = run_messages.get_input_messages()
+        messages = run_messages.messages if run_messages.messages else run_messages.get_input_messages()
 
         for reasoning_delta, result in self.stream_native_reasoning(model, messages):
             if reasoning_delta is not None:
@@ -1133,7 +1133,7 @@ class ReasoningManager:
 
     def _get_native_reasoning_events(self, model: Model, run_messages: RunMessages) -> Iterator[ReasoningEvent]:
         """Get native reasoning (non-streaming) and yield ReasoningEvent objects."""
-        messages = run_messages.get_input_messages()
+        messages = run_messages.messages if run_messages.messages else run_messages.get_input_messages()
         result = self.get_native_reasoning(model, messages)
 
         if not result.success:
@@ -1182,7 +1182,7 @@ class ReasoningManager:
         self, model: Model, run_messages: RunMessages
     ) -> AsyncIterator[ReasoningEvent]:
         """Stream native reasoning asynchronously and yield ReasoningEvent objects."""
-        messages = run_messages.get_input_messages()
+        messages = run_messages.messages if run_messages.messages else run_messages.get_input_messages()
 
         async for reasoning_delta, result in self.astream_native_reasoning(model, messages):
             if reasoning_delta is not None:
@@ -1210,7 +1210,7 @@ class ReasoningManager:
         self, model: Model, run_messages: RunMessages
     ) -> AsyncIterator[ReasoningEvent]:
         """Get native reasoning asynchronously (non-streaming) and yield ReasoningEvent objects."""
-        messages = run_messages.get_input_messages()
+        messages = run_messages.messages if run_messages.messages else run_messages.get_input_messages()
         result = await self.aget_native_reasoning(model, messages)
 
         if not result.success:

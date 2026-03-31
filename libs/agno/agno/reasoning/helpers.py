@@ -22,6 +22,7 @@ def get_reasoning_agent(
         telemetry=telemetry,
         debug_mode=debug_mode,
         debug_level=debug_level,
+        session_id=run_context.session_id if run_context else None,
         session_state=run_context.session_state if run_context else None,
         dependencies=run_context.dependencies if run_context else None,
         metadata=run_context.metadata if run_context else None,
