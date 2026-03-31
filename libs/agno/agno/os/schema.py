@@ -148,6 +148,14 @@ class WorkflowSummaryResponse(BaseModel):
         )
 
 
+class InfoResponse(BaseModel):
+    """Response schema for the /info endpoint returning lightweight OS metadata."""
+
+    agent_count: int = Field(0, description="Number of agents registered in the OS")
+    team_count: int = Field(0, description="Number of teams registered in the OS")
+    workflow_count: int = Field(0, description="Number of workflows registered in the OS")
+
+
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 
