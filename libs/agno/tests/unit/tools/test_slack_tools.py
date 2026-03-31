@@ -41,7 +41,7 @@ def test_init_all_flag_enables_all():
     with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(all=True)
-            assert len(tools.functions) == 10
+            assert len(tools.functions) == 11
 
 
 # === Core Tools ===
@@ -74,9 +74,11 @@ def test_list_channels(slack_tools):
 
 def test_get_channel_history(slack_tools):
     slack_tools.client.conversations_history.return_value = {"messages": [{"text": "hi", "user": "U1", "ts": "1.0"}]}
+    slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
     result = slack_tools.get_channel_history("C1")
     messages = json.loads(result)
     assert messages[0]["text"] == "hi"
+    assert messages[0]["user"] == "User One"
 
 
 def test_upload_file(slack_tools):
@@ -116,8 +118,11 @@ def test_search_messages(slack_tools):
 
 def test_get_thread(slack_tools):
     slack_tools.client.conversations_replies.return_value = {"messages": [{"text": "parent", "user": "U1", "ts": "1"}]}
+    slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
     result = slack_tools.get_thread("C1", "1")
-    assert json.loads(result)["reply_count"] == 0
+    data = json.loads(result)
+    assert data["reply_count"] == 0
+    assert data["messages"][0]["user"] == "User One"
 
 
 def test_list_users(slack_tools):
