@@ -45,59 +45,71 @@ class AzureBlobLoader(BaseLoader):
         return azure_config
 
     def _get_azure_blob_client(self, azure_config: AzureBlobConfig):
-        """Get a sync Azure Blob Service Client using client credentials flow.
+        """Get a sync Azure Blob Service Client.
 
-        Requires the `azure-identity` and `azure-storage-blob` packages.
+        Supports both Service Principal (client credentials) and SAS token authentication.
         """
         try:
-            from azure.identity import ClientSecretCredential  # type: ignore
             from azure.storage.blob import BlobServiceClient  # type: ignore
         except ImportError:
             raise ImportError(
-                "The `azure-identity` and `azure-storage-blob` packages are not installed. "
-                "Please install them via `pip install azure-identity azure-storage-blob`."
+                "The `azure-storage-blob` package is not installed. "
+                "Please install it via `pip install azure-storage-blob`."
             )
 
-        credential = ClientSecretCredential(
-            tenant_id=azure_config.tenant_id,
-            client_id=azure_config.client_id,
-            client_secret=azure_config.client_secret,
-        )
+        account_url = f"https://{azure_config.storage_account}.blob.core.windows.net"
 
-        blob_service = BlobServiceClient(
-            account_url=f"https://{azure_config.storage_account}.blob.core.windows.net",
-            credential=credential,
-        )
+        if azure_config.sas_token is not None:
+            credential = azure_config.sas_token
+        else:
+            try:
+                from azure.identity import ClientSecretCredential  # type: ignore
+            except ImportError:
+                raise ImportError(
+                    "The `azure-identity` package is required for Service Principal authentication. "
+                    "Please install it via `pip install azure-identity`."
+                )
+            credential = ClientSecretCredential(
+                tenant_id=azure_config.tenant_id,
+                client_id=azure_config.client_id,
+                client_secret=azure_config.client_secret,
+            )
 
-        return blob_service
+        return BlobServiceClient(account_url=account_url, credential=credential)
 
     def _get_azure_blob_client_async(self, azure_config: AzureBlobConfig):
-        """Get an async Azure Blob Service Client using client credentials flow.
+        """Get an async Azure Blob Service Client.
 
-        Requires the `azure-identity` and `azure-storage-blob` packages.
+        Supports both Service Principal (client credentials) and SAS token authentication.
         Uses the async versions from azure.storage.blob.aio and azure.identity.aio.
         """
         try:
-            from azure.identity.aio import ClientSecretCredential  # type: ignore
             from azure.storage.blob.aio import BlobServiceClient  # type: ignore
         except ImportError:
             raise ImportError(
-                "The `azure-identity` and `azure-storage-blob` packages are not installed. "
-                "Please install them via `pip install azure-identity azure-storage-blob`."
+                "The `azure-storage-blob` package is not installed. "
+                "Please install it via `pip install azure-storage-blob`."
             )
 
-        credential = ClientSecretCredential(
-            tenant_id=azure_config.tenant_id,
-            client_id=azure_config.client_id,
-            client_secret=azure_config.client_secret,
-        )
+        account_url = f"https://{azure_config.storage_account}.blob.core.windows.net"
 
-        blob_service = BlobServiceClient(
-            account_url=f"https://{azure_config.storage_account}.blob.core.windows.net",
-            credential=credential,
-        )
+        if azure_config.sas_token is not None:
+            credential = azure_config.sas_token
+        else:
+            try:
+                from azure.identity.aio import ClientSecretCredential  # type: ignore
+            except ImportError:
+                raise ImportError(
+                    "The `azure-identity` package is required for Service Principal authentication. "
+                    "Please install it via `pip install azure-identity`."
+                )
+            credential = ClientSecretCredential(
+                tenant_id=azure_config.tenant_id,
+                client_id=azure_config.client_id,
+                client_secret=azure_config.client_secret,
+            )
 
-        return blob_service
+        return BlobServiceClient(account_url=account_url, credential=credential)
 
     def _build_azure_metadata(
         self,
