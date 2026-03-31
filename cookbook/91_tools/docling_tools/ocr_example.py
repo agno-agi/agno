@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.tools.docling import DoclingTools
-
 from paths import pdf_path
 
 
