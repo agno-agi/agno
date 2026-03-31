@@ -333,3 +333,23 @@ def test_unknown_output_format_raises_value_error():
     """Test that unknown output format raises ValueError"""
     with pytest.raises(ValueError, match="Invalid output format: 'random_format'"):
         DoclingReader(output_format="random_format")
+
+
+def test_docling_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = DoclingReader(chunk_size=800)
+    assert reader.chunk_size == 800
+    assert reader.chunking_strategy.chunk_size == 800
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_docling_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = DoclingReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
