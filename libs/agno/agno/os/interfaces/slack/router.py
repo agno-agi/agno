@@ -187,11 +187,13 @@ def attach_routes(
             if skipped:
                 notice = "[Skipped files: " + ", ".join(skipped) + "]"
                 message_text = f"{notice}\n{message_text}"
-
             run_kwargs: Dict[str, Any] = {
                 "user_id": resolved_user_id,
                 "session_id": session_id,
                 "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
+                # Let the agent know which channel/thread it's responding in
+                "dependencies": {"Slack channel_id": ctx["channel_id"], "Slack thread_ts": ctx["thread_id"]},
+                "add_dependencies_to_context": True,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
@@ -301,7 +303,6 @@ def attach_routes(
             if skipped:
                 notice = "[Skipped files: " + ", ".join(skipped) + "]"
                 message_text = f"{notice}\n{message_text}"
-
             run_kwargs: Dict[str, Any] = {
                 "stream": True,
                 # Enables event-level chunks for task card and tool lifecycle rendering
@@ -309,6 +310,9 @@ def attach_routes(
                 "user_id": resolved_user_id,
                 "session_id": session_id,
                 "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
+                # Let the agent know which channel/thread it's responding in
+                "dependencies": {"Slack channel_id": ctx["channel_id"], "Slack thread_ts": ctx["thread_id"]},
+                "add_dependencies_to_context": True,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,

@@ -33,6 +33,7 @@ class SlackTools(Toolkit):
         enable_get_thread: bool = False,
         enable_list_users: bool = False,
         enable_get_user_info: bool = False,
+        enable_get_channel_info: bool = False,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
@@ -56,6 +57,7 @@ class SlackTools(Toolkit):
             enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
             enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
+            enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
@@ -96,6 +98,8 @@ class SlackTools(Toolkit):
             tools.append(self.list_users)
         if enable_get_user_info or all:
             tools.append(self.get_user_info)
+        if enable_get_channel_info or all:
+            tools.append(self.get_channel_info)
 
         super().__init__(name="slack", tools=tools, **kwargs)
 
@@ -162,16 +166,20 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.conversations_history(channel=channel, limit=limit)
-            messages: List[Dict[str, Any]] = [  # type: ignore
-                {
+            messages: List[Dict[str, Any]] = []  # type: ignore
+            for msg in response.get("messages", []):
+                entry: Dict[str, Any] = {
                     "text": msg.get("text", ""),
                     "user": "webhook" if msg.get("subtype") == "bot_message" else msg.get("user", "unknown"),
                     "ts": msg.get("ts", ""),
                     "sub_type": msg.get("subtype", "unknown"),
                     "attachments": msg.get("attachments", []) if msg.get("subtype") == "bot_message" else "n/a",
                 }
-                for msg in response.get("messages", [])
-            ]
+                # Expose thread info so the agent can discover and expand threads
+                if msg.get("thread_ts"):
+                    entry["thread_ts"] = msg["thread_ts"]
+                    entry["reply_count"] = msg.get("reply_count", 0)
+                messages.append(entry)
             return json.dumps(messages)
         except SlackApiError as e:
             logger.error(f"Error getting channel history: {e}")
@@ -467,4 +475,33 @@ class SlackTools(Toolkit):
             )
         except SlackApiError as e:
             logger.error(f"Error getting user info: {e}")
+            return json.dumps({"error": str(e)})
+
+    def get_channel_info(self, channel: str) -> str:
+        """Get detailed information about a Slack channel by its ID.
+
+        Args:
+            channel (str): The Slack channel ID to look up.
+
+        Returns:
+            str: A JSON string containing the channel's name, topic, purpose, member count, creation date, and visibility.
+        """
+        try:
+            response = self.client.conversations_info(channel=channel, include_num_members=True)
+            ch = response.get("channel", {})
+            return json.dumps(
+                {
+                    "id": ch.get("id", ""),
+                    "name": ch.get("name", ""),
+                    "topic": ch.get("topic", {}).get("value", ""),
+                    "purpose": ch.get("purpose", {}).get("value", ""),
+                    "num_members": ch.get("num_members", 0),
+                    "is_private": ch.get("is_private", False),
+                    "is_archived": ch.get("is_archived", False),
+                    "created": ch.get("created", 0),
+                    "creator": ch.get("creator", ""),
+                }
+            )
+        except SlackApiError as e:
+            logger.error(f"Error getting channel info: {e}")
             return json.dumps({"error": str(e)})
