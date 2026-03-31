@@ -349,31 +349,14 @@ async def workflow_continue_response_streamer(
     run_id: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    step_requirements_data: Optional[List[Dict[str, Any]]] = None,
+    step_requirements: Optional[List[Any]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
 ) -> AsyncGenerator:
     try:
-        from agno.workflow.types import StepRequirement
-
-        # Convert raw dicts to StepRequirement objects
-        step_requirements = None
-        if step_requirements_data:
-            step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
-
-        # Load the paused run
-        run_response = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
-        if run_response is None:
-            error_response = WorkflowErrorEvent(error=f"Run {run_id} not found")
-            yield format_sse_event(error_response)
-            return
-
-        # Apply step requirements to the run response
-        if step_requirements:
-            run_response.step_requirements = step_requirements
-
         continue_response = await workflow.acontinue_run(  # type: ignore[call-overload]
-            run_response=run_response,
+            run_id=run_id,
             session_id=session_id,
+            step_requirements=step_requirements,
             stream=True,
             stream_events=True,
             background_tasks=background_tasks,
@@ -1014,18 +997,14 @@ def get_workflow_router(
         # Convert step requirements dicts to StepRequirement objects
         from agno.workflow.types import StepRequirement
 
-        parsed_requirements = None
+        step_requirements = None
         if step_requirements_data:
             try:
-                parsed_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
+                step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
             except Exception as e:
                 raise HTTPException(
                     status_code=400, detail=f"Invalid structure or content for step_requirements: {str(e)}"
                 )
-
-        # Apply resolved requirements to the run
-        if parsed_requirements:
-            existing_run.step_requirements = parsed_requirements
 
         if stream:
             return StreamingResponse(
@@ -1034,16 +1013,17 @@ def get_workflow_router(
                     run_id=run_id,
                     session_id=session_id,
                     user_id=user_id,
-                    step_requirements_data=step_requirements_data,
+                    step_requirements=step_requirements,
                     background_tasks=background_tasks,
                 ),
                 media_type="text/event-stream",
             )
         else:
             try:
-                run_response = await workflow.acontinue_run(  # type: ignore[call-overload]
-                    run_response=existing_run,
+                run_response = await workflow.acontinue_run(
+                    run_id=run_id,
                     session_id=session_id,
+                    step_requirements=step_requirements,
                     stream=False,
                     background_tasks=background_tasks,
                 )
