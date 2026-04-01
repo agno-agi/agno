@@ -20,7 +20,6 @@ from agno.db.dynamo.utils import (
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
-    deserialize_session,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
@@ -357,71 +356,53 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
-            filter_expression = None
+            # Build filter parts (non-key filters used by both query and scan)
+            non_key_filters: List[str] = []
             expression_attribute_names: Dict[str, str] = {}
             expression_attribute_values: Dict[str, Any] = {}
 
-            if session_type is not None:
-                session_type_filter = "#session_type = :session_type"
-                expression_attribute_names["#session_type"] = "session_type"
-                expression_attribute_values[":session_type"] = {"S": session_type.value}
-                filter_expression = session_type_filter
-
             if user_id is not None:
-                user_filter = "#user_id = :user_id"
+                non_key_filters.append("#user_id = :user_id")
                 expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
-                if filter_expression:
-                    filter_expression += f" AND {user_filter}"
-                else:
-                    filter_expression = user_filter
 
-            if component_id and session_type is not None:
-                component_filter = None
+            if component_id:
                 if session_type == SessionType.AGENT:
-                    component_filter = "#agent_id = :component_id"
+                    non_key_filters.append("#agent_id = :component_id")
                     expression_attribute_names["#agent_id"] = "agent_id"
                 elif session_type == SessionType.TEAM:
-                    component_filter = "#team_id = :component_id"
+                    non_key_filters.append("#team_id = :component_id")
                     expression_attribute_names["#team_id"] = "team_id"
-                else:
-                    component_filter = "#workflow_id = :component_id"
+                elif session_type == SessionType.WORKFLOW:
+                    non_key_filters.append("#workflow_id = :component_id")
                     expression_attribute_names["#workflow_id"] = "workflow_id"
-
-                if component_filter:
-                    expression_attribute_values[":component_id"] = {"S": component_id}
-                    if filter_expression:
-                        filter_expression += f" AND {component_filter}"
-                    else:
-                        filter_expression = component_filter
+                elif session_type is None:
+                    non_key_filters.append(
+                        "(#agent_id = :component_id OR #team_id = :component_id OR #workflow_id = :component_id)"
+                    )
+                    expression_attribute_names["#agent_id"] = "agent_id"
+                    expression_attribute_names["#team_id"] = "team_id"
+                    expression_attribute_names["#workflow_id"] = "workflow_id"
+                expression_attribute_values[":component_id"] = {"S": component_id}
 
             if session_name:
-                name_filter = "#session_name = :session_name"
+                non_key_filters.append("#session_name = :session_name")
                 expression_attribute_names["#session_name"] = "session_name"
                 expression_attribute_values[":session_name"] = {"S": session_name}
-                if filter_expression:
-                    filter_expression += f" AND {name_filter}"
-                else:
-                    filter_expression = name_filter
 
             items = []
             if session_type is not None:
+                expression_attribute_values[":session_type"] = {"S": session_type.value}
                 query_kwargs: Dict[str, Any] = {
                     "TableName": table_name,
                     "IndexName": "session_type-created_at-index",
                     "KeyConditionExpression": "session_type = :session_type",
                     "ExpressionAttributeValues": expression_attribute_values,
                 }
-                if filter_expression:
-                    non_key_filters = filter_expression.replace("#session_type = :session_type", "").strip()
-                    if non_key_filters.startswith("AND "):
-                        non_key_filters = non_key_filters[4:]
-                    if non_key_filters:
-                        query_kwargs["FilterExpression"] = non_key_filters
+                if non_key_filters:
+                    query_kwargs["FilterExpression"] = " AND ".join(non_key_filters)
                 if expression_attribute_names:
-                    expression_attribute_names.pop("#session_type", None)
-                    if expression_attribute_names:
-                        query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+                    query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
 
                 if sort_by == "created_at":
                     query_kwargs["ScanIndexForward"] = sort_order != "desc"
@@ -431,23 +412,31 @@ class DynamoDb(BaseDb):
 
                 response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
+
+                # Handle query pagination
+                while "LastEvaluatedKey" in response:
+                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.query(**query_kwargs)
+                    items.extend(response.get("Items", []))
             else:
                 scan_kwargs: Dict[str, Any] = {"TableName": table_name}
-                if filter_expression:
-                    scan_kwargs["FilterExpression"] = filter_expression
+                if non_key_filters:
+                    scan_kwargs["FilterExpression"] = " AND ".join(non_key_filters)
                 if expression_attribute_names:
                     scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
                 if expression_attribute_values:
                     scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values
+                if limit and not page:
+                    scan_kwargs["Limit"] = limit
 
                 response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
-            # Handle pagination
-            while "LastEvaluatedKey" in response:
-                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.query(**query_kwargs)
-                items.extend(response.get("Items", []))
+                # Handle scan pagination
+                while "LastEvaluatedKey" in response:
+                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.scan(**scan_kwargs)
+                    items.extend(response.get("Items", []))
 
             # Convert DynamoDB items to session data
             sessions_data = []
@@ -456,8 +445,8 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
-            # Apply in-memory sorting for fields not supported by DynamoDB
-            if sort_by and sort_by != "created_at":
+            # Apply in-memory sorting
+            if sort_by:
                 sessions_data = apply_sorting(sessions_data, sort_by, sort_order)
 
             # Get total count before pagination
@@ -470,11 +459,18 @@ class DynamoDb(BaseDb):
             if not deserialize:
                 return sessions_data, total_count
 
-            sessions = []
+            sessions: List[Session] = []
             for session_data in sessions_data:
-                session = deserialize_session(session_data)
-                if session:
-                    sessions.append(session)
+                st = session_data.get("session_type")
+                deserialized: Optional[Session] = None
+                if st == SessionType.AGENT.value:
+                    deserialized = AgentSession.from_dict(session_data)
+                elif st == SessionType.TEAM.value:
+                    deserialized = TeamSession.from_dict(session_data)
+                elif st == SessionType.WORKFLOW.value:
+                    deserialized = WorkflowSession.from_dict(session_data)
+                if deserialized is not None:
+                    sessions.append(deserialized)
 
             return sessions
 

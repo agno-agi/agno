@@ -654,6 +654,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:

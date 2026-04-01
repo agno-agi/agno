@@ -605,8 +605,6 @@ class AsyncMongoDb(AsyncBaseDb):
             query = {"session_id": session_id}
             if user_id is not None:
                 query["user_id"] = user_id
-            if session_type is not None:
-                query["session_type"] = session_type
 
             result = await collection.find_one(query)
             if result is None:
@@ -684,6 +682,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:
@@ -1345,7 +1349,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await collection.aggregate(count_pipeline).to_list(length=1)  # type: ignore[union-attr]
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -1354,7 +1358,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
                 pipeline.append({"$limit": limit})  # type: ignore
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
 
             formatted_results = [
                 {
@@ -2690,7 +2694,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await collection.aggregate(count_pipeline).to_list(length=1)  # type: ignore[union-attr]
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -2698,7 +2702,7 @@ class AsyncMongoDb(AsyncBaseDb):
             pipeline.append({"$skip": skip})
             pipeline.append({"$limit": limit or 20})
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
 
             # Convert to list of dicts with datetime objects
             stats_list = []

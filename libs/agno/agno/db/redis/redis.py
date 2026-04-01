@@ -433,6 +433,14 @@ class RedisDb(BaseDb):
                     filtered_sessions = [s for s in filtered_sessions if s.get("team_id") == component_id]
                 elif session_type == SessionType.WORKFLOW:
                     filtered_sessions = [s for s in filtered_sessions if s.get("workflow_id") == component_id]
+                elif session_type is None:
+                    filtered_sessions = [
+                        s
+                        for s in filtered_sessions
+                        if s.get("agent_id") == component_id
+                        or s.get("team_id") == component_id
+                        or s.get("workflow_id") == component_id
+                    ]
             if start_timestamp is not None:
                 filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) >= start_timestamp]
             if end_timestamp is not None:

@@ -430,6 +430,17 @@ class FirestoreDb(BaseDb):
             all_docs = query.stream()
             all_records = [doc.to_dict() for doc in all_docs]
 
+            # Apply component_id filter in-memory when session_type is None
+            # (Firestore doesn't support OR queries across different fields)
+            if component_id is not None and session_type is None:
+                all_records = [
+                    r
+                    for r in all_records
+                    if r.get("agent_id") == component_id
+                    or r.get("team_id") == component_id
+                    or r.get("workflow_id") == component_id
+                ]
+
             if not all_records:
                 return [] if deserialize else ([], 0)
 
@@ -453,15 +464,15 @@ class FirestoreDb(BaseDb):
 
             sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for session in sessions_raw:
-                if session["session_type"] == SessionType.AGENT.value:
+                if session.get("session_type") == SessionType.AGENT.value:
                     agent_session = AgentSession.from_dict(session)
                     if agent_session is not None:
                         sessions.append(agent_session)
-                elif session["session_type"] == SessionType.TEAM.value:
+                elif session.get("session_type") == SessionType.TEAM.value:
                     team_session = TeamSession.from_dict(session)
                     if team_session is not None:
                         sessions.append(team_session)
-                elif session["session_type"] == SessionType.WORKFLOW.value:
+                elif session.get("session_type") == SessionType.WORKFLOW.value:
                     workflow_session = WorkflowSession.from_dict(session)
                     if workflow_session is not None:
                         sessions.append(workflow_session)

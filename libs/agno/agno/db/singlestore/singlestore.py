@@ -273,12 +273,11 @@ class SingleStoreDb(BaseDb):
 
                         columns_def = ", ".join(columns_sql)
 
-                        # Add primary key, shard key and unique constraint
+                        # Add primary key and shard key
                         table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
                             {columns_def},
                             PRIMARY KEY (session_id),
-                            SHARD KEY (session_id),
-                            UNIQUE KEY uq_session_type (session_id, session_type)
+                            SHARD KEY (session_id)
                         )"""
 
                         sess.execute(text(table_sql))
@@ -667,6 +666,12 @@ class SingleStoreDb(BaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:

@@ -464,6 +464,12 @@ class MongoDb(BaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:

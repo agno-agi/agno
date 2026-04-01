@@ -322,12 +322,19 @@ class GcsJsonDb(BaseDb):
                         continue
                     elif session_type == SessionType.WORKFLOW and session_data.get("workflow_id") != component_id:
                         continue
+                    elif session_type is None:
+                        if (
+                            session_data.get("agent_id") != component_id
+                            and session_data.get("team_id") != component_id
+                            and session_data.get("workflow_id") != component_id
+                        ):
+                            continue
                 if start_timestamp is not None and session_data.get("created_at", 0) < start_timestamp:
                     continue
                 if end_timestamp is not None and session_data.get("created_at", 0) > end_timestamp:
                     continue
                 if session_name is not None:
-                    stored_name = session_data.get("session_data", {}).get("session_name", "")
+                    stored_name = (session_data.get("session_data") or {}).get("session_name", "")
                     if session_name.lower() not in stored_name.lower():
                         continue
                 if session_type is not None:
