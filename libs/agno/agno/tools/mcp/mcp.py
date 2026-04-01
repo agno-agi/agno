@@ -561,12 +561,22 @@ class MCPTools(Toolkit):
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Exit the async context manager."""
         if self._session_context is not None:
-            await self._session_context.__aexit__(_exc_type, _exc_val, _exc_tb)
+            # Catch the async exception here to avoid propagation
+            try:
+                await self._session_context.__aexit__(_exc_type, _exc_val, _exc_tb)
+            except (RuntimeError, BaseException):
+                # Silence any cleanup exceptions
+                pass
             self.session = None
             self._session_context = None
 
         if self._context is not None:
-            await self._context.__aexit__(_exc_type, _exc_val, _exc_tb)
+            # Catch the async exception here to avoid propagation
+            try:
+                await self._context.__aexit__(_exc_type, _exc_val, _exc_tb)
+            except (RuntimeError, BaseException):
+                # Silence any cleanup exceptions
+                pass
             self._context = None
 
         self._initialized = False
