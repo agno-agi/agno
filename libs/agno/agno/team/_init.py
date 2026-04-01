@@ -29,13 +29,13 @@ from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
-from agno.fallback import FallbackConfig
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.run.agent import RunEvent

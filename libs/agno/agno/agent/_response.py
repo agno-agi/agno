@@ -23,9 +23,9 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.media import Audio
 from agno.models.base import Model
+from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps

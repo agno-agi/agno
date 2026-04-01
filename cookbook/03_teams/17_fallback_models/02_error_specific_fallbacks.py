@@ -10,8 +10,8 @@ Use FallbackConfig for error-specific fallback routing on Teams.
 """
 
 from agno.agent import Agent
-from agno.fallback import FallbackConfig
 from agno.models.anthropic import Claude
+from agno.models.fallback import FallbackConfig
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 

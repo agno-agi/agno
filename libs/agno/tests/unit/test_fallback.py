@@ -10,7 +10,8 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent.agent import Agent
 from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
-from agno.fallback import (
+from agno.models.base import Model
+from agno.models.fallback import (
     FallbackConfig,
     acall_model_stream_with_fallback,
     acall_model_with_fallback,
@@ -18,7 +19,6 @@ from agno.fallback import (
     call_model_with_fallback,
     get_fallback_models,
 )
-from agno.models.base import Model
 from agno.models.openai.chat import OpenAIChat
 from agno.models.response import ModelResponse, ModelResponseEvent
 

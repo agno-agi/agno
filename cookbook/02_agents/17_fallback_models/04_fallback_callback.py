@@ -11,8 +11,8 @@ after the full stream completes for streaming calls).
 """
 
 from agno.agent import Agent
-from agno.fallback import FallbackConfig
 from agno.models.anthropic import Claude
+from agno.models.fallback import FallbackConfig
 from agno.models.openai import OpenAIChat
 
 

@@ -1,4 +1,4 @@
-from agno.fallback import FallbackConfig
+from agno.models.fallback import FallbackConfig
 from agno.run.team import (
     FollowupsCompletedEvent,
     FollowupsStartedEvent,

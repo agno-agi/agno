@@ -34,10 +34,10 @@ from agno.exceptions import (
     OutputCheckError,
     RunCancelledException,
 )
-from agno.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution

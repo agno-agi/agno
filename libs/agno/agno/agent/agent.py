@@ -37,7 +37,6 @@ from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
-from agno.fallback import FallbackConfig
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
@@ -46,6 +45,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.registry.registry import Registry

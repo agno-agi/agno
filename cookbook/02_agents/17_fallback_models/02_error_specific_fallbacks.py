@@ -13,8 +13,8 @@ priority over the general on_error list.
 """
 
 from agno.agent import Agent
-from agno.fallback import FallbackConfig
 from agno.models.anthropic import Claude
+from agno.models.fallback import FallbackConfig
 from agno.models.openai import OpenAIChat
 
 # ---------------------------------------------------------------------------
