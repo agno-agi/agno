@@ -6,8 +6,10 @@ from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
     member_name,
+    resolve_slack_user,
     send_slack_message_async,
     should_respond,
+    strip_bot_mention,
     task_id,
     upload_response_media_async,
 )
@@ -195,3 +197,113 @@ class TestStreamState:
         chunk = Mock(images=None, videos=None, audio=None, files=None)
         state.collect_media(chunk)
         assert state.images == []
+
+
+# -- resolve_slack_user --
+
+
+class TestResolveSlackUser:
+    @pytest.mark.asyncio
+    async def test_returns_email_and_display_name(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "ashpreet",
+                    "profile": {
+                        "email": "ashpreet@example.com",
+                        "display_name": "Ashpreet",
+                        "real_name": "Ashpreet Bhatia",
+                    },
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U123")
+        assert resolved_id == "ashpreet@example.com"
+        assert display_name == "Ashpreet"
+
+    @pytest.mark.asyncio
+    async def test_no_email_falls_back_to_slack_id(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "bob",
+                    "profile": {"display_name": "Bob", "real_name": "Bob Jones"},
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U456")
+        assert resolved_id == "U456"
+        assert display_name == "Bob"
+
+    @pytest.mark.asyncio
+    async def test_display_name_fallback_to_real_name(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "charlie",
+                    "profile": {"email": "charlie@co.com", "display_name": "", "real_name": "Charlie Brown"},
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U789")
+        assert resolved_id == "charlie@co.com"
+        assert display_name == "Charlie Brown"
+
+    @pytest.mark.asyncio
+    async def test_display_name_fallback_to_username(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "dave",
+                    "profile": {"email": "dave@co.com", "display_name": "", "real_name": ""},
+                }
+            }
+        )
+        resolved_id, display_name = await resolve_slack_user(client, "U101")
+        assert resolved_id == "dave@co.com"
+        assert display_name == "dave"
+
+    @pytest.mark.asyncio
+    async def test_api_error_falls_back_gracefully(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("Slack API error"))
+        resolved_id, display_name = await resolve_slack_user(client, "UFAIL")
+        assert resolved_id == "UFAIL"
+        assert display_name is None
+
+
+# -- strip_bot_mention --
+
+
+class TestStripBotMention:
+    def test_strips_bot_mention(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hello world", "U0APCSS3MDH")
+        assert result == "hello world"
+
+    def test_preserves_other_user_mentions(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hey <@U999OTHER> check this", "U0APCSS3MDH")
+        assert result == "hey <@U999OTHER> check this"
+
+    def test_no_mention(self):
+        result = strip_bot_mention("just a plain message", "U0APCSS3MDH")
+        assert result == "just a plain message"
+
+    def test_empty_text(self):
+        result = strip_bot_mention("", "U0APCSS3MDH")
+        assert result == ""
+
+    def test_none_bot_id(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hello", None)
+        assert result == "<@U0APCSS3MDH> hello"
+
+    def test_mention_only(self):
+        result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH")
+        assert result == ""
+
+    def test_mention_in_middle(self):
+        result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH")
+        assert result == "hey what's up"

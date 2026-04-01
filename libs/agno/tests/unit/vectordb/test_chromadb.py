@@ -16,8 +16,12 @@ TEST_PATH = "tmp/test_chromadb"
 
 
 @pytest.fixture
-def chroma_db(mock_embedder):
-    """Fixture to create and clean up a ChromaDb instance"""
+def chroma_db(mock_embedder, request):
+    """Fixture to create and clean up a ChromaDb instance
+
+    Can optionally accept batch_size via indirect parametrization:
+        @pytest.mark.parametrize('chroma_db', [batch_size_value], indirect=True)
+    """
     # Ensure the test directory exists with proper permissions
     os.makedirs(TEST_PATH, exist_ok=True)
 
@@ -26,7 +30,21 @@ def chroma_db(mock_embedder):
         shutil.rmtree(TEST_PATH)
         os.makedirs(TEST_PATH)
 
-    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
+    # Check if batch_size was provided via indirect parametrization
+    batch_size = getattr(request, "param", None)
+
+    # Create db with or without batch_size
+    if batch_size is not None:
+        db = ChromaDb(
+            collection=TEST_COLLECTION,
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            batch_size=batch_size,
+        )
+    else:
+        db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
+
     db.create()
     yield db
 
@@ -1286,3 +1304,180 @@ def test_sync_async_id_consistency(mock_embedder):
     finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
+
+
+# =============================================================================
+# Tests for ChromaDB Batch Size Limit
+# =============================================================================
+
+
+@pytest.mark.skip(reason="Slow test: inserts 6000 documents. Run manually to verify batch splitting works.")
+def test_insert_large_batch_exceeds_limit(chroma_db):
+    """Test inserting more than 5461 documents (ChromaDB's batch size limit).
+
+    This test ensures that large document batches are automatically split into
+    smaller batches to respect this limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Section {i}: This is a test document with unique content for batch size testing. "
+            f"The content is generated to simulate a real-world scenario where large documents "
+            f"are chunked into many pieces, exceeding ChromaDB's batch size limit.",
+            meta_data={"section": i, "test": "batch_size"},
+            name=f"doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    # Insert all documents - should succeed with batching
+    chroma_db.insert(content_hash="test_hash_large_batch", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.skip(reason="Slow test: upserts 6000 documents. Run manually to verify batch splitting works.")
+def test_upsert_large_batch_exceeds_limit(chroma_db):
+    """Test upserting more than 5461 documents.
+
+    Tests the upsert method with a large batch that exceeds the limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Upsert test document {i}",
+            meta_data={"index": i},
+            name=f"upsert_doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    chroma_db.upsert(content_hash="test_hash_upsert", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.skip(reason="Slow test: async inserts 6000 documents. Run manually to verify batch splitting works.")
+@pytest.mark.asyncio
+async def test_async_insert_large_batch_exceeds_limit(chroma_db):
+    """Test async inserting more than 5461 documents.
+
+    Tests the async_insert method with a large batch that exceeds the limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Async test document {i}",
+            meta_data={"index": i},
+            name=f"async_doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    for doc in documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
+    await chroma_db.async_insert(content_hash="test_hash_async", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.skip(reason="Slow test: async upserts 6000 documents. Run manually to verify batch splitting works.")
+@pytest.mark.asyncio
+async def test_async_upsert_large_batch_exceeds_limit(chroma_db):
+    """Test async upserting more than 5,461 documents.
+
+    Tests the async_upsert method with a large batch that exceeds the limit.
+    """
+    num_documents = 6000
+    documents = [
+        Document(
+            content=f"Async upsert test document {i}",
+            meta_data={"index": i},
+            name=f"async_upsert_doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    for doc in documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
+    await chroma_db.async_upsert(content_hash="test_hash_async_upsert", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.parametrize("chroma_db", [10], indirect=True)
+def test_custom_batch_size(chroma_db: ChromaDb):
+    """Test that custom batch_size parameter is respected."""
+    assert chroma_db.batch_size == 10
+
+    num_documents = 20
+    documents = [
+        Document(
+            content=f"Section {i}: Test document with unique content for batch size testing.",
+            meta_data={"section": i, "test": "custom_batch_size"},
+            name=f"doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    chroma_db.insert(content_hash="test_hash_custom_batch", documents=documents)
+
+    assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.parametrize("chroma_db", [2], indirect=True)
+def test_custom_batch_size_splits_into_batches(chroma_db: ChromaDb):
+    """Test that custom batch_size parameter causes documents to be split into multiple batches."""
+    assert chroma_db.batch_size == 2
+
+    num_documents = 6
+    documents = [
+        Document(
+            content=f"Test document {i} for batch splitting.",
+            meta_data={"index": i},
+            name=f"doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    original_add = chroma_db._collection.add
+    add_call_count = 0
+    batch_sizes = []
+
+    def mock_add(**kwargs):
+        nonlocal add_call_count
+        add_call_count += 1
+        batch_sizes.append(len(kwargs.get("ids", [])))
+        return original_add(**kwargs)
+
+    with patch.object(chroma_db._collection, "add", side_effect=mock_add):
+        chroma_db.insert(content_hash="test_hash_batch", documents=documents)
+
+    assert add_call_count == 3, f"Expected 3 batch calls, got {add_call_count}"
+    assert batch_sizes == [2, 2, 2], f"Expected batch sizes [2, 2, 2], got {batch_sizes}"
+    assert chroma_db.get_count() == num_documents
+
+
+def test_no_batch_size_no_batching_logs(chroma_db, caplog):
+    """Test that when batch_size is not provided, no batching logs appear for small document sets."""
+    import logging
+
+    num_documents = 5
+    documents = [
+        Document(
+            content=f"Test document {i} without batching.",
+            meta_data={"index": i},
+            name=f"doc_{i}",
+        )
+        for i in range(num_documents)
+    ]
+
+    with caplog.at_level(logging.DEBUG):
+        chroma_db.insert(content_hash="test_hash_no_batch", documents=documents)
+
+    batch_log_found = any("batch" in record.message.lower() for record in caplog.records)
+    assert not batch_log_found, "Expected no batch log messages, but found batch related logs"
+
+    assert chroma_db.get_count() == num_documents
