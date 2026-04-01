@@ -73,8 +73,6 @@ class ChromaDb(VectorDb):
             Controls ranking smoothness - higher values give more weight to lower-ranked
             results, lower values make top results more dominant. Default is 60
             (per original RRF paper by Cormack et al.).
-        batch_size: Maximum number of documents per batch operation. If not provided,
-            automatically detects ChromaDB's maximum batch size limit.
         reranker: The reranker to use when reranking documents.
         **kwargs: Additional arguments to pass to the ChromaDB client.
     """
@@ -91,7 +89,6 @@ class ChromaDb(VectorDb):
         persistent_client: bool = False,
         search_type: SearchType = SearchType.vector,
         hybrid_rrf_k: int = 60,
-        batch_size: Optional[int] = None,
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
@@ -144,9 +141,6 @@ class ChromaDb(VectorDb):
 
         # Chroma client kwargs
         self.kwargs = kwargs
-
-        # Batch size for ChromaDB operations
-        self._batch_size: Optional[int] = batch_size
 
     def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
         """
@@ -201,71 +195,6 @@ class ChromaDb(VectorDb):
                     **self.kwargs,
                 )
         return self._client
-
-    @property
-    def batch_size(self) -> int:
-        """Get the batch size for ChromaDB operations.
-
-        Returns user-provided batch_size if set, otherwise auto-detects ChromaDB's
-        maximum batch size limit based on SQLite's MAX_VARIABLE_NUMBER constraint.
-
-        Returns:
-            int: Batch size for operations
-
-        Note:
-            - User-provided value takes precedence over auto-detection
-            - Auto-detected value is cached after first calculation
-            - Falls back to 100 if auto-detection fails
-            - Eg: typical values: ~5461 on standard systems, ~41666 on systems with higher limits
-        """
-        if self._batch_size is None:
-            try:
-                max_size = self.client.get_max_batch_size()
-                self._batch_size = max_size
-                log_debug(f"ChromaDB max batch size: {max_size}")
-            except Exception as e:
-                # Fallback to conservative value if query fails
-                log_warning(f"Could not query ChromaDB max batch size: {e}. Using fallback: 100")
-                self._batch_size = 100
-        return self._batch_size
-
-    def _batch_operation(
-        self,
-        ids: List[str],
-        embeddings: List,
-        documents: List[str],
-        metadatas: List[Dict[str, Any]],
-        operation_name: str,
-        operation_func: Any,
-    ) -> None:
-        """Execute a batched ChromaDB operation to respect batch size limits."""
-        num_documents = len(documents)
-        if num_documents == 0:
-            return
-
-        batch_size = self.batch_size
-        total_batches = (num_documents + batch_size - 1) // batch_size
-
-        for i in range(0, num_documents, batch_size):
-            batch_ids = ids[i : i + batch_size]
-            batch_embeddings = embeddings[i : i + batch_size]
-            batch_docs = documents[i : i + batch_size]
-            batch_metadata = metadatas[i : i + batch_size]
-
-            operation_func(
-                ids=batch_ids,
-                embeddings=batch_embeddings,
-                documents=batch_docs,
-                metadatas=batch_metadata,
-            )
-
-            if total_batches > 1:
-                batch_num = (i // batch_size) + 1
-                log_debug(
-                    f"{operation_name.capitalize()} batch {batch_num}/{total_batches} ({len(batch_ids)} documents)"
-                )
-
-        log_debug(f"Committed {num_documents} documents")
 
     def create(self) -> None:
         """Create the collection in ChromaDb."""
@@ -361,14 +290,9 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="insert",
-                operation_func=self._collection.add,
-            )
+            if len(docs) > 0:
+                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                log_debug(f"Committed {len(docs)} documents")
 
     async def async_insert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -465,14 +389,9 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="async_insert",
-                operation_func=self._collection.add,
-            )
+            if len(docs) > 0:
+                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                log_debug(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -550,14 +469,9 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="upsert",
-                operation_func=self._collection.upsert,
-            )
+            if len(docs) > 0:
+                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                log_debug(f"Committed {len(docs)} documents")
 
     async def _async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -656,14 +570,9 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="async_upsert",
-                operation_func=self._collection.upsert,
-            )
+            if len(docs) > 0:
+                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                log_debug(f"Committed {len(docs)} documents")
 
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None

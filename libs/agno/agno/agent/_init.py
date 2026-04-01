@@ -230,6 +230,19 @@ def get_models(agent: Agent) -> None:
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
+    if agent.fallback_config is not None:
+        config = agent.fallback_config
+        for attr in ("on_error", "on_rate_limit", "on_context_overflow"):
+            raw_list = getattr(config, attr)
+            if raw_list:
+                resolved: list = []
+                for fm in raw_list:
+                    resolved_model = get_model(fm)
+                    if resolved_model is not None:
+                        resolved_model.model_type = ModelType.MODEL
+                        resolved.append(resolved_model)
+                setattr(config, attr, resolved)
+
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 

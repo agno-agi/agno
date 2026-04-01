@@ -521,7 +521,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         return [
             "/",
             "/health",
-            "/info",
             "/docs",
             "/redoc",
             "/openapi.json",

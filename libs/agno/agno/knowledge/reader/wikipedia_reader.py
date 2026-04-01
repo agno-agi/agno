@@ -17,10 +17,9 @@ except ImportError:
 class WikipediaReader(Reader):
     auto_suggest: bool = True
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, auto_suggest: bool = True, **kwargs):
-        if chunking_strategy is None:
-            chunk_size = kwargs.get("chunk_size", 5000)
-            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
+    def __init__(
+        self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), auto_suggest: bool = True, **kwargs
+    ):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.auto_suggest = auto_suggest
 

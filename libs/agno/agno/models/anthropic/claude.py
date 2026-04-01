@@ -29,6 +29,7 @@ try:
     from anthropic import (
         AsyncAnthropic as AsyncAnthropicClient,
     )
+    from anthropic import OverloadedError as AnthropicOverloadedError
     from anthropic.lib.streaming._beta_types import (
         BetaRawContentBlockStartEvent,
         ParsedBetaContentBlockStopEvent,
@@ -634,8 +635,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -701,8 +712,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -758,8 +779,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -821,8 +852,18 @@ class Claude(Model):
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except AnthropicOverloadedError as e:
+            log_warning(f"Anthropic overloaded (status {e.status_code}): {str(e)}")
+            raise ModelRateLimitError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            # Handle overloaded errors returned as 200 in streaming responses
+            if "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
@@ -908,19 +949,11 @@ class Claude(Model):
                                 )
                 elif block.type == "thinking":
                     model_response.reasoning_content = block.thinking
-                    model_response.provider_data = model_response.provider_data or {}
-                    model_response.provider_data["signature"] = block.signature
+                    model_response.provider_data = {
+                        "signature": block.signature,
+                    }
                 elif block.type == "redacted_thinking":
                     model_response.redacted_reasoning_content = block.data
-                elif block.type not in ("tool_use",):
-                    # Preserve all non-text/thinking blocks for conversation history reconstruction.
-                    # thinking/redacted_thinking already handled by elif branches above;
-                    # streaming path uses ("thinking", "redacted_thinking", "tool_use") tuple instead.
-                    # tool_use is handled separately below via stop_reason check.
-                    if model_response.provider_data is None:
-                        model_response.provider_data = {}
-                    server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
-                    server_blocks.append(block.model_dump())
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -1055,15 +1088,10 @@ class Claude(Model):
             # The text was already streamed via ContentBlockDeltaEvent chunks
             accumulated_text = ""
 
-            server_tool_blocks: List[Dict[str, Any]] = []
-
             for block in response.message.content:  # type: ignore
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
-                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
-                    # Preserve all non-text/thinking/tool_use blocks for history
-                    server_tool_blocks.append(block.model_dump())
 
                 # Handle citations
                 citations = getattr(block, "citations", None)
@@ -1079,12 +1107,6 @@ class Claude(Model):
                         model_response.citations.documents.append(  # type: ignore
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
-
-            # Preserve server tool blocks for conversation history reconstruction
-            if server_tool_blocks:
-                if model_response.provider_data is None:
-                    model_response.provider_data = {}
-                model_response.provider_data.setdefault("server_tool_blocks", []).extend(server_tool_blocks)
 
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication

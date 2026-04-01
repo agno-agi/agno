@@ -33,9 +33,8 @@ agent = Agent(
 agent.print_response("What's the latest with Anthropic?", stream=True)
 
 # Show the web search metrics
-run_output = agent.get_last_run_output()
 print("---" * 5, "Web Search Metrics", "---" * 5)
-pprint(run_output.metrics)
+pprint(agent.get_last_run_output().metrics)
 print("---" * 20)
 
 # ---------------------------------------------------------------------------

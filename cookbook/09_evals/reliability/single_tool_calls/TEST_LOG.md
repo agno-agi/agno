@@ -1,9 +1,11 @@
 # Test Log: reliability/single_tool_calls
 
+> Tests not yet run. Run each file and update this log.
+
 ### calculator.py
 
-**Status:** PASS
+**Status:** PENDING
 
-**Description:** Two evaluations: factorial tool call check and multiply with argument validation (`expected_tool_call_arguments`). Both passed.
+**Description:** Evaluates reliability for a single factorial tool call.
 
 ---

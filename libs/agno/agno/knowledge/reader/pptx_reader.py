@@ -19,10 +19,7 @@ except ImportError:
 class PPTXReader(Reader):
     """Reader for PPTX files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
-        if chunking_strategy is None:
-            chunk_size = kwargs.get("chunk_size", 5000)
-            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(), **kwargs):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod

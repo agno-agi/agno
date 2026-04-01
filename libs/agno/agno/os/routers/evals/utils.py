@@ -184,7 +184,7 @@ async def run_reliability_eval(
     default_model: Optional[Model] = None,
 ) -> EvalSchema:
     """Run a reliability evaluation for the given agent or team"""
-    if eval_run_input.expected_tool_calls is None:
+    if not eval_run_input.expected_tool_calls:
         raise HTTPException(status_code=400, detail="expected_tool_calls is required for reliability evaluations")
 
     if agent:
@@ -194,8 +194,6 @@ async def run_reliability_eval(
             name=eval_run_input.name,
             agent_response=agent_response,
             expected_tool_calls=eval_run_input.expected_tool_calls,
-            allow_additional_tool_calls=eval_run_input.allow_additional_tool_calls,
-            expected_tool_call_arguments=eval_run_input.expected_tool_call_arguments,
         )
         model_id = agent.model.id if agent and agent.model else None
         model_provider = agent.model.provider if agent and agent.model else None
@@ -207,8 +205,6 @@ async def run_reliability_eval(
             name=eval_run_input.name,
             team_response=team_response,
             expected_tool_calls=eval_run_input.expected_tool_calls,
-            allow_additional_tool_calls=eval_run_input.allow_additional_tool_calls,
-            expected_tool_call_arguments=eval_run_input.expected_tool_call_arguments,
         )
         model_id = team.model.id if team and team.model else None
         model_provider = team.model.provider if team and team.model else None
@@ -221,7 +217,6 @@ async def run_reliability_eval(
         reliability_eval=reliability_eval,
         result=result,
         agent_id=agent.id if agent else None,
-        team_id=team.id if team else None,
         model_id=model_id,
         model_provider=model_provider,
     )

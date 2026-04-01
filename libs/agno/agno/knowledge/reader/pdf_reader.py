@@ -206,13 +206,9 @@ class BasePDFReader(Reader):
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
         sanitize_content: bool = True,
-        chunking_strategy: Optional[ChunkingStrategy] = None,
+        chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(chunk_size=5000),
         **kwargs,
     ):
-        if chunking_strategy is None:
-            chunk_size = kwargs.get("chunk_size", 5000)
-            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
-
         if page_start_numbering_format is None:
             page_start_numbering_format = PAGE_START_NUMBERING_FORMAT_DEFAULT
         if page_end_numbering_format is None:
