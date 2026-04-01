@@ -35,6 +35,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.run.agent import RunEvent
@@ -63,6 +64,8 @@ def __init__(
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
+    fallback_config: Optional[FallbackConfig] = None,
+    fallback_models: Optional[List[Union[Model, str]]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
     mode: Optional["TeamMode"] = None,
@@ -94,6 +97,7 @@ def __init__(
     markdown: bool = False,
     add_datetime_to_context: bool = False,
     add_location_to_context: bool = False,
+    datetime_format: Optional[str] = None,
     timezone_identifier: Optional[str] = None,
     add_name_to_context: bool = False,
     add_member_tools_to_context: bool = False,
@@ -156,6 +160,9 @@ def __init__(
     reasoning_agent: Optional[Agent] = None,
     reasoning_min_steps: int = 1,
     reasoning_max_steps: int = 10,
+    followups: bool = False,
+    num_followups: int = 3,
+    followup_model: Optional[Union[Model, str]] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     store_events: bool = False,
@@ -179,6 +186,14 @@ def __init__(
     team.members = members
 
     team.model = model  # type: ignore[assignment]
+    if fallback_config is not None:
+        if fallback_models:
+            log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
+        team.fallback_config = fallback_config
+    elif fallback_models:
+        team.fallback_config = FallbackConfig(on_error=fallback_models)
+    else:
+        team.fallback_config = None
 
     team.name = name
     team.id = id
@@ -253,6 +268,7 @@ def __init__(
     team.markdown = markdown
     team.add_datetime_to_context = add_datetime_to_context
     team.add_location_to_context = add_location_to_context
+    team.datetime_format = datetime_format
     team.add_name_to_context = add_name_to_context
     team.timezone_identifier = timezone_identifier
     team.add_member_tools_to_context = add_member_tools_to_context
@@ -336,6 +352,12 @@ def __init__(
     team.reasoning_agent = reasoning_agent
     team.reasoning_min_steps = reasoning_min_steps
     team.reasoning_max_steps = reasoning_max_steps
+
+    team.followups = followups
+    if num_followups < 1:
+        raise ValueError("num_followups must be at least 1")
+    team.num_followups = num_followups
+    team.followup_model = followup_model  # type: ignore[assignment]
 
     team.stream = stream
     team.stream_events = stream_events
@@ -663,6 +685,9 @@ def _resolve_models(team: "Team") -> None:
         team.parser_model = get_model(team.parser_model)
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+
+    if team.fallback_config is not None:
+        team.fallback_config.resolve_models()
 
 
 def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:

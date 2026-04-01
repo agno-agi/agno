@@ -17,6 +17,7 @@ from agno.os.config import AuthorizationConfig
 from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.telegram import Telegram
 from agno.team import RemoteTeam, Team
 from agno.vectordb.pgvector.pgvector import PgVector
 from agno.workflow import RemoteWorkflow, Workflow
@@ -161,6 +162,12 @@ slack_remote = Slack(agent=remote_assistant, prefix="/slack/remote", tags=["Slac
 slack_team = Slack(team=remote_team, prefix="/slack/team", tags=["Slack-Team"])
 slack_workflow = Slack(workflow=local_workflow, prefix="/slack/workflow", tags=["Slack-Workflow"])
 
+# Telegram Interfaces (for local agent, remote agent, team, and workflow)
+telegram_local = Telegram(agent=local_agent, prefix="/telegram/local", tags=["Telegram-Local"])
+telegram_remote = Telegram(agent=remote_assistant, prefix="/telegram/remote", tags=["Telegram-Remote"])
+telegram_team = Telegram(team=remote_team, prefix="/telegram/team", tags=["Telegram-Team"])
+telegram_workflow = Telegram(workflow=local_workflow, prefix="/telegram/workflow", tags=["Telegram-Workflow"])
+
 # A2A Interface (exposes all agents, teams, and workflows)
 a2a_interface = A2A(
     agents=[local_agent, remote_assistant, remote_researcher],
@@ -204,6 +211,10 @@ agent_os = AgentOS(
         slack_remote,
         slack_team,
         slack_workflow,
+        telegram_local,
+        telegram_remote,
+        telegram_team,
+        telegram_workflow,
         a2a_interface,
     ],
     tracing=True,

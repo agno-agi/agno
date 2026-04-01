@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio
 from agno.models.base import Model
+from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -39,6 +40,8 @@ from agno.tools.function import Function
 from agno.utils.events import (
     create_team_compression_completed_event,
     create_team_compression_started_event,
+    create_team_followups_completed_event,
+    create_team_followups_started_event,
     create_team_model_request_completed_event,
     create_team_model_request_started_event,
     create_team_parser_model_response_completed_event,
@@ -943,7 +946,9 @@ def _handle_model_response_stream(
         stream_model_response = False
 
     full_model_response = ModelResponse()
-    for model_response_event in team.model.response_stream(
+    for model_response_event in call_model_stream_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1095,7 +1100,9 @@ async def _ahandle_model_response_stream(
         stream_model_response = False
 
     full_model_response = ModelResponse()
-    model_stream = team.model.aresponse_stream(
+    model_stream = acall_model_stream_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1247,18 +1254,41 @@ def _handle_model_response_chunk(
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
 
-            # We just bubble the event up
-            yield handle_event(  # type: ignore
-                model_response_event,  # type: ignore
-                run_response,
-                events_to_skip=team.events_to_skip,
-                store_events=team.store_events,
-            )  # type: ignore
+            # Wrap member RunContentEvent as IntermediateRunContentEvent so
+            # that team streaming surfaces only the leader's final synthesis,
+            # not the raw member output that the leader will summarize.
+            from agno.run.agent import RunContentEvent
+            from agno.run.team import IntermediateRunContentEvent
+
+            if isinstance(model_response_event, RunContentEvent):
+                yield handle_event(  # type: ignore
+                    IntermediateRunContentEvent(
+                        content=model_response_event.content,
+                        content_type=model_response_event.content_type,
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )  # type: ignore
+            else:
+                yield handle_event(  # type: ignore
+                    model_response_event,  # type: ignore
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )  # type: ignore
         else:
             # Don't yield anything
             return
     else:
         model_response_event = cast(ModelResponse, model_response_event)
+        # If a fallback model was activated, reset accumulated content
+        if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+            full_model_response.content = None
+            full_model_response.reasoning_content = None
+            run_response.content = None
+            run_response.reasoning_content = None
+            return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"
@@ -1624,3 +1654,162 @@ def _convert_response_to_structured_format(
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
+
+
+# ---------------------------------------------------------------------------
+# Followups
+# ---------------------------------------------------------------------------
+
+
+def generate_team_followups(
+    team: Team,
+    run_response: TeamRunOutput,
+) -> None:
+    """Generate followups after the main response (sync, non-streaming)."""
+    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
+    from agno.metrics import ModelType, accumulate_model_metrics
+
+    if not team.followups or run_response.content is None:
+        return
+
+    model = team.followup_model or team.model
+    if model is None:
+        return
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = model.response(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+
+async def agenerate_team_followups(
+    team: Team,
+    run_response: TeamRunOutput,
+) -> None:
+    """Generate followups after the main response (async, non-streaming)."""
+    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
+    from agno.metrics import ModelType, accumulate_model_metrics
+
+    if not team.followups or run_response.content is None:
+        return
+
+    model = team.followup_model or team.model
+    if model is None:
+        return
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = await model.aresponse(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+
+def generate_team_followups_stream(
+    team: Team,
+    run_response: TeamRunOutput,
+    stream_events: bool = True,
+) -> Iterator[TeamRunOutputEvent]:
+    """Generate followups after the main response (sync, streaming)."""
+    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
+    from agno.metrics import ModelType, accumulate_model_metrics
+
+    if not team.followups or run_response.content is None:
+        return
+
+    model = team.followup_model or team.model
+    if model is None:
+        return
+
+    if stream_events:
+        yield handle_event(
+            create_team_followups_started_event(run_response),
+            run_response,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+        )
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = model.response(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+    if stream_events:
+        yield handle_event(
+            create_team_followups_completed_event(run_response, followups=run_response.followups),
+            run_response,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+        )
+
+
+async def agenerate_team_followups_stream(
+    team: Team,
+    run_response: TeamRunOutput,
+    stream_events: bool = True,
+) -> AsyncIterator[TeamRunOutputEvent]:
+    """Generate followups after the main response (async, streaming)."""
+    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
+    from agno.metrics import ModelType, accumulate_model_metrics
+
+    if not team.followups or run_response.content is None:
+        return
+
+    model = team.followup_model or team.model
+    if model is None:
+        return
+
+    if stream_events:
+        yield handle_event(
+            create_team_followups_started_event(run_response),
+            run_response,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+        )
+
+    response_format = _get_followups_response_format(model)
+    user_message = run_response.input.input_content_string() if run_response.input else None
+    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+
+    try:
+        model_response: ModelResponse = await model.aresponse(
+            messages=messages,
+            response_format=response_format,
+        )
+        run_response.followups = _parse_followups_response(model_response)
+        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except Exception as e:
+        log_warning(f"Error generating followups: {e}")
+
+    if stream_events:
+        yield handle_event(
+            create_team_followups_completed_event(run_response, followups=run_response.followups),
+            run_response,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+        )

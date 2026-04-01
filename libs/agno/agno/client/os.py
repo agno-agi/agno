@@ -962,11 +962,14 @@ class AgentOSClient:
         data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
-    def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    def get_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -975,14 +978,19 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = self._get(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = self._get(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
-    async def aget_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    async def aget_workflow(
+        self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None
+    ) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            version: Workflow version to retrieve (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -991,7 +999,9 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = await self._aget(f"/workflows/{workflow_id}", headers=headers)
+        params = {"version": version}
+        params = {k: v for k, v in params.items() if v is not None}
+        data = await self._aget(f"/workflows/{workflow_id}", params=params, headers=headers)
         return WorkflowResponse.model_validate(data)
 
     async def run_workflow(
@@ -2007,6 +2017,8 @@ class AgentOSClient:
         model_provider: Optional[str] = None,
         expected_output: Optional[str] = None,
         expected_tool_calls: Optional[List[str]] = None,
+        allow_additional_tool_calls: bool = False,
+        expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None,
         num_iterations: int = 1,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -2023,6 +2035,8 @@ class AgentOSClient:
             model_provider: Optional model provider to use
             expected_output: Expected output for accuracy evaluations
             expected_tool_calls: Expected tool calls for reliability evaluations
+            allow_additional_tool_calls: When True, extra tool calls beyond expected are allowed
+            expected_tool_call_arguments: Expected arguments for specific tool calls
             num_iterations: Number of iterations for performance evaluations
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -2050,6 +2064,8 @@ class AgentOSClient:
             model_provider=model_provider,
             expected_output=expected_output,
             expected_tool_calls=expected_tool_calls,
+            allow_additional_tool_calls=allow_additional_tool_calls,
+            expected_tool_call_arguments=expected_tool_call_arguments,
             num_iterations=num_iterations,
         )
 
