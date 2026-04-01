@@ -285,3 +285,17 @@ def test_build_instructions_multiple_tools():
 def test_build_instructions_search_messages_fallback():
     result = SlackTools._build_instructions(["search_workspace", "search_messages", "get_channel_history"])
     assert "Fallback (user-token only)" in result
+
+
+def test_build_instructions_never_references_disabled_tools():
+    # get_channel_history enabled without get_thread — should NOT mention get_thread
+    result = SlackTools._build_instructions(["search_workspace", "get_channel_history"])
+    assert "get_thread" not in result
+
+    # get_thread enabled without search_workspace — should NOT mention search_workspace
+    result = SlackTools._build_instructions(["get_channel_history", "get_thread"])
+    assert "search_workspace" not in result
+
+    # search_messages without search_workspace — should NOT mention "unavailable"
+    result = SlackTools._build_instructions(["search_messages", "get_channel_history"])
+    assert "unavailable" not in result

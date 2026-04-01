@@ -19,57 +19,76 @@ except ImportError:
 
 
 class SlackTools(Toolkit):
-    _TOOL_INSTRUCTIONS: Dict[str, str] = {
-        "search_workspace": (
-            "**search_workspace** — semantic and keyword search across the workspace.\n"
-            "When to use: finding discussions about a topic, catching up, summarizing activity.\n"
-            "Returns: messages with channel, author, timestamp, and surrounding context."
-        ),
-        "get_channel_history": (
-            "**get_channel_history** — recent top-level messages from a specific channel.\n"
-            "When to use: reading the latest activity in a known channel.\n"
-            "Note: returns only top-level messages, not thread replies. Look for thread_ts\n"
-            "and reply_count in results, then use get_thread to expand important threads.\n"
-            "Requires: bot must be a member of the channel."
-        ),
-        "get_thread": (
-            "**get_thread** — full thread replies given a channel and thread timestamp.\n"
-            "When to use: expanding a message with replies into its full discussion.\n"
-            "Chain after get_channel_history or search_workspace for complete context."
-        ),
-        "get_channel_info": (
-            "**get_channel_info** — channel metadata (topic, purpose, member count).\n"
-            "When to use: understanding what a channel is about."
-        ),
-        "search_messages": (
-            "**search_messages** — legacy search API. Requires a user token.\n"
-            "When to use: only when search_workspace is unavailable."
-        ),
-    }
-
     @classmethod
     def _build_instructions(cls, tool_names: list[str]) -> str:
-        sections = [cls._TOOL_INSTRUCTIONS[n] for n in tool_names if n in cls._TOOL_INSTRUCTIONS]
-        # Only inject guidance when there are multiple instructed tools to choose between
+        """Build LLM guidance based on which tools are actually enabled.
+
+        Only references tools the LLM can call — never mentions disabled tools.
+        """
+        enabled = set(tool_names)
+        sections: list[str] = []
+
+        if "search_workspace" in enabled:
+            sections.append(
+                "**search_workspace** — semantic and keyword search across the workspace.\n"
+                "When to use: finding discussions about a topic, catching up, summarizing activity.\n"
+                "Returns: messages with channel, author, timestamp, and surrounding context."
+            )
+
+        if "get_channel_history" in enabled:
+            text = (
+                "**get_channel_history** — recent top-level messages from a specific channel.\n"
+                "When to use: reading the latest activity in a known channel.\n"
+                "Note: returns only top-level messages, not thread replies."
+            )
+            # Only reference get_thread if the LLM can actually call it
+            if "get_thread" in enabled:
+                text += "\nLook for thread_ts and reply_count, then use get_thread to expand."
+            text += "\nRequires: bot must be a member of the channel."
+            sections.append(text)
+
+        if "get_thread" in enabled:
+            text = (
+                "**get_thread** — full thread replies given a channel and thread timestamp.\n"
+                "When to use: expanding a message with replies into its full discussion."
+            )
+            # Reference chaining sources that are actually available
+            sources = [t for t in ("get_channel_history", "search_workspace") if t in enabled]
+            if sources:
+                text += f"\nChain after {' or '.join(sources)} for complete context."
+            sections.append(text)
+
+        if "get_channel_info" in enabled:
+            sections.append(
+                "**get_channel_info** — channel metadata (topic, purpose, member count).\n"
+                "When to use: understanding what a channel is about."
+            )
+
+        if "search_messages" in enabled:
+            text = "**search_messages** — legacy search API. Requires a user token."
+            if "search_workspace" in enabled:
+                text += "\nWhen to use: only when search_workspace is unavailable."
+            sections.append(text)
+
+        # Only inject guidance when there are multiple tools to choose between
         if len(sections) < 2:
             return ""
 
         result = "## Slack Tool Selection\n\n" + "\n\n".join(sections)
 
-        # Tool selection guidance
-        if "search_workspace" in tool_names and "get_channel_history" in tool_names:
-            result += (
-                "\n\n## When to use which\n"
-                "- Topic search, catch-up, cross-channel → search_workspace\n"
-                "- Latest messages in a specific channel → get_channel_history"
-            )
-        if "get_thread" in tool_names:
-            result += (
-                "\n- Deep-dive into a message → get_thread with channel_id and ts\n"
-                "- Always expand threads with high reply_count before summarizing"
-            )
-        if "search_messages" in tool_names and "search_workspace" in tool_names:
-            result += "\n- Fallback (user-token only) → search_messages"
+        # Routing guidance
+        routing: list[str] = []
+        if "search_workspace" in enabled and "get_channel_history" in enabled:
+            routing.append("- Topic search, catch-up, cross-channel → search_workspace")
+            routing.append("- Latest messages in a specific channel → get_channel_history")
+        if "get_thread" in enabled:
+            routing.append("- Deep-dive into a message → get_thread with channel_id and ts")
+            routing.append("- Always expand threads with high reply_count before summarizing")
+        if "search_messages" in enabled and "search_workspace" in enabled:
+            routing.append("- Fallback (user-token only) → search_messages")
+
+        if routing:
+            result += "\n\n## When to use which\n" + "\n".join(routing)
 
         return result
 
