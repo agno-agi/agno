@@ -192,7 +192,7 @@ def __init__(
             log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
         team.fallback_config = fallback_config
     elif fallback_models:
-        team.fallback_config = FallbackConfig(models=fallback_models)
+        team.fallback_config = FallbackConfig(on_error=fallback_models)
     else:
         team.fallback_config = None
 
@@ -689,7 +689,7 @@ def _resolve_models(team: "Team") -> None:
 
     if team.fallback_config is not None:
         config = team.fallback_config
-        for attr in ("models", "rate_limit_models", "context_window_models"):
+        for attr in ("on_error", "on_rate_limit", "on_context_overflow"):
             raw_list = getattr(config, attr)
             if raw_list:
                 resolved: list = []

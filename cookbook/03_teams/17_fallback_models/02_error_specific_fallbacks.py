@@ -4,9 +4,9 @@ Team Fallback Models — Error-Specific
 
 Use FallbackConfig for error-specific fallback routing on Teams.
 
-- models: tried on any error from the primary model.
-- rate_limit_models: tried specifically on rate-limit (429) errors.
-- context_window_models: tried on context-window-exceeded errors.
+- on_error: tried on any error from the primary model.
+- on_rate_limit: tried specifically on rate-limit (429) errors.
+- on_context_overflow: tried on context-window-exceeded errors.
 """
 
 from agno.agent import Agent
@@ -31,14 +31,14 @@ team = Team(
     name="Research Team",
     model=OpenAIChat(id="gpt-4o"),
     fallback_config=FallbackConfig(
-        rate_limit_models=[
+        on_rate_limit=[
             OpenAIChat(id="gpt-4o-mini"),
             Claude(id="claude-sonnet-4-20250514"),
         ],
-        context_window_models=[
+        on_context_overflow=[
             Claude(id="claude-sonnet-4-20250514"),
         ],
-        models=[
+        on_error=[
             Claude(id="claude-sonnet-4-20250514"),
         ],
     ),

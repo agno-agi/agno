@@ -23,22 +23,22 @@ class FallbackConfig:
     Example::
 
         FallbackConfig(
-            models=[Claude(id="claude-sonnet-4-20250514")],
-            rate_limit_models=[OpenAIChat(id="gpt-4o-mini")],
-            context_window_models=[Claude(id="claude-sonnet-4-20250514")],
+            on_error=[Claude(id="claude-sonnet-4-20250514")],
+            on_rate_limit=[OpenAIChat(id="gpt-4o-mini")],
+            on_context_overflow=[Claude(id="claude-sonnet-4-20250514")],
         )
     """
 
     # General fallback models tried when the primary model fails
-    models: List[Union[Model, str]] = field(default_factory=list)
+    on_error: List[Union[Model, str]] = field(default_factory=list)
     # Fallback models tried specifically on rate-limit (429) errors
-    rate_limit_models: List[Union[Model, str]] = field(default_factory=list)
+    on_rate_limit: List[Union[Model, str]] = field(default_factory=list)
     # Fallback models tried specifically on context-window-exceeded errors
-    context_window_models: List[Union[Model, str]] = field(default_factory=list)
+    on_context_overflow: List[Union[Model, str]] = field(default_factory=list)
 
     @property
     def has_fallbacks(self) -> bool:
-        return bool(self.models or self.rate_limit_models or self.context_window_models)
+        return bool(self.on_error or self.on_rate_limit or self.on_context_overflow)
 
 
 # ---------------------------------------------------------------------------
@@ -50,24 +50,24 @@ def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Except
     """Return the appropriate fallback list for the given error.
 
     Priority:
-    1. Error-specific fallbacks (rate_limit_models / context_window_models)
-    2. General fallback models
+    1. Error-specific fallbacks (on_rate_limit / on_context_overflow)
+    2. General fallback models (on_error)
     """
     if fallback_config is None:
         return None
 
-    if isinstance(error, ModelRateLimitError) and fallback_config.rate_limit_models:
-        return fallback_config.rate_limit_models  # type: ignore[return-value]
-    if isinstance(error, ContextWindowExceededError) and fallback_config.context_window_models:
-        return fallback_config.context_window_models  # type: ignore[return-value]
+    if isinstance(error, ModelRateLimitError) and fallback_config.on_rate_limit:
+        return fallback_config.on_rate_limit  # type: ignore[return-value]
+    if isinstance(error, ContextWindowExceededError) and fallback_config.on_context_overflow:
+        return fallback_config.on_context_overflow  # type: ignore[return-value]
     # For any ModelProviderError that wasn't already classified, try to classify it
     if isinstance(error, ModelProviderError):
         classified = Model.classify_error(error)
-        if isinstance(classified, ModelRateLimitError) and fallback_config.rate_limit_models:
-            return fallback_config.rate_limit_models  # type: ignore[return-value]
-        if isinstance(classified, ContextWindowExceededError) and fallback_config.context_window_models:
-            return fallback_config.context_window_models  # type: ignore[return-value]
-    return fallback_config.models or None  # type: ignore[return-value]
+        if isinstance(classified, ModelRateLimitError) and fallback_config.on_rate_limit:
+            return fallback_config.on_rate_limit  # type: ignore[return-value]
+        if isinstance(classified, ContextWindowExceededError) and fallback_config.on_context_overflow:
+            return fallback_config.on_context_overflow  # type: ignore[return-value]
+    return fallback_config.on_error or None  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------

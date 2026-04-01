@@ -232,7 +232,7 @@ def get_models(agent: Agent) -> None:
 
     if agent.fallback_config is not None:
         config = agent.fallback_config
-        for attr in ("models", "rate_limit_models", "context_window_models"):
+        for attr in ("on_error", "on_rate_limit", "on_context_overflow"):
             raw_list = getattr(config, attr)
             if raw_list:
                 resolved: list = []
