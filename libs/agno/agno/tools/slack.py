@@ -559,19 +559,20 @@ class SlackTools(Toolkit):
                         "ts": msg.get("message_ts", ""),
                         "permalink": msg.get("permalink", ""),
                     }
-                    ctx_msgs = msg.get("context_messages") or {}
-                    before = [
-                        {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
-                        for cm in ctx_msgs.get("before", [])
-                    ]
-                    after = [
-                        {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
-                        for cm in ctx_msgs.get("after", [])
-                    ]
-                    if before:
-                        entry["context_before"] = before
-                    if after:
-                        entry["context_after"] = after
+                    if include_context_messages:
+                        ctx_msgs = msg.get("context_messages", {})
+                        before = [
+                            {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
+                            for cm in ctx_msgs.get("before", [])
+                        ]
+                        after = [
+                            {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
+                            for cm in ctx_msgs.get("after", [])
+                        ]
+                        if before:
+                            entry["context_before"] = before
+                        if after:
+                            entry["context_after"] = after
                     output["messages"].append(entry)
                 result_count += len(output["messages"])
 
