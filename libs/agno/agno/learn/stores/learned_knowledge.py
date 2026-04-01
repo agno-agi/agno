@@ -35,13 +35,13 @@ from agno.learn.config import LearnedKnowledgeConfig, LearningMode
 from agno.learn.schemas import LearnedKnowledge
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import to_dict_safe
-from agno.utils.message import get_conversation_text
 from agno.utils.log import (
     log_debug,
     log_warning,
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics

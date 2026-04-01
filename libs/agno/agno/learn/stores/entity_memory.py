@@ -44,13 +44,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
-from agno.utils.message import get_conversation_text
 from agno.utils.log import (
     log_debug,
     log_warning,
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
