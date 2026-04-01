@@ -5,12 +5,24 @@ from agno.media import Image
 from agno.utils.log import logger
 
 
-def _process_bytes_image(image: bytes) -> Dict[str, Any]:
-    """Process bytes image data."""
+def _process_bytes_image(image: bytes, image_format: Optional[str] = None) -> Dict[str, Any]:
     import base64
 
     base64_image = base64.b64encode(image).decode("utf-8")
-    image_url = f"data:image/jpeg;base64,{base64_image}"
+
+    if image_format:
+        mime_type = f"image/{image_format.lower()}"
+    else:
+        # Detect from magic bytes, fall back to JPEG
+        try:
+            import imghdr
+
+            detected = imghdr.what(None, h=image)
+            mime_type = f"image/{detected}" if detected else "image/jpeg"
+        except Exception:
+            mime_type = "image/jpeg"
+
+    image_url = f"data:{mime_type};base64,{base64_image}"
     return {"type": "input_image", "image_url": image_url}
 
 
@@ -50,14 +62,15 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
         image_payload = _process_image_path(image.filepath)
 
     elif image.content is not None:
-        image_payload = _process_bytes_image(image.content)
+        image_payload = _process_bytes_image(image.content, image.format)
 
     else:
         logger.warning(f"Unsupported image format: {image}")
         return None
 
-    if image.detail:
-        image_payload["image_url"]["detail"] = image.detail
+    # Responses API: detail is a top-level field, not nested inside image_url
+    if image_payload and image.detail:
+        image_payload["detail"] = image.detail
 
     return image_payload
 
