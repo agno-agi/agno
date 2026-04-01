@@ -506,7 +506,7 @@ def _run(
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                model_response: ModelResponse = agent.model.response(
+                _model_kwargs = dict(
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -516,6 +516,17 @@ def _run(
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                 )
+                if agent.resilience and agent.resilience.fallback_models:
+                    from agno.resilience.fallback import try_with_fallback
+
+                    model_response: ModelResponse = try_with_fallback(
+                        primary_model=agent.model,
+                        fallback_models=agent.resilience.fallback_models,
+                        on_fallback=agent.resilience.on_fallback,
+                        **_model_kwargs,
+                    )
+                else:
+                    model_response = agent.model.response(**_model_kwargs)
 
                 # Check for cancellation after model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1588,7 +1599,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                model_response: ModelResponse = await agent.model.aresponse(
+                _model_kwargs = dict(
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -1598,6 +1609,17 @@ async def _arun(
                     run_response=run_response,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                 )
+                if agent.resilience and agent.resilience.fallback_models:
+                    from agno.resilience.fallback import atry_with_fallback
+
+                    model_response: ModelResponse = await atry_with_fallback(
+                        primary_model=agent.model,
+                        fallback_models=agent.resilience.fallback_models,
+                        on_fallback=agent.resilience.on_fallback,
+                        **_model_kwargs,
+                    )
+                else:
+                    model_response = await agent.model.aresponse(**_model_kwargs)
 
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2940,7 +2962,7 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = agent.model.response(
+                _model_kwargs = dict(
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -2950,6 +2972,17 @@ def _continue_run(
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                 )
+                if agent.resilience and agent.resilience.fallback_models:
+                    from agno.resilience.fallback import try_with_fallback
+
+                    model_response: ModelResponse = try_with_fallback(
+                        primary_model=agent.model,
+                        fallback_models=agent.resilience.fallback_models,
+                        on_fallback=agent.resilience.on_fallback,
+                        **_model_kwargs,
+                    )
+                else:
+                    model_response = agent.model.response(**_model_kwargs)
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3705,7 +3738,7 @@ async def _acontinue_run(
                 )
 
                 # 8. Get model response
-                model_response: ModelResponse = await agent.model.aresponse(
+                _model_kwargs = dict(
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -3715,6 +3748,17 @@ async def _acontinue_run(
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                 )
+                if agent.resilience and agent.resilience.fallback_models:
+                    from agno.resilience.fallback import atry_with_fallback
+
+                    model_response: ModelResponse = await atry_with_fallback(
+                        primary_model=agent.model,
+                        fallback_models=agent.resilience.fallback_models,
+                        on_fallback=agent.resilience.on_fallback,
+                        **_model_kwargs,
+                    )
+                else:
+                    model_response = await agent.model.aresponse(**_model_kwargs)
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
