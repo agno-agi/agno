@@ -51,7 +51,8 @@ def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Except
 
     Priority:
     1. Error-specific fallbacks (on_rate_limit / on_context_overflow)
-    2. General fallback models (on_error)
+    2. General fallback models (on_error) — only for retryable (5xx/network) errors
+    3. Non-retryable client errors (400/401/403/etc.) are never masked by on_error
     """
     if fallback_config is None:
         return None
@@ -67,6 +68,19 @@ def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Except
             return fallback_config.on_rate_limit  # type: ignore[return-value]
         if isinstance(classified, ContextWindowExceededError) and fallback_config.on_context_overflow:
             return fallback_config.on_context_overflow  # type: ignore[return-value]
+    # Don't mask non-retryable client errors (401/403/etc.) — these are
+    # configuration bugs that the developer needs to see and fix.
+    # Rate-limit (429/529) and context-window errors are excluded since they
+    # are legitimate fallback scenarios even when their specific lists are empty.
+    _retryable_status_codes = {429, 529}
+    if (
+        isinstance(error, ModelProviderError)
+        and not isinstance(error, (ModelRateLimitError, ContextWindowExceededError))
+        and error.status_code
+        and 400 <= error.status_code < 500
+        and error.status_code not in _retryable_status_codes
+    ):
+        return None
     return fallback_config.on_error or None  # type: ignore[return-value]
 
 

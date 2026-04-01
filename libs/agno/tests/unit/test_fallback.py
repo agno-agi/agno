@@ -120,6 +120,43 @@ class TestGetFallbackModels:
         result = get_fallback_models(config, error)
         assert result == [general_model]
 
+    def test_get_fallback_models_blocks_401_auth_error(self):
+        """401 auth errors are not masked by on_error — they surface to the developer."""
+        config = FallbackConfig(on_error=[_make_model("fallback")])
+        error = ModelProviderError("invalid api key", status_code=401)
+        result = get_fallback_models(config, error)
+        assert result is None
+
+    def test_get_fallback_models_blocks_403_forbidden(self):
+        """403 forbidden errors are not masked by on_error."""
+        config = FallbackConfig(on_error=[_make_model("fallback")])
+        error = ModelProviderError("forbidden", status_code=403)
+        result = get_fallback_models(config, error)
+        assert result is None
+
+    def test_get_fallback_models_blocks_400_bad_request(self):
+        """400 bad request errors are not masked by on_error."""
+        config = FallbackConfig(on_error=[_make_model("fallback")])
+        error = ModelProviderError("invalid request", status_code=400)
+        result = get_fallback_models(config, error)
+        assert result is None
+
+    def test_get_fallback_models_allows_500_server_error(self):
+        """500 server errors do fall through to on_error."""
+        general_model = _make_model("fallback")
+        config = FallbackConfig(on_error=[general_model])
+        error = ModelProviderError("internal server error", status_code=500)
+        result = get_fallback_models(config, error)
+        assert result == [general_model]
+
+    def test_get_fallback_models_allows_503_unavailable(self):
+        """503 service unavailable errors do fall through to on_error."""
+        general_model = _make_model("fallback")
+        config = FallbackConfig(on_error=[general_model])
+        error = ModelProviderError("service unavailable", status_code=503)
+        result = get_fallback_models(config, error)
+        assert result == [general_model]
+
 
 # =============================================================================
 # Group 3: call_model_with_fallback() (sync)
