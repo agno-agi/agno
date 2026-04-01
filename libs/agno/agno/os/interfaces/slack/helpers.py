@@ -92,6 +92,18 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
         return (slack_user_id, None)
 
 
+async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:
+    """Resolve a Slack channel ID to its human-readable name."""
+    try:
+        resp = await async_client.conversations_info(channel=channel_id)
+        channel = resp.get("channel", {}) if resp else {}
+        # API returns "" for unnamed channels; normalize to None
+        return channel.get("name") or None
+    except Exception:
+        log_warning(f"Failed to resolve channel name for {channel_id}")
+        return None
+
+
 async def download_event_files_async(
     token: str, event: dict, max_file_size: int
 ) -> Tuple[List[File], List[Image], List[Video], List[Audio], List[str]]:
