@@ -698,12 +698,17 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        if store_executor_outputs and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None and response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
+                        elif response is None:
+                            logger.warning(
+                                f"Step '{self.name}': executor returned None instead of RunOutput/TeamRunOutput. "
+                                "step_executor_runs will not include a run for this step."
+                            )
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
                         # This is NOT supported at workflow level - warn the user
-                        if hasattr(response, "is_paused") and response.is_paused:
+                        if response is not None and hasattr(response, "is_paused") and response.is_paused:
                             logger.warning(
                                 f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
                                 "Agent tool-level HITL is NOT propagated to the workflow. "
@@ -995,8 +1000,14 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        if store_executor_outputs and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None and active_executor_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
+                        elif active_executor_run_response is None:
+                            logger.warning(
+                                f"Step '{self.name}': executor stream ended without a RunOutput/TeamRunOutput "
+                                "(the executor may have emitted an error event). "
+                                "step_executor_runs will not include a run for this step."
+                            )
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
                         # This is NOT supported at workflow level - warn the user
@@ -1564,8 +1575,14 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        if store_executor_outputs and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None and active_executor_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
+                        elif active_executor_run_response is None:
+                            logger.warning(
+                                f"Step '{self.name}': executor stream ended without a RunOutput/TeamRunOutput "
+                                "(the executor may have emitted an error event). "
+                                "step_executor_runs will not include a run for this step."
+                            )
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
                         # This is NOT supported at workflow level - warn the user
