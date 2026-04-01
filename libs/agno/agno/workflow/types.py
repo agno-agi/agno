@@ -362,8 +362,6 @@ class StepOutput:
 
     # Executor HITL: indicates the step's agent/team is paused for tool-level HITL
     is_paused: bool = False
-    # Internal reference to the paused RunOutput/TeamRunOutput (not serialized)
-    _executor_run_response: Optional[Any] = None
 
     steps: Optional[List["StepOutput"]] = None
 
@@ -637,8 +635,8 @@ class StepRequirement:
     executor_agent_name: Optional[str] = None
     executor_run_id: Optional[str] = None
     executor_type: Optional[str] = None  # "agent" or "team"
-    # Internal reference to the paused RunOutput/TeamRunOutput (not serialized)
-    _executor_run_response: Optional[Any] = None
+    # Session ID for the executor's session (needed for DB-based continue_run)
+    executor_session_id: Optional[str] = None
 
     def confirm(self) -> None:
         """Confirm the step execution"""
@@ -824,6 +822,7 @@ class StepRequirement:
             result["executor_agent_name"] = self.executor_agent_name
             result["executor_run_id"] = self.executor_run_id
             result["executor_type"] = self.executor_type
+            result["executor_session_id"] = self.executor_session_id
 
         return result
 
@@ -862,6 +861,7 @@ class StepRequirement:
             executor_agent_name=data.get("executor_agent_name"),
             executor_run_id=data.get("executor_run_id"),
             executor_type=data.get("executor_type"),
+            executor_session_id=data.get("executor_session_id"),
         )
 
 

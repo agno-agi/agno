@@ -319,3 +319,90 @@ def finalize_workflow_completion(
     workflow_run_response.status = RunStatus.completed
     workflow_run_response.paused_step_index = None
     workflow_run_response.paused_step_name = None
+
+
+# -------------------------------------------------------------------------
+# Executor HITL helpers — for agent/team tool-level pauses within steps
+# -------------------------------------------------------------------------
+
+
+def get_last_executor_run(workflow_run_response: "WorkflowRunOutput") -> Any:
+    """Get the last executor run response from step_executor_runs.
+
+    This is used to find the paused executor's RunOutput after
+    _store_executor_response has been called.
+    """
+    if workflow_run_response.step_executor_runs:
+        return workflow_run_response.step_executor_runs[-1]
+    return None
+
+
+def apply_executor_pause(
+    inner_step: Any,
+    step_index: int,
+    step_name: str,
+    executor_response: Any,
+    workflow_run_response: "WorkflowRunOutput",
+    collected_step_outputs: list,
+) -> "StepRequirement":
+    """Apply executor pause state to the workflow run response.
+
+    Sets workflow status to paused, creates the executor StepRequirement,
+    and returns it. Callers are responsible for saving the session.
+
+    Args:
+        inner_step: The Step instance containing the paused executor (may be
+            resolved from a composite step via _find_inner_step_by_executor).
+        step_index: Index of the top-level step in the workflow.
+        step_name: Name of the top-level step.
+        executor_response: The paused RunOutput/TeamRunOutput from step_executor_runs.
+        workflow_run_response: The workflow run output to update.
+        collected_step_outputs: Step outputs collected so far.
+
+    Returns:
+        The created StepRequirement for the executor pause.
+    """
+    step_req = inner_step._create_executor_step_requirement(step_index, executor_response)
+    workflow_run_response.status = RunStatus.paused
+    workflow_run_response.paused_step_index = step_index
+    workflow_run_response.paused_step_name = step_name
+    workflow_run_response.step_requirements = [step_req]
+    workflow_run_response.step_results = collected_step_outputs
+    return step_req
+
+
+def create_executor_paused_event(
+    step_req: "StepRequirement",
+    step: Any,
+    step_index: int,
+    step_name: str,
+    workflow_run_response: "WorkflowRunOutput",
+) -> Any:
+    """Create a StepExecutorPausedEvent for streaming.
+
+    Args:
+        step_req: The executor StepRequirement.
+        step: The Step instance.
+        step_index: Index of the step.
+        step_name: Name of the step.
+        workflow_run_response: The workflow run output.
+
+    Returns:
+        StepExecutorPausedEvent instance.
+    """
+    from agno.run.workflow import StepExecutorPausedEvent
+
+    return StepExecutorPausedEvent(
+        run_id=workflow_run_response.run_id or "",
+        workflow_name=workflow_run_response.workflow_name or "",
+        workflow_id=workflow_run_response.workflow_id or "",
+        session_id=workflow_run_response.session_id or "",
+        step_name=step_name,
+        step_index=step_index,
+        step_id=getattr(step, "step_id", None),
+        executor_agent_id=step_req.executor_agent_id,
+        executor_agent_name=step_req.executor_agent_name,
+        executor_run_id=step_req.executor_run_id,
+        executor_type=step_req.executor_type,
+        executor_requirements=step_req.executor_requirements,
+    )

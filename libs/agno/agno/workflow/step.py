@@ -707,7 +707,6 @@ class Step:
                             use_workflow_logger()
                             step_output = self._process_step_output(response)
                             step_output.is_paused = True
-                            step_output._executor_run_response = response
                             return step_output
 
                         # Switch back to workflow logger after execution
@@ -1007,7 +1006,7 @@ class Step:
                             use_workflow_logger()
                             paused_output = self._process_step_output(active_executor_run_response)
                             paused_output.is_paused = True
-                            paused_output._executor_run_response = active_executor_run_response
+                            # paused state is already set on paused_output.is_paused
                             yield paused_output
                             return
 
@@ -1281,7 +1280,6 @@ class Step:
                             use_workflow_logger()
                             step_output = self._process_step_output(response)
                             step_output.is_paused = True
-                            step_output._executor_run_response = response
                             return step_output
 
                         # Switch back to workflow logger after execution
@@ -1575,7 +1573,7 @@ class Step:
                             use_workflow_logger()
                             paused_output = self._process_step_output(active_executor_run_response)
                             paused_output.is_paused = True
-                            paused_output._executor_run_response = active_executor_run_response
+                            # paused state is already set on paused_output.is_paused
                             yield paused_output
                             return
 
@@ -1814,7 +1812,7 @@ class Step:
             executor_agent_name=executor_name,
             executor_run_id=executor_response.run_id,
             executor_type=executor_type,
-            _executor_run_response=executor_response,
+            executor_session_id=getattr(executor_response, "session_id", None),
         )
 
     def _process_step_output(self, response: Union[RunOutput, TeamRunOutput, StepOutput]) -> StepOutput:

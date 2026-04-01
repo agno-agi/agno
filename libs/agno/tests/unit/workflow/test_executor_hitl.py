@@ -13,9 +13,7 @@ Tests cover:
 """
 
 from unittest.mock import MagicMock
-from uuid import uuid4
 
-from agno.run.base import RunStatus
 from agno.run.workflow import (
     StepExecutorPausedEvent,
     WorkflowRunEvent,
@@ -24,7 +22,6 @@ from agno.run.workflow import (
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
 from agno.workflow.types import (
-    StepInput,
     StepOutput,
     StepRequirement,
     StepType,

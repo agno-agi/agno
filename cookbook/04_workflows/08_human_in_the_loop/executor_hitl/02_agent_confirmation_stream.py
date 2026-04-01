@@ -114,7 +114,7 @@ if __name__ == "__main__":
         console.print("\n[bold]Continuing workflow...[/]")
         for event in workflow.continue_run(paused_response, stream=True):
             if isinstance(event, WorkflowCompletedEvent):
-                console.print(f"\n\n[bold green]Workflow completed![/]")
+                console.print("\n\n[bold green]Workflow completed![/]")
             elif isinstance(event, WorkflowRunOutput):
                 pass  # Final run output (only emitted on pause)
             elif hasattr(event, "content") and event.content:

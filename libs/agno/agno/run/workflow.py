@@ -670,27 +670,33 @@ class WorkflowRunOutput:
         return [req for req in self.error_requirements if req.needs_decision]
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "step_results",
-                "step_executor_runs",
-                "events",
-                "metrics",
-                "workflow_agent_run",
-                "step_requirements",
-                "error_requirements",
-            ]
-        }
+        # Temporarily clear complex fields before asdict() since it uses deepcopy
+        # internally (via pickle), which fails on objects containing RLock etc.
+        # These fields are excluded from the asdict result anyway and serialized
+        # manually below — but asdict still deep-copies them before filtering.
+        _excluded_fields = [
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
+            "step_requirements",
+            "error_requirements",
+        ]
+        _saved = {f: getattr(self, f) for f in _excluded_fields}
+        for f in _excluded_fields:
+            setattr(self, f, None)
+        try:
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in _excluded_fields}
+        finally:
+            for f in _excluded_fields:
+                setattr(self, f, _saved[f])
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
