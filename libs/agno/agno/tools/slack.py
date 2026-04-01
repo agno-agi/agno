@@ -494,30 +494,19 @@ class SlackTools(Toolkit):
         limit: int = 10,
         include_context_messages: bool = True,
     ) -> str:
-        """Search messages, files, channels, and users across the Slack workspace.
-
-        Uses the assistant.search.context API which supports both keyword and semantic
-        search (semantic requires Slack AI Search on the workspace plan). Results are
-        scoped to what the requesting user can see.
+        """Search messages, files, and channels across the Slack workspace.
 
         Args:
-            run_context (RunContext): Injected by the framework. Provides the action_token
-                needed for bot-token workspace search.
-            query (str): Search query. Phrased as a natural language question (e.g.
-                "What did the team decide about the auth migration?") to trigger semantic
-                search, or as keywords for keyword search. Supports filters like
+            run_context (RunContext): Injected by the framework.
+            query (str): Natural language question or keywords. Supports filters:
                 in:<#channel>, from:<@user>, has:link, before:YYYY-MM-DD, after:YYYY-MM-DD.
-            content_types (str): Comma-separated content types to search. Any combination of:
-                messages, files, channels, users. Defaults to "messages".
-            channel_types (str): Comma-separated channel types. Any combination of:
-                public_channel, private_channel, mpim, im. Defaults to "public_channel".
-            limit (int): Number of results per content type, max 20. Defaults to 10.
-            include_context_messages (bool): Whether to include surrounding messages for
-                each result. Defaults to True.
+            content_types (str): Comma-separated: messages, files, channels, users.
+            channel_types (str): Comma-separated: public_channel, private_channel, mpim, im.
+            limit (int): Results per content type, max 20.
+            include_context_messages (bool): Include surrounding messages for each result.
 
         Returns:
-            str: JSON with search results including content, author, channel, permalink,
-                and context_messages for each match.
+            str: JSON with search results grouped by content type.
         """
         action_token = (run_context.metadata or {}).get("action_token") if run_context else None
         if not action_token:
