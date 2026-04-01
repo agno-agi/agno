@@ -33,6 +33,7 @@ class SlackTools(Toolkit):
         enable_get_thread: bool = False,
         enable_list_users: bool = False,
         enable_get_user_info: bool = False,
+        enable_get_channel_info: bool = False,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
@@ -56,6 +57,7 @@ class SlackTools(Toolkit):
             enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
             enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
+            enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
@@ -96,6 +98,8 @@ class SlackTools(Toolkit):
             tools.append(self.list_users)
         if enable_get_user_info or all:
             tools.append(self.get_user_info)
+        if enable_get_channel_info or all:
+            tools.append(self.get_channel_info)
 
         super().__init__(name="slack", tools=tools, **kwargs)
 
@@ -162,20 +166,54 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.conversations_history(channel=channel, limit=limit)
-            messages: List[Dict[str, Any]] = [  # type: ignore
-                {
-                    "text": msg.get("text", ""),
-                    "user": "webhook" if msg.get("subtype") == "bot_message" else msg.get("user", "unknown"),
-                    "ts": msg.get("ts", ""),
-                    "sub_type": msg.get("subtype", "unknown"),
-                    "attachments": msg.get("attachments", []) if msg.get("subtype") == "bot_message" else "n/a",
-                }
-                for msg in response.get("messages", [])
-            ]
+
+            raw_messages = response.get("messages", [])
+            human_msgs = [m for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")]
+            user_names = self._resolve_user_names(list({m["user"] for m in human_msgs}))
+
+            messages: List[Dict[str, Any]] = []
+            for msg in raw_messages:
+                entry = self._build_message_entry(msg, user_names)
+                # Thread metadata lets the agent discover and expand threads
+                thread_ts = msg.get("thread_ts")
+                if thread_ts:
+                    entry["thread_ts"] = thread_ts
+                    entry["reply_count"] = msg.get("reply_count", 0)
+                messages.append(entry)
             return json.dumps(messages)
         except SlackApiError as e:
             logger.error(f"Error getting channel history: {e}")
             return json.dumps({"error": str(e)})
+
+    def _resolve_user_names(self, user_ids: List[str]) -> Dict[str, str]:
+        """Resolve a list of Slack user IDs to display names.
+
+        Makes one users.info call per unique ID. Typical channels have <10 unique
+        participants so this stays well within Slack's Tier 4 rate limit (~100 req/min).
+        Falls back to the raw ID on failure.
+        """
+        names: Dict[str, str] = {}
+        for uid in user_ids:
+            try:
+                resp = self.client.users_info(user=uid)
+                profile = resp.get("user", {}).get("profile", {})
+                # Prefer display_name (chosen by user), fall back to real_name
+                names[uid] = profile.get("display_name") or profile.get("real_name") or uid
+            except SlackApiError:
+                names[uid] = uid
+        return names
+
+    def _build_message_entry(self, msg: Dict[str, Any], user_names: Dict[str, str]) -> Dict[str, Any]:
+        user_id = msg.get("user", "")
+        user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
+        entry: Dict[str, Any] = {
+            "text": msg.get("text", ""),
+            "user": user_label,
+            "ts": msg.get("ts", ""),
+        }
+        if msg.get("attachments"):
+            entry["attachments"] = msg["attachments"]
+        return entry
 
     def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
         """Save file to disk if output_directory is set. Return file path or None."""
@@ -395,14 +433,13 @@ class SlackTools(Toolkit):
                 ts=thread_ts,
                 limit=min(limit, self.thread_message_limit),
             )
-            messages = [
-                {
-                    "text": msg.get("text", ""),
-                    "user": msg.get("user", "unknown"),
-                    "ts": msg.get("ts", ""),
-                }
-                for msg in response.get("messages", [])
-            ]
+            raw_messages = response.get("messages", [])
+            human_msgs = [m for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")]
+            user_names = self._resolve_user_names(list({m["user"] for m in human_msgs}))
+
+            messages: List[Dict[str, Any]] = []
+            for msg in raw_messages:
+                messages.append(self._build_message_entry(msg, user_names))
             return json.dumps(
                 {
                     "thread_ts": thread_ts,
@@ -467,4 +504,33 @@ class SlackTools(Toolkit):
             )
         except SlackApiError as e:
             logger.error(f"Error getting user info: {e}")
+            return json.dumps({"error": str(e)})
+
+    def get_channel_info(self, channel: str) -> str:
+        """Get detailed information about a Slack channel by its ID.
+
+        Args:
+            channel (str): The Slack channel ID to look up.
+
+        Returns:
+            str: A JSON string containing the channel's name, topic, purpose, member count, creation date, and visibility.
+        """
+        try:
+            response = self.client.conversations_info(channel=channel, include_num_members=True)
+            ch = response.get("channel", {})
+            return json.dumps(
+                {
+                    "id": ch.get("id", ""),
+                    "name": ch.get("name", ""),
+                    "topic": ch.get("topic", {}).get("value", ""),
+                    "purpose": ch.get("purpose", {}).get("value", ""),
+                    "num_members": ch.get("num_members", 0),
+                    "is_private": ch.get("is_private", False),
+                    "is_archived": ch.get("is_archived", False),
+                    "created": ch.get("created", 0),
+                    "creator": ch.get("creator", ""),
+                }
+            )
+        except SlackApiError as e:
+            logger.error(f"Error getting channel info: {e}")
             return json.dumps({"error": str(e)})

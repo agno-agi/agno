@@ -158,6 +158,7 @@ class Claude(AnthropicClaude):
         system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        messages: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
@@ -166,6 +167,7 @@ class Claude(AnthropicClaude):
             system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
+            messages: Optional list of Message objects for the conversation.
 
         Returns:
             Dict[str, Any]: The request keyword arguments.
