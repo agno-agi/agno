@@ -498,7 +498,7 @@ class Agent:
                 log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
             self.fallback_config = fallback_config
         elif fallback_models:
-            self.fallback_config = FallbackConfig(models=fallback_models)
+            self.fallback_config = FallbackConfig(on_error=fallback_models)
         else:
             self.fallback_config = None
         self.name = name
