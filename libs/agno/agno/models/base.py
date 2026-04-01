@@ -33,7 +33,6 @@ from agno.exceptions import (
     AgentRunException,
     ContextWindowExceededError,
     ModelProviderError,
-    ModelRateLimitError,
     RetryableModelProviderError,
 )
 from agno.media import Audio, File, Image, Video
@@ -190,54 +189,13 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
-    # Patterns that indicate a context window / token limit exceeded error
-    CONTEXT_WINDOW_PATTERNS = [
-        "context_length_exceeded",
-        "context window",
-        "maximum context length",
-        "token limit",
-        "max_tokens",
-        "too many tokens",
-        "payload too large",
-        "content_too_large",
-        "request too large",
-        "input too long",
-        "exceeds the model",
-    ]
-
     @staticmethod
     def classify_error(error: ModelProviderError) -> ModelProviderError:
         """Re-classify a generic ModelProviderError into a specific subclass.
 
-        If the error is already a specific subclass (ModelRateLimitError,
-        ContextWindowExceededError), it is returned as-is. Otherwise, the
-        error message and status code are inspected to determine if a more
-        specific subclass applies.
+        Delegates to ModelProviderError.classify(). Kept for backwards compatibility.
         """
-        # Already classified
-        if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
-            return error
-
-        # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
-        if error.status_code in {429, 529}:
-            return ModelRateLimitError(
-                message=error.message,
-                status_code=error.status_code,
-                model_name=error.model_name,
-                model_id=error.model_id,
-            )
-
-        # Context-window detection
-        error_msg = str(error.message).lower()
-        if any(pattern in error_msg for pattern in Model.CONTEXT_WINDOW_PATTERNS):
-            return ContextWindowExceededError(
-                message=error.message,
-                status_code=error.status_code,
-                model_name=error.model_name,
-                model_id=error.model_id,
-            )
-
-        return error
+        return ModelProviderError.classify(error)
 
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
@@ -262,7 +220,7 @@ class Model(ABC):
 
         # Defense-in-depth: catch context window errors even if not pre-classified
         error_msg = str(error.message).lower()
-        if any(pattern in error_msg for pattern in self.CONTEXT_WINDOW_PATTERNS):
+        if any(pattern in error_msg for pattern in ModelProviderError.CONTEXT_WINDOW_PATTERNS):
             return False
 
         return True

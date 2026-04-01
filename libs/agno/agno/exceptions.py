@@ -92,6 +92,21 @@ class ModelAuthenticationError(AgnoError):
 class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 
+    # Patterns that indicate a context window / token limit exceeded error
+    CONTEXT_WINDOW_PATTERNS = [
+        "context_length_exceeded",
+        "context window",
+        "maximum context length",
+        "token limit",
+        "max_tokens",
+        "too many tokens",
+        "payload too large",
+        "content_too_large",
+        "request too large",
+        "input too long",
+        "exceeds the model",
+    ]
+
     def __init__(
         self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
     ):
@@ -101,6 +116,40 @@ class ModelProviderError(AgnoError):
 
         self.type = "model_provider_error"
         self.error_id = "model_provider_error"
+
+    @classmethod
+    def classify(cls, error: "ModelProviderError") -> "ModelProviderError":
+        """Re-classify a generic ModelProviderError into a specific subclass.
+
+        If the error is already a specific subclass (ModelRateLimitError,
+        ContextWindowExceededError), it is returned as-is. Otherwise, the
+        error message and status code are inspected to determine if a more
+        specific subclass applies.
+        """
+        # Already classified
+        if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
+            return error
+
+        # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
+        if error.status_code in {429, 529}:
+            return ModelRateLimitError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+            )
+
+        # Context-window detection
+        error_msg = str(error.message).lower()
+        if any(pattern in error_msg for pattern in cls.CONTEXT_WINDOW_PATTERNS):
+            return ContextWindowExceededError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+            )
+
+        return error
 
 
 class ModelRateLimitError(ModelProviderError):
