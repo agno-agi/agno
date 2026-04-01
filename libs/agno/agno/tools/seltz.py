@@ -81,18 +81,13 @@ class SeltzTools(Toolkit):
         """Convert Seltz documents into JSON for the agent."""
         parsed: List[dict[str, Any]] = []
         for doc in documents or []:
-            # New SDK documents have a to_dict() method
-            if hasattr(doc, "to_dict"):
-                doc_dict = doc.to_dict()
-            else:
-                # Fallback for compatibility
-                doc_dict = {}
-                url = getattr(doc, "url", None)
-                content = getattr(doc, "content", None)
-                if url is not None:
-                    doc_dict["url"] = url
-                if content:
-                    doc_dict["content"] = content
+            doc_dict: dict[str, Any] = {}
+            url = getattr(doc, "url", None)
+            content = getattr(doc, "content", None)
+            if url:
+                doc_dict["url"] = url
+            if content:
+                doc_dict["content"] = content
             if doc_dict:
                 parsed.append(doc_dict)
         return json.dumps(parsed, indent=4, ensure_ascii=False)
