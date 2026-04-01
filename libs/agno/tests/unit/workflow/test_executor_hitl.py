@@ -46,15 +46,17 @@ class TestStepOutputPaused:
         assert output.is_paused is True
 
     def test_step_output_executor_run_response(self):
-        """StepOutput can carry _executor_run_response."""
+        """StepOutput can carry _executor_run_response as a runtime attribute."""
         mock_response = MagicMock()
-        output = StepOutput(content="test", is_paused=True, _executor_run_response=mock_response)
+        output = StepOutput(content="test", is_paused=True)
+        output._executor_run_response = mock_response
         assert output._executor_run_response is mock_response
 
     def test_step_output_to_dict_excludes_executor_response(self):
         """StepOutput.to_dict() does not include _executor_run_response."""
         mock_response = MagicMock()
-        output = StepOutput(content="test", is_paused=True, _executor_run_response=mock_response)
+        output = StepOutput(content="test", is_paused=True)
+        output._executor_run_response = mock_response
         d = output.to_dict()
         assert "is_paused" in d
         assert d["is_paused"] is True
@@ -94,7 +96,6 @@ class TestStepRequirementExecutorFields:
         assert req.executor_agent_name is None
         assert req.executor_run_id is None
         assert req.executor_type is None
-        assert req._executor_run_response is None
 
     def test_executor_fields_set(self):
         """Executor fields can be set."""
@@ -276,7 +277,6 @@ class TestCreateExecutorStepRequirement:
         assert req.executor_agent_name == "TestAgent"
         assert req.executor_run_id == "run-789"
         assert req.executor_type == "agent"
-        assert req._executor_run_response is mock_response
 
     def test_creates_requirement_for_team(self):
         """Creates correct StepRequirement for team executor."""

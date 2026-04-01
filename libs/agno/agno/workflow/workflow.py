@@ -6557,7 +6557,7 @@ class Workflow:
                     )
 
                     condition_step_output: Optional[StepOutput] = None
-                    async for event in step.aexecute_stream(
+                    async for event in step.aexecute_stream(  # type: ignore[assignment]
                         step_input,
                         session_id=session.session_id,
                         user_id=self.user_id,
@@ -6646,7 +6646,7 @@ class Workflow:
 
                         try:
                             router_step_output = None
-                            async for event in step.aexecute_stream(
+                            async for event in step.aexecute_stream(  # type: ignore[assignment]
                                 step_input,
                                 session_id=session.session_id,
                                 user_id=self.user_id,
