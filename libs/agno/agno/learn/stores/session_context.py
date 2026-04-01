@@ -35,6 +35,7 @@ from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.utils.message import get_conversation_text
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -529,7 +530,7 @@ class SessionContextStore(LearningStore):
         # Get existing context to build upon
         existing_context = self.get(session_id=session_id)
 
-        conversation_text = self._messages_to_text(messages=messages)
+        conversation_text = get_conversation_text(messages)
 
         tools = self._get_extraction_tools(
             session_id=session_id,
@@ -598,7 +599,7 @@ class SessionContextStore(LearningStore):
         # Get existing context to build upon
         existing_context = await self.aget(session_id=session_id)
 
-        conversation_text = self._messages_to_text(messages=messages)
+        conversation_text = get_conversation_text(messages)
 
         tools = await self._aget_extraction_tools(
             session_id=session_id,
@@ -669,20 +670,6 @@ class SessionContextStore(LearningStore):
             parts.append(f"**Completed:**\n  - {progress_items}")
 
         return "\n\n".join(parts)
-
-    def _messages_to_text(self, messages: List["Message"]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     def _get_system_message(
         self,

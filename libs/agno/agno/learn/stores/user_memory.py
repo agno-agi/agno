@@ -34,6 +34,7 @@ from agno.learn.config import LearningMode, UserMemoryConfig
 from agno.learn.schemas import Memories
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.utils.message import get_conversation_text
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -774,8 +775,8 @@ class UserMemoryStore(LearningStore):
 
         self.memories_updated = False
 
-        input_string = self._messages_to_input_string(messages=messages)
-        if not input_string.strip():
+        conversation_text = get_conversation_text(messages)
+        if not conversation_text.strip():
             return "No updates needed"
 
         existing_memories = self.get(user_id=user_id)
@@ -783,7 +784,7 @@ class UserMemoryStore(LearningStore):
 
         tools = self._get_extraction_tools(
             user_id=user_id,
-            input_string=input_string,
+            input_string=conversation_text,
             existing_memories=existing_memories,
             agent_id=agent_id,
             team_id=team_id,
@@ -793,7 +794,7 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            Message(role="user", content=input_string),
+            Message(role="user", content=conversation_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -835,8 +836,8 @@ class UserMemoryStore(LearningStore):
 
         self.memories_updated = False
 
-        input_string = self._messages_to_input_string(messages=messages)
-        if not input_string.strip():
+        conversation_text = get_conversation_text(messages)
+        if not conversation_text.strip():
             return "No updates needed"
 
         existing_memories = await self.aget(user_id=user_id)
@@ -844,7 +845,7 @@ class UserMemoryStore(LearningStore):
 
         tools = await self._aget_extraction_tools(
             user_id=user_id,
-            input_string=input_string,
+            input_string=conversation_text,
             existing_memories=existing_memories,
             agent_id=agent_id,
             team_id=team_id,
@@ -854,7 +855,7 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            Message(role="user", content=input_string),
+            Message(role="user", content=conversation_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -951,13 +952,6 @@ class UserMemoryStore(LearningStore):
                 result.append({"id": memory_id, "content": content})
 
         return result
-
-    def _messages_to_input_string(self, messages: List["Message"]) -> str:
-        """Convert messages to input string."""
-        if len(messages) == 1:
-            return messages[0].get_content_string()
-        else:
-            return "\n".join([f"{m.role}: {m.get_content_string()}" for m in messages if m.content])
 
     def _build_functions_for_model(self, tools: List[Callable]) -> List["Function"]:
         """Convert callables to Functions for model."""
