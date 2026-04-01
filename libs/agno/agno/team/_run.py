@@ -95,6 +95,7 @@ from agno.utils.log import (
 _background_tasks: set[asyncio.Task[None]] = set()
 
 if TYPE_CHECKING:
+    from agno.team._run_options import ResolvedRunOptions
     from agno.team.team import Team
 
 
@@ -4536,7 +4537,7 @@ def _route_requirements_to_members(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> List[str]:
-    """Route member requirements back to the appropriate member agents (sync).
+    """Route member requirements back to the appropriate member agents (sync, non-streaming).
 
     Groups requirements by member_agent_id, calls member.continue_run() for each,
     and returns a list of result descriptions for building a continuation message.
@@ -4623,13 +4624,125 @@ def _route_requirements_to_members(
     return member_results
 
 
+def _route_requirements_to_members_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    member_results: List[str],
+    run_context: Optional[RunContext] = None,
+    stream_events: bool = False,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    """Route member requirements back to the appropriate member agents (sync, streaming).
+
+    Yields member streaming events (RunContent, etc.) to the caller, and appends
+    result descriptions to the provided member_results list.
+
+    Following the same pattern as delegate_task_to_member: iterate the member's
+    streaming response, yield intermediate events, capture the final RunOutput.
+
+    Args:
+        member_results: Mutable list to collect member result strings.
+
+    Yields:
+        Member streaming events (RunOutputEvent, TeamRunOutputEvent).
+    """
+    from agno.run.requirement import RunRequirement
+    from agno.team._tools import _find_member_route_by_id
+
+    # Group requirements by member
+    member_reqs: Dict[str, List[RunRequirement]] = {}
+    for req in run_response.requirements or []:
+        mid = getattr(req, "member_agent_id", None)
+        if mid is not None:
+            member_reqs.setdefault(mid, []).append(req)
+
+    for member_id, reqs in member_reqs.items():
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
+        if route_result is None:
+            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
+            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
+            continue
+
+        _, member = route_result
+
+        member_run_output = getattr(reqs[0], "_member_run_response", None)
+
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
+        if member_run_output is not None:
+            member_run_output.requirements = reqs
+            updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
+            if updated_tools and member_run_output.tools:
+                updated_map = {t.tool_call_id: t for t in updated_tools}
+                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+
+            member_response_stream = member.continue_run(  # type: ignore[call-overload]
+                run_response=member_run_output,  # type: ignore[arg-type]
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+        else:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            member_response_stream = member.continue_run(  # type: ignore[call-overload]
+                run_id=member_run_id,
+                requirements=reqs,
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+
+        # Iterate the member's streaming response — yield intermediate events,
+        member_response = None
+        for event in member_response_stream:  # type: ignore[union-attr]
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                member_response = event
+                continue  # Don't yield the final RunOutput
+
+            # Set parent_run_id on member events (same as delegate_task_to_member)
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
+
+            # Store event and yield (same as _handle_model_response_chunk for member events)
+            if team.stream_member_events:
+                yield handle_event(
+                    event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+        if member_response is None:
+            log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
+            member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
+        elif getattr(member_response, "is_paused", False):
+            from agno.team._tools import _propagate_member_pause
+
+            _propagate_member_pause(run_response, member, member_response)
+        else:
+            session.upsert_run(member_response)
+            content = getattr(member_response, "content", None) or "Task completed"
+            member_results.append(f"[{member.name or member_id}]: {content}")
+
+        # Clear _member_run_response references to allow GC of the member RunOutput
+        for req in reqs:
+            req._member_run_response = None
+
+
 async def _aroute_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> List[str]:
-    """Route member requirements back to the appropriate member agents (async).
+    """Route member requirements back to the appropriate member agents (async, non-streaming).
 
     Runs member continue_run() calls concurrently with asyncio.gather.
 
@@ -4716,6 +4829,121 @@ async def _aroute_requirements_to_members(
         elif isinstance(r, str):
             member_results.append(r)
     return member_results
+
+
+async def _aroute_requirements_to_members_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    member_results: List[str],
+    run_context: Optional[RunContext] = None,
+    stream_events: bool = False,
+) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    """Route member requirements back to the appropriate member agents (async, streaming).
+
+    Yields member streaming events (RunContent, etc.) to the caller, and appends
+    result descriptions to the provided member_results list.
+
+    Following the same pattern as adelegate_task_to_member: iterate the member's
+    async streaming response, yield intermediate events, capture the final RunOutput.
+
+    Note: When streaming, members are processed sequentially (not with asyncio.gather)
+    because we need to yield events as they arrive.
+
+    Args:
+        member_results: Mutable list to collect member result strings.
+
+    Yields:
+        Member streaming events (RunOutputEvent, TeamRunOutputEvent).
+    """
+    from agno.run.requirement import RunRequirement
+    from agno.team._tools import _find_member_route_by_id
+
+    # Group requirements by member
+    member_reqs: Dict[str, List[RunRequirement]] = {}
+    for req in run_response.requirements or []:
+        mid = getattr(req, "member_agent_id", None)
+        if mid is not None:
+            member_reqs.setdefault(mid, []).append(req)
+
+    for member_id, reqs in member_reqs.items():
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
+        if route_result is None:
+            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
+            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
+            continue
+
+        _, member = route_result
+
+        member_run_output = getattr(reqs[0], "_member_run_response", None)
+
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
+        if member_run_output is not None:
+            member_run_output.requirements = reqs
+            updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
+            if updated_tools and member_run_output.tools:
+                updated_map = {t.tool_call_id: t for t in updated_tools}
+                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+
+            member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
+                run_response=member_run_output,  # type: ignore[arg-type]
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+        else:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
+                run_id=member_run_id,
+                requirements=reqs,
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+
+        # Iterate the member's async streaming response — yield intermediate events,
+        member_response = None
+        async for event in member_response_stream:  # type: ignore[union-attr]
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                member_response = event
+                continue  # Don't yield the final RunOutput
+
+            # Set parent_run_id on member events (same as adelegate_task_to_member)
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
+
+            # Store event and yield (same as _handle_model_response_chunk for member events)
+            if team.stream_member_events:
+                yield handle_event(
+                    event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+        if member_response is None:
+            log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
+            member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
+        elif getattr(member_response, "is_paused", False):
+            from agno.team._tools import _propagate_member_pause
+
+            _propagate_member_pause(run_response, member, member_response)
+        else:
+            session.upsert_run(member_response)
+            content = getattr(member_response, "content", None) or "Task completed"
+            member_results.append(f"[{member.name or member_id}]: {content}")
+
+        # Clear _member_run_response references to allow GC of the member RunOutput
+        for req in reqs:
+            req._member_run_response = None
 
 
 def _build_continuation_message(member_results: List[str]) -> str:
@@ -4957,10 +5185,51 @@ def continue_run_dispatch(
         # may append newly propagated reqs via _propagate_member_pause (chained HITL).
         original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
-        member_results = _route_requirements_to_members(
-            team, run_response=run_response, session=team_session, run_context=run_context
-        )
-        # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
+
+        if opts.stream:
+            # Streaming: use the generator variant that yields member events.
+            # We collect member_results via a mutable list and chain with the
+            # team continuation stream below.
+            member_event_stream = _route_requirements_to_members_stream(
+                team,
+                run_response=run_response,
+                session=team_session,
+                member_results=member_results,
+                run_context=run_context,
+                stream_events=opts.stream_events or False,
+            )
+        else:
+            member_event_stream = None
+            member_results = _route_requirements_to_members(
+                team,
+                run_response=run_response,
+                session=team_session,
+                run_context=run_context,
+            )
+
+        # For non-streaming, member routing is done eagerly above.
+        # For streaming, we must consume member events lazily inside a returned generator.
+        # But first we need to check for chained pauses AFTER member routing completes.
+        # So for streaming, we defer everything to a wrapper generator.
+        if opts.stream and member_event_stream is not None:
+            return _continue_run_dispatch_stream_with_member_events(
+                team=team,
+                run_response=run_response,
+                member_event_stream=member_event_stream,
+                member_results=member_results,
+                original_member_req_ids=original_member_req_ids,
+                team_level_reqs=team_level_reqs,
+                has_team_level=has_team_level,
+                team_session=team_session,
+                run_context=run_context,
+                opts=opts,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+
+        # Non-streaming: merge and check for chained pauses
         newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
         run_response.requirements = team_level_reqs + newly_propagated
 
@@ -4968,14 +5237,9 @@ def continue_run_dispatch(
         if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
             from agno.team import _hooks
 
-            if opts.stream:
-                return _hooks.handle_team_run_paused_stream(
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                )  # type: ignore
-            else:
-                return _hooks.handle_team_run_paused(
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                )
+            return _hooks.handle_team_run_paused(
+                team, run_response=run_response, session=team_session, run_context=run_context
+            )
 
     # Handle team-level tool resolution
     if has_team_level:
@@ -5139,6 +5403,165 @@ def continue_run_dispatch(
     return run_response
 
 
+def _continue_run_dispatch_stream_with_member_events(
+    team: "Team",
+    run_response: TeamRunOutput,
+    member_event_stream: Iterator[Union[TeamRunOutputEvent, RunOutputEvent]],
+    member_results: List[str],
+    original_member_req_ids: set,
+    team_level_reqs: list,
+    has_team_level: bool,
+    team_session: TeamSession,
+    run_context: RunContext,
+    opts: "ResolvedRunOptions",
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+    """Sync streaming wrapper that yields member events then continues the team run.
+
+    This generator first yields all member streaming events from the member routing,
+    then proceeds with the normal team continuation (model call, etc.).
+    """
+    from agno.team._response import get_response_format
+    from agno.team._tools import _determine_tools_for_model
+
+    # Phase 1: Yield member streaming events
+    yield from member_event_stream
+
+    # Phase 2: After member routing completes, check for chained pauses
+    newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
+    run_response.requirements = team_level_reqs + newly_propagated
+
+    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+        from agno.team import _hooks
+
+        yield from _hooks.handle_team_run_paused_stream(
+            team, run_response=run_response, session=team_session, run_context=run_context
+        )
+        return
+
+    # Phase 3: Continue the team run with member results
+    if has_team_level:
+        unresolved_team = [
+            r
+            for r in (run_response.requirements or [])
+            if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+        ]
+        if unresolved_team:
+            from agno.team import _hooks
+
+            yield from _hooks.handle_team_run_paused_stream(
+                team, run_response=run_response, session=team_session, run_context=run_context
+            )
+            return
+
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
+
+        team_run_context: Dict[str, Any] = {}
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=True,
+            stream_events=opts.stream_events or False,
+        )
+
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
+
+        run_response.status = RunStatus.running
+        run_response.content = None
+
+        log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
+
+        yield from _continue_run_stream(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            tools=_tools,
+            session=team_session,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        return
+
+    if member_results:
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
+
+        team_run_context_2: Dict[str, Any] = {}
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context_2,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=True,
+            stream_events=opts.stream_events or False,
+        )
+
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+        log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
+
+        yield from _continue_run_stream(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            tools=_tools,
+            session=team_session,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        return
+
+    # Fallback: nothing more to do
+    run_response.status = RunStatus.completed
+    _cleanup_and_store(team, run_response=run_response, session=team_session)
+    if opts.yield_run_output:
+        yield run_response
+
+
 def _continue_run(
     team: "Team",
     run_response: TeamRunOutput,
@@ -5179,7 +5602,7 @@ def _continue_run(
     handle_event(
         create_team_run_continued_event(run_response),
         run_response,
-        events_to_skip=team.events_to_skip,
+        # events_to_skip=team.events_to_skip,
         store_events=team.store_events,
     )
 
@@ -5785,7 +6208,10 @@ async def _acontinue_run(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        run_context=run_context,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -6078,9 +6504,16 @@ async def _acontinue_run_stream(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context
-                    )
+                    # Streaming: use the async generator variant that yields member events
+                    async for event in _aroute_requirements_to_members_stream(
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        member_results=member_results,
+                        run_context=run_context,
+                        stream_events=stream_events,
+                    ):
+                        yield event
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
