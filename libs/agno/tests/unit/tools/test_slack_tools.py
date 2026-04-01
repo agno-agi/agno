@@ -210,6 +210,15 @@ def test_search_workspace_success():
                     "files": [
                         {"title": "RFC.pdf", "file_type": "pdf", "author_name": "Bob", "permalink": "https://..."}
                     ],
+                    "users": [
+                        {
+                            "user_id": "U3",
+                            "full_name": "Carol Smith",
+                            "title": "Staff Engineer",
+                            "email": "carol@example.com",
+                            "permalink": "https://slack.com/team/U3",
+                        }
+                    ],
                 },
             }
 
@@ -220,7 +229,7 @@ def test_search_workspace_success():
 
             result = json.loads(tools.search_workspace(ctx, "auth migration"))
 
-            assert result["result_count"] == 2
+            assert result["result_count"] == 3
             assert len(result["messages"]) == 1
             assert result["messages"][0]["author"] == "Alice"
             assert result["messages"][0]["context_before"] == [{"text": "hey team", "user_id": "U2"}]
@@ -228,6 +237,9 @@ def test_search_workspace_success():
             assert "context_after" not in result["messages"][0]
             assert len(result["files"]) == 1
             assert result["files"][0]["title"] == "RFC.pdf"
+            assert len(result["users"]) == 1
+            assert result["users"][0]["full_name"] == "Carol Smith"
+            assert result["users"][0]["title"] == "Staff Engineer"
 
             mock_client.api_call.assert_called_once_with(
                 "assistant.search.context",

@@ -591,6 +591,20 @@ class SlackTools(Toolkit):
                 ]
                 result_count += len(output["channels"])
 
+            raw_users = results.get("users", [])
+            if raw_users:
+                output["users"] = [
+                    {
+                        "user_id": u.get("user_id", ""),
+                        "full_name": u.get("full_name", ""),
+                        "title": u.get("title", ""),
+                        "email": u.get("email", ""),
+                        "permalink": u.get("permalink", ""),
+                    }
+                    for u in raw_users
+                ]
+                result_count += len(output["users"])
+
             output["result_count"] = result_count
             return json.dumps(output)
         except SlackApiError as e:
