@@ -50,7 +50,8 @@ class SlackTools(Toolkit):
     @classmethod
     def _build_instructions(cls, tool_names: list[str]) -> str:
         sections = [cls._TOOL_INSTRUCTIONS[n] for n in tool_names if n in cls._TOOL_INSTRUCTIONS]
-        if not sections:
+        # Only inject guidance when there are multiple instructed tools to choose between
+        if len(sections) < 2:
             return ""
 
         result = "## Slack Tool Selection\n\n" + "\n\n".join(sections)
@@ -67,6 +68,8 @@ class SlackTools(Toolkit):
                 "\n- Deep-dive into a message → get_thread with channel_id and ts\n"
                 "- Always expand threads with high reply_count before summarizing"
             )
+        if "search_messages" in tool_names and "search_workspace" in tool_names:
+            result += "\n- Fallback (user-token only) → search_messages"
 
         return result
 
@@ -160,8 +163,8 @@ class SlackTools(Toolkit):
             tools.append(self.get_channel_info)
 
         # Build tool instructions dynamically based on enabled tools
-        if "instructions" not in kwargs:
-            tool_names = [t.__name__ if callable(t) else t.name for t in tools]
+        if kwargs.get("instructions") is None:
+            tool_names = [t.__name__ for t in tools]
             built = self._build_instructions(tool_names)
             if built:
                 kwargs["instructions"] = built
@@ -516,7 +519,6 @@ class SlackTools(Toolkit):
             str: JSON with search results including content, author, channel, permalink,
                 and context_messages for each match.
         """
-        # action_token is user-scoped and per-event; set by the Slack interface
         action_token = (run_context.metadata or {}).get("action_token") if run_context else None
         if not action_token:
             return json.dumps(
@@ -541,32 +543,37 @@ class SlackTools(Toolkit):
 
             results: Dict[str, Any] = response.get("results", {})
             output: Dict[str, Any] = {}
+            result_count = 0
 
             raw_messages = results.get("messages", [])
             if raw_messages:
                 output["messages"] = []
                 for msg in raw_messages:
+                    entry: Dict[str, Any] = {
+                        "content": msg.get("content", ""),
+                        "author": msg.get("author_name", ""),
+                        "author_user_id": msg.get("author_user_id", ""),
+                        "is_bot": msg.get("is_author_bot", False),
+                        "channel_id": msg.get("channel_id", ""),
+                        "channel_name": msg.get("channel_name", ""),
+                        "ts": msg.get("message_ts", ""),
+                        "permalink": msg.get("permalink", ""),
+                    }
                     ctx_msgs = msg.get("context_messages") or {}
-                    output["messages"].append(
-                        {
-                            "content": msg.get("content", ""),
-                            "author": msg.get("author_name", ""),
-                            "author_user_id": msg.get("author_user_id", ""),
-                            "is_bot": msg.get("is_author_bot", False),
-                            "channel_id": msg.get("channel_id", ""),
-                            "channel_name": msg.get("channel_name", ""),
-                            "ts": msg.get("message_ts", ""),
-                            "permalink": msg.get("permalink", ""),
-                            "context_before": [
-                                {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
-                                for cm in ctx_msgs.get("before", [])
-                            ],
-                            "context_after": [
-                                {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
-                                for cm in ctx_msgs.get("after", [])
-                            ],
-                        }
-                    )
+                    before = [
+                        {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
+                        for cm in ctx_msgs.get("before", [])
+                    ]
+                    after = [
+                        {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
+                        for cm in ctx_msgs.get("after", [])
+                    ]
+                    if before:
+                        entry["context_before"] = before
+                    if after:
+                        entry["context_after"] = after
+                    output["messages"].append(entry)
+                result_count += len(output["messages"])
 
             raw_files = results.get("files", [])
             if raw_files:
@@ -579,6 +586,7 @@ class SlackTools(Toolkit):
                     }
                     for f in raw_files
                 ]
+                result_count += len(output["files"])
 
             raw_channels = results.get("channels", [])
             if raw_channels:
@@ -591,15 +599,9 @@ class SlackTools(Toolkit):
                     }
                     for ch in raw_channels
                 ]
+                result_count += len(output["channels"])
 
-            output["result_count"] = (
-                len(output.get("messages", [])) + len(output.get("files", [])) + len(output.get("channels", []))
-            )
-
-            next_cursor = response.get("response_metadata", {}).get("next_cursor", "")
-            if next_cursor:
-                output["next_cursor"] = next_cursor
-
+            output["result_count"] = result_count
             return json.dumps(output)
         except SlackApiError as e:
             logger.error(f"Error in search_workspace: {e}")

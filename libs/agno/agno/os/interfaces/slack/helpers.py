@@ -48,7 +48,7 @@ def build_run_metadata(
     metadata: Dict[str, Any] = {}
     if display_name:
         metadata["user_name"] = display_name
-        metadata["user_email"] = resolved_user_id
+        metadata["user_id"] = resolved_user_id
     if ctx.get("action_token"):
         metadata["action_token"] = ctx["action_token"]
     return metadata or None
@@ -62,7 +62,7 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
-        "action_token": (event.get("assistant_thread") or {}).get("action_token"),
+        "action_token": event.get("assistant_thread", {}).get("action_token"),
     }
 
 

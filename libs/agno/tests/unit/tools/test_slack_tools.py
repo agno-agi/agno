@@ -41,7 +41,7 @@ def test_init_all_flag_enables_all():
     with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(all=True)
-            assert len(tools.functions) == 11
+            assert len(tools.functions) == 12
 
 
 # === Core Tools ===
