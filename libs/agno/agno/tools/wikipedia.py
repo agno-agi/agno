@@ -62,9 +62,12 @@ class WikipediaTools(Toolkit):
 
         log_info(f"Searching wikipedia for: {query}")
         try:
+            # auto_suggest=False prevents the library from silently redirecting to wrong articles (e.g. "Nvidia" -> "nida")
             content = wikipedia.summary(query, auto_suggest=False)
             return json.dumps(Document(name=query, content=content).to_dict())
         except DisambiguationError as e:
+            if not e.options:
+                return json.dumps({"error": "disambiguation_unresolvable", "query": query})
             return json.dumps({"disambiguation": query, "options": e.options[:10]})
         except PageError:
             return json.dumps({"error": "page_not_found", "query": query})
