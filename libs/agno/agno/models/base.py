@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
+    Coroutine,
     Dict,
     Iterator,
     List,
@@ -640,6 +642,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        pre_call_hook: Optional[Callable[[List[Message]], None]] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -652,6 +655,9 @@ class Model(ABC):
             tool_call_limit: Tool call limit
             run_response: Run response to use
             send_media_to_model: Whether to send media to the model
+            pre_call_hook: Optional callback invoked before each model call after tool results
+                          are added (skipped on the first iteration). Used by model_hooks to
+                          inspect messages including tool return data.
         """
         try:
             # Check cache if enabled
@@ -680,6 +686,10 @@ class Model(ABC):
             _compression_manager = compression_manager if _compress_tool_results else None
 
             while True:
+                # Run model hooks before each model call after tool results are added
+                if function_call_count > 0 and pre_call_hook is not None:
+                    pre_call_hook(messages)
+
                 # Compress tool results if compression is enabled and threshold is met
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
@@ -871,6 +881,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        async_pre_call_hook: Optional[Callable[..., Coroutine[Any, Any, None]]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -902,6 +913,10 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
+                # Run async model hooks before each model call after tool results are added
+                if function_call_count > 0 and async_pre_call_hook is not None:
+                    await async_pre_call_hook(messages)
+
                 # Compress existing tool results BEFORE making API call to avoid context overflow
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format
@@ -1339,6 +1354,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        pre_call_hook: Optional[Callable[[List[Message]], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1377,6 +1393,10 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
+                # Run model hooks before each model call after tool results are added
+                if function_call_count > 0 and pre_call_hook is not None:
+                    pre_call_hook(messages)
+
                 # Compress existing tool results BEFORE invoke
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
@@ -1615,6 +1635,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        async_pre_call_hook: Optional[Callable[..., Coroutine[Any, Any, None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1653,6 +1674,10 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
+                # Run async model hooks before each model call after tool results are added
+                if function_call_count > 0 and async_pre_call_hook is not None:
+                    await async_pre_call_hook(messages)
+
                 # Compress existing tool results BEFORE making API call to avoid context overflow
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format

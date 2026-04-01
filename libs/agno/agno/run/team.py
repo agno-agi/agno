@@ -25,7 +25,7 @@ from agno.utils.media import (
 
 @dataclass
 class TeamRunInput:
-    """Container for the raw input data passed to Agent.run().
+    """Container for the raw input data passed to Team.run().
     This captures the original input exactly as provided by the user,
     separate from the processed messages that go to the model.
     Attributes:
@@ -41,6 +41,7 @@ class TeamRunInput:
     videos: Optional[Sequence[Video]] = None
     audios: Optional[Sequence[Audio]] = None
     files: Optional[Sequence[File]] = None
+    extra_data: Optional[Dict[str, Any]] = None
 
     def input_content_string(self) -> str:
         import json
@@ -112,6 +113,9 @@ class TeamRunInput:
         if self.files:
             result["files"] = [file.to_dict() for file in self.files]
 
+        if self.extra_data:
+            result["extra_data"] = self.extra_data
+
         return result
 
     @classmethod
@@ -123,7 +127,12 @@ class TeamRunInput:
         files = reconstruct_files(data.get("files"))
 
         return cls(
-            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
+            input_content=data.get("input_content", ""),
+            images=images,
+            videos=videos,
+            audios=audios,
+            files=files,
+            extra_data=data.get("extra_data"),
         )
 
 
@@ -140,6 +149,9 @@ class TeamRunEvent(str, Enum):
 
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
+
+    model_hook_started = "TeamModelHookStarted"
+    model_hook_completed = "TeamModelHookCompleted"
 
     post_hook_started = "TeamPostHookStarted"
     post_hook_completed = "TeamPostHookCompleted"
@@ -345,6 +357,18 @@ class PreHookCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.pre_hook_completed.value
     pre_hook_name: Optional[str] = None
     run_input: Optional[TeamRunInput] = None
+
+
+@dataclass
+class ModelHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.model_hook_started.value
+    model_hook_name: Optional[str] = None
+
+
+@dataclass
+class ModelHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.model_hook_completed.value
+    model_hook_name: Optional[str] = None
 
 
 @dataclass
@@ -633,6 +657,10 @@ TeamRunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    ModelHookStartedEvent,
+    ModelHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningContentDeltaEvent,
@@ -675,6 +703,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_continued.value: RunContinuedEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    TeamRunEvent.model_hook_started.value: ModelHookStartedEvent,
+    TeamRunEvent.model_hook_completed.value: ModelHookCompletedEvent,
     TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
     TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
