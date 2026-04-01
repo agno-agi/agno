@@ -774,10 +774,12 @@ class UserMemoryStore(LearningStore):
 
         self.memories_updated = False
 
+        input_string = self._messages_to_input_string(messages=messages)
+        if not input_string.strip():
+            return "No updates needed"
+
         existing_memories = self.get(user_id=user_id)
         existing_data = self._memories_to_list(memories=existing_memories)
-
-        input_string = self._messages_to_input_string(messages=messages)
 
         tools = self._get_extraction_tools(
             user_id=user_id,
@@ -791,7 +793,7 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            *messages,
+            Message(role="user", content=input_string),
         ]
 
         model_copy = deepcopy(self.model)
@@ -833,10 +835,12 @@ class UserMemoryStore(LearningStore):
 
         self.memories_updated = False
 
+        input_string = self._messages_to_input_string(messages=messages)
+        if not input_string.strip():
+            return "No updates needed"
+
         existing_memories = await self.aget(user_id=user_id)
         existing_data = self._memories_to_list(memories=existing_memories)
-
-        input_string = self._messages_to_input_string(messages=messages)
 
         tools = await self._aget_extraction_tools(
             user_id=user_id,
@@ -850,7 +854,7 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            *messages,
+            Message(role="user", content=input_string),
         ]
 
         model_copy = deepcopy(self.model)

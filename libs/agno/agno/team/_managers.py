@@ -20,6 +20,9 @@ from agno.run.messages import RunMessages
 from agno.session import TeamSession
 from agno.utils.log import log_debug, log_warning
 
+# Roles to keep when filtering messages for learning extraction
+_LEARNING_ROLES = ("user", "assistant", "model")
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
@@ -204,7 +207,7 @@ def _process_learnings(
 
     collector = RunMetrics()
     try:
-        messages = list(run_messages.messages) if run_messages else []
+        messages = [m for m in run_messages.messages if m.role in _LEARNING_ROLES] if run_messages else []
         team._learning.process(
             messages=messages,
             user_id=user_id,
@@ -232,7 +235,7 @@ async def _aprocess_learnings(
 
     collector = RunMetrics()
     try:
-        messages = list(run_messages.messages) if run_messages else []
+        messages = [m for m in run_messages.messages if m.role in _LEARNING_ROLES] if run_messages else []
         await team._learning.aprocess(
             messages=messages,
             user_id=user_id,

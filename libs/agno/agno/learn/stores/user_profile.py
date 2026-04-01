@@ -864,6 +864,10 @@ class UserProfileStore(LearningStore):
 
         self.profile_updated = False
 
+        input_text = self._messages_to_input_string(messages)
+        if not input_text.strip():
+            return "No updates needed"
+
         existing_profile = self.get(user_id=user_id)
 
         tools = self._get_extraction_tools(
@@ -877,7 +881,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            *messages,
+            Message(role="user", content=input_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -919,6 +923,10 @@ class UserProfileStore(LearningStore):
 
         self.profile_updated = False
 
+        input_text = self._messages_to_input_string(messages)
+        if not input_text.strip():
+            return "No updates needed"
+
         existing_profile = await self.aget(user_id=user_id)
 
         tools = await self._aget_extraction_tools(
@@ -932,7 +940,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            *messages,
+            Message(role="user", content=input_text),
         ]
 
         model_copy = deepcopy(self.model)

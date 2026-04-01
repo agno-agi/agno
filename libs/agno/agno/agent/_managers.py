@@ -21,6 +21,10 @@ from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.utils.log import log_debug, log_warning
 
+# Roles to keep when filtering messages for learning extraction —
+# system prompts and tool scaffolding are for the primary model, not learning
+_LEARNING_ROLES = ("user", "assistant", "model")
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
@@ -396,8 +400,7 @@ def process_learnings(
 
     collector = RunMetrics()
     try:
-        # Convert run messages to list format expected by LearningMachine
-        messages = run_messages.messages if run_messages else []
+        messages = [m for m in run_messages.messages if m.role in _LEARNING_ROLES] if run_messages else []
 
         agent._learning.process(
             messages=messages,
@@ -427,7 +430,7 @@ async def aprocess_learnings(
 
     collector = RunMetrics()
     try:
-        messages = run_messages.messages if run_messages else []
+        messages = [m for m in run_messages.messages if m.role in _LEARNING_ROLES] if run_messages else []
         await agent._learning.aprocess(
             messages=messages,
             user_id=user_id,
