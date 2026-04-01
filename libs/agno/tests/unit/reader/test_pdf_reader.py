@@ -457,3 +457,45 @@ async def test_pdf_reader_async_sanitize_content_disabled(sample_pdf_path):
     documents = await reader.async_read(sample_pdf_path)
 
     assert len(documents) > 0
+
+
+def test_pdf_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PDFReader(chunk_size=100)
+    assert reader.chunk_size == 100
+    assert reader.chunking_strategy.chunk_size == 100
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_pdf_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PDFReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_pdf_reader_explicit_strategy_preserved():
+    """Test that explicit chunking_strategy is not overridden"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    custom_strategy = FixedSizeChunking(chunk_size=200)
+    reader = PDFReader(chunk_size=100, chunking_strategy=custom_strategy)
+    assert reader.chunk_size == 100
+    assert reader.chunking_strategy is custom_strategy
+    assert reader.chunking_strategy.chunk_size == 200  # Keeps explicit value
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_pdf_reader_multiple_instances_independent():
+    """Test that multiple instances don't share chunking strategies"""
+    reader1 = PDFReader(chunk_size=300)
+    reader2 = PDFReader(chunk_size=400)
+
+    assert reader1.chunking_strategy is not reader2.chunking_strategy
+    assert reader1.chunking_strategy.chunk_size == 300
+    assert reader2.chunking_strategy.chunk_size == 400
