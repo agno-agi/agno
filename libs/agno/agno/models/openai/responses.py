@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
@@ -726,12 +726,18 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            error_body = exc.response.json().get("error", {})
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -796,12 +802,18 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            error_body = exc.response.json().get("error", {})
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -870,12 +882,18 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            error_body = exc.response.json().get("error", {})
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -941,12 +959,18 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            error_body = exc.response.json().get("error", {})
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
