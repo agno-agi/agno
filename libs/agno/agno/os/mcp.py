@@ -114,7 +114,7 @@ def get_mcp_server(
     )  # type: ignore
     async def get_sessions(
         db_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: Optional[str] = None,
         component_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_name: Optional[str] = None,
