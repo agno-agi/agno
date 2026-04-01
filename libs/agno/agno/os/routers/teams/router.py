@@ -264,6 +264,11 @@ def get_team_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
+        # Member HITL needs member runs embedded on the team run (member_responses).
+        # Without this, API continue cannot reliably reload member tool state from the DB.
+        if not isinstance(team, RemoteTeam):
+            team.store_member_responses = True
+
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
@@ -491,6 +496,9 @@ def get_team_router(
         team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
+
+        if not isinstance(team, RemoteTeam):
+            team.store_member_responses = True
 
         if session_id is None or session_id == "":
             log_warning(
