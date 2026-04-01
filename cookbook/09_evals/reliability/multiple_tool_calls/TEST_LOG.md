@@ -1,11 +1,9 @@
 # Test Log: reliability/multiple_tool_calls
 
-> Tests not yet run. Run each file and update this log.
-
 ### calculator.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Evaluates reliability for expected multiply and exponentiate tool calls.
+**Description:** Two evaluations: exact match for multiply and exponentiate, and subset matching with `allow_additional_tool_calls=True` requiring only multiply. Both passed.
 
 ---
