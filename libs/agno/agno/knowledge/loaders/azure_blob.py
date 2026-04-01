@@ -154,8 +154,8 @@ class AzureBlobLoader(BaseLoader):
     ):
         """Load content from Azure Blob Storage (async).
 
-        Requires the AzureBlobConfig to contain tenant_id, client_id, client_secret,
-        storage_account, and container.
+        Requires a valid AzureBlobConfig with either Service Principal credentials
+        or a SAS token, plus storage_account and container.
 
         Uses the async Azure SDK to avoid blocking the event loop.
         """
@@ -300,8 +300,8 @@ class AzureBlobLoader(BaseLoader):
     ):
         """Load content from Azure Blob Storage (sync).
 
-        Requires the AzureBlobConfig to contain tenant_id, client_id, client_secret,
-        storage_account, and container.
+        Requires a valid AzureBlobConfig with either Service Principal credentials
+        or a SAS token, plus storage_account and container.
         """
         remote_content: AzureBlobContent = cast(AzureBlobContent, content.remote_content)
         azure_config = self._validate_azure_config(content, config)

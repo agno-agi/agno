@@ -520,6 +520,19 @@ def test_azure_blob_config_both_auth_methods_raises():
         )
 
 
+def test_azure_blob_config_sas_with_partial_sp_raises():
+    """Test that providing SAS token with partial SP credentials raises ValidationError."""
+    with pytest.raises(ValidationError, match="not a mix"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            sas_token="sv=2024-11-04&sr=c&sig=abc",
+            tenant_id="tenant-123",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
 def test_azure_blob_config_partial_sp_raises():
     """Test that providing incomplete SP credentials raises ValidationError."""
     with pytest.raises(ValidationError, match="Incomplete Service Principal"):
