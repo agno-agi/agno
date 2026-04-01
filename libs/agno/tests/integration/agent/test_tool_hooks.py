@@ -94,7 +94,7 @@ def test_confirmation_hook_allows_mul_tool():
 
 
 def test_logger_hook_invocation_add_tool():
-    agent = Agent(tools=[add], tool_hooks=[logger_hook])
+    agent = Agent(tools=[add], tool_hooks=[logger_hook], instructions="Always use the add tool to compute sums.")
 
     with patch.object(type(logger), "info", wraps=logger.info) as mock_info:
         response: RunOutput = agent.run("Compute 4 + 5")
