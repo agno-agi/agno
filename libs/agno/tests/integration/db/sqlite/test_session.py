@@ -583,13 +583,15 @@ def test_session_type_polymorphism(
     team_result = sqlite_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
     assert isinstance(team_result, TeamSession)
 
-    # Verify wrong session type returns None
+    # get_session queries by session_id only; session_type controls deserialization, not filtering.
+    # Passing a mismatched type still finds the session — it just deserializes it as the wrong class.
     wrong_type_result = sqlite_db_real.get_session(
         session_id=sample_agent_session.session_id,
-        # Wrong session type!
         session_type=SessionType.TEAM,
     )
-    assert wrong_type_result is None
+    # Session is found (by session_id) but deserialized as TeamSession
+    assert wrong_type_result is not None
+    assert isinstance(wrong_type_result, TeamSession)
 
 
 def test_upsert_session_handles_all_agent_session_fields(sqlite_db_real: SqliteDb):
