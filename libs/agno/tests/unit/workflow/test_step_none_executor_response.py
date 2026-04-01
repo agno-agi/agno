@@ -17,7 +17,6 @@ import pytest
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -95,11 +94,7 @@ class TestStoreExecutorResponseNoneGuard:
             mock_executor_response = MagicMock()
             store_executor_outputs = True
 
-            if (
-                store_executor_outputs
-                and mock_workflow_response is not None
-                and mock_executor_response is not None
-            ):
+            if store_executor_outputs and mock_workflow_response is not None and mock_executor_response is not None:
                 step._store_executor_response(mock_workflow_response, mock_executor_response)
 
             mock_store.assert_called_once_with(mock_workflow_response, mock_executor_response)
@@ -113,11 +108,7 @@ class TestStoreExecutorResponseNoneGuard:
             mock_executor_response = MagicMock()
             store_executor_outputs = False
 
-            if (
-                store_executor_outputs
-                and mock_workflow_response is not None
-                and mock_executor_response is not None
-            ):
+            if store_executor_outputs and mock_workflow_response is not None and mock_executor_response is not None:
                 step._store_executor_response(mock_workflow_response, mock_executor_response)
 
             mock_store.assert_not_called()
@@ -131,11 +122,7 @@ class TestStoreExecutorResponseNoneGuard:
             mock_executor_response = MagicMock()
             store_executor_outputs = True
 
-            if (
-                store_executor_outputs
-                and mock_workflow_response is not None
-                and mock_executor_response is not None
-            ):
+            if store_executor_outputs and mock_workflow_response is not None and mock_executor_response is not None:
                 step._store_executor_response(mock_workflow_response, mock_executor_response)
 
             mock_store.assert_not_called()
