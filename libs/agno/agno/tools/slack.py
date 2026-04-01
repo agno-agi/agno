@@ -3,7 +3,7 @@ import json
 from os import getenv
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import httpx
 
@@ -489,8 +489,8 @@ class SlackTools(Toolkit):
         self,
         run_context: RunContext,
         query: str,
-        content_types: str = "messages",
-        channel_types: str = "public_channel",
+        content_types: Optional[List[Literal["messages", "files", "channels", "users"]]] = None,
+        channel_types: Optional[List[Literal["public_channel", "private_channel", "mpim", "im"]]] = None,
         limit: int = 10,
         include_context_messages: bool = True,
     ) -> str:
@@ -500,8 +500,8 @@ class SlackTools(Toolkit):
             run_context (RunContext): Injected by the framework.
             query (str): Natural language question or keywords. Supports filters:
                 in:<#channel>, from:<@user>, has:link, before:YYYY-MM-DD, after:YYYY-MM-DD.
-            content_types (str): Comma-separated: messages, files, channels, users.
-            channel_types (str): Comma-separated: public_channel, private_channel, mpim, im.
+            content_types (list): What to search for. Defaults to ["messages"].
+            channel_types (list): Channel scopes to include. Defaults to ["public_channel"].
             limit (int): Results per content type, max 20.
             include_context_messages (bool): Include surrounding messages for each result.
 
@@ -522,8 +522,8 @@ class SlackTools(Toolkit):
                 params={
                     "query": query,
                     "action_token": action_token,
-                    "content_types": content_types,
-                    "channel_types": channel_types,
+                    "content_types": ",".join(content_types or ["messages"]),
+                    "channel_types": ",".join(channel_types or ["public_channel"]),
                     "limit": min(limit, 20),
                     "include_context_messages": include_context_messages,
                 },

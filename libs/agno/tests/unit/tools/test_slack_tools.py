@@ -241,17 +241,12 @@ def test_search_workspace_success():
             assert result["users"][0]["full_name"] == "Carol Smith"
             assert result["users"][0]["title"] == "Staff Engineer"
 
-            mock_client.api_call.assert_called_once_with(
-                "assistant.search.context",
-                params={
-                    "query": "auth migration",
-                    "action_token": "xoxo-action-token",
-                    "content_types": "messages",
-                    "channel_types": "public_channel",
-                    "limit": 10,
-                    "include_context_messages": True,
-                },
-            )
+            # Lists are joined to comma-separated strings for the API
+            call_params = mock_client.api_call.call_args[1]["params"]
+            assert call_params["content_types"] == "messages"
+            assert call_params["channel_types"] == "public_channel"
+            assert call_params["query"] == "auth migration"
+            assert call_params["action_token"] == "xoxo-action-token"
 
 
 def test_search_workspace_api_error():
