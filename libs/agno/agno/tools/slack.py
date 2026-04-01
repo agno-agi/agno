@@ -508,6 +508,8 @@ class SlackTools(Toolkit):
         Returns:
             str: JSON with search results grouped by content type.
         """
+        # Injected by the Slack interface via run_context.metadata; scopes results
+        # to what the requesting user can see
         action_token = (run_context.metadata or {}).get("action_token") if run_context else None
         if not action_token:
             return json.dumps(
@@ -515,101 +517,120 @@ class SlackTools(Toolkit):
             )
 
         try:
-            params: Dict[str, Any] = {
-                "query": query,
-                "action_token": action_token,
-                "content_types": content_types,
-                "channel_types": channel_types,
-                "limit": min(limit, 20),
-                "include_context_messages": include_context_messages,
-            }
-            response = self.client.api_call("assistant.search.context", params=params)
+            response = self.client.api_call(
+                "assistant.search.context",
+                params={
+                    "query": query,
+                    "action_token": action_token,
+                    "content_types": content_types,
+                    "channel_types": channel_types,
+                    "limit": min(limit, 20),
+                    "include_context_messages": include_context_messages,
+                },
+            )
 
             if not response.get("ok"):
                 error = response.get("error", "unknown_error")
                 logger.error(f"assistant.search.context failed: {error}")
                 return json.dumps({"error": error})
 
-            results: Dict[str, Any] = response.get("results", {})
-            output: Dict[str, Any] = {}
-            result_count = 0
-
-            raw_messages = results.get("messages", [])
-            if raw_messages:
-                output["messages"] = []
-                for msg in raw_messages:
-                    entry: Dict[str, Any] = {
-                        "content": msg.get("content", ""),
-                        "author": msg.get("author_name", ""),
-                        "author_user_id": msg.get("author_user_id", ""),
-                        "is_bot": msg.get("is_author_bot", False),
-                        "channel_id": msg.get("channel_id", ""),
-                        "channel_name": msg.get("channel_name", ""),
-                        "ts": msg.get("message_ts", ""),
-                        "permalink": msg.get("permalink", ""),
-                    }
-                    if include_context_messages:
-                        ctx_msgs = msg.get("context_messages", {})
-                        before = [
-                            {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
-                            for cm in ctx_msgs.get("before", [])
-                        ]
-                        after = [
-                            {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
-                            for cm in ctx_msgs.get("after", [])
-                        ]
-                        if before:
-                            entry["context_before"] = before
-                        if after:
-                            entry["context_after"] = after
-                    output["messages"].append(entry)
-                result_count += len(output["messages"])
-
-            raw_files = results.get("files", [])
-            if raw_files:
-                output["files"] = [
-                    {
-                        "title": f.get("title", ""),
-                        "file_type": f.get("file_type", ""),
-                        "author": f.get("author_name", ""),
-                        "permalink": f.get("permalink", ""),
-                    }
-                    for f in raw_files
-                ]
-                result_count += len(output["files"])
-
-            raw_channels = results.get("channels", [])
-            if raw_channels:
-                output["channels"] = [
-                    {
-                        "name": ch.get("name", ""),
-                        "topic": ch.get("topic", ""),
-                        "purpose": ch.get("purpose", ""),
-                        "permalink": ch.get("permalink", ""),
-                    }
-                    for ch in raw_channels
-                ]
-                result_count += len(output["channels"])
-
-            raw_users = results.get("users", [])
-            if raw_users:
-                output["users"] = [
-                    {
-                        "user_id": u.get("user_id", ""),
-                        "full_name": u.get("full_name", ""),
-                        "title": u.get("title", ""),
-                        "email": u.get("email", ""),
-                        "permalink": u.get("permalink", ""),
-                    }
-                    for u in raw_users
-                ]
-                result_count += len(output["users"])
-
-            output["result_count"] = result_count
-            return json.dumps(output)
+            return json.dumps(self._format_search_results(response.get("results", {}), include_context_messages))
         except SlackApiError as e:
             logger.error(f"Error in search_workspace: {e}")
             return json.dumps({"error": str(e)})
+
+    def _format_search_results(self, results: Dict[str, Any], include_context: bool) -> Dict[str, Any]:
+        """Shape raw assistant.search.context results for LLM consumption.
+
+        Extracts only fields the LLM needs to synthesize answers and offer
+        drill-downs (via ts + channel_id -> get_thread). Drops API noise like
+        team_id, blocks, and redundant uploader fields.
+        """
+        output: Dict[str, Any] = {}
+        result_count = 0
+
+        # Messages: core fields + optional surrounding conversation context
+        messages = results.get("messages", [])
+        if messages:
+            output["messages"] = [self._format_message(m, include_context) for m in messages]
+            result_count += len(output["messages"])
+
+        # Files: title and type are enough for relevance; permalink for access
+        files = results.get("files", [])
+        if files:
+            output["files"] = [
+                {
+                    "title": f.get("title", ""),
+                    "file_type": f.get("file_type", ""),
+                    "author": f.get("author_name", ""),
+                    "permalink": f.get("permalink", ""),
+                }
+                for f in files
+            ]
+            result_count += len(output["files"])
+
+        # Channels: topic + purpose help LLM judge relevance
+        channels = results.get("channels", [])
+        if channels:
+            output["channels"] = [
+                {
+                    "name": ch.get("name", ""),
+                    "topic": ch.get("topic", ""),
+                    "purpose": ch.get("purpose", ""),
+                    "permalink": ch.get("permalink", ""),
+                }
+                for ch in channels
+            ]
+            result_count += len(output["channels"])
+
+        # Users: name + title for people discovery ("who works on X?")
+        users = results.get("users", [])
+        if users:
+            output["users"] = [
+                {
+                    "user_id": u.get("user_id", ""),
+                    "full_name": u.get("full_name", ""),
+                    "title": u.get("title", ""),
+                    "email": u.get("email", ""),
+                    "permalink": u.get("permalink", ""),
+                }
+                for u in users
+            ]
+            result_count += len(output["users"])
+
+        output["result_count"] = result_count
+        return output
+
+    @staticmethod
+    def _format_message(msg: Dict[str, Any], include_context: bool) -> Dict[str, Any]:
+        """Extract LLM-relevant fields from a single search result message.
+
+        Field renames: author_name -> author, message_ts -> ts, is_author_bot -> is_bot.
+        Keeps channel_id + ts so LLM can chain into get_thread.
+        """
+        entry: Dict[str, Any] = {
+            "content": msg.get("content", ""),
+            "author": msg.get("author_name", ""),
+            "author_user_id": msg.get("author_user_id", ""),
+            "is_bot": msg.get("is_author_bot", False),
+            "channel_id": msg.get("channel_id", ""),
+            "channel_name": msg.get("channel_name", ""),
+            "ts": msg.get("message_ts", ""),
+            "permalink": msg.get("permalink", ""),
+        }
+
+        # Surrounding messages give the LLM conversation context without
+        # needing a separate get_thread call; omit when empty to save tokens
+        if include_context:
+            ctx = msg.get("context_messages", {})
+            before = [{"text": cm.get("text", ""), "user_id": cm.get("user_id", "")} for cm in ctx.get("before", [])]
+            after = [{"text": cm.get("text", ""), "user_id": cm.get("user_id", "")} for cm in ctx.get("after", [])]
+            if before:
+                entry["context_before"] = before
+            if after:
+                entry["context_after"] = after
+
+        return entry
 
     def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
         """Get all messages in a thread by the parent message's timestamp.
