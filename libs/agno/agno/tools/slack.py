@@ -188,8 +188,9 @@ class SlackTools(Toolkit):
     def _resolve_user_names(self, user_ids: List[str]) -> Dict[str, str]:
         """Resolve a list of Slack user IDs to display names.
 
-        Uses individual users.info calls — efficient for small sets (threads, channels)
-        since most have <10 unique participants.
+        Makes one users.info call per unique ID. Typical channels have <10 unique
+        participants so this stays well within Slack's Tier 4 rate limit (~100 req/min).
+        Falls back to the raw ID on failure.
         """
         names: Dict[str, str] = {}
         for uid in user_ids:

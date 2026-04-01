@@ -137,3 +137,24 @@ def test_get_user_info(slack_tools):
     slack_tools.client.users_info.return_value = {"user": {"id": "U1", "name": "user", "profile": {}}}
     result = slack_tools.get_user_info("U1")
     assert json.loads(result)["name"] == "user"
+
+
+def test_get_channel_info(slack_tools):
+    slack_tools.client.conversations_info.return_value = {
+        "channel": {
+            "id": "C1",
+            "name": "general",
+            "topic": {"value": "General chat"},
+            "purpose": {"value": ""},
+            "num_members": 5,
+            "is_private": False,
+            "is_archived": False,
+            "created": 1234567890,
+            "creator": "U1",
+        }
+    }
+    result = slack_tools.get_channel_info("C1")
+    data = json.loads(result)
+    assert data["name"] == "general"
+    assert data["num_members"] == 5
+    assert data["topic"] == "General chat"
