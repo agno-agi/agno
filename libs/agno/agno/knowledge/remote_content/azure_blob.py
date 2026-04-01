@@ -71,7 +71,12 @@ class AzureBlobConfig(BaseStorageConfig):
                 "Provide either Service Principal credentials (tenant_id, client_id, client_secret) "
                 "or a sas_token, not both."
             )
-        if has_partial_sp and not has_sas:
+        if has_partial_sp:
+            if has_sas:
+                raise ValueError(
+                    "Provide either a sas_token or complete Service Principal credentials "
+                    "(tenant_id, client_id, client_secret), not a mix of both."
+                )
             raise ValueError(
                 "Incomplete Service Principal credentials: all of tenant_id, client_id, and client_secret are required."
             )
