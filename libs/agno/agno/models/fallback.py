@@ -44,7 +44,13 @@ class FallbackConfig:
         return bool(self.on_error or self.on_rate_limit or self.on_context_overflow)
 
     def resolve_models(self) -> None:
-        """Resolve string model references to Model instances across all fallback lists."""
+        """Resolve string model references to Model instances across all fallback lists.
+
+        Deep copies model instances to avoid mutating shared objects when
+        this FallbackConfig is reused across multiple agents.
+        """
+        from copy import deepcopy
+
         from agno.metrics import ModelType
         from agno.models.utils import get_model
 
@@ -55,6 +61,7 @@ class FallbackConfig:
                 for fm in raw_list:
                     resolved_model = get_model(fm)
                     if resolved_model is not None:
+                        resolved_model = deepcopy(resolved_model)
                         resolved_model.model_type = ModelType.MODEL
                         resolved.append(resolved_model)
                 setattr(self, attr, resolved)
@@ -108,6 +115,19 @@ def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Except
 # ---------------------------------------------------------------------------
 
 
+def _clean_kwargs_for_fallback(kwargs: dict) -> dict:
+    """Return a copy of kwargs with a fresh messages list.
+
+    The primary model's retry-with-guidance logic may have appended
+    provider-specific guidance messages to kwargs["messages"]. Fallback
+    models should not see those, so we strip any temporary messages.
+    """
+    cleaned = dict(kwargs)
+    if "messages" in cleaned:
+        cleaned["messages"] = [m for m in cleaned["messages"] if not getattr(m, "temporary", False)]
+    return cleaned
+
+
 def call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
@@ -124,7 +144,9 @@ def call_model_with_fallback(
         if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
-        return _try_fallback_models(fallbacks, primary_error, "response", kwargs, model.id, fallback_config)
+        return _try_fallback_models(
+            fallbacks, primary_error, "response", _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+        )
 
 
 async def acall_model_with_fallback(
@@ -140,7 +162,9 @@ async def acall_model_with_fallback(
         if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
-        return await _atry_fallback_models(fallbacks, primary_error, "aresponse", kwargs, model.id, fallback_config)
+        return await _atry_fallback_models(
+            fallbacks, primary_error, "aresponse", _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +186,9 @@ def call_model_stream_with_fallback(
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
-        yield from _try_fallback_models_stream(fallbacks, primary_error, kwargs, model.id, fallback_config)
+        yield from _try_fallback_models_stream(
+            fallbacks, primary_error, _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+        )
 
 
 async def acall_model_stream_with_fallback(
@@ -180,7 +206,9 @@ async def acall_model_stream_with_fallback(
             raise
         log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
-        async for event in _atry_fallback_models_stream(fallbacks, primary_error, kwargs, model.id, fallback_config):
+        async for event in _atry_fallback_models_stream(
+            fallbacks, primary_error, _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+        ):
             yield event
 
 
