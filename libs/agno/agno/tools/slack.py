@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
+from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -18,6 +19,57 @@ except ImportError:
 
 
 class SlackTools(Toolkit):
+    _TOOL_INSTRUCTIONS: Dict[str, str] = {
+        "search_workspace": (
+            "**search_workspace** — semantic and keyword search across the workspace.\n"
+            "When to use: finding discussions about a topic, catching up, summarizing activity.\n"
+            "Returns: messages with channel, author, timestamp, and surrounding context."
+        ),
+        "get_channel_history": (
+            "**get_channel_history** — recent top-level messages from a specific channel.\n"
+            "When to use: reading the latest activity in a known channel.\n"
+            "Note: returns only top-level messages, not thread replies. Look for thread_ts\n"
+            "and reply_count in results, then use get_thread to expand important threads.\n"
+            "Requires: bot must be a member of the channel."
+        ),
+        "get_thread": (
+            "**get_thread** — full thread replies given a channel and thread timestamp.\n"
+            "When to use: expanding a message with replies into its full discussion.\n"
+            "Chain after get_channel_history or search_workspace for complete context."
+        ),
+        "get_channel_info": (
+            "**get_channel_info** — channel metadata (topic, purpose, member count).\n"
+            "When to use: understanding what a channel is about."
+        ),
+        "search_messages": (
+            "**search_messages** — legacy search API. Requires a user token.\n"
+            "When to use: only when search_workspace is unavailable."
+        ),
+    }
+
+    @classmethod
+    def _build_instructions(cls, tool_names: list[str]) -> str:
+        sections = [cls._TOOL_INSTRUCTIONS[n] for n in tool_names if n in cls._TOOL_INSTRUCTIONS]
+        if not sections:
+            return ""
+
+        result = "## Slack Tool Selection\n\n" + "\n\n".join(sections)
+
+        # Tool selection guidance
+        if "search_workspace" in tool_names and "get_channel_history" in tool_names:
+            result += (
+                "\n\n## When to use which\n"
+                "- Topic search, catch-up, cross-channel → search_workspace\n"
+                "- Latest messages in a specific channel → get_channel_history"
+            )
+        if "get_thread" in tool_names:
+            result += (
+                "\n- Deep-dive into a message → get_thread with channel_id and ts\n"
+                "- Always expand threads with high reply_count before summarizing"
+            )
+
+        return result
+
     def __init__(
         self,
         token: Optional[str] = None,
@@ -30,6 +82,7 @@ class SlackTools(Toolkit):
         enable_upload_file: bool = True,
         enable_download_file: bool = True,
         enable_search_messages: bool = False,
+        enable_search_workspace: bool = False,
         enable_get_thread: bool = False,
         enable_list_users: bool = False,
         enable_get_user_info: bool = False,
@@ -53,7 +106,10 @@ class SlackTools(Toolkit):
             enable_get_channel_history (bool): Whether to enable the get_channel_history tool. Defaults to True.
             enable_upload_file (bool): Whether to enable the upload_file tool. Defaults to True.
             enable_download_file (bool): Whether to enable the download_file tool. Defaults to True.
-            enable_search_messages (bool): Whether to enable the search_messages tool. Defaults to False.
+            enable_search_messages (bool): Whether to enable the search_messages tool (legacy API). Defaults to False.
+            enable_search_workspace (bool): Whether to enable the search_workspace tool (assistant.search.context API).
+                Requires search:read.public, search:read.files, and search:read.users bot scopes.
+                The action_token is read from run_context.metadata at call time. Defaults to False.
             enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
             enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
@@ -92,6 +148,8 @@ class SlackTools(Toolkit):
             tools.append(self.download_file)
         if enable_search_messages or all:
             tools.append(self.search_messages)
+        if enable_search_workspace or all:
+            tools.append(self.search_workspace)
         if enable_get_thread or all:
             tools.append(self.get_thread)
         if enable_list_users or all:
@@ -100,6 +158,14 @@ class SlackTools(Toolkit):
             tools.append(self.get_user_info)
         if enable_get_channel_info or all:
             tools.append(self.get_channel_info)
+
+        # Build tool instructions dynamically based on enabled tools
+        if "instructions" not in kwargs:
+            tool_names = [t.__name__ if callable(t) else t.name for t in tools]
+            built = self._build_instructions(tool_names)
+            if built:
+                kwargs["instructions"] = built
+                kwargs.setdefault("add_instructions", True)
 
         super().__init__(name="slack", tools=tools, **kwargs)
 
@@ -414,6 +480,129 @@ class SlackTools(Toolkit):
             return json.dumps({"count": len(messages), "messages": messages})
         except SlackApiError as e:
             logger.error(f"Error searching messages: {e}")
+            return json.dumps({"error": str(e)})
+
+    def search_workspace(
+        self,
+        run_context: RunContext,
+        query: str,
+        content_types: str = "messages",
+        channel_types: str = "public_channel",
+        limit: int = 10,
+        include_context_messages: bool = True,
+    ) -> str:
+        """Search messages, files, channels, and users across the Slack workspace.
+
+        Uses the assistant.search.context API which supports both keyword and semantic
+        search (semantic requires Slack AI Search on the workspace plan). Results are
+        scoped to what the requesting user can see.
+
+        Args:
+            run_context (RunContext): Injected by the framework. Provides the action_token
+                needed for bot-token workspace search.
+            query (str): Search query. Phrased as a natural language question (e.g.
+                "What did the team decide about the auth migration?") to trigger semantic
+                search, or as keywords for keyword search. Supports filters like
+                in:<#channel>, from:<@user>, has:link, before:YYYY-MM-DD, after:YYYY-MM-DD.
+            content_types (str): Comma-separated content types to search. Any combination of:
+                messages, files, channels, users. Defaults to "messages".
+            channel_types (str): Comma-separated channel types. Any combination of:
+                public_channel, private_channel, mpim, im. Defaults to "public_channel".
+            limit (int): Number of results per content type, max 20. Defaults to 10.
+            include_context_messages (bool): Whether to include surrounding messages for
+                each result. Defaults to True.
+
+        Returns:
+            str: JSON with search results including content, author, channel, permalink,
+                and context_messages for each match.
+        """
+        # action_token is user-scoped and per-event; set by the Slack interface
+        action_token = (run_context.metadata or {}).get("action_token") if run_context else None
+        if not action_token:
+            return json.dumps(
+                {"error": "No action_token available. This tool only works when invoked through the Slack interface."}
+            )
+
+        try:
+            params: Dict[str, Any] = {
+                "query": query,
+                "action_token": action_token,
+                "content_types": content_types,
+                "channel_types": channel_types,
+                "limit": min(limit, 20),
+                "include_context_messages": include_context_messages,
+            }
+            response = self.client.api_call("assistant.search.context", params=params)
+
+            if not response.get("ok"):
+                error = response.get("error", "unknown_error")
+                logger.error(f"assistant.search.context failed: {error}")
+                return json.dumps({"error": error})
+
+            results: Dict[str, Any] = response.get("results", {})
+            output: Dict[str, Any] = {}
+
+            raw_messages = results.get("messages", [])
+            if raw_messages:
+                output["messages"] = []
+                for msg in raw_messages:
+                    ctx_msgs = msg.get("context_messages") or {}
+                    output["messages"].append(
+                        {
+                            "content": msg.get("content", ""),
+                            "author": msg.get("author_name", ""),
+                            "author_user_id": msg.get("author_user_id", ""),
+                            "is_bot": msg.get("is_author_bot", False),
+                            "channel_id": msg.get("channel_id", ""),
+                            "channel_name": msg.get("channel_name", ""),
+                            "ts": msg.get("message_ts", ""),
+                            "permalink": msg.get("permalink", ""),
+                            "context_before": [
+                                {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
+                                for cm in ctx_msgs.get("before", [])
+                            ],
+                            "context_after": [
+                                {"text": cm.get("text", ""), "user_id": cm.get("user_id", "")}
+                                for cm in ctx_msgs.get("after", [])
+                            ],
+                        }
+                    )
+
+            raw_files = results.get("files", [])
+            if raw_files:
+                output["files"] = [
+                    {
+                        "title": f.get("title", ""),
+                        "file_type": f.get("file_type", ""),
+                        "author": f.get("author_name", ""),
+                        "permalink": f.get("permalink", ""),
+                    }
+                    for f in raw_files
+                ]
+
+            raw_channels = results.get("channels", [])
+            if raw_channels:
+                output["channels"] = [
+                    {
+                        "name": ch.get("name", ""),
+                        "topic": ch.get("topic", ""),
+                        "purpose": ch.get("purpose", ""),
+                        "permalink": ch.get("permalink", ""),
+                    }
+                    for ch in raw_channels
+                ]
+
+            output["result_count"] = (
+                len(output.get("messages", [])) + len(output.get("files", [])) + len(output.get("channels", []))
+            )
+
+            next_cursor = response.get("response_metadata", {}).get("next_cursor", "")
+            if next_cursor:
+                output["next_cursor"] = next_cursor
+
+            return json.dumps(output)
+        except SlackApiError as e:
+            logger.error(f"Error in search_workspace: {e}")
             return json.dumps({"error": str(e)})
 
     def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
