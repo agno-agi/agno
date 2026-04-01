@@ -5188,6 +5188,7 @@ def branch_session_dispatch(
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> str:
     """Branch the current session into a new independent session.
 
@@ -5231,7 +5232,39 @@ def branch_session_dispatch(
     now = int(time.time())
     new_session_id = str(uuid4())
     new_user_id = user_id or source_session.user_id
-    branched_runs = copy.deepcopy(source_session.runs)
+    if message_id:
+        filtered_runs = []
+        found_message = False
+
+        for run in source_session.runs or []:
+            if not run.messages:
+                continue
+
+            new_messages = []
+            found = False
+
+            for msg in run.messages:
+                new_messages.append(copy.deepcopy(msg))
+
+                if msg.id == message_id:
+                    found = True
+                    found_message = True
+                    break
+
+            if new_messages:
+                new_run = copy.deepcopy(run)
+                new_run.messages = new_messages
+                filtered_runs.append(new_run)
+
+            if found:
+                break
+
+        if not found_message:
+            raise ValueError(f"message_id {message_id} not found in session")
+
+        branched_runs = filtered_runs
+    else:
+        branched_runs = copy.deepcopy(source_session.runs)
 
     # Rewrite session_id on each copied run so the new session's run metadata
     # is internally consistent (runs should reference their owning session).
@@ -5266,6 +5299,7 @@ async def abranch_session_dispatch(
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> str:
     """Async variant of branch_session_dispatch.
 
@@ -5310,8 +5344,39 @@ async def abranch_session_dispatch(
     now = int(time.time())
     new_session_id = str(uuid4())
     new_user_id = user_id or source_session.user_id
-    branched_runs = copy.deepcopy(source_session.runs)
+    if message_id:
+        filtered_runs = []
+        found_message = False
 
+        for run in source_session.runs or []:
+            if not run.messages:
+                continue
+
+            new_messages = []
+            found = False
+
+            for msg in run.messages:
+                new_messages.append(copy.deepcopy(msg))
+
+                if msg.id == message_id:
+                    found = True
+                    found_message = True
+                    break
+
+            if new_messages:
+                new_run = copy.deepcopy(run)
+                new_run.messages = new_messages
+                filtered_runs.append(new_run)
+
+            if found:
+                break
+
+        if not found_message:
+            raise ValueError(f"message_id {message_id} not found in session")
+
+        branched_runs = filtered_runs
+    else:
+        branched_runs = copy.deepcopy(source_session.runs)
     # Rewrite session_id and run_id on each copied run so run metadata is consistent.
     for run in branched_runs or []:
         run.run_id = str(uuid4())
