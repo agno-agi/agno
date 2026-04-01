@@ -211,9 +211,7 @@ def run_workflow(loaded: Workflow, input_text: str):
                 for i, choice in enumerate(req.available_choices, 1):
                     print(f"  {i}. {choice}")
                 selections = input("Select (comma-separated numbers): ").strip()
-                chosen = [
-                    s.strip() for s in selections.split(",") if s.strip()
-                ]
+                chosen = [s.strip() for s in selections.split(",") if s.strip()]
                 if len(chosen) > 1:
                     req.select_multiple(chosen)
                 else:

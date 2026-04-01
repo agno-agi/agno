@@ -308,11 +308,11 @@ class GcsJsonDb(BaseDb):
             Exception: If an error occurs while reading the sessions.
         """
         try:
-            sessions = self._read_json_file(self.session_table_name)
+            sessions_raw = self._read_json_file(self.session_table_name)
 
             # Apply filters
             filtered_sessions = []
-            for session_data in sessions:
+            for session_data in sessions_raw:
                 if user_id is not None and session_data.get("user_id") != user_id:
                     continue
                 if component_id is not None:
