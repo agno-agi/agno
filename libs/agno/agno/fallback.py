@@ -36,8 +36,8 @@ class FallbackConfig:
     # Fallback models tried specifically on context-window-exceeded errors
     on_context_overflow: List[Union[Model, str]] = field(default_factory=list)
     # Optional callback invoked when a fallback model is activated.
-    # Signature: on_fallback(primary_model_id: str, fallback_model_id: str, error: Exception) -> None
-    on_fallback: Optional[Callable[[str, str, Exception], None]] = None
+    # Signature: callback(primary_model_id: str, fallback_model_id: str, error: Exception) -> None
+    callback: Optional[Callable[[str, str, Exception], None]] = None
 
     @property
     def has_fallbacks(self) -> bool:
@@ -196,9 +196,9 @@ def _notify_fallback(
     error: Exception,
 ) -> None:
     """Invoke the on_fallback callback if configured."""
-    if fallback_config and fallback_config.on_fallback:
+    if fallback_config and fallback_config.callback:
         try:
-            fallback_config.on_fallback(primary_model_id, fallback_model_id, error)
+            fallback_config.callback(primary_model_id, fallback_model_id, error)
         except Exception:
             pass  # Don't let callback errors break fallback flow
 
@@ -256,8 +256,8 @@ def _try_fallback_models_stream(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             yield from fallback.response_stream(**kwargs)
+            _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
             log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
@@ -276,9 +276,9 @@ async def _atry_fallback_models_stream(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             async for event in fallback.aresponse_stream(**kwargs):
                 yield event
+            _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
             log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
