@@ -384,7 +384,7 @@ def get_agent_router(
                     "text/plain",
                     "text/html",
                     "text/css",
-                    "text/md",
+                    "text/markdown",
                     "text/csv",
                     "text/xml",
                     "text/rtf",

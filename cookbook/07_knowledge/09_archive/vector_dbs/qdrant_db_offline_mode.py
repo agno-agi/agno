@@ -36,8 +36,7 @@ print("This step downloads the model to the cache directory.")
 try:
     # Pre-cache SentenceTransformer model
     embedder = SentenceTransformerEmbedder(
-        id="sentence-transformers/all-MiniLM-L6-v2",
-        dimensions=384
+        id="sentence-transformers/all-MiniLM-L6-v2", dimensions=384
     )
 
     # Pre-cache BM25 model
