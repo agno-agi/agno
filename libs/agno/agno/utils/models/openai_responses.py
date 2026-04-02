@@ -102,7 +102,7 @@ def sanitize_response_schema(schema: dict):
     - Removes "default": null from optional fields.
     - Ensures that all fields defined in "properties" are listed in "required",
       making every property explicitly required as per OpenAI's expectations,
-      EXCEPT for Dict fields which should not be in the required array.
+      EXCEPT for Dict fields and optional fields (with default: null) which should not be in the required array.
     """
     if isinstance(schema, dict):
         # Enforce additionalProperties: false for object types, but preserve Dict schemas
@@ -121,9 +121,13 @@ def sanitize_response_schema(schema: dict):
 
                 required_fields = []
                 for prop_name, prop_schema in schema["properties"].items():
-                    # Use the utility function to check if this is a Dict field
-                    if not is_dict_field(prop_schema):
-                        required_fields.append(prop_name)
+                    # Skip Dict fields
+                    if is_dict_field(prop_schema):
+                        continue
+                    # Skip optional fields (have default: null) — must check before defaults are stripped below
+                    if "default" in prop_schema and prop_schema["default"] is None:
+                        continue
+                    required_fields.append(prop_name)
 
                 schema["required"] = required_fields
 
