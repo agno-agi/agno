@@ -45,6 +45,7 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_paused = "StepPaused"
+    step_executor_paused = "StepExecutorPaused"
     step_error = "StepError"
 
     loop_execution_started = "LoopExecutionStarted"
@@ -239,6 +240,23 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     # User input fields
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
+
+
+@dataclass
+class StepExecutorPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a step's executor (agent/team) is paused for tool-level HITL"""
+
+    event: str = WorkflowRunEvent.step_executor_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Executor context
+    executor_agent_id: Optional[str] = None
+    executor_agent_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[str] = None  # "agent" or "team"
+    executor_requirements: Optional[List[Any]] = None
 
 
 @dataclass
@@ -505,6 +523,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
@@ -630,6 +649,13 @@ class WorkflowRunOutput:
         return [req for req in self.step_requirements if req.needs_route_selection]
 
     @property
+    def steps_requiring_executor_resolution(self) -> List["StepRequirement"]:
+        """Get step requirements that need executor (agent/team) HITL resolution"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_executor_resolution]
+
+    @property
     def active_error_requirements(self) -> List["ErrorRequirement"]:
         """Get error requirements that still need user decision"""
         if not self.error_requirements:
@@ -644,27 +670,33 @@ class WorkflowRunOutput:
         return [req for req in self.error_requirements if req.needs_decision]
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "step_results",
-                "step_executor_runs",
-                "events",
-                "metrics",
-                "workflow_agent_run",
-                "step_requirements",
-                "error_requirements",
-            ]
-        }
+        # Temporarily clear complex fields before asdict() since it uses deepcopy
+        # internally (via pickle), which fails on objects containing RLock etc.
+        # These fields are excluded from the asdict result anyway and serialized
+        # manually below — but asdict still deep-copies them before filtering.
+        _excluded_fields = [
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
+            "step_requirements",
+            "error_requirements",
+        ]
+        _saved = {f: getattr(self, f) for f in _excluded_fields}
+        for f in _excluded_fields:
+            setattr(self, f, None)
+        try:
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in _excluded_fields}
+        finally:
+            for f in _excluded_fields:
+                setattr(self, f, _saved[f])
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status

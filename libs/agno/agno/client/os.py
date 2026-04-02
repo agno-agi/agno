@@ -1125,6 +1125,107 @@ class AgentOSClient:
         async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
             yield event
 
+    async def continue_workflow_run(
+        self,
+        workflow_id: str,
+        run_id: str,
+        requirements: List[Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Continue a paused workflow run with resolved requirements.
+
+        Args:
+            workflow_id: ID of the workflow
+            run_id: ID of the run to continue
+            requirements: List of resolved StepRequirement dicts
+            session_id: Optional session ID
+            user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            WorkflowRunOutput: The continued run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        endpoint = f"/workflows/{workflow_id}/runs/{run_id}/continue"
+        serialized = []
+        for req in requirements:
+            if hasattr(req, "to_dict"):
+                serialized.append(req.to_dict())
+            elif isinstance(req, dict):
+                serialized.append(req)
+            else:
+                serialized.append(req)
+        data: Dict[str, Any] = {"requirements": json.dumps(serialized), "stream": "false"}
+        if session_id is not None:
+            data["session_id"] = session_id
+        if user_id is not None:
+            data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
+        return WorkflowRunOutput.from_dict(response_data)
+
+    async def continue_workflow_run_stream(
+        self,
+        workflow_id: str,
+        run_id: str,
+        requirements: List[Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]:
+        """Stream a continued workflow run response.
+
+        Args:
+            workflow_id: ID of the workflow
+            run_id: ID of the run to continue
+            requirements: List of resolved StepRequirement dicts
+            session_id: Optional session ID
+            user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
+
+        Yields:
+            WorkflowRunOutputEvent: Typed event objects
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        endpoint = f"/workflows/{workflow_id}/runs/{run_id}/continue"
+        serialized = []
+        for req in requirements:
+            if hasattr(req, "to_dict"):
+                serialized.append(req.to_dict())
+            elif isinstance(req, dict):
+                serialized.append(req)
+            else:
+                serialized.append(req)
+        data: Dict[str, Any] = {"requirements": json.dumps(serialized), "stream": "true"}
+        if session_id is not None:
+            data["session_id"] = session_id
+        if user_id is not None:
+            data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
+        async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
+            yield event
+
     async def cancel_workflow_run(
         self, workflow_id: str, run_id: str, headers: Optional[Dict[str, str]] = None
     ) -> None:

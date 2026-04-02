@@ -266,6 +266,18 @@ class Steps:
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -274,6 +286,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -399,6 +423,18 @@ class Steps:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
 
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -516,6 +552,18 @@ class Steps:
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -524,6 +572,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -647,6 +707,18 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
