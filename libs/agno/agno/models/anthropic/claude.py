@@ -1107,11 +1107,13 @@ class Claude(Model):
                 file_ids: List[str] = []
                 for block in response.message.content:  # type: ignore
                     if block.type == "bash_code_execution_tool_result":
-                        if hasattr(block, "content") and hasattr(block.content, "content"):
-                            if isinstance(block.content.content, list):
-                                for output_block in block.content.content:
-                                    if hasattr(output_block, "file_id"):
-                                        file_ids.append(output_block.file_id)
+                        block_content = getattr(block, "content", None)
+                        nested_content = getattr(block_content, "content", None)
+                        if isinstance(nested_content, list):
+                            for output_block in nested_content:
+                                file_id = getattr(output_block, "file_id", None)
+                                if isinstance(file_id, str):
+                                    file_ids.append(file_id)
                 if file_ids:
                     model_response.provider_data = model_response.provider_data or {}
                     model_response.provider_data["file_ids"] = file_ids

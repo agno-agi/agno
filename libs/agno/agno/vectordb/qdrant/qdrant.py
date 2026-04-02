@@ -1055,11 +1055,13 @@ class Qdrant(VectorDb):
                 return
 
             points = search_result[0]
-            update_operations = []
+            updated_count = 0
 
-            # Prepare update operations for each point
             for point in points:
                 point_id = point.id
+                if point_id is None:
+                    continue
+
                 current_payload = point.payload or {}
 
                 # Merge existing metadata with new metadata
@@ -1073,16 +1075,14 @@ class Qdrant(VectorDb):
                 else:
                     updated_payload["filters"] = metadata
 
-                # Create set payload operation
-                update_operations.append(models.SetPayload(payload=updated_payload, points=[point_id]))
-
-            # Execute all updates
-            for operation in update_operations:
                 self.client.set_payload(
-                    collection_name=self.collection, payload=operation.payload, points=operation.points
+                    collection_name=self.collection,
+                    payload=updated_payload,
+                    points=models.PointIdsList(points=[point_id]),
                 )
+                updated_count += 1
 
-            log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
+            log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
