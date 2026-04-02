@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from agno.utils.common import MIME_TO_EXTENSION
 from agno.utils.log import log_error
 
 
@@ -51,6 +52,21 @@ class Image(BaseModel):
                 data["id"] = str(uuid4())
 
         return data
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, v):
+        """Validate that the mime_type is one of the allowed types."""
+        if v is not None:
+            v_lower = v.lower()
+            if v_lower not in cls.valid_mime_types():
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+            return v_lower
+        return v
+
+    @classmethod
+    def valid_mime_types(cls) -> List[str]:
+        return [m for m, e in MIME_TO_EXTENSION.items() if m.startswith("image/")]
 
     def get_content_bytes(self) -> Optional[bytes]:
         """Get image content as raw bytes, loading from URL/file if needed"""
@@ -167,6 +183,21 @@ class Audio(BaseModel):
                 data["id"] = str(uuid4())
 
         return data
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, v):
+        """Validate that the mime_type is one of the allowed types."""
+        if v is not None:
+            v_lower = v.lower()
+            if v_lower not in cls.valid_mime_types():
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+            return v_lower
+        return v
+
+    @classmethod
+    def valid_mime_types(cls) -> List[str]:
+        return [m for m, e in MIME_TO_EXTENSION.items() if m.startswith("audio/")]
 
     def get_content_bytes(self) -> Optional[bytes]:
         """Get audio content as raw bytes"""
@@ -300,6 +331,21 @@ class Video(BaseModel):
 
         return data
 
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, v):
+        """Validate that the mime_type is one of the allowed types."""
+        if v is not None:
+            v_lower = v.lower()
+            if v_lower not in cls.valid_mime_types():
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+            return v_lower
+        return v
+
+    @classmethod
+    def valid_mime_types(cls) -> List[str]:
+        return [m for m, e in MIME_TO_EXTENSION.items() if m.startswith("video/")]
+
     def get_content_bytes(self) -> Optional[bytes]:
         """Get video content as raw bytes"""
         if self.content:
@@ -345,7 +391,7 @@ class Video(BaseModel):
         format: Optional[str] = None,
         **kwargs,
     ) -> "Video":
-        """Create Image from base64 content"""
+        """Create Video from base64 content"""
         import base64
 
         try:
@@ -379,18 +425,18 @@ class Video(BaseModel):
 
 
 class File(BaseModel):
+    # Core content fields (at least one required)
     id: Optional[str] = None
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
-    # Raw bytes content of a file
-    content: Optional[Any] = None
-    mime_type: Optional[str] = None
+    content: Optional[Any] = None  # Raw bytes content of a file
+    external: Optional[Any] = None  # External file object (e.g. GeminiFile)
 
+    # Metadata fields
+    mime_type: Optional[str] = None
     file_type: Optional[str] = None
     filename: Optional[str] = None
     size: Optional[int] = None
-    # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
-    external: Optional[Any] = None
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
     name: Optional[str] = None  # Name of the file, mandatory for AWS Bedrock document input
 
@@ -408,28 +454,17 @@ class File(BaseModel):
     @classmethod
     def validate_mime_type(cls, v):
         """Validate that the mime_type is one of the allowed types."""
-        if v is not None and v not in cls.valid_mime_types():
-            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+        if v is not None:
+            v_lower = v.lower()
+            if v_lower not in cls.valid_mime_types():
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+            return v_lower
         return v
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:
-        return [
-            "application/pdf",
-            "application/json",
-            "application/x-javascript",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "text/javascript",
-            "application/x-python",
-            "text/x-python",
-            "text/plain",
-            "text/html",
-            "text/css",
-            "text/markdown",
-            "text/csv",
-            "text/xml",
-            "text/rtf",
-        ]
+        # Return all MIME types defined in common.py for regular Files/Documents
+        return list(MIME_TO_EXTENSION.keys())
 
     @classmethod
     def from_base64(

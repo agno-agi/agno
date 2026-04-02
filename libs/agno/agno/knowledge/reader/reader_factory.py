@@ -2,6 +2,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
+from agno.utils.common import MIME_TO_EXTENSION
 
 
 class ReaderFactory:
@@ -364,30 +365,32 @@ class ReaderFactory:
 
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:
-        """Get the appropriate reader for a file extension."""
-        # TODO: add docling for unique file extensions eg: images, audios, etc.
-        extension = extension.lower()
+        """Get the appropriate reader for a file extension or MIME type."""
+        # 1. Standardize the input: lower() and remove optional leading dot
+        ext = extension.lower().strip()
+        if ext.startswith("."):
+            ext = ext[1:]
 
-        if extension in [".pdf", "application/pdf"]:
+        # 2. Check if the input is a full MIME type and convert to short extension
+        if ext in MIME_TO_EXTENSION:
+            ext = MIME_TO_EXTENSION[ext]
+
+        # 3. Route to the specialized reader based on the normalized format
+        if ext == "pdf":
             return cls.create_reader("pdf")
-        elif extension in [".csv", "text/csv"]:
+        elif ext == "csv":
             return cls.create_reader("csv")
-        elif extension in [
-            ".xlsx",
-            ".xls",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel",
-        ]:
+        elif ext in ["xlsx", "xls"]:
             return cls.create_reader("excel")
-        elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+        elif ext in ["docx", "doc"]:
             return cls.create_reader("docx")
-        elif extension == ".pptx":
+        elif ext == "pptx":
             return cls.create_reader("pptx")
-        elif extension == ".json":
+        elif ext == "json":
             return cls.create_reader("json")
-        elif extension in [".md", ".markdown"]:
+        elif ext in ["md", "markdown"]:
             return cls.create_reader("markdown")
-        elif extension in [".txt", ".text"]:
+        elif ext in ["txt", "text"]:
             return cls.create_reader("text")
         else:
             # Default to text reader for unknown extensions

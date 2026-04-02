@@ -1,5 +1,71 @@
 from dataclasses import asdict
-from typing import Any, List, Optional, Set, Type, Union, get_type_hints
+from typing import Any, Dict, List, Optional, Set, Type, Union, get_type_hints
+
+# Single Source of Truth for MIME-to-Extension mapping across Agno
+MIME_TO_EXTENSION: Dict[str, str] = {
+    # Documents & Spreadsheets
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/vnd.ms-powerpoint": "ppt",
+    "text/csv": "csv",
+    "text/tab-separated-values": "tsv",
+    "text/yaml": "yaml",
+    "application/x-yaml": "yaml",
+    "text/markdown": "md",
+    "text/plain": "txt",
+    "application/json": "json",
+    "application/xml": "xml",
+    "text/html": "html",
+    "text/css": "css",
+    "application/x-javascript": "js",
+    "text/javascript": "js",
+    "application/x-python": "py",
+    "text/x-python": "py",
+    "application/zip": "zip",
+    "application/x-tar": "tar",
+    "text/rtf": "rtf",
+    # Images
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/bmp": "bmp",
+    "image/tiff": "tiff",
+    "image/tif": "tif",
+    "image/avif": "avif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/svg+xml": "svg",
+    # Audio
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/ogg": "ogg",
+    "audio/mp4": "m4a",
+    "audio/m4a": "m4a",
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+    # Video
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/x-msvideo": "avi",
+    "video/x-matroska": "mkv",
+    "video/x-flv": "flv",
+    "video/mpeg": "mpeg",
+    "video/mpegs": "mpeg",
+    "video/mpgs": "mpeg",
+    "video/mpg": "mpeg",
+    "video/webm": "webm",
+    "video/wmv": "wmv",
+    "video/3gpp": "3gp",
+    "video/ogg": "ogg",
+}
 
 
 def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
