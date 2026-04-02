@@ -44,6 +44,14 @@ class Claude(AnthropicClaude):
         # Overwrite output schema support for VertexAI Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
+        # Auto-enable trailing user message for Claude 4.6+ on Vertex AI
+        if self.append_trailing_user_message is None:
+            # Strip Vertex AI version suffix (e.g. "claude-sonnet-4@20250514" -> "claude-sonnet-4")
+            core_id = self.id.split("@")[0] if "@" in self.id else self.id
+            self.append_trailing_user_message = (
+                core_id not in self._PREFILL_SUPPORTED_ALIASES
+                and not core_id.startswith(self._PREFILL_SUPPORTED_PREFIXES)
+            )
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}

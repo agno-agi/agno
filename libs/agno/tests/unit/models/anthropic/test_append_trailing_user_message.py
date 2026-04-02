@@ -1,14 +1,15 @@
 """
-Tests for inject_trailing_user_message across Anthropic, Bedrock, and LiteLLM.
+Tests for append_trailing_user_message across Anthropic, Bedrock, and LiteLLM.
 
 Verifies that:
-- The trailing user message is injected when the flag is True and the
+- The trailing user message is appended when the flag is True and the
   conversation ends with an assistant turn.
-- The trailing user message is NOT injected when the flag is False.
-- The trailing user message is NOT injected when the conversation already
+- The trailing user message is NOT appended when the flag is False.
+- The trailing user message is NOT appended when the conversation already
   ends with a user turn.
 - Custom trailing_user_message_content is used when provided.
 - The feature works for all three providers that support it.
+- Auto-detection sets the flag for Claude 4.6+ models.
 """
 
 from agno.models.message import Message
@@ -53,53 +54,53 @@ ONLY_SYSTEM_AND_USER = [
 class TestAnthropicFormatMessages:
     """Tests for the shared Anthropic format_messages utility."""
 
-    def _format(self, messages, inject=False, content="."):
+    def _format(self, messages, append=False, content="continue"):
         from agno.utils.models.claude import format_messages
 
         formatted, _ = format_messages(
             messages,
-            inject_trailing_user_message=inject,
+            append_trailing_user_message=append,
             trailing_user_message_content=content,
         )
         return formatted
 
-    def test_injects_when_ends_with_assistant(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=True)
+    def test_appends_when_ends_with_assistant(self):
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == [{"type": "text", "text": "."}]
+        assert msgs[-1]["content"] == [{"type": "text", "text": "continue"}]
 
-    def test_no_inject_when_flag_false(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=False)
+    def test_no_append_when_flag_false(self):
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=False)
         assert msgs[-1]["role"] == "assistant"
 
-    def test_no_inject_when_ends_with_user(self):
-        msgs = self._format(ENDS_WITH_USER, inject=True)
+    def test_no_append_when_ends_with_user(self):
+        msgs = self._format(ENDS_WITH_USER, append=True)
         assert msgs[-1]["role"] == "user"
         assert len(msgs) == 1
 
     def test_custom_trailing_content(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=True, content="continue")
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=True, content="go on")
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == [{"type": "text", "text": "continue"}]
+        assert msgs[-1]["content"] == [{"type": "text", "text": "go on"}]
 
-    def test_multi_assistant_injects_once(self):
-        msgs = self._format(MULTI_ASSISTANT, inject=True)
+    def test_multi_assistant_appends_once(self):
+        msgs = self._format(MULTI_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
         user_count = sum(1 for m in msgs if m["role"] == "user")
-        # original 2 user messages + 1 injected
+        # original 2 user messages + 1 appended
         assert user_count == 3
 
     def test_system_messages_excluded_from_check(self):
-        msgs = self._format(SYSTEM_THEN_ASSISTANT, inject=True)
+        msgs = self._format(SYSTEM_THEN_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
 
-    def test_no_inject_when_only_user(self):
-        msgs = self._format(ONLY_SYSTEM_AND_USER, inject=True)
+    def test_no_append_when_only_user(self):
+        msgs = self._format(ONLY_SYSTEM_AND_USER, append=True)
         assert msgs[-1]["role"] == "user"
         assert len(msgs) == 1
 
     def test_empty_messages(self):
-        msgs = self._format([], inject=True)
+        msgs = self._format([], append=True)
         assert len(msgs) == 0
 
 
@@ -109,42 +110,38 @@ class TestAnthropicFormatMessages:
 
 
 class TestBedrockFormatMessages:
-    """Tests for AwsBedrock._format_messages injection."""
+    """Tests for AwsBedrock._format_messages trailing message."""
 
-    def _format(self, messages, inject=False, content="."):
+    def _format(self, messages, append=False, content="continue"):
         from agno.models.aws.bedrock import AwsBedrock
 
         model = AwsBedrock(
             id="us.anthropic.claude-sonnet-4-6",
             aws_region="us-east-1",
-            inject_trailing_user_message=inject,
+            append_trailing_user_message=append,
             trailing_user_message_content=content,
         )
-        formatted, _ = model._format_messages(
-            messages,
-            inject_trailing_user_message=model.inject_trailing_user_message,
-            trailing_user_message_content=model.trailing_user_message_content,
-        )
+        formatted, _ = model._format_messages(messages)
         return formatted
 
-    def test_injects_when_ends_with_assistant(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=True)
+    def test_appends_when_ends_with_assistant(self):
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == [{"text": "."}]
+        assert msgs[-1]["content"] == [{"text": "continue"}]
 
-    def test_no_inject_when_flag_false(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=False)
+    def test_no_append_when_flag_false(self):
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=False)
         assert msgs[-1]["role"] == "assistant"
 
-    def test_no_inject_when_ends_with_user(self):
-        msgs = self._format(ENDS_WITH_USER, inject=True)
+    def test_no_append_when_ends_with_user(self):
+        msgs = self._format(ENDS_WITH_USER, append=True)
         assert msgs[-1]["role"] == "user"
         assert len(msgs) == 1
 
     def test_custom_trailing_content(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=True, content="continue")
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=True, content="go on")
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == [{"text": "continue"}]
+        assert msgs[-1]["content"] == [{"text": "go on"}]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -153,37 +150,72 @@ class TestBedrockFormatMessages:
 
 
 class TestLiteLLMFormatMessages:
-    """Tests for LiteLLM._format_messages injection."""
+    """Tests for LiteLLM._format_messages trailing message."""
 
-    def _format(self, messages, inject=False, content="."):
+    def _format(self, messages, append=False, content="continue"):
         from agno.models.litellm.chat import LiteLLM
 
         model = LiteLLM(
             id="anthropic/claude-sonnet-4-6",
-            inject_trailing_user_message=inject,
+            append_trailing_user_message=append,
             trailing_user_message_content=content,
         )
-        return model._format_messages(
-            messages,
-            inject_trailing_user_message=model.inject_trailing_user_message,
-            trailing_user_message_content=model.trailing_user_message_content,
-        )
+        return model._format_messages(messages)
 
-    def test_injects_when_ends_with_assistant(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=True)
+    def test_appends_when_ends_with_assistant(self):
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == "."
+        assert msgs[-1]["content"] == "continue"
 
-    def test_no_inject_when_flag_false(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=False)
+    def test_no_append_when_flag_false(self):
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=False)
         assert msgs[-1]["role"] == "assistant"
 
-    def test_no_inject_when_ends_with_user(self):
-        msgs = self._format(ENDS_WITH_USER, inject=True)
+    def test_no_append_when_ends_with_user(self):
+        msgs = self._format(ENDS_WITH_USER, append=True)
         assert msgs[-1]["role"] == "user"
         assert len(msgs) == 1
 
     def test_custom_trailing_content(self):
-        msgs = self._format(ENDS_WITH_ASSISTANT, inject=True, content="continue")
+        msgs = self._format(ENDS_WITH_ASSISTANT, append=True, content="go on")
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == "continue"
+        assert msgs[-1]["content"] == "go on"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Auto-detection (Claude.__post_init__)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAutoDetection:
+    """Tests for automatic append_trailing_user_message detection."""
+
+    def test_sonnet_46_auto_enabled(self):
+        from agno.models.anthropic import Claude
+
+        assert Claude(id="claude-sonnet-4-6").append_trailing_user_message is True
+
+    def test_opus_46_auto_enabled(self):
+        from agno.models.anthropic import Claude
+
+        assert Claude(id="claude-opus-4-6").append_trailing_user_message is True
+
+    def test_sonnet_45_auto_disabled(self):
+        from agno.models.anthropic import Claude
+
+        assert Claude(id="claude-sonnet-4-5-20250929").append_trailing_user_message is False
+
+    def test_sonnet_4_alias_auto_disabled(self):
+        from agno.models.anthropic import Claude
+
+        assert Claude(id="claude-sonnet-4").append_trailing_user_message is False
+
+    def test_user_override_respected(self):
+        from agno.models.anthropic import Claude
+
+        assert Claude(id="claude-sonnet-4-6", append_trailing_user_message=False).append_trailing_user_message is False
+
+    def test_future_model_auto_enabled(self):
+        from agno.models.anthropic import Claude
+
+        assert Claude(id="claude-sonnet-5-0").append_trailing_user_message is True

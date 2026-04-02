@@ -101,6 +101,30 @@ class Claude(Model):
         "claude-opus-4-0",
     }
 
+    # Models that support assistant message prefill. This is a closed set —
+    # prefill was deprecated starting with Claude 4.6 and all future models
+    # are expected to reject it.
+    _PREFILL_SUPPORTED_PREFIXES = (
+        "claude-3-",
+        "claude-sonnet-4-0",
+        "claude-sonnet-4-1",
+        "claude-sonnet-4-2",
+        "claude-sonnet-4-5",
+        "claude-opus-4-0",
+        "claude-opus-4-1",
+        "claude-opus-4-2",
+        "claude-opus-4-5",
+        "claude-haiku-4-0",
+        "claude-haiku-4-1",
+        "claude-haiku-4-2",
+        "claude-haiku-4-5",
+    )
+    _PREFILL_SUPPORTED_ALIASES = {
+        "claude-sonnet-4",
+        "claude-opus-4",
+        "claude-haiku-4",
+    }
+
     id: str = "claude-sonnet-4-5-20250929"
     name: str = "Claude"
     provider: str = "Anthropic"
@@ -127,8 +151,9 @@ class Claude(Model):
 
     # Claude 4.6+ does not support assistant message prefill.
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
-    inject_trailing_user_message: bool = False
-    trailing_user_message_content: str = "."
+    # Defaults to True for Claude 4.6+ models.
+    append_trailing_user_message: Optional[bool] = None
+    trailing_user_message_content: str = "continue"
 
     # Client parameters
     api_key: Optional[str] = None
@@ -152,6 +177,12 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
+        # Auto-enable trailing user message for models that don't support prefill
+        if self.append_trailing_user_message is None:
+            self.append_trailing_user_message = (
+                self.id not in self._PREFILL_SUPPORTED_ALIASES
+                and not self.id.startswith(self._PREFILL_SUPPORTED_PREFIXES)
+            )
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -431,7 +462,7 @@ class Claude(Model):
         anthropic_messages, system_prompt = format_messages(
             messages,
             compress_tool_results=True,
-            inject_trailing_user_message=self.inject_trailing_user_message,
+            append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
         )
         anthropic_tools = None
@@ -457,7 +488,7 @@ class Claude(Model):
         anthropic_messages, system_prompt = format_messages(
             messages,
             compress_tool_results=True,
-            inject_trailing_user_message=self.inject_trailing_user_message,
+            append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
         )
         anthropic_tools = None
@@ -647,7 +678,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
+                append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
             )
             request_kwargs = self._prepare_request_kwargs(
@@ -706,7 +737,7 @@ class Claude(Model):
         chat_messages, system_message = format_messages(
             messages,
             compress_tool_results=compress_tool_results,
-            inject_trailing_user_message=self.inject_trailing_user_message,
+            append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
         )
         request_kwargs = self._prepare_request_kwargs(
@@ -756,7 +787,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
+                append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
             )
             request_kwargs = self._prepare_request_kwargs(
@@ -814,7 +845,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
+                append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
             )
             request_kwargs = self._prepare_request_kwargs(

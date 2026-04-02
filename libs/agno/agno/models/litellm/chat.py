@@ -46,13 +46,35 @@ class LiteLLM(Model):
     extra_query: Optional[Dict[str, Any]] = None
     extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
-    inject_trailing_user_message: bool = False
-    trailing_user_message_content: str = "."
+    append_trailing_user_message: Optional[bool] = None
+    trailing_user_message_content: str = "continue"
 
     client: Optional[Any] = None
 
     # Store the original client to preserve it across copies (e.g., for Router instances)
     _original_client: Optional[Any] = None
+
+    # Models that support assistant message prefill (closed set).
+    _PREFILL_SUPPORTED_PREFIXES = (
+        "claude-3-",
+        "claude-sonnet-4-0",
+        "claude-sonnet-4-1",
+        "claude-sonnet-4-2",
+        "claude-sonnet-4-5",
+        "claude-opus-4-0",
+        "claude-opus-4-1",
+        "claude-opus-4-2",
+        "claude-opus-4-5",
+        "claude-haiku-4-0",
+        "claude-haiku-4-1",
+        "claude-haiku-4-2",
+        "claude-haiku-4-5",
+    )
+    _PREFILL_SUPPORTED_ALIASES = {
+        "claude-sonnet-4",
+        "claude-opus-4",
+        "claude-haiku-4",
+    }
 
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
@@ -62,6 +84,18 @@ class LiteLLM(Model):
         # This ensures the client is preserved when the model is copied for background tasks
         if self.client is not None and self._original_client is None:
             self._original_client = self.client
+
+        # Auto-enable trailing user message for Claude 4.6+ via LiteLLM
+        if self.append_trailing_user_message is None:
+            # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6" -> "claude-sonnet-4-6")
+            core_id = self.id.split("/")[-1] if "/" in self.id else self.id
+            if core_id.startswith("claude"):
+                self.append_trailing_user_message = (
+                    core_id not in self._PREFILL_SUPPORTED_ALIASES
+                    and not core_id.startswith(self._PREFILL_SUPPORTED_PREFIXES)
+                )
+            else:
+                self.append_trailing_user_message = False
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -116,13 +150,7 @@ class LiteLLM(Model):
 
         return result
 
-    def _format_messages(
-        self,
-        messages: List[Message],
-        compress_tool_results: bool = False,
-        inject_trailing_user_message: bool = False,
-        trailing_user_message_content: str = ".",
-    ) -> List[Dict[str, Any]]:
+    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
         from agno.utils.message import normalize_tool_messages
 
@@ -192,8 +220,8 @@ class LiteLLM(Model):
 
         # Claude 4.6+ models do not support assistant message prefill.
         # Append a trailing user turn so the request ends with a user message.
-        if inject_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
-            formatted_messages.append({"role": "user", "content": trailing_user_message_content})
+        if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
+            formatted_messages.append({"role": "user", "content": self.trailing_user_message_content})
 
         return formatted_messages
 
@@ -254,12 +282,7 @@ class LiteLLM(Model):
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(
-            messages,
-            compress_tool_results,
-            inject_trailing_user_message=self.inject_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
-        )
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
 
@@ -282,12 +305,7 @@ class LiteLLM(Model):
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(
-            messages,
-            compress_tool_results,
-            inject_trailing_user_message=self.inject_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
-        )
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
@@ -310,12 +328,7 @@ class LiteLLM(Model):
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(
-            messages,
-            compress_tool_results,
-            inject_trailing_user_message=self.inject_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
-        )
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
 
@@ -338,12 +351,7 @@ class LiteLLM(Model):
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(
-            messages,
-            compress_tool_results,
-            inject_trailing_user_message=self.inject_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
-        )
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
@@ -568,12 +576,7 @@ class LiteLLM(Model):
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        formatted_messages = self._format_messages(
-            messages,
-            compress_tool_results=True,
-            inject_trailing_user_message=self.inject_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
-        )
+        formatted_messages = self._format_messages(messages, compress_tool_results=True)
         formatted_tools = self._format_tools(tools) if tools else None
         tokens = litellm.token_counter(
             model=self.id,

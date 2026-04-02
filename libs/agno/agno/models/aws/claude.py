@@ -51,6 +51,14 @@ class Claude(AnthropicClaude):
         # Overwrite output schema support for AWS Bedrock Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
+        # Auto-enable trailing user message for Claude 4.6+ on Bedrock
+        if self.append_trailing_user_message is None:
+            # Extract core model name from Bedrock ID (e.g. "global.anthropic.claude-sonnet-4-6" -> "claude-sonnet-4-6")
+            core_id = self.id.split("anthropic.")[-1] if "anthropic." in self.id else self.id
+            self.append_trailing_user_message = (
+                core_id not in self._PREFILL_SUPPORTED_ALIASES
+                and not core_id.startswith(self._PREFILL_SUPPORTED_PREFIXES)
+            )
 
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:

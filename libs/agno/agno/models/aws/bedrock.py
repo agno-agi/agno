@@ -77,12 +77,46 @@ class AwsBedrock(Model):
     top_p: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
     request_params: Optional[Dict[str, Any]] = None
-    inject_trailing_user_message: bool = False
-    trailing_user_message_content: str = "."
+    append_trailing_user_message: Optional[bool] = None
+    trailing_user_message_content: str = "continue"
 
     client: Optional[AwsClient] = None
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
+
+    _PREFILL_SUPPORTED_PREFIXES = (
+        "claude-3-",
+        "claude-sonnet-4-0",
+        "claude-sonnet-4-1",
+        "claude-sonnet-4-2",
+        "claude-sonnet-4-5",
+        "claude-opus-4-0",
+        "claude-opus-4-1",
+        "claude-opus-4-2",
+        "claude-opus-4-5",
+        "claude-haiku-4-0",
+        "claude-haiku-4-1",
+        "claude-haiku-4-2",
+        "claude-haiku-4-5",
+    )
+    _PREFILL_SUPPORTED_ALIASES = {
+        "claude-sonnet-4",
+        "claude-opus-4",
+        "claude-haiku-4",
+    }
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.append_trailing_user_message is None:
+            # Strip Bedrock prefix (e.g. "us.anthropic.claude-sonnet-4-6" -> "claude-sonnet-4-6")
+            core_id = self.id.split("anthropic.")[-1] if "anthropic." in self.id else self.id
+            if core_id.startswith("claude"):
+                self.append_trailing_user_message = (
+                    core_id not in self._PREFILL_SUPPORTED_ALIASES
+                    and not core_id.startswith(self._PREFILL_SUPPORTED_PREFIXES)
+                )
+            else:
+                self.append_trailing_user_message = False
 
     def get_client(self) -> AwsClient:
         """
@@ -272,11 +306,7 @@ class AwsBedrock(Model):
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
     def _format_messages(
-        self,
-        messages: List[Message],
-        compress_tool_results: bool = False,
-        inject_trailing_user_message: bool = False,
-        trailing_user_message_content: str = ".",
+        self, messages: List[Message], compress_tool_results: bool = False
     ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Format the messages for the request.
@@ -426,8 +456,8 @@ class AwsBedrock(Model):
 
         # Claude 4.6+ models do not support assistant message prefill.
         # Append a trailing user turn so the request ends with a user message.
-        if inject_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
-            formatted_messages.append({"role": "user", "content": [{"text": trailing_user_message_content}]})
+        if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
+            formatted_messages.append({"role": "user", "content": [{"text": self.trailing_user_message_content}]})
 
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
@@ -439,12 +469,7 @@ class AwsBedrock(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_messages, system_message = self._format_messages(
-                messages,
-                compress_tool_results=True,
-                inject_trailing_user_message=self.inject_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
-            )
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
@@ -473,12 +498,7 @@ class AwsBedrock(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_messages, system_message = self._format_messages(
-                messages,
-                compress_tool_results=True,
-                inject_trailing_user_message=self.inject_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
-            )
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
@@ -515,12 +535,7 @@ class AwsBedrock(Model):
         Invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(
-                messages,
-                compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
-            )
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -566,12 +581,7 @@ class AwsBedrock(Model):
         Invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(
-                messages,
-                compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
-            )
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -621,12 +631,7 @@ class AwsBedrock(Model):
         Async invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(
-                messages,
-                compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
-            )
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -675,12 +680,7 @@ class AwsBedrock(Model):
         Async invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(
-                messages,
-                compress_tool_results,
-                inject_trailing_user_message=self.inject_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
-            )
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:

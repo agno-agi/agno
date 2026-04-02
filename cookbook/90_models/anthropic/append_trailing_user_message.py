@@ -1,14 +1,14 @@
 """
-Anthropic Inject Trailing User Message
+Anthropic Append Trailing User Message
 ======================================
 
-Some models do not support assistant message prefill — the API rejects
-requests where the conversation ends with an assistant turn. Enable
-`inject_trailing_user_message` to automatically append a user turn so
-the request stays valid. This is needed for reasoning flows, session
-history replay, or any scenario that produces trailing assistant messages.
+Claude 4.6+ does not support assistant message prefill. Enable
+`append_trailing_user_message` to append a trailing user turn when the
+conversation ends with an assistant message (e.g. during reasoning).
 
-Use `trailing_user_message_content` to customise the injected text (defaults to ".").
+Use `trailing_user_message_content` to customise the appended text (defaults to "continue").
+
+Note: Claude 4.6+ models auto-detect and enable this flag automatically.
 """
 
 from agno.agent import Agent
@@ -19,7 +19,7 @@ from agno.models.anthropic import Claude
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-6", inject_trailing_user_message=True),
+    model=Claude(id="claude-sonnet-4-6", append_trailing_user_message=True),
     reasoning=True,
     markdown=True,
 )
@@ -28,8 +28,8 @@ agent = Agent(
 agent_custom = Agent(
     model=Claude(
         id="claude-sonnet-4-6",
-        inject_trailing_user_message=True,
-        trailing_user_message_content="continue",
+        append_trailing_user_message=True,
+        trailing_user_message_content=".",
     ),
     reasoning=True,
     markdown=True,
