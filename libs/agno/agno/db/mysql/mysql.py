@@ -1169,6 +1169,26 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
+    def clear_user_memories(self, user_id: Optional[str] = None) -> None:
+        """Delete all user memories, optionally scoped to a single user."""
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete()
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    log_debug(f"No user memories found for user_id: {user_id}")
+                else:
+                    log_debug(f"Successfully cleared {result.rowcount} user memories")
+
+        except Exception as e:
+            log_error(f"Error clearing user memories: {e}")
+
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 

@@ -20,6 +20,7 @@ def mock_db():
     db.get_user_memories = MagicMock(return_value=[])
     db.upsert_user_memory = MagicMock(return_value=None)
     db.delete_user_memory = MagicMock(return_value=None)
+    db.clear_user_memories = MagicMock(return_value=None)
     db.clear_memories = MagicMock(return_value=None)
     return db
 
@@ -343,21 +344,15 @@ class TestClear:
 
 class TestClearUserMemories:
     def test_clear_user_memories(self, manager, mock_db, sample_memories):
-        """Clears all memories for a specific user via batch delete."""
-        user1_memories = [m for m in sample_memories if m.user_id == "user1"]
-        mock_db.get_user_memories.return_value = user1_memories
-        mock_db.delete_user_memories = MagicMock()
+        """Delegates user-scoped clearing directly to the DB."""
         manager.clear_user_memories(user_id="user1")
-        mock_db.delete_user_memories.assert_called_once()
-        call_args = mock_db.delete_user_memories.call_args
-        assert call_args.kwargs["user_id"] == "user1"
-        assert len(call_args.kwargs["memory_ids"]) == 2
+        mock_db.clear_user_memories.assert_called_once_with(user_id="user1")
+        mock_db.get_user_memories.assert_not_called()
 
     def test_clear_user_memories_default_user(self, manager, mock_db):
         """Uses 'default' user_id when none provided."""
-        mock_db.get_user_memories.return_value = []
         manager.clear_user_memories()
-        mock_db.get_user_memories.assert_called_with(user_id="default")
+        mock_db.clear_user_memories.assert_called_with(user_id="default")
 
     def test_clear_user_memories_no_db(self):
         """Does nothing when no db."""

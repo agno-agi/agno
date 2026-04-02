@@ -1,5 +1,6 @@
 from types import MethodType
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -47,6 +48,7 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
 
     async def delete_user_memories(self, memory_ids, user_id: Optional[str] = None) -> None:
         user = user_id or "default"
+        self.calls.append(("delete_user_memories", user))
         user_memories = self._memories.get(user, {})
         for memory_id in memory_ids:
             user_memories.pop(memory_id, None)
@@ -275,3 +277,30 @@ async def test_aupdate_memory_task_refreshes_async_db():
     saved_memories = await manager.aget_user_memories(user_id="user-2")
     assert len(saved_memories) == 1
     assert saved_memories[0].memory == "Task: Sync state"
+
+
+@pytest.mark.asyncio
+async def test_aclear_user_memories_with_async_db_uses_db_method():
+    async_db = DummyAsyncMemoryDb()
+    manager = MemoryManager(db=async_db)
+
+    await async_db.upsert_user_memory(UserMemory(memory="First", user_id="user-1", memory_id="mem-1"))
+    await async_db.upsert_user_memory(UserMemory(memory="Second", user_id="user-1", memory_id="mem-2"))
+
+    await manager.aclear_user_memories(user_id="user-1")
+
+    remaining = await manager.aget_user_memories(user_id="user-1")
+    assert remaining == []
+    assert ("get_user_memories", "user-1") in async_db.calls
+    assert ("delete_user_memories", "user-1") in async_db.calls
+
+
+@pytest.mark.asyncio
+async def test_aclear_user_memories_with_sync_db_uses_db_method():
+    sync_db = MagicMock()
+    sync_db.clear_user_memories = MagicMock(return_value=None)
+    manager = MemoryManager(db=sync_db)
+
+    await manager.aclear_user_memories(user_id="user-1")
+
+    sync_db.clear_user_memories.assert_called_once_with(user_id="user-1")

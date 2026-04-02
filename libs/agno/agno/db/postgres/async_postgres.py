@@ -1033,6 +1033,29 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
+    async def clear_user_memories(self, user_id: Optional[str] = None) -> None:
+        """Delete all user memories, optionally scoped to a single user."""
+        try:
+            table = await self._get_table(table_type="memories")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                delete_stmt = table.delete()
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
+                result = await sess.execute(delete_stmt)
+
+                if result.rowcount == 0:  # type: ignore
+                    log_debug(f"No user memories found for user_id: {user_id}")
+                else:
+                    log_debug(f"Successfully cleared {result.rowcount} user memories")  # type: ignore
+
+        except Exception as e:
+            log_error(f"Error clearing user memories: {e}")
+
     async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 
