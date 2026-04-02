@@ -1254,29 +1254,13 @@ def _handle_model_response_chunk(
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
 
-            # Wrap member RunContentEvent as IntermediateRunContentEvent so
-            # that team streaming surfaces only the leader's final synthesis,
-            # not the raw member output that the leader will summarize.
-            from agno.run.agent import RunContentEvent
-            from agno.run.team import IntermediateRunContentEvent
-
-            if isinstance(model_response_event, RunContentEvent):
-                yield handle_event(  # type: ignore
-                    IntermediateRunContentEvent(
-                        content=model_response_event.content,
-                        content_type=model_response_event.content_type,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )  # type: ignore
-            else:
-                yield handle_event(  # type: ignore
-                    model_response_event,  # type: ignore
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )  # type: ignore
+            # We just bubble the event up
+            yield handle_event(  # type: ignore
+                model_response_event,  # type: ignore
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )  # type: ignore
         else:
             # Don't yield anything
             return

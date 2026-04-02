@@ -891,6 +891,7 @@ class AgentOS:
                 excluded_route_paths = [
                     "/",
                     "/health",
+                    "/info",
                     "/docs",
                     "/redoc",
                     "/openapi.json",

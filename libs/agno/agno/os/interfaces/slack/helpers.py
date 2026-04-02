@@ -40,6 +40,20 @@ def should_respond(event: dict, reply_to_mentions_only: bool) -> bool:
     return True
 
 
+def build_run_metadata(
+    display_name: Optional[str],
+    resolved_user_id: str,
+    ctx: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    metadata: Dict[str, Any] = {}
+    if display_name:
+        metadata["user_name"] = display_name
+        metadata["user_id"] = resolved_user_id
+    if ctx.get("action_token"):
+        metadata["action_token"] = ctx["action_token"]
+    return metadata or None
+
+
 def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
@@ -47,6 +61,8 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "user": event.get("user", ""),
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
+        # User-scoped token for assistant.search.context workspace search
+        "action_token": event.get("assistant_thread", {}).get("action_token"),
     }
 
 
