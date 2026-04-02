@@ -213,7 +213,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
                     "type": "document",
                     "source": {
                         "type": "text",
-                        "media_type": "text/plain",
+                        "media_type": media_type,
                         "data": raw_bytes.decode("utf-8", errors="replace"),
                     },
                     "citations": {"enabled": True},
@@ -242,7 +242,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
                 "type": "document",
                 "source": {
                     "type": "text",
-                    "media_type": "text/plain",
+                    "media_type": media_type,
                     "data": file.content.decode("utf-8", errors="replace"),
                 },
                 "citations": {"enabled": True},
