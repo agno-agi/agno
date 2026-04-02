@@ -1,9 +1,10 @@
 import json
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
-from typing_extensions import AsyncIterator, List, Union
+from pydantic import BaseModel
+from typing_extensions import AsyncIterator, List
 
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
@@ -81,6 +82,23 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
+
+
+def _content_to_str(content: Any) -> str:
+    """Serialize *content* to a string suitable for A2A text parts.
+
+    When an agent has ``output_schema`` set, ``RunContentEvent.content``
+    carries the Pydantic model instance rather than a plain string.
+    Concatenating that with ``str`` raises::
+
+        TypeError: can only concatenate str (not "MyModel") to str
+
+    Serialise Pydantic models to their JSON representation; everything
+    else is passed through ``str()``.
+    """
+    if isinstance(content, BaseModel):
+        return content.model_dump_json()
+    return str(content)
 
 
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
@@ -348,11 +366,12 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            content_str = _content_to_str(event.content)
+            accumulated_content += content_str
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=content_str))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},
@@ -804,7 +823,7 @@ async def stream_a2a_response(
 
         final_parts: List[Part] = []
         if final_content:
-            final_parts.append(Part(root=TextPart(text=str(final_content))))
+            final_parts.append(Part(root=TextPart(text=_content_to_str(final_content))))
 
         # Handle all media artifacts
         artifacts: List[Artifact] = []
