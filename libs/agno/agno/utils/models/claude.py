@@ -403,6 +403,30 @@ def format_messages(
     return merged_messages, " ".join(system_messages)
 
 
+def _ensure_additional_properties_false(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively ensure all object schemas have additionalProperties: false.
+
+    Anthropic's API requires this on all object-type schemas, not just the root.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    result = schema.copy()
+
+    if result.get("type") == "object" or "properties" in result:
+        result["additionalProperties"] = False
+
+    for key, value in result.items():
+        if key == "properties" and isinstance(value, dict):
+            result[key] = {k: _ensure_additional_properties_false(v) for k, v in value.items()}
+        elif key == "items" and isinstance(value, dict):
+            result[key] = _ensure_additional_properties_false(value)
+        elif key in ("anyOf", "allOf", "oneOf") and isinstance(value, list):
+            result[key] = [_ensure_additional_properties_false(v) if isinstance(v, dict) else v for v in value]
+
+    return result
+
+
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
@@ -426,7 +450,8 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
         input_properties: Dict[str, Any] = {}
         for param_name, param_info in properties.items():
             # Preserve the complete schema structure for complex types
-            input_properties[param_name] = param_info.copy()
+            # and recursively ensure additionalProperties: false on nested objects
+            input_properties[param_name] = _ensure_additional_properties_false(param_info.copy())
 
             # Ensure description is present (default to empty if missing)
             if "description" not in input_properties[param_name]:

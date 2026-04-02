@@ -426,6 +426,7 @@ class File(BaseModel):
             "text/plain",
             "text/html",
             "text/css",
+            "text/markdown",
             "text/md",
             "text/csv",
             "text/xml",
