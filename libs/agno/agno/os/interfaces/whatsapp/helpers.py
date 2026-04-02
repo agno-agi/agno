@@ -8,7 +8,7 @@ import httpx
 
 from agno.utils.audio import pcm_to_wav_bytes
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.tokens import get_image_type
+from agno.utils.media import get_image_type
 
 _BASE_URL = "https://graph.facebook.com"
 _API_VERSION = "v22.0"
