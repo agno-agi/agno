@@ -72,6 +72,8 @@ content_workflow = Workflow(
     description="Research and create content on any topic via Slack",
     db=workflow_db,
     steps=[research_step, writing_step],
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 # Create AgentOS with Slack interface for the workflow
