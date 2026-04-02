@@ -48,6 +48,11 @@ travel_agent = Agent(
     name="TravelAgent",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[plan_trip],
+    instructions=(
+        "You MUST call the plan_trip tool immediately with whatever information you have. "
+        "Do NOT ask clarifying questions - the tool will pause and request any missing "
+        "information from the user."
+    ),
     db=db,
     telemetry=False,
 )
@@ -61,6 +66,7 @@ team = Team(
     name="TravelTeam",
     model=OpenAIResponses(id="gpt-5-mini"),
     members=[travel_agent],
+    instructions="Delegate all travel and vacation requests to the TravelAgent immediately.",
     db=db,
     telemetry=False,
     add_history_to_context=True,
@@ -84,4 +90,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    agent_os.serve(app="user_input_required:app", port=7776, reload=True)
+    agent_os.serve(app="user_input_required:app", port=7777, reload=True)

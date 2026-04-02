@@ -50,6 +50,11 @@ admin_agent = Agent(
     role="Handles account administration tasks",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[delete_user_account],
+    instructions=(
+        "You MUST call the delete_user_account tool immediately when asked to "
+        "delete an account. Do NOT refuse or ask for confirmation yourself - "
+        "the tool handles confirmation."
+    ),
     db=db,
     telemetry=False,
 )
@@ -62,6 +67,7 @@ team = Team(
     id="hitl-rejection-team",
     name="Admin Team",
     members=[admin_agent],
+    instructions="Delegate all account administration requests to the Admin Agent immediately.",
     model=OpenAIResponses(id="gpt-5-mini"),
     db=db,
     telemetry=False,

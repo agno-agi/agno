@@ -48,6 +48,10 @@ weather_agent = Agent(
     name="WeatherAgent",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[get_the_weather],
+    instructions=(
+        "You MUST call the get_the_weather tool to answer any weather question. "
+        "Do NOT answer from your own knowledge."
+    ),
     db=db,
     telemetry=False,
 )
@@ -61,6 +65,7 @@ team = Team(
     name="WeatherTeam",
     model=OpenAIResponses(id="gpt-5-mini"),
     members=[weather_agent],
+    instructions="Delegate all weather questions to the WeatherAgent immediately.",
     db=db,
     telemetry=False,
     add_history_to_context=True,

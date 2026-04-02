@@ -45,6 +45,10 @@ email_agent = Agent(
     name="EmailAgent",
     model=OpenAIResponses(id="gpt-5-mini"),
     tools=[send_email],
+    instructions=(
+        "You MUST call the send_email tool immediately when asked to send an email. "
+        "Do NOT simulate or describe sending - use the tool."
+    ),
     db=db,
     telemetry=False,
 )
@@ -58,6 +62,7 @@ team = Team(
     name="CommunicationTeam",
     model=OpenAIResponses(id="gpt-5-mini"),
     members=[email_agent],
+    instructions="Delegate all email requests to the EmailAgent immediately.",
     db=db,
     telemetry=False,
     add_history_to_context=True,
@@ -81,4 +86,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    agent_os.serve(app="external_tool_execution:app", port=7776, reload=True)
+    agent_os.serve(app="external_tool_execution:app", port=7777, reload=True)
