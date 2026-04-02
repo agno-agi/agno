@@ -12,7 +12,8 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.models.claude import supports_prefill
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.tokens import count_schema_tokens
 
@@ -54,28 +55,6 @@ class LiteLLM(Model):
     # Store the original client to preserve it across copies (e.g., for Router instances)
     _original_client: Optional[Any] = None
 
-    # Models that support assistant message prefill (closed set).
-    _PREFILL_SUPPORTED_PREFIXES = (
-        "claude-3-",
-        "claude-sonnet-4-0",
-        "claude-sonnet-4-1",
-        "claude-sonnet-4-2",
-        "claude-sonnet-4-5",
-        "claude-opus-4-0",
-        "claude-opus-4-1",
-        "claude-opus-4-2",
-        "claude-opus-4-5",
-        "claude-haiku-4-0",
-        "claude-haiku-4-1",
-        "claude-haiku-4-2",
-        "claude-haiku-4-5",
-    )
-    _PREFILL_SUPPORTED_ALIASES = {
-        "claude-sonnet-4",
-        "claude-opus-4",
-        "claude-haiku-4",
-    }
-
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
         super().__post_init__()
@@ -87,15 +66,7 @@ class LiteLLM(Model):
 
         # Auto-enable trailing user message for Claude 4.6+ via LiteLLM
         if self.append_trailing_user_message is None:
-            # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6" -> "claude-sonnet-4-6")
-            core_id = self.id.split("/")[-1] if "/" in self.id else self.id
-            if core_id.startswith("claude"):
-                self.append_trailing_user_message = (
-                    core_id not in self._PREFILL_SUPPORTED_ALIASES
-                    and not core_id.startswith(self._PREFILL_SUPPORTED_PREFIXES)
-                )
-            else:
-                self.append_trailing_user_message = False
+            self.append_trailing_user_message = not supports_prefill(self.id)
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -221,6 +192,7 @@ class LiteLLM(Model):
         # Claude 4.6+ models do not support assistant message prefill.
         # Append a trailing user turn so the request ends with a user message.
         if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
+            log_info("Appending trailing user message because this model does not support assistant message prefill")
             formatted_messages.append({"role": "user", "content": self.trailing_user_message_content})
 
         return formatted_messages

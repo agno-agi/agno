@@ -193,6 +193,57 @@ class TestLiteLLMFormatMessages:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+class TestSupportsPrefillHelper:
+    """Tests for the shared supports_prefill() helper."""
+
+    def test_anthropic_direct_prefill_supported(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("claude-sonnet-4-5-20250929") is True
+        assert supports_prefill("claude-sonnet-4-0") is True
+        assert supports_prefill("claude-opus-4-0") is True
+        assert supports_prefill("claude-3-5-sonnet-20241022") is True
+
+    def test_anthropic_direct_prefill_not_supported(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("claude-sonnet-4-6") is False
+        assert supports_prefill("claude-opus-4-6") is False
+        assert supports_prefill("claude-sonnet-5-0") is False
+
+    def test_aliases_supported(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("claude-sonnet-4") is True
+        assert supports_prefill("claude-opus-4") is True
+        assert supports_prefill("claude-haiku-4") is True
+
+    def test_bedrock_ids(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("us.anthropic.claude-sonnet-4-5-20250929-v1:0") is True
+        assert supports_prefill("us.anthropic.claude-sonnet-4-6") is False
+        assert supports_prefill("global.anthropic.claude-sonnet-4-6-v1:0") is False
+
+    def test_vertex_ids(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("claude-sonnet-4@20250514") is True
+        assert supports_prefill("claude-sonnet-4-6@20260401") is False
+
+    def test_litellm_ids(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("anthropic/claude-sonnet-4-5") is True
+        assert supports_prefill("anthropic/claude-sonnet-4-6") is False
+
+    def test_non_claude_models(self):
+        from agno.utils.models.claude import supports_prefill
+
+        assert supports_prefill("gpt-4o") is True
+        assert supports_prefill("gemini-2.0-flash") is True
+
+
 class TestAutoDetection:
     """Tests for automatic append_trailing_user_message detection."""
 
@@ -225,3 +276,69 @@ class TestAutoDetection:
         from agno.models.anthropic import Claude
 
         assert Claude(id="claude-sonnet-5-0").append_trailing_user_message is True
+
+
+class TestAutoDetectionVertexAI:
+    """Tests for VertexAI Claude auto-detection."""
+
+    def test_vertex_sonnet_45_auto_disabled(self):
+        from agno.models.vertexai.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-5@20250929").append_trailing_user_message is False
+
+    def test_vertex_sonnet_46_auto_enabled(self):
+        from agno.models.vertexai.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-6@20260401").append_trailing_user_message is True
+
+    def test_vertex_alias_auto_disabled(self):
+        from agno.models.vertexai.claude import Claude
+
+        assert Claude(id="claude-sonnet-4@20250514").append_trailing_user_message is False
+
+
+class TestAutoDetectionAwsClaude:
+    """Tests for AWS Bedrock Claude (anthropic SDK) auto-detection."""
+
+    def test_aws_sonnet_45_auto_disabled(self):
+        from agno.models.aws.claude import Claude
+
+        assert Claude(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0").append_trailing_user_message is False
+
+    def test_aws_sonnet_46_auto_enabled(self):
+        from agno.models.aws.claude import Claude
+
+        assert Claude(id="us.anthropic.claude-sonnet-4-6").append_trailing_user_message is True
+
+    def test_aws_global_prefix_auto_enabled(self):
+        from agno.models.aws.claude import Claude
+
+        assert Claude(id="global.anthropic.claude-sonnet-4-6-v1:0").append_trailing_user_message is True
+
+
+class TestAutoDetectionLiteLLM:
+    """Tests for LiteLLM auto-detection."""
+
+    def test_litellm_sonnet_45_auto_disabled(self):
+        import pytest
+
+        pytest.importorskip("litellm", reason="litellm not installed")
+        from agno.models.litellm.chat import LiteLLM
+
+        assert LiteLLM(id="anthropic/claude-sonnet-4-5").append_trailing_user_message is False
+
+    def test_litellm_sonnet_46_auto_enabled(self):
+        import pytest
+
+        pytest.importorskip("litellm", reason="litellm not installed")
+        from agno.models.litellm.chat import LiteLLM
+
+        assert LiteLLM(id="anthropic/claude-sonnet-4-6").append_trailing_user_message is True
+
+    def test_litellm_non_claude_auto_disabled(self):
+        import pytest
+
+        pytest.importorskip("litellm", reason="litellm not installed")
+        from agno.models.litellm.chat import LiteLLM
+
+        assert LiteLLM(id="openai/gpt-4o").append_trailing_user_message is False
