@@ -278,77 +278,28 @@ def get_agent_router(
 
         if files:
             for file in files:
-                if file.content_type in [
-                    "image/png",
-                    "image/jpeg",
-                    "image/jpg",
-                    "image/gif",
-                    "image/webp",
-                    "image/bmp",
-                    "image/tiff",
-                    "image/tif",
-                    "image/avif",
-                    "image/heic",
-                    "image/heif",
-                ]:
+                if file.content_type in Image.valid_mime_types():
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {e}")
                         continue
-                elif file.content_type in [
-                    "audio/wav",
-                    "audio/wave",
-                    "audio/mp3",
-                    "audio/mpeg",
-                    "audio/ogg",
-                    "audio/mp4",
-                    "audio/m4a",
-                    "audio/aac",
-                    "audio/flac",
-                ]:
+                elif file.content_type in Audio.valid_mime_types():
                     try:
                         audio = process_audio(file)
                         base64_audios.append(audio)
                     except Exception as e:
                         log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
                         continue
-                elif file.content_type in [
-                    "video/x-flv",
-                    "video/quicktime",
-                    "video/mpeg",
-                    "video/mpegs",
-                    "video/mpgs",
-                    "video/mpg",
-                    "video/mpg",
-                    "video/mp4",
-                    "video/webm",
-                    "video/wmv",
-                    "video/3gpp",
-                ]:
+                elif file.content_type in Video.valid_mime_types():
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {e}")
                         continue
-                elif file.content_type in [
-                    "application/pdf",
-                    "application/json",
-                    "application/x-javascript",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "text/javascript",
-                    "application/x-python",
-                    "text/x-python",
-                    "text/plain",
-                    "text/html",
-                    "text/css",
-                    "text/markdown",
-                    "text/csv",
-                    "text/xml",
-                    "text/rtf",
-                ]:
+                elif file.content_type in FileMedia.valid_mime_types():
                     # Process document files
                     try:
                         input_file = process_document(file)

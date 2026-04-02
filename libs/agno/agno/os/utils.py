@@ -21,6 +21,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team
 from agno.tools import Function, Toolkit
+from agno.utils.common import MIME_TO_EXTENSION
 from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -491,14 +492,25 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
 
 
 def extract_format(file: UploadFile) -> Optional[str]:
-    """Extract the File format from file name or content_type."""
-    # Get the format from the filename
-    if file.filename and "." in file.filename:
-        return file.filename.split(".")[-1].lower()
+    """Extract a standardized file format (extension) from file name or content_type."""
+    # Priority 1: Use filename but only the literal final extension to avoid double extension attacks
+    if file.filename:
+        name_parts = file.filename.split(".")
+        if len(name_parts) > 1:
+            ext = name_parts[-1].lower().strip()
+            if ext:
+                return ext
 
-    # Fallback to the file content_type
+    # Priority 2: Use explicit mapping for complex MIME types (common in Office/Google Drive)
     if file.content_type:
-        return file.content_type.strip().split("/")[-1]
+        # Handle formats like 'image/png; charset=utf-8'
+        main_type = file.content_type.split(";")[0].strip().lower()
+        if main_type in MIME_TO_EXTENSION:
+            return MIME_TO_EXTENSION[main_type]
+
+        # Priority 3: Fallback to the last part of a standard MIME type (e.g., image/png -> png)
+        if "/" in main_type:
+            return main_type.split("/")[-1].lower()
 
     return None
 

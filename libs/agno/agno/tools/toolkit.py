@@ -1,3 +1,4 @@
+import functools
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
@@ -241,23 +242,29 @@ class Toolkit:
             if is_async:
 
                 def make_bound_method(func, instance):
+                    # Use functools.wraps to preserve signature for media injection
+                    @functools.wraps(func)
                     async def bound(*args, **kwargs):
                         return await func(instance, *args, **kwargs)
 
-                    bound.__name__ = getattr(func, "__name__", tool_name)
-                    bound.__doc__ = getattr(func, "__doc__", None)
                     return bound
             else:
 
                 def make_bound_method(func, instance):
+                    # Use functools.wraps to preserve signature for media injection
+                    @functools.wraps(func)
                     def bound(*args, **kwargs):
                         return func(instance, *args, **kwargs)
 
-                    bound.__name__ = getattr(func, "__name__", tool_name)
-                    bound.__doc__ = getattr(func, "__doc__", None)
                     return bound
 
             bound_method = make_bound_method(original_func, self)
+            # If the original function was a Function object (decorated with @tool),
+            # and it was assigned to this instance with the same name,
+            # we should update the instance attribute to the bound method
+            # so it remains callable as a normal method.
+            if hasattr(self, tool_name) and getattr(self, tool_name) == function:
+                setattr(self, tool_name, bound_method)
         else:
             # Function doesn't expect self (e.g., static method or already bound)
             bound_method = original_func
