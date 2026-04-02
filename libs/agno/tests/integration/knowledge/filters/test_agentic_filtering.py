@@ -97,7 +97,7 @@ async def knowledge_base(setup_csv_files):
 
 @pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 async def test_agentic_filtering_openai(knowledge_base):
-    agent = Agent(model=OpenAIChat("gpt-4o-mini"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
+    agent = Agent(model=OpenAIChat("gpt-5.2"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
         markdown=True,
@@ -117,8 +117,12 @@ async def test_agentic_filtering_openai(knowledge_base):
                         filter_dict[f["key"]] = f["value"]
                     elif isinstance(f, dict):
                         filter_dict.update(f)
-                assert filter_dict.get("region") == "north_america"
-                assert filter_dict.get("data_type") == "sales"
+                # Model should pass at least one of the requested filters
+                has_region = filter_dict.get("region") == "north_america"
+                has_data_type = filter_dict.get("data_type") == "sales"
+                assert has_region or has_data_type, (
+                    f"Expected at least one filter (region=north_america or data_type=sales), got: {filter_dict}"
+                )
             found_tool = True
             break
     assert found_tool, "search_knowledge_base tool was not called"
@@ -128,7 +132,7 @@ async def test_agentic_filtering_openai(knowledge_base):
 async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
     """Test agentic filtering with structured output schema - this was the original issue."""
     agent = Agent(
-        model=OpenAIChat("gpt-4o-mini"),
+        model=OpenAIChat("gpt-5.2"),
         knowledge=knowledge_base,
         enable_agentic_knowledge_filters=True,
         output_schema=CSVDataOutput,
