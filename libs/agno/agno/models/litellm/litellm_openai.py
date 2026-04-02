@@ -29,6 +29,10 @@ class LiteLLMOpenAI(OpenAILike):
     api_key: Optional[str] = field(default_factory=lambda: getenv("LITELLM_API_KEY"))
     base_url: str = "http://0.0.0.0:4000"
 
+    # Remove non-standard fields like `requires_confirmation` by default
+    def _supports_internal_tool_fields(self) -> bool:
+        return False
+
     def _get_client_params(self) -> Dict[str, Any]:
         """
         Returns client parameters for API requests, checking for LITELLM_API_KEY.
@@ -63,6 +67,10 @@ class LiteLLMOpenResponses(OpenResponses):
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("LITELLM_API_KEY"))
     base_url: str = "http://0.0.0.0:4000"
+
+    # Remove non-standard fields like `requires_confirmation` by default
+    def _supports_internal_tool_fields(self) -> bool:
+        return False
 
     def _get_client_params(self) -> Dict[str, Any]:
         """

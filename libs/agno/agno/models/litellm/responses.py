@@ -36,6 +36,10 @@ class LiteLLMResponses(OpenResponses):
     # Store the original client to preserve it across copies (e.g., for Router instances)
     _original_client: Optional[Any] = None
 
+    # Remove non-standard fields like `requires_confirmation` by default
+    def _supports_internal_tool_fields(self) -> bool:
+        return False
+
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
         super().__post_init__()
