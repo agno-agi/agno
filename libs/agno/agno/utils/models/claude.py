@@ -413,7 +413,9 @@ def _ensure_additional_properties_false(schema: Dict[str, Any]) -> Dict[str, Any
 
     result = schema.copy()
 
-    if result.get("type") == "object" or "properties" in result:
+    # Only set additionalProperties: false on structured object schemas (those with "properties").
+    # Dict-type schemas use additionalProperties as a value type schema, so leave those alone.
+    if "properties" in result:
         result["additionalProperties"] = False
 
     for key, value in result.items():
