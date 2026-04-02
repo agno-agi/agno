@@ -23,7 +23,7 @@ class SlackTools(Toolkit):
 
     @classmethod
     def _build_instructions(cls, tool_names: list[str]) -> str:
-        """Build LLM guidance based on which tools are actually enabled.
+        """Build instructions based on which tools are actually enabled.
 
         Only references tools the LLM can call — never mentions disabled tools.
         """
