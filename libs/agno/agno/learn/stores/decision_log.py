@@ -938,6 +938,7 @@ class DecisionLogStore(LearningStore):
                 user_id=decision.user_id,
                 team_id=decision.team_id,
                 content=content,
+                namespace=self.config.namespace,
             )
 
             self.decisions_updated = True
@@ -965,6 +966,7 @@ class DecisionLogStore(LearningStore):
                     user_id=decision.user_id,
                     team_id=decision.team_id,
                     content=content,
+                    namespace=self.config.namespace,
                 )
             else:
                 self.db.upsert_learning(
@@ -975,6 +977,7 @@ class DecisionLogStore(LearningStore):
                     user_id=decision.user_id,
                     team_id=decision.team_id,
                     content=content,
+                    namespace=self.config.namespace,
                 )
 
             self.decisions_updated = True

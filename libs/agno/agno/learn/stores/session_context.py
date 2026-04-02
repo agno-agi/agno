@@ -361,6 +361,7 @@ class SessionContextStore(LearningStore):
                 agent_id=agent_id,
                 team_id=team_id,
                 content=content,
+                namespace=self.config.namespace,
             )
             log_debug(f"SessionContextStore.save: saved context for session_id={session_id}")
 
@@ -393,6 +394,7 @@ class SessionContextStore(LearningStore):
                     agent_id=agent_id,
                     team_id=team_id,
                     content=content,
+                    namespace=self.config.namespace,
                 )
             else:
                 self.db.upsert_learning(
@@ -403,6 +405,7 @@ class SessionContextStore(LearningStore):
                     agent_id=agent_id,
                     team_id=team_id,
                     content=content,
+                    namespace=self.config.namespace,
                 )
             log_debug(f"SessionContextStore.asave: saved context for session_id={session_id}")
 

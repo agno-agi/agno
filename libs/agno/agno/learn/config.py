@@ -150,6 +150,9 @@ class UserMemoryConfig:
     enable_delete_memory: bool = True
     enable_clear_memories: bool = False  # Dangerous - disabled by default
 
+    # Namespace for isolation across agents/teams
+    namespace: Optional[str] = None
+
     # Agent tools
     enable_agent_tools: bool = False
     agent_can_update_memories: bool = True
@@ -206,6 +209,9 @@ class SessionContextConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Namespace for isolation across agents/teams
+    namespace: Optional[str] = None
 
     # Planning mode
     enable_planning: bool = False
@@ -394,6 +400,9 @@ class DecisionLogConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Namespace for isolation across agents/teams
+    namespace: Optional[str] = None
 
     # Agent tools
     enable_agent_tools: bool = True

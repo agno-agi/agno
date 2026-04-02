@@ -539,6 +539,7 @@ class UserMemoryStore(LearningStore):
                 agent_id=agent_id,
                 team_id=team_id,
                 content=content,
+                namespace=self.config.namespace,
             )
             log_debug(f"UserMemoryStore.save: saved memories for user_id={user_id}")
 
@@ -569,6 +570,7 @@ class UserMemoryStore(LearningStore):
                     agent_id=agent_id,
                     team_id=team_id,
                     content=content,
+                    namespace=self.config.namespace,
                 )
             else:
                 self.db.upsert_learning(
@@ -578,6 +580,7 @@ class UserMemoryStore(LearningStore):
                     agent_id=agent_id,
                     team_id=team_id,
                     content=content,
+                    namespace=self.config.namespace,
                 )
             log_debug(f"UserMemoryStore.asave: saved memories for user_id={user_id}")
 

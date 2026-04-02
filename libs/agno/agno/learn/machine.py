@@ -222,11 +222,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.namespace is None:
+                config.namespace = self.namespace
         else:
             config = UserMemoryConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.ALWAYS,
+                namespace=self.namespace,
             )
 
         return UserMemoryStore(config=config, debug_mode=self.debug_mode)
@@ -240,11 +243,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.namespace is None:
+                config.namespace = self.namespace
         else:
             config = SessionContextConfig(
                 db=self.db,
                 model=self.model,
                 enable_planning=False,
+                namespace=self.namespace,
             )
 
         return SessionContextStore(config=config, debug_mode=self.debug_mode)
@@ -295,11 +301,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.namespace is None:
+                config.namespace = self.namespace
         else:
             config = DecisionLogConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.AGENTIC,  # Default to AGENTIC for explicit logging
+                namespace=self.namespace,
             )
 
         return DecisionLogStore(config=config, debug_mode=self.debug_mode)
