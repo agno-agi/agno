@@ -1,7 +1,8 @@
 from agno.models.litellm.chat import LiteLLM
+from agno.models.litellm.responses import LiteLLMResponses
 
 try:
-    from agno.models.litellm.litellm_openai import LiteLLMOpenAI
+    from agno.models.litellm.litellm_openai import LiteLLMOpenAI, LiteLLMOpenResponses
 except ImportError:
 
     class LiteLLMOpenAI:  # type: ignore
@@ -11,4 +12,7 @@ except ImportError:
 
 __all__ = [
     "LiteLLM",
+    "LiteLLMResponses",
+    "LiteLLMOpenAI",
+    "LiteLLMOpenResponses"
 ]
