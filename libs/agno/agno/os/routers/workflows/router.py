@@ -1069,4 +1069,46 @@ def get_workflow_router(
 
         return run_output.to_dict()
 
+    @router.get(
+        "/workflows/{workflow_id}/runs",
+        tags=["Workflows"],
+        operation_id="list_workflow_runs",
+        summary="List Workflow Runs",
+        description=(
+            "List runs for a workflow within a session, optionally filtered by status.\n\n"
+            "Useful for monitoring background runs and viewing run history."
+        ),
+        responses={
+            200: {"description": "List of runs retrieved successfully"},
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+    )
+    async def list_workflow_runs(
+        workflow_id: str,
+        session_id: str = Query(..., description="Session ID to list runs for"),
+        status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED)"),
+    ):
+        from agno.os.schema import WorkflowRunSchema
+
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if isinstance(workflow, RemoteWorkflow):
+            raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
+
+        session = await workflow.aread_or_create_session(session_id=session_id)
+        runs = session.runs or []
+
+        result = []
+        for run in runs:
+            run_dict = run.to_dict()
+            if status and run_dict.get("status") != status:
+                continue
+            result.append(WorkflowRunSchema.from_dict(run_dict))
+
+        return result
+
     return router
