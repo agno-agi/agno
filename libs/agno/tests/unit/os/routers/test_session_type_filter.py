@@ -406,3 +406,49 @@ class TestSessionSchema:
             }
         )
         assert schema.session_type == "team"
+
+
+class TestBackwardsCompatibility:
+    """Sessions created by older SDK versions without session_type field should still work."""
+
+    def test_old_sessions_without_session_type_field(self):
+        """Sessions from older SDK that lack session_type should be inferred from component IDs."""
+        db = InMemoryDb()
+        uid = uuid.uuid4().hex[:8]
+
+        # Simulate old SDK sessions: no session_type field, only agent_id/team_id
+        db._sessions.append(
+            {
+                "session_id": f"old-agent-{uid}",
+                "agent_id": "legacy-agent",
+                "user_id": "user-1",
+                "session_data": {"session_name": "Old Agent Session"},
+                "created_at": int(time.time()),
+                "updated_at": int(time.time()),
+            }
+        )
+        db._sessions.append(
+            {
+                "session_id": f"old-team-{uid}",
+                "team_id": "legacy-team",
+                "user_id": "user-1",
+                "session_data": {"session_name": "Old Team Session"},
+                "created_at": int(time.time()) + 1,
+                "updated_at": int(time.time()) + 1,
+            }
+        )
+
+        client = _build_client(db)
+
+        # type=None should return both old sessions
+        resp = client.get("/sessions?user_id=user-1")
+        assert resp.status_code == 200
+        data, _ = _get_data(resp)
+        session_ids = {s["session_id"] for s in data}
+        assert f"old-agent-{uid}" in session_ids
+        assert f"old-team-{uid}" in session_ids
+
+        # session_type should be inferred in the response
+        types = {s["session_id"]: s.get("session_type") for s in data}
+        assert types[f"old-agent-{uid}"] == "agent"
+        assert types[f"old-team-{uid}"] == "team"

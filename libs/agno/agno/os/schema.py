@@ -233,18 +233,18 @@ class SessionSchema(BaseModel):
         if summary and hasattr(summary, "to_dict"):
             summary = summary.to_dict()
 
-        # Determine session_type from the data
-        session_type = session.get("session_type")
-        if session_type is None:
-            if session.get("agent_id"):
-                session_type = "agent"
-            elif session.get("team_id"):
-                session_type = "team"
-            elif session.get("workflow_id"):
-                session_type = "workflow"
-        # Normalize enum to string value
-        if session_type is not None and hasattr(session_type, "value"):
-            session_type = session_type.value  # type: ignore[union-attr]
+        # Determine session_type — prefer inference from component IDs over stored value
+        if session.get("agent_id"):
+            session_type = "agent"
+        elif session.get("team_id"):
+            session_type = "team"
+        elif session.get("workflow_id"):
+            session_type = "workflow"
+        else:
+            session_type = session.get("session_type")
+            # Normalize enum to string value
+            if session_type is not None and hasattr(session_type, "value"):
+                session_type = session_type.value  # type: ignore[union-attr]
 
         return cls(
             session_id=session.get("session_id", ""),

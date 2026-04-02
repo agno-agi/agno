@@ -447,7 +447,15 @@ class SurrealDb(BaseDb):
 
         result_sessions: List[Session] = []
         for raw in converted_sessions_raw:
-            st = raw.get("session_type")
+            st = raw.get("session_type") or (
+                SessionType.AGENT
+                if raw.get("agent_id")
+                else SessionType.TEAM
+                if raw.get("team_id")
+                else SessionType.WORKFLOW
+                if raw.get("workflow_id")
+                else None
+            )
             if st in (SessionType.AGENT, SessionType.AGENT.value):
                 s = deserialize_session(SessionType.AGENT, raw)
             elif st in (SessionType.TEAM, SessionType.TEAM.value):

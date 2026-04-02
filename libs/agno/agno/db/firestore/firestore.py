@@ -464,15 +464,24 @@ class FirestoreDb(BaseDb):
 
             sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for session in sessions_raw:
-                if session.get("session_type") == SessionType.AGENT.value:
+                st = session.get("session_type") or (
+                    "agent"
+                    if session.get("agent_id")
+                    else "team"
+                    if session.get("team_id")
+                    else "workflow"
+                    if session.get("workflow_id")
+                    else None
+                )
+                if st == SessionType.AGENT.value:
                     agent_session = AgentSession.from_dict(session)
                     if agent_session is not None:
                         sessions.append(agent_session)
-                elif session.get("session_type") == SessionType.TEAM.value:
+                elif st == SessionType.TEAM.value:
                     team_session = TeamSession.from_dict(session)
                     if team_session is not None:
                         sessions.append(team_session)
-                elif session.get("session_type") == SessionType.WORKFLOW.value:
+                elif st == SessionType.WORKFLOW.value:
                     workflow_session = WorkflowSession.from_dict(session)
                     if workflow_session is not None:
                         sessions.append(workflow_session)

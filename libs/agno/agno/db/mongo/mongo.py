@@ -507,7 +507,22 @@ class MongoDb(BaseDb):
 
             sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for record in sessions_raw:
-                st = session_type if session_type is not None else record.get("session_type")
+                st = (
+                    session_type
+                    if session_type is not None
+                    else (
+                        record.get("session_type")
+                        or (
+                            "agent"
+                            if record.get("agent_id")
+                            else "team"
+                            if record.get("team_id")
+                            else "workflow"
+                            if record.get("workflow_id")
+                            else None
+                        )
+                    )
+                )
                 if st in (SessionType.AGENT, SessionType.AGENT.value):
                     agent_session = AgentSession.from_dict(record)
                     if agent_session is not None:

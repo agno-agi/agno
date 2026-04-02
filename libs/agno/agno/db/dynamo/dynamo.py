@@ -461,7 +461,15 @@ class DynamoDb(BaseDb):
 
             sessions: List[Session] = []
             for session_data in sessions_data:
-                st = session_data.get("session_type")
+                st = session_data.get("session_type") or (
+                    "agent"
+                    if session_data.get("agent_id")
+                    else "team"
+                    if session_data.get("team_id")
+                    else "workflow"
+                    if session_data.get("workflow_id")
+                    else None
+                )
                 deserialized: Optional[Session] = None
                 if st == SessionType.AGENT.value:
                     deserialized = AgentSession.from_dict(session_data)

@@ -46,6 +46,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _detect_session_type(raw: dict) -> str:
+    """Detect session type from raw session data, inferring from component IDs if session_type is missing."""
+    st = raw.get("session_type")
+    if st:
+        return st.value if hasattr(st, "value") else st
+    if raw.get("agent_id"):
+        return "agent"
+    if raw.get("team_id"):
+        return "team"
+    if raw.get("workflow_id"):
+        return "workflow"
+    return "agent"
+
+
 def get_mcp_server(
     os: "AgentOS",
 ) -> StarletteWithLifespan:
@@ -213,7 +227,7 @@ def get_mcp_server(
             raise Exception(f"Session {session_id} not found")
 
         if session_type_enum is None:
-            detected = (raw if isinstance(raw, dict) else {}).get("session_type", "agent")
+            detected = _detect_session_type(raw if isinstance(raw, dict) else {})
             session_type_enum = SessionType(detected) if detected else SessionType.AGENT
 
         # Deserialize from raw
@@ -361,7 +375,7 @@ def get_mcp_server(
             raise Exception(f"Session {session_id} not found")
 
         if session_type_enum is None:
-            detected = (session if isinstance(session, dict) else {}).get("session_type", "agent")
+            detected = _detect_session_type(session if isinstance(session, dict) else {})
             session_type_enum = SessionType(detected) if detected else SessionType.AGENT
 
         runs = session.get("runs")  # type: ignore
@@ -481,7 +495,7 @@ def get_mcp_server(
                 )
             if not raw:
                 raise Exception(f"Session {session_id} not found")
-            detected = (raw if isinstance(raw, dict) else {}).get("session_type", "agent")
+            detected = _detect_session_type(raw if isinstance(raw, dict) else {})
             session_type_enum = SessionType(detected) if detected else SessionType.AGENT
 
         if isinstance(db, AsyncBaseDb):
@@ -549,7 +563,7 @@ def get_mcp_server(
                 )
             if not raw:
                 raise Exception(f"Session {session_id} not found")
-            detected = (raw if isinstance(raw, dict) else {}).get("session_type", "agent")
+            detected = _detect_session_type(raw if isinstance(raw, dict) else {})
             session_type_enum = SessionType(detected) if detected else SessionType.AGENT
 
         # Get the existing session
