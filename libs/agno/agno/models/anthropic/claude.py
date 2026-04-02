@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, NoReturn, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -587,6 +587,30 @@ class Claude(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
+    def _handle_api_error(self, e: Exception) -> NoReturn:
+        """Convert Anthropic SDK exceptions into Agno model exceptions.
+
+        Raises the appropriate ModelProviderError or ModelRateLimitError.
+        Always raises — never returns normally.
+        """
+        if isinstance(e, APIConnectionError):
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        if isinstance(e, RateLimitError):
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        if isinstance(e, APIStatusError):
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            if e.status_code == 529 or "overloaded_error" in str(e):
+                raise ModelRateLimitError(
+                    message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                ) from e
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        log_error(f"Unexpected error calling Claude API: {str(e)}")
+        raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
     def invoke(
         self,
         messages: List[Message],
@@ -628,20 +652,8 @@ class Claude(Model):
 
             return model_response
 
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            self._handle_api_error(e)
 
     def invoke_stream(
         self,
@@ -695,20 +707,8 @@ class Claude(Model):
 
             assistant_message.metrics.stop_timer()
 
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            self._handle_api_error(e)
 
     async def ainvoke(
         self,
@@ -752,20 +752,8 @@ class Claude(Model):
 
             return model_response
 
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            self._handle_api_error(e)
 
     async def ainvoke_stream(
         self,
@@ -815,20 +803,8 @@ class Claude(Model):
 
             assistant_message.metrics.stop_timer()
 
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            self._handle_api_error(e)
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         if tools is not None and len(tools) > 0:
