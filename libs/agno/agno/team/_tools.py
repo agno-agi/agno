@@ -183,8 +183,16 @@ def _determine_tools_for_model(
         _tools.extend(learning_tools)
 
     if team.enable_agentic_state:
-        _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
+        def update_session_state_wrapper(run_context, session_state_updates: dict):
+            print("DEBUG TOOL CALLED:", session_state_updates)
+            return _update_session_state_tool(team, run_context, session_state_updates)
 
+        _tools.append(
+            Function(
+                name="update_session_state",
+                entrypoint=update_session_state_wrapper
+            )
+        )
     if team.search_past_sessions:
         _tools.append(
             _search_past_sessions_function(
