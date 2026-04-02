@@ -992,9 +992,10 @@ def test_intermediate_steps_with_member_agents_nested_team():
         RunEvent.tool_call_started.value,
         RunEvent.tool_call_completed.value,
     }
-    # IntermediateRunContent is optional - depends on whether agent streams content during execution
+    # IntermediateRunContent and RunContent are optional - depends on whether agent streams content during execution
     optional_intermediate_events = {
         TeamRunEvent.run_intermediate_content.value,
+        RunEvent.run_content.value,
     }
 
     actual_events = set(events.keys())
