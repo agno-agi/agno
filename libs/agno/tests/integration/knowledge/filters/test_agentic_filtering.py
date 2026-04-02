@@ -1,3 +1,4 @@
+import os
 import tempfile
 from pathlib import Path
 
@@ -94,6 +95,7 @@ async def knowledge_base(setup_csv_files):
     return knowledge
 
 
+@pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 async def test_agentic_filtering_openai(knowledge_base):
     agent = Agent(model=OpenAIChat("gpt-4o-mini"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
@@ -122,6 +124,7 @@ async def test_agentic_filtering_openai(knowledge_base):
     assert found_tool, "search_knowledge_base tool was not called"
 
 
+@pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
     """Test agentic filtering with structured output schema - this was the original issue."""
     agent = Agent(
@@ -164,6 +167,7 @@ async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
     assert response.content.summary is not None
 
 
+@pytest.mark.skipif(not os.environ.get("GOOGLE_API_KEY"), reason="GOOGLE_API_KEY not set")
 async def test_agentic_filtering_gemini(knowledge_base):
     agent = Agent(model=Gemini("gemini-2.0-flash-001"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
@@ -192,6 +196,7 @@ async def test_agentic_filtering_gemini(knowledge_base):
     assert found_tool, "search_knowledge_base tool was not called"
 
 
+@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
 async def test_agentic_filtering_claude(knowledge_base):
     agent = Agent(model=Claude("claude-sonnet-4-0"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
