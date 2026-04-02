@@ -263,7 +263,10 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
 
 def format_messages(
-    messages: List[Message], compress_tool_results: bool = False
+    messages: List[Message],
+    compress_tool_results: bool = False,
+    inject_trailing_user_message: bool = False,
+    trailing_user_message_content: str = ".",
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
@@ -271,6 +274,9 @@ def format_messages(
     Args:
         messages (List[Message]): The list of messages to process.
         compress_tool_results: Whether to compress tool results.
+        inject_trailing_user_message: If True, append a dummy user message when the conversation
+            ends with an assistant turn. Required for models that do not support assistant prefill.
+        trailing_user_message_content: The text content of the injected trailing user message.
 
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
@@ -399,6 +405,11 @@ def format_messages(
                 ]
         else:
             merged_messages.append(msg)
+
+    # Claude 4.6+ models do not support assistant message prefill.
+    # Append a trailing user turn so the request ends with a user message.
+    if inject_trailing_user_message and merged_messages and merged_messages[-1]["role"] == "assistant":
+        merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
 
     return merged_messages, " ".join(system_messages)
 
