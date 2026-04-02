@@ -7424,8 +7424,9 @@ class Workflow:
         # Handle Condition steps
         if isinstance(step, Condition):
             copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            copied_else_steps = [self._deep_copy_single_step(s) for s in step.else_steps] if step.else_steps else None
             return Condition(
-                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
+                evaluator=step.evaluator, steps=copied_condition_steps, else_steps=copied_else_steps, name=step.name, description=step.description
             )
 
         # Handle Router steps
