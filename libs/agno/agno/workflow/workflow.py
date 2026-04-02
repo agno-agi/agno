@@ -1239,7 +1239,10 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            result = await self._aupsert_session(session=session)  # type: ignore
+            if self._has_async_db():
+                result = await self._aupsert_session(session=session)  # type: ignore
+            else:
+                result = self._upsert_session(session=session)
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
@@ -7389,6 +7392,13 @@ class Workflow:
                 "strict_input_validation",
                 "add_workflow_history",
                 "num_history_runs",
+                "requires_confirmation",
+                "confirmation_message",
+                "on_reject",
+                "requires_user_input",
+                "user_input_message",
+                "user_input_schema",
+                "on_error",
             ]:
                 if hasattr(step, attr):
                     value = getattr(step, attr)
@@ -7419,24 +7429,53 @@ class Workflow:
                 description=step.description,
                 max_iterations=step.max_iterations,
                 end_condition=step.end_condition,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
             )
 
         # Handle Condition steps
         if isinstance(step, Condition):
             copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            copied_else_steps = [self._deep_copy_single_step(s) for s in step.else_steps] if step.else_steps else None
             return Condition(
-                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
+                evaluator=step.evaluator,
+                steps=copied_condition_steps,
+                else_steps=copied_else_steps,
+                name=step.name,
+                description=step.description,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
             )
 
         # Handle Router steps
         if isinstance(step, Router):
             copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
-            return Router(choices=copied_choices, name=step.name, description=step.description, selector=step.selector)
+            return Router(
+                choices=copied_choices,
+                name=step.name,
+                description=step.description,
+                selector=step.selector,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
+                requires_user_input=step.requires_user_input,
+                user_input_message=step.user_input_message,
+                allow_multiple_selections=step.allow_multiple_selections,
+            )
 
         # Handle Steps container
         if isinstance(step, Steps):
             copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Steps(name=step.name, description=step.description, steps=copied_steps)
+            return Steps(
+                name=step.name,
+                description=step.description,
+                steps=copied_steps,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
+            )
 
         # For other types, attempt deep copy
         try:
