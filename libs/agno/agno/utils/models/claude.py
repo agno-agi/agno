@@ -160,7 +160,6 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         "text/html": "text",
         "text/css": "text",
         "text/markdown": "text",
-        "text/md": "text",  # Not a valid MIME type, kept for backwards compatibility
         "text/xml": "text",
         "text/rtf": "text",
         "text/javascript": "text",

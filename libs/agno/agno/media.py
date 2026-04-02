@@ -427,7 +427,6 @@ class File(BaseModel):
             "text/html",
             "text/css",
             "text/markdown",
-            "text/md",  # Not a valid MIME type, kept for backwards compatibility
             "text/csv",
             "text/xml",
             "text/rtf",
