@@ -12,7 +12,16 @@ Verifies that:
 - Auto-detection sets the flag for Claude 4.6+ models.
 """
 
+import importlib
+
+import pytest
+
 from agno.models.message import Message
+
+_has_boto3 = importlib.util.find_spec("boto3") is not None
+_skip_boto3 = pytest.mark.skipif(not _has_boto3, reason="boto3 not installed")
+_has_litellm = importlib.util.find_spec("litellm") is not None
+_skip_litellm = pytest.mark.skipif(not _has_litellm, reason="litellm not installed")
 
 # ---------------------------------------------------------------------------
 # Shared test messages
@@ -109,13 +118,11 @@ class TestAnthropicFormatMessages:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@_skip_boto3
 class TestBedrockFormatMessages:
     """Tests for AwsBedrock._format_messages trailing message."""
 
     def _format(self, messages, append=False, content="continue"):
-        import pytest
-
-        pytest.importorskip("boto3", reason="boto3 not installed")
         from agno.models.aws.bedrock import AwsBedrock
 
         model = AwsBedrock(
@@ -152,13 +159,11 @@ class TestBedrockFormatMessages:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@_skip_litellm
 class TestLiteLLMFormatMessages:
     """Tests for LiteLLM._format_messages trailing message."""
 
     def _format(self, messages, append=False, content="continue"):
-        import pytest
-
-        pytest.importorskip("litellm", reason="litellm not installed")
         from agno.models.litellm.chat import LiteLLM
 
         model = LiteLLM(
@@ -316,29 +321,21 @@ class TestAutoDetectionAwsClaude:
         assert Claude(id="global.anthropic.claude-sonnet-4-6-v1:0").append_trailing_user_message is True
 
 
+@_skip_litellm
 class TestAutoDetectionLiteLLM:
     """Tests for LiteLLM auto-detection."""
 
     def test_litellm_sonnet_45_auto_disabled(self):
-        import pytest
-
-        pytest.importorskip("litellm", reason="litellm not installed")
         from agno.models.litellm.chat import LiteLLM
 
         assert LiteLLM(id="anthropic/claude-sonnet-4-5").append_trailing_user_message is False
 
     def test_litellm_sonnet_46_auto_enabled(self):
-        import pytest
-
-        pytest.importorskip("litellm", reason="litellm not installed")
         from agno.models.litellm.chat import LiteLLM
 
         assert LiteLLM(id="anthropic/claude-sonnet-4-6").append_trailing_user_message is True
 
     def test_litellm_non_claude_auto_disabled(self):
-        import pytest
-
-        pytest.importorskip("litellm", reason="litellm not installed")
         from agno.models.litellm.chat import LiteLLM
 
         assert LiteLLM(id="openai/gpt-4o").append_trailing_user_message is False
