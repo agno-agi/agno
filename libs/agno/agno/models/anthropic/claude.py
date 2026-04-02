@@ -462,7 +462,7 @@ class Claude(Model):
         anthropic_messages, system_prompt = format_messages(
             messages,
             compress_tool_results=True,
-            append_trailing_user_message=self.append_trailing_user_message,
+            append_trailing_user_message=self.append_trailing_user_message or False,
             trailing_user_message_content=self.trailing_user_message_content,
         )
         anthropic_tools = None
@@ -488,7 +488,7 @@ class Claude(Model):
         anthropic_messages, system_prompt = format_messages(
             messages,
             compress_tool_results=True,
-            append_trailing_user_message=self.append_trailing_user_message,
+            append_trailing_user_message=self.append_trailing_user_message or False,
             trailing_user_message_content=self.trailing_user_message_content,
         )
         anthropic_tools = None
@@ -678,7 +678,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                append_trailing_user_message=self.append_trailing_user_message,
+                append_trailing_user_message=self.append_trailing_user_message or False,
                 trailing_user_message_content=self.trailing_user_message_content,
             )
             request_kwargs = self._prepare_request_kwargs(
@@ -737,7 +737,7 @@ class Claude(Model):
         chat_messages, system_message = format_messages(
             messages,
             compress_tool_results=compress_tool_results,
-            append_trailing_user_message=self.append_trailing_user_message,
+            append_trailing_user_message=self.append_trailing_user_message or False,
             trailing_user_message_content=self.trailing_user_message_content,
         )
         request_kwargs = self._prepare_request_kwargs(
@@ -787,7 +787,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                append_trailing_user_message=self.append_trailing_user_message,
+                append_trailing_user_message=self.append_trailing_user_message or False,
                 trailing_user_message_content=self.trailing_user_message_content,
             )
             request_kwargs = self._prepare_request_kwargs(
@@ -845,7 +845,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                append_trailing_user_message=self.append_trailing_user_message,
+                append_trailing_user_message=self.append_trailing_user_message or False,
                 trailing_user_message_content=self.trailing_user_message_content,
             )
             request_kwargs = self._prepare_request_kwargs(

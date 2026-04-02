@@ -113,6 +113,9 @@ class TestBedrockFormatMessages:
     """Tests for AwsBedrock._format_messages trailing message."""
 
     def _format(self, messages, append=False, content="continue"):
+        import pytest
+
+        pytest.importorskip("boto3", reason="boto3 not installed")
         from agno.models.aws.bedrock import AwsBedrock
 
         model = AwsBedrock(
@@ -153,6 +156,9 @@ class TestLiteLLMFormatMessages:
     """Tests for LiteLLM._format_messages trailing message."""
 
     def _format(self, messages, append=False, content="continue"):
+        import pytest
+
+        pytest.importorskip("litellm", reason="litellm not installed")
         from agno.models.litellm.chat import LiteLLM
 
         model = LiteLLM(
