@@ -234,6 +234,7 @@ class SessionSchema(BaseModel):
             summary = summary.to_dict()
 
         # Determine session_type — prefer inference from component IDs over stored value
+        session_type: Optional[str] = None
         if session.get("agent_id"):
             session_type = "agent"
         elif session.get("team_id"):
@@ -241,10 +242,9 @@ class SessionSchema(BaseModel):
         elif session.get("workflow_id"):
             session_type = "workflow"
         else:
-            session_type = session.get("session_type")
-            # Normalize enum to string value
-            if session_type is not None and hasattr(session_type, "value"):
-                session_type = session_type.value  # type: ignore[union-attr]
+            raw_type = session.get("session_type")
+            if raw_type is not None:
+                session_type = raw_type.value if hasattr(raw_type, "value") else str(raw_type)
 
         return cls(
             session_id=session.get("session_id", ""),
