@@ -277,6 +277,10 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
                 )
             )
 
+        # Persist new session to DB immediately so it is visible during long-running retries
+        if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+            _upsert_session(team, team_session)
+
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
         team._cached_session = team_session
@@ -343,6 +347,10 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
                     messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
                 )
             )
+
+        # Persist new session to DB immediately so it is visible during long-running retries
+        if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+            await _aupsert_session(team, team_session)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
