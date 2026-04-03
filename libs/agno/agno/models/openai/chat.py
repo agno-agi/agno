@@ -7,7 +7,7 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
@@ -382,6 +382,17 @@ class OpenAIChat(Model):
             message_dict["content"] = ""
         return message_dict
 
+    def _format_all_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Format all messages, remapping foreign tool call IDs to call_ prefix first."""
+        from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+        normalized = reformat_tool_call_ids(messages, provider="openai_chat")
+        return [self._format_message(m, compress_tool_results) for m in normalized]
+
     def invoke(
         self,
         messages: List[Message],
@@ -411,7 +422,7 @@ class OpenAIChat(Model):
 
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -425,7 +436,10 @@ class OpenAIChat(Model):
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -443,14 +457,20 @@ class OpenAIChat(Model):
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
-                error_message = e.response.json().get("error", {})
+                error_body = e.response.json().get("error", {})
             except Exception:
-                error_message = e.response.text
+                error_body = e.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=e.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
@@ -492,7 +512,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -506,7 +526,10 @@ class OpenAIChat(Model):
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -524,14 +547,20 @@ class OpenAIChat(Model):
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
-                error_message = e.response.json().get("error", {})
+                error_body = e.response.json().get("error", {})
             except Exception:
-                error_message = e.response.text
+                error_body = e.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=e.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
@@ -571,7 +600,7 @@ class OpenAIChat(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -584,7 +613,10 @@ class OpenAIChat(Model):
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -602,14 +634,20 @@ class OpenAIChat(Model):
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
-                error_message = e.response.json().get("error", {})
+                error_body = e.response.json().get("error", {})
             except Exception:
-                error_message = e.response.text
+                error_body = e.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=e.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
@@ -649,7 +687,7 @@ class OpenAIChat(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
+                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -664,7 +702,10 @@ class OpenAIChat(Model):
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -682,14 +723,20 @@ class OpenAIChat(Model):
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
-                error_message = e.response.json().get("error", {})
+                error_body = e.response.json().get("error", {})
             except Exception:
-                error_message = e.response.text
+                error_body = e.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=e.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
@@ -734,7 +781,7 @@ class OpenAIChat(Model):
                 }
             else:
                 if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
+                    tool_call_entry["function"]["name"] = _function_name
                 if _function_arguments:
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
