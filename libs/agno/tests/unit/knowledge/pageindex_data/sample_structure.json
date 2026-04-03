@@ -1,0 +1,58 @@
+{
+  "doc_name": "Tax Policy Guide",
+  "structure": [
+    {
+      "title": "Overview",
+      "summary": "Overview of tax policies for fiscal year 2024.",
+      "start_index": 1,
+      "end_index": 3,
+      "node_id": "0001"
+    },
+    {
+      "title": "Income Tax",
+      "summary": "Income tax rates, brackets, deductions and credits for individuals.",
+      "start_index": 5,
+      "end_index": 16,
+      "node_id": "0002",
+      "nodes": [
+        {
+          "title": "Tax Brackets",
+          "summary": "Tax bracket rates for 2024: 10%, 12%, 22% at various income thresholds.",
+          "start_index": 8,
+          "end_index": 12,
+          "node_id": "0003"
+        },
+        {
+          "title": "Deductions and Credits",
+          "summary": "Itemized deductions versus standard deduction for lower tax liability.",
+          "start_index": 14,
+          "end_index": 16,
+          "node_id": "0004"
+        }
+      ]
+    },
+    {
+      "title": "Corporate Tax",
+      "summary": "Corporate tax rate of 21% on taxable income with loss carryforward.",
+      "start_index": 18,
+      "end_index": 24,
+      "node_id": "0005",
+      "nodes": [
+        {
+          "title": "Filing Requirements",
+          "summary": "Annual filing for corporations with gross receipts over $250,000.",
+          "start_index": 22,
+          "end_index": 24,
+          "node_id": "0006"
+        }
+      ]
+    },
+    {
+      "title": "Sales Tax",
+      "summary": "Sales tax rates vary by jurisdiction with exemptions for essential goods.",
+      "start_index": 26,
+      "end_index": 28,
+      "node_id": "0007"
+    }
+  ]
+}
