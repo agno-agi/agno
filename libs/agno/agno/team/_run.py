@@ -5023,7 +5023,9 @@ async def _ahandle_model_response_for_continue(
     )
 
     team.model = cast(Model, team.model)
-    model_response: ModelResponse = await team.model.aresponse(
+    model_response: ModelResponse = await acall_model_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
