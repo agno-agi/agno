@@ -98,14 +98,12 @@ def serialize_session(session: Session, table_names: dict[TableType, str]) -> di
     return _dict
 
 
-def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] = None) -> dict:
+def desurrealize_session(session_raw: dict) -> dict:
     session_raw = deserialize_record_id(session_raw, "session_id", "id")
-    if session_type == SessionType.AGENT:
-        session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
-    elif session_type == SessionType.TEAM:
-        session_raw = deserialize_record_id(session_raw, "team_id", "team")
-    elif session_type == SessionType.WORKFLOW:
-        session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
+    # Always attempt to convert all RecordID fields so agent_id/team_id/workflow_id are populated
+    session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
+    session_raw = deserialize_record_id(session_raw, "team_id", "team")
+    session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
 
     session_raw = desurrealize_dates(session_raw)
 
@@ -120,7 +118,7 @@ def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] 
 
 
 def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    session_raw = desurrealize_session(session_raw, session_type)
+    session_raw = desurrealize_session(session_raw)
 
     if session_type == SessionType.AGENT:
         return AgentSession.from_dict(session_raw)

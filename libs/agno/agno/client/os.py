@@ -1553,7 +1553,7 @@ class AgentOSClient:
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -1563,7 +1563,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session to retrieve
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -1576,7 +1576,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1585,9 +1585,10 @@ class AgentOSClient:
 
         data = await self._aget(f"/sessions/{session_id}", params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
         else:
             return WorkflowSessionDetailSchema.model_validate(data)
@@ -1595,7 +1596,7 @@ class AgentOSClient:
     async def get_session_runs(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         created_after: Optional[int] = None,
         created_before: Optional[int] = None,
@@ -1607,7 +1608,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             created_after: Filter runs created after this Unix timestamp
             created_before: Filter runs created before this Unix timestamp
@@ -1622,7 +1623,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "created_after": created_after,
             "created_before": created_before,
@@ -1648,7 +1649,7 @@ class AgentOSClient:
         self,
         session_id: str,
         run_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -1659,7 +1660,7 @@ class AgentOSClient:
         Args:
             session_id: ID of the session
             run_id: ID of the run to retrieve
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -1672,7 +1673,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,

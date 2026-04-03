@@ -681,6 +681,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -720,6 +726,25 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [TeamSession.from_dict(record) for record in session]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
+            elif session_type is None:
+                sessions: List[Session] = []
+                for record in session:
+                    st = record.get("session_type") or (
+                        "agent"
+                        if record.get("agent_id")
+                        else "team"
+                        if record.get("team_id")
+                        else "workflow"
+                        if record.get("workflow_id")
+                        else None
+                    )
+                    if st == SessionType.AGENT.value:
+                        sessions.append(AgentSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.TEAM.value:
+                        sessions.append(TeamSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.WORKFLOW.value:
+                        sessions.append(WorkflowSession.from_dict(record))  # type: ignore
+                return sessions
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 

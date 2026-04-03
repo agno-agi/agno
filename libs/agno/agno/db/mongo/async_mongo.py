@@ -605,8 +605,6 @@ class AsyncMongoDb(AsyncBaseDb):
             query = {"session_id": session_id}
             if user_id is not None:
                 query["user_id"] = user_id
-            if session_type is not None:
-                query["session_type"] = session_type
 
             result = await collection.find_one(query)
             if result is None:
@@ -684,6 +682,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:
@@ -721,15 +725,31 @@ class AsyncMongoDb(AsyncBaseDb):
 
             sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for record in sessions_raw:
-                if session_type == SessionType.AGENT.value:
+                st = (
+                    session_type
+                    if session_type is not None
+                    else (
+                        record.get("session_type")
+                        or (
+                            "agent"
+                            if record.get("agent_id")
+                            else "team"
+                            if record.get("team_id")
+                            else "workflow"
+                            if record.get("workflow_id")
+                            else None
+                        )
+                    )
+                )
+                if st in (SessionType.AGENT, SessionType.AGENT.value):
                     agent_session = AgentSession.from_dict(record)
                     if agent_session is not None:
                         sessions.append(agent_session)
-                elif session_type == SessionType.TEAM.value:
+                elif st in (SessionType.TEAM, SessionType.TEAM.value):
                     team_session = TeamSession.from_dict(record)
                     if team_session is not None:
                         sessions.append(team_session)
-                elif session_type == SessionType.WORKFLOW.value:
+                elif st in (SessionType.WORKFLOW, SessionType.WORKFLOW.value):
                     workflow_session = WorkflowSession.from_dict(record)
                     if workflow_session is not None:
                         sessions.append(workflow_session)
@@ -1344,7 +1364,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await collection.aggregate(count_pipeline).to_list(length=1)  # type: ignore[union-attr]
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -1353,7 +1373,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
                 pipeline.append({"$limit": limit})  # type: ignore
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
 
             formatted_results = [
                 {
@@ -2689,7 +2709,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await collection.aggregate(count_pipeline).to_list(length=1)  # type: ignore[union-attr]
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -2697,7 +2717,7 @@ class AsyncMongoDb(AsyncBaseDb):
             pipeline.append({"$skip": skip})
             pipeline.append({"$limit": limit or 20})
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
 
             # Convert to list of dicts with datetime objects
             stats_list = []

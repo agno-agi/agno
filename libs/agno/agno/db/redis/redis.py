@@ -433,6 +433,14 @@ class RedisDb(BaseDb):
                     filtered_sessions = [s for s in filtered_sessions if s.get("team_id") == component_id]
                 elif session_type == SessionType.WORKFLOW:
                     filtered_sessions = [s for s in filtered_sessions if s.get("workflow_id") == component_id]
+                elif session_type is None:
+                    filtered_sessions = [
+                        s
+                        for s in filtered_sessions
+                        if s.get("agent_id") == component_id
+                        or s.get("team_id") == component_id
+                        or s.get("workflow_id") == component_id
+                    ]
             if start_timestamp is not None:
                 filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) >= start_timestamp]
             if end_timestamp is not None:
@@ -458,6 +466,25 @@ class RedisDb(BaseDb):
                 return [TeamSession.from_dict(record) for record in sessions]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(record) for record in sessions]  # type: ignore
+            elif session_type is None:
+                deserialized: List[Session] = []
+                for record in sessions:
+                    st = record.get("session_type") or (
+                        "agent"
+                        if record.get("agent_id")
+                        else "team"
+                        if record.get("team_id")
+                        else "workflow"
+                        if record.get("workflow_id")
+                        else None
+                    )
+                    if st == SessionType.AGENT.value:
+                        deserialized.append(AgentSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.TEAM.value:
+                        deserialized.append(TeamSession.from_dict(record))  # type: ignore
+                    elif st == SessionType.WORKFLOW.value:
+                        deserialized.append(WorkflowSession.from_dict(record))  # type: ignore
+                return deserialized
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 

@@ -464,6 +464,12 @@ class MongoDb(BaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:
@@ -501,15 +507,31 @@ class MongoDb(BaseDb):
 
             sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for record in sessions_raw:
-                if session_type == SessionType.AGENT.value:
+                st = (
+                    session_type
+                    if session_type is not None
+                    else (
+                        record.get("session_type")
+                        or (
+                            "agent"
+                            if record.get("agent_id")
+                            else "team"
+                            if record.get("team_id")
+                            else "workflow"
+                            if record.get("workflow_id")
+                            else None
+                        )
+                    )
+                )
+                if st in (SessionType.AGENT, SessionType.AGENT.value):
                     agent_session = AgentSession.from_dict(record)
                     if agent_session is not None:
                         sessions.append(agent_session)
-                elif session_type == SessionType.TEAM.value:
+                elif st in (SessionType.TEAM, SessionType.TEAM.value):
                     team_session = TeamSession.from_dict(record)
                     if team_session is not None:
                         sessions.append(team_session)
-                elif session_type == SessionType.WORKFLOW.value:
+                elif st in (SessionType.WORKFLOW, SessionType.WORKFLOW.value):
                     workflow_session = WorkflowSession.from_dict(record)
                     if workflow_session is not None:
                         sessions.append(workflow_session)

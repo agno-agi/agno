@@ -310,16 +310,15 @@ class SurrealDb(BaseDb):
         if raw is None:
             return None
 
-        # Verify session type matches
-        if session_type == SessionType.AGENT and raw.get("agent") is None:
-            return None
-        elif session_type == SessionType.TEAM and raw.get("team") is None:
-            return None
-        elif session_type == SessionType.WORKFLOW and raw.get("workflow") is None:
-            return None
+        desurrealized = desurrealize_session(raw)
 
         if not deserialize:
-            return raw
+            return desurrealized
+
+        # Verify session type matches before deserializing
+        detected_type = desurrealized.get("session_type")
+        if detected_type and session_type != detected_type:
+            return None
 
         return deserialize_session(session_type, raw)
 
@@ -370,6 +369,20 @@ class SurrealDb(BaseDb):
         # -- Filters
         where = WhereClause()
 
+        # session_type — filter by which RecordID link is present
+        if session_type == SessionType.AGENT:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("agent IS NOT NONE")
+        elif session_type == SessionType.TEAM:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("team IS NOT NONE")
+        elif session_type == SessionType.WORKFLOW:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("workflow IS NOT NONE")
+
         # user_id
         if user_id is not None:
             where = where.and_("user_id", user_id)
@@ -382,6 +395,21 @@ class SurrealDb(BaseDb):
                 where = where.and_("team", RecordID(teams_table, component_id))
             elif session_type == SessionType.WORKFLOW:
                 where = where.and_("workflow", RecordID(workflows_table, component_id))
+            elif session_type is None:
+                # Filter by component_id across all session type fields
+                p_a = f"p{where._param_count}"
+                where._params[p_a] = RecordID(agents_table, component_id)
+                where._param_count += 1
+                p_t = f"p{where._param_count}"
+                where._params[p_t] = RecordID(teams_table, component_id)
+                where._param_count += 1
+                p_w = f"p{where._param_count}"
+                where._params[p_w] = RecordID(workflows_table, component_id)
+                where._param_count += 1
+                or_cond = f"(agent = ${p_a} OR team = ${p_t} OR workflow = ${p_w})"
+                if where._conditions:
+                    where._conditions.append("AND")
+                where._conditions.append(or_cond)
 
         # session_name
         if session_name is not None:
@@ -409,15 +437,36 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         sessions_raw = self._query(query, where_vars, dict)
-        converted_sessions_raw = [desurrealize_session(session, session_type) for session in sessions_raw]
+        converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
-        if session_type is None:
-            raise ValueError("session_type is required when deserialize=True")
+        if session_type is not None:
+            return deserialize_sessions(session_type, list(sessions_raw))
 
-        return deserialize_sessions(session_type, list(sessions_raw))
+        result_sessions: List[Session] = []
+        for raw in converted_sessions_raw:
+            st = raw.get("session_type") or (
+                SessionType.AGENT
+                if raw.get("agent_id")
+                else SessionType.TEAM
+                if raw.get("team_id")
+                else SessionType.WORKFLOW
+                if raw.get("workflow_id")
+                else None
+            )
+            if st in (SessionType.AGENT, SessionType.AGENT.value):
+                s = deserialize_session(SessionType.AGENT, raw)
+            elif st in (SessionType.TEAM, SessionType.TEAM.value):
+                s = deserialize_session(SessionType.TEAM, raw)
+            elif st in (SessionType.WORKFLOW, SessionType.WORKFLOW.value):
+                s = deserialize_session(SessionType.WORKFLOW, raw)
+            else:
+                continue
+            if s is not None:
+                result_sessions.append(s)
+        return result_sessions
 
     def rename_session(
         self,
@@ -741,11 +790,12 @@ class SurrealDb(BaseDb):
         table = self._get_table("memories")
         records = [RecordID(table, memory_id) for memory_id in memory_ids]
         if user_id is None:
-            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
         else:
             user_rec_id = RecordID(self._get_table("users"), user_id)
             _ = self.client.query(
-                f"DELETE FROM {table} WHERE id IN $records AND user = $user", {"records": records, "user": user_rec_id}
+                f"DELETE FROM {table} WHERE id IN $records AND user = $user",
+                {"records": records, "user": user_rec_id},  # type: ignore[dict-item]
             )
 
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
@@ -1310,7 +1360,7 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
-        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
