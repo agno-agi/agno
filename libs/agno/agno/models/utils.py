@@ -29,6 +29,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return AzureAIFoundry(id=model_id)
 
+    elif model_provider == "azure-foundry-claude":
+        from agno.models.azure import AzureFoundryClaude
+
+        return AzureFoundryClaude(id=model_id)
+
     elif model_provider == "azure-openai":
         from agno.models.azure import AzureOpenAI
 
