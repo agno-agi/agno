@@ -384,6 +384,11 @@ def _determine_tools_for_model(
             except Exception as e:
                 log_warning(f"Could not add tool {tool}: {e}")
 
+    # Propagate RunContext to Toolkit instances so decorators can access per-run context
+    for tool in _tools:
+        if isinstance(tool, Toolkit):
+            tool._run_context = run_context
+
     if _functions:
         from inspect import signature
 

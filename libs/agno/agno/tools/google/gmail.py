@@ -362,7 +362,7 @@ class GmailTools(Toolkit):
     def _build_service(self):
         return build("gmail", "v1", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id: Optional[str] = None) -> None:
         if self.creds and self.creds.valid:
             return
 
@@ -385,7 +385,7 @@ class GmailTools(Toolkit):
             return
 
         # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, "gmail", self.scopes):
+        if google_auth_from_store(self, "gmail", self.scopes, user_id=user_id):
             return
 
         # File-based OAuth flow
@@ -427,7 +427,7 @@ class GmailTools(Toolkit):
 
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            google_auth_save_to_store(self, "gmail")
+            google_auth_save_to_store(self, "gmail", user_id=user_id)
             log_debug("Gmail credentials saved")
 
     def _format_emails(self, emails: List[dict]) -> str:

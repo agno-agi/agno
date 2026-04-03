@@ -80,6 +80,9 @@ class Toolkit:
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
 
+        # Per-run context, set by determine_tools_for_model before tool execution
+        self._run_context: Optional[Any] = None
+
         # Automatically register all methods if auto_register is True
         if auto_register:
             if self.tools:

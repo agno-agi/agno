@@ -180,7 +180,7 @@ class GoogleSheetsTools(Toolkit):
     def _build_service(self):
         return build("sheets", "v4", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id: Optional[str] = None) -> None:
         """
         Authenticate with Google Sheets API
         """
@@ -199,7 +199,7 @@ class GoogleSheetsTools(Toolkit):
             return
 
         # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, "sheets", self.scopes):
+        if google_auth_from_store(self, "sheets", self.scopes, user_id=user_id):
             return
 
         token_file = Path(self.token_path or "token.json")
@@ -237,7 +237,7 @@ class GoogleSheetsTools(Toolkit):
 
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())  # type: ignore
-            google_auth_save_to_store(self, "sheets")
+            google_auth_save_to_store(self, "sheets", user_id=user_id)
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

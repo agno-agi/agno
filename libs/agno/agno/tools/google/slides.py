@@ -194,7 +194,7 @@ class GoogleSlidesTools(Toolkit):
         # Returned value stored as self.service by decorator (sentinel for "services built")
         return self.slides_service
 
-    def _auth(self) -> None:
+    def _auth(self, user_id: Optional[str] = None) -> None:
         """Authenticate with Google Slides API"""
         if self.creds and self.creds.valid:
             return
@@ -211,7 +211,7 @@ class GoogleSlidesTools(Toolkit):
             return
 
         # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, "slides", self.scopes):
+        if google_auth_from_store(self, "slides", self.scopes, user_id=user_id):
             return
 
         token_file = Path(self.token_path or "token.json")
@@ -257,7 +257,7 @@ class GoogleSlidesTools(Toolkit):
         # Save the credentials for future use
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            google_auth_save_to_store(self, "slides")
+            google_auth_save_to_store(self, "slides", user_id=user_id)
             log_debug("Google Slides credentials saved")
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:

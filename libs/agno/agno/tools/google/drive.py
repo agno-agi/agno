@@ -240,7 +240,7 @@ class GoogleDriveTools(Toolkit):
         if self.google_auth:
             self.google_auth.register_service("drive", self.scopes)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id: Optional[str] = None) -> None:
         """Authenticate with Google Drive API using service account or OAuth."""
         if self.creds and self.creds.valid:
             return
@@ -260,7 +260,7 @@ class GoogleDriveTools(Toolkit):
             return
 
         # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, "drive", self.scopes):
+        if google_auth_from_store(self, "drive", self.scopes, user_id=user_id):
             return
 
         # OAuth flow
@@ -302,7 +302,7 @@ class GoogleDriveTools(Toolkit):
 
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
-            google_auth_save_to_store(self, "drive")
+            google_auth_save_to_store(self, "drive", user_id=user_id)
 
     def _build_service(self):
         creds_to_use = self.creds
