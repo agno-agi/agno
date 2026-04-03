@@ -1346,7 +1346,7 @@ def get_run_messages(
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {e}")
-         # --- NEW FEATURE: add file metadata to session_state ---
+    # --- NEW FEATURE: add file metadata to session_state ---
     if (
         run_context is not None
         and not agent.send_media_to_model
