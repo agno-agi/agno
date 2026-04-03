@@ -99,6 +99,9 @@ class OpenAIChat(Model):
         "model": "assistant",
     }
 
+    def _supports_internal_tool_fields(self) -> bool:
+        return self.provider not in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]
+
     def get_provider(self) -> str:
         return f"{super().get_provider()} Chat"
 
@@ -195,6 +198,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        remove_extension_tool_fields: bool = False,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -253,7 +257,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
+            if not self._supports_internal_tool_fields():
                 for tool in tools:
                     if tool.get("type") == "function":
                         for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):

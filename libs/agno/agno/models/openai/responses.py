@@ -97,6 +97,9 @@ class OpenAIResponses(Model):
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
 
+    def _supports_internal_tool_fields(self) -> bool:
+        return self.provider not in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]
+
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
         base_params["reasoning"] = self.reasoning or {}
@@ -264,7 +267,15 @@ class OpenAIResponses(Model):
                 log_debug(f"Added web_search_preview tool for deep research model: {self.id}")
 
         if tools:
-            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
+            formatted_tools = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
+
+            if not self._supports_internal_tool_fields():
+                for tool in formatted_tools:
+                    if tool.get("type") == "function":
+                        for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
+                            tool.pop(_internal_key, None)
+
+            request_params["tools"] = formatted_tools
 
         if tool_choice is not None:
             request_params["tool_choice"] = tool_choice
@@ -1084,7 +1095,7 @@ class OpenAIResponses(Model):
                         "type": "function",
                         "function": {
                             "name": output.name,
-                            "arguments": output.arguments,
+                            "arguments": getattr(output, "arguments", ""),
                         },
                     }
                 )
@@ -1186,7 +1197,7 @@ class OpenAIResponses(Model):
                     "type": "function",
                     "function": {
                         "name": item.name,
-                        "arguments": item.arguments,
+                        "arguments": getattr(item, "arguments", ""),
                     },
                 }
 
