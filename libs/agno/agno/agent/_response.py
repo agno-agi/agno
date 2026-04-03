@@ -1718,7 +1718,10 @@ def _get_followups_response_format(model: Model) -> Optional[Union[Dict, Type[Ba
 
 
 def _build_followup_messages(
-    response_content: Any, num_suggestions: int, user_message: Optional[str] = None
+    response_content: Any,
+    num_suggestions: int,
+    user_message: Optional[str] = None,
+    followup_instructions: Optional[str] = None,
 ) -> List[Message]:
     """Build the messages for the followups model call."""
     import json
@@ -1728,6 +1731,8 @@ def _build_followup_messages(
         "Each suggestion should be a short action-oriented prompt (5-10 words). "
         "Cover different angles: dig deeper, practical next step, or alternative perspective."
     )
+    if followup_instructions:
+        system_prompt = system_prompt + "\n" + followup_instructions
 
     # Stringify content if needed
     if isinstance(response_content, str):
@@ -1797,13 +1802,19 @@ def generate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
+    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
     if model is None:
         return
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        agent.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1824,13 +1835,19 @@ async def agenerate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
+    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
     if model is None:
         return
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        agent.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1852,7 +1869,8 @@ def generate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
+    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1866,7 +1884,12 @@ def generate_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        agent.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1896,7 +1919,8 @@ async def agenerate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
+    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1910,7 +1934,12 @@ async def agenerate_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        agent.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
