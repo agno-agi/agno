@@ -1753,10 +1753,27 @@ async def _arun(
 
                 return run_response
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 run_response = cast(RunOutput, run_response)
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
+                # Queue cleanup as fire-and-forget so session data is persisted.
+                if agent_session is not None:
+                    _cleanup = asyncio.create_task(
+                        acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    )
+                    _background_tasks.add(_cleanup)
+                    _cleanup.add_done_callback(_background_tasks.discard)
+                # Re-raise CancelledError to propagate system cancellation;
+                # KeyboardInterrupt returns the response to the caller.
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 return run_response
             except Exception as e:
                 # Check if this is the last attempt
@@ -2375,8 +2392,24 @@ async def _arun_stream(
                 yield run_error
                 break
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 run_response = cast(RunOutput, run_response)
+                run_response.status = RunStatus.cancelled
+                run_response.content = "Operation cancelled by user"
+                if agent_session is not None:
+                    _cleanup = asyncio.create_task(
+                        acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    )
+                    _background_tasks.add(_cleanup)
+                    _cleanup.add_done_callback(_background_tasks.discard)
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 yield handle_event(  # type: ignore
                     create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
                     run_response,
@@ -3861,10 +3894,24 @@ async def _acontinue_run(
 
                 return run_response
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 run_response = cast(RunOutput, run_response)
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
+                if agent_session is not None:
+                    _cleanup = asyncio.create_task(
+                        acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    )
+                    _background_tasks.add(_cleanup)
+                    _cleanup.add_done_callback(_background_tasks.discard)
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 return run_response
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
@@ -4339,10 +4386,26 @@ async def _acontinue_run_stream(
                 # Yield the error event
                 yield run_error
                 break
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = cast(RunOutput, run_response)
+                run_response.status = RunStatus.cancelled
+                run_response.content = "Operation cancelled by user"
+                if agent_session is not None:
+                    _cleanup = asyncio.create_task(
+                        acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    )
+                    _background_tasks.add(_cleanup)
+                    _cleanup.add_done_callback(_background_tasks.discard)
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 yield handle_event(  # type: ignore
                     create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
                     run_response,
