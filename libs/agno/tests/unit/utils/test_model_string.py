@@ -1,13 +1,17 @@
-import pytest
+﻿import pytest
 
 from agno.agent import Agent
 from agno.culture.manager import CultureManager
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic import Claude
+from agno.models.azure import AzureOpenAI
 from agno.models.google import Gemini
 from agno.models.groq import Groq
+from agno.models.lmstudio import LMStudio
 from agno.models.openai import OpenAIChat
+from agno.models.openai.responses import OpenAIResponses
+from agno.models.siliconflow import Siliconflow
 from agno.models.utils import get_model
 from agno.team import Team
 
@@ -76,6 +80,40 @@ def test_get_model_unknown_provider():
     with pytest.raises(ValueError, match="not supported"):
         get_model("unknown-provider:model-123")
 
+
+def test_get_model_normalizes_openai_chat_provider_alias():
+    """Test get_model() accepts the OpenAIChat class/provider name."""
+    model = get_model("OpenAIChat:gpt-4o")
+    assert isinstance(model, OpenAIChat)
+    assert model.id == "gpt-4o"
+
+
+def test_get_model_normalizes_openai_responses_provider_alias():
+    """Test get_model() accepts the OpenAIResponses class/provider name."""
+    model = get_model("OpenAIResponses:gpt-4.1")
+    assert isinstance(model, OpenAIResponses)
+    assert model.id == "gpt-4.1"
+
+
+def test_get_model_normalizes_azure_provider_alias():
+    """Test get_model() accepts the Azure provider label used by model classes."""
+    model = get_model("Azure:gpt-4o")
+    assert isinstance(model, AzureOpenAI)
+    assert model.id == "gpt-4o"
+
+
+def test_get_model_normalizes_lmstudio_provider_casing():
+    """Test get_model() accepts the LMStudio provider label."""
+    model = get_model("LMStudio:qwen2.5")
+    assert isinstance(model, LMStudio)
+    assert model.id == "qwen2.5"
+
+
+def test_get_model_normalizes_siliconflow_provider_casing():
+    """Test get_model() accepts Siliconflow casing from model.provider."""
+    model = get_model("Siliconflow:Qwen/Qwen3-32B")
+    assert isinstance(model, Siliconflow)
+    assert model.id == "Qwen/Qwen3-32B"
 
 def test_agent_with_model_string():
     """Test creating Agent with model string."""
@@ -164,3 +202,4 @@ def test_agentic_chunking_with_model_instance():
     """Test AgenticChunking accepts Model instance."""
     chunking = AgenticChunking(model=OpenAIChat(id="gpt-4o"))
     assert isinstance(chunking.model, OpenAIChat)
+

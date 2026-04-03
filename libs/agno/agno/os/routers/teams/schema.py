@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+﻿from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
 from agno.team.team import Team
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
+from agno.models.utils import normalize_model_provider
 
 
 class TeamResponse(BaseModel):
@@ -172,7 +173,7 @@ class TeamResponse(BaseModel):
                 memory_info["model"] = ModelResponse(
                     name=team.memory_manager.model.name,
                     model=team.memory_manager.model.id,
-                    provider=team.memory_manager.model.provider,
+                    provider=normalize_model_provider(team.memory_manager.model.provider, team.memory_manager.model.name),
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
@@ -186,7 +187,7 @@ class TeamResponse(BaseModel):
             reasoning_info["reasoning_model"] = ModelResponse(
                 name=team.reasoning_model.name,
                 model=team.reasoning_model.id,
-                provider=team.reasoning_model.provider,
+                provider=normalize_model_provider(team.reasoning_model.provider, team.reasoning_model.name),
             ).model_dump()
 
         default_tools_info = {
@@ -242,7 +243,7 @@ class TeamResponse(BaseModel):
             response_settings_info["parser_model"] = ModelResponse(
                 name=team.parser_model.name,
                 model=team.parser_model.id,
-                provider=team.parser_model.provider,
+                provider=normalize_model_provider(team.parser_model.provider, team.parser_model.name),
             ).model_dump()
 
         streaming_info = {
@@ -258,7 +259,7 @@ class TeamResponse(BaseModel):
         if team.model and team.model.id is not None:
             _team_model_data["model"] = team.model.id
         if team.model and team.model.provider is not None:
-            _team_model_data["provider"] = team.model.provider
+            _team_model_data["provider"] = normalize_model_provider(team.model.provider, team.model.name)
 
         members: List[Union[AgentResponse, TeamResponse]] = []
         for member in team.members if isinstance(team.members, list) else []:
@@ -294,3 +295,4 @@ class TeamResponse(BaseModel):
             current_version=getattr(team, "_version", None),
             stage=getattr(team, "_stage", None),
         )
+
