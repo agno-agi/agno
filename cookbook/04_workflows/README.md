@@ -11,6 +11,7 @@ Runnable workflow examples under: cookbook/04_workflows
 - 05_conditional_branching/: Additional examples for 05 conditional branching.
 - 06_advanced_concepts/: Additional examples for 06 advanced concepts.
 - 07_cel_expressions/: Additional examples for 07 cel expressions.
+- 08_human_in_the_loop/: Sequential HITL decision trees and confirmation patterns.
 - assets/: Reference images used by workflow documentation.
 
 ## Prerequisites

@@ -54,10 +54,8 @@ from agno.run.cancel import (
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
-    RouterPausedEvent,
     StepErrorEvent,
     StepOutputEvent,
-    StepPausedEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
     WorkflowRunEvent,
@@ -4747,50 +4745,20 @@ class Workflow:
 
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
-                # Check if step requires HITL (confirmation or user input) - for subsequent steps
-                if (
-                    isinstance(step, Step)
-                    and (step.requires_confirmation or step.requires_user_input)
-                    and i != start_step_index
-                ):
-                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
-                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+                # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
+                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i != hitl_resolved_index:
+                    step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
+                    pause_result = step_pause_status(step, i, step_input, step_type)
+                    # For Router, also check route selection if confirmation didn't trigger
+                    if isinstance(step, Router) and not pause_result.should_pause:
+                        pause_result = step_pause_status(step, i, step_input, step_type, for_route_selection=True)
 
-                    step_requirement = step.create_step_requirement(i, step_input)
-
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [step_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
-
-                    return workflow_run_response
-
-                # Check if Router requires HITL (user-driven routing) - for subsequent steps
-                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
-                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
-
-                    router_requirement = step.create_step_requirement(
-                        step_index=i,
-                        step_input=step_input,
-                        for_route_selection=True,
-                    )
-
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [router_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
-
-                    return workflow_run_response
+                    if pause_result.should_pause:
+                        apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, pause_result)
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                 try:
                     step_output = step.execute(  # type: ignore[union-attr]
@@ -5099,77 +5067,31 @@ class Workflow:
 
                     continue  # Move to next step
 
-                # Check if step requires HITL (confirmation or user input) - for subsequent steps
-                if (
-                    isinstance(step, Step)
-                    and (step.requires_confirmation or step.requires_user_input)
-                    and i != start_step_index
-                ):
-                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
-                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+                # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
+                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i != hitl_resolved_index:
+                    step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
+                    pause_result = step_pause_status(step, i, step_input, step_type)
+                    # For Router, also check route selection if confirmation didn't trigger
+                    if isinstance(step, Router) and not pause_result.should_pause:
+                        pause_result = step_pause_status(step, i, step_input, step_type, for_route_selection=True)
 
-                    step_requirement = step.create_step_requirement(i, step_input)
+                    if pause_result.should_pause:
+                        apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, pause_result)
 
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [step_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
+                        # Yield appropriate event based on requirement type
+                        req = pause_result.step_requirement
+                        if req and req.requires_route_selection:
+                            paused_event = create_router_paused_event(workflow_run_response, step_name, i, pause_result)
+                        else:
+                            paused_event = create_step_paused_event(
+                                workflow_run_response, step, step_name, i, pause_result
+                            )
+                        yield self._handle_event(paused_event, workflow_run_response)
 
-                    step_paused_event = StepPausedEvent(
-                        run_id=workflow_run_response.run_id or "",
-                        workflow_name=workflow_run_response.workflow_name,
-                        workflow_id=workflow_run_response.workflow_id,
-                        session_id=workflow_run_response.session_id,
-                        step_name=step_name,
-                        step_index=i,
-                        step_id=step.step_id,
-                        requires_confirmation=step.requires_confirmation,
-                        confirmation_message=step.confirmation_message,
-                        requires_user_input=step.requires_user_input,
-                        user_input_message=step.user_input_message,
-                    )
-                    yield self._handle_event(step_paused_event, workflow_run_response)
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
-
-                    return
-
-                # Check if Router requires HITL (user-driven routing) - for subsequent steps
-                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
-                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
-
-                    router_requirement = step.create_step_requirement(
-                        step_index=i,
-                        step_input=step_input,
-                        for_route_selection=True,
-                    )
-
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [router_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
-
-                    router_paused_event = RouterPausedEvent(
-                        run_id=workflow_run_response.run_id or "",
-                        workflow_name=workflow_run_response.workflow_name,
-                        workflow_id=workflow_run_response.workflow_id,
-                        session_id=workflow_run_response.session_id,
-                        step_name=step_name,
-                        available_choices=router_requirement.available_choices or [],
-                        allow_multiple_selections=step.allow_multiple_selections,
-                        user_input_message=step.user_input_message,
-                    )
-                    yield self._handle_event(router_paused_event, workflow_run_response)
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
-
-                    return
+                        save_paused_session(self, session, workflow_run_response)
+                        return
 
                 # Execute step with streaming
                 step_error_occurred = False
@@ -5770,50 +5692,20 @@ class Workflow:
 
                     continue  # Move to next step
 
-                # Check if step requires HITL (confirmation or user input) - for subsequent steps
-                if (
-                    isinstance(step, Step)
-                    and (step.requires_confirmation or step.requires_user_input)
-                    and i != start_step_index
-                ):
-                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
-                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+                # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
+                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i != hitl_resolved_index:
+                    step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
+                    pause_result = step_pause_status(step, i, step_input, step_type)
+                    # For Router, also check route selection if confirmation didn't trigger
+                    if isinstance(step, Router) and not pause_result.should_pause:
+                        pause_result = step_pause_status(step, i, step_input, step_type, for_route_selection=True)
 
-                    step_requirement = step.create_step_requirement(i, step_input)
-
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [step_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    await self.asave_session(session=session)
-
-                    return workflow_run_response
-
-                # Check if Router requires HITL (user-driven routing) - for subsequent steps
-                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
-                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
-
-                    router_requirement = step.create_step_requirement(
-                        step_index=i,
-                        step_input=step_input,
-                        for_route_selection=True,
-                    )
-
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [router_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    await self.asave_session(session=session)
-
-                    return workflow_run_response
+                    if pause_result.should_pause:
+                        apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, pause_result)
+                        await asave_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                 try:
                     step_output = await step.aexecute(  # type: ignore[union-attr]
@@ -6119,77 +6011,31 @@ class Workflow:
 
                     continue  # Move to next step
 
-                # Check if step requires HITL (confirmation or user input) - for subsequent steps
-                if (
-                    isinstance(step, Step)
-                    and (step.requires_confirmation or step.requires_user_input)
-                    and i != start_step_index
-                ):
-                    hitl_type = "confirmation" if step.requires_confirmation else "user input"
-                    log_debug(f"Step '{step_name}' requires {hitl_type} - pausing workflow")
+                # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
+                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i != hitl_resolved_index:
+                    step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
+                    pause_result = step_pause_status(step, i, step_input, step_type)
+                    # For Router, also check route selection if confirmation didn't trigger
+                    if isinstance(step, Router) and not pause_result.should_pause:
+                        pause_result = step_pause_status(step, i, step_input, step_type, for_route_selection=True)
 
-                    step_requirement = step.create_step_requirement(i, step_input)
+                    if pause_result.should_pause:
+                        apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, pause_result)
 
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [step_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
+                        # Yield appropriate event based on requirement type
+                        req = pause_result.step_requirement
+                        if req and req.requires_route_selection:
+                            paused_event = create_router_paused_event(workflow_run_response, step_name, i, pause_result)
+                        else:
+                            paused_event = create_step_paused_event(
+                                workflow_run_response, step, step_name, i, pause_result
+                            )
+                        yield self._handle_event(paused_event, workflow_run_response)
 
-                    step_paused_event = StepPausedEvent(
-                        run_id=workflow_run_response.run_id or "",
-                        workflow_name=workflow_run_response.workflow_name,
-                        workflow_id=workflow_run_response.workflow_id,
-                        session_id=workflow_run_response.session_id,
-                        step_name=step_name,
-                        step_index=i,
-                        step_id=step.step_id,
-                        requires_confirmation=step.requires_confirmation,
-                        confirmation_message=step.confirmation_message,
-                        requires_user_input=step.requires_user_input,
-                        user_input_message=step.user_input_message,
-                    )
-                    yield self._handle_event(step_paused_event, workflow_run_response)
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    await self.asave_session(session=session)
-
-                    return
-
-                # Check if Router requires HITL (user-driven routing) - for subsequent steps
-                if isinstance(step, Router) and step.requires_user_input and i != start_step_index:
-                    log_debug(f"Router '{step_name}' requires user selection - pausing workflow")
-
-                    router_requirement = step.create_step_requirement(
-                        step_index=i,
-                        step_input=step_input,
-                        for_route_selection=True,
-                    )
-
-                    workflow_run_response.status = RunStatus.paused
-                    workflow_run_response.step_requirements = [router_requirement]
-                    workflow_run_response.paused_step_index = i
-                    workflow_run_response.paused_step_name = step_name
-                    workflow_run_response.step_results = collected_step_outputs
-
-                    router_paused_event = RouterPausedEvent(
-                        run_id=workflow_run_response.run_id or "",
-                        workflow_name=workflow_run_response.workflow_name,
-                        workflow_id=workflow_run_response.workflow_id,
-                        session_id=workflow_run_response.session_id,
-                        step_name=step_name,
-                        available_choices=router_requirement.available_choices or [],
-                        allow_multiple_selections=step.allow_multiple_selections,
-                        user_input_message=step.user_input_message,
-                    )
-                    yield self._handle_event(router_paused_event, workflow_run_response)
-
-                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                    session.upsert_run(run=workflow_run_response)
-                    await self.asave_session(session=session)
-
-                    return
+                        await asave_paused_session(self, session, workflow_run_response)
+                        return
 
                 # Execute step with streaming
                 step_error_occurred = False
