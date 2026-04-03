@@ -269,6 +269,16 @@ APPROVAL_TABLE_SCHEMA = {
     "run_status": {"type": String, "nullable": True, "index": True},
 }
 
+OAUTH_TOKEN_TABLE_SCHEMA = {
+    "provider": {"type": String, "primary_key": True, "nullable": False},
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "index": True},
+    "service": {"type": String, "primary_key": True, "nullable": False},
+    "token_data": {"type": JSON, "nullable": False},
+    "granted_scopes": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules") -> dict[str, Any]:
     """Get the schedule runs table schema with a foreign key to the schedules table."""
@@ -333,6 +343,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
+        "oauth_tokens": OAUTH_TOKEN_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

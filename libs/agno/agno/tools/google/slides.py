@@ -60,7 +60,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_debug
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
@@ -89,6 +89,7 @@ class GoogleSlidesTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
         scopes: Optional[List[str]] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
@@ -120,6 +121,7 @@ class GoogleSlidesTools(Toolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
+        self.google_auth = google_auth
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
@@ -183,13 +185,16 @@ class GoogleSlidesTools(Toolkit):
             **kwargs,
         )
 
+        if self.google_auth:
+            self.google_auth.register_service("slides", self.scopes)
+
     def _build_service(self):
         self.slides_service = build("slides", "v1", credentials=self.creds)
         self.drive_service = build("drive", "v3", credentials=self.creds)
         # Returned value stored as self.service by decorator (sentinel for "services built")
         return self.slides_service
 
-    def _auth(self) -> None:
+    def _auth(self, user_id: Optional[str] = None) -> None:
         """Authenticate with Google Slides API"""
         if self.creds and self.creds.valid:
             return
@@ -203,6 +208,10 @@ class GoogleSlidesTools(Toolkit):
             # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
             sa_creds.refresh(Request())
             self.creds = sa_creds
+            return
+
+        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
+        if google_auth_from_store(self, "slides", self.scopes, user_id=user_id):
             return
 
         token_file = Path(self.token_path or "token.json")
@@ -248,6 +257,7 @@ class GoogleSlidesTools(Toolkit):
         # Save the credentials for future use
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+            google_auth_save_to_store(self, "slides", user_id=user_id)
             log_debug("Google Slides credentials saved")
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:

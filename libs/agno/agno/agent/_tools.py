@@ -475,6 +475,11 @@ def determine_tools_for_model(
             agent, tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode
         )
 
+    # Propagate RunContext to Toolkit instances so decorators can access per-run context
+    for tool in processed_tools:
+        if isinstance(tool, Toolkit):
+            tool._run_context = run_context
+
     # Update the session state for the functions
     if _functions:
         from inspect import signature
