@@ -40,6 +40,7 @@ from agno.utils.events import (
     create_tool_call_started_event,
     handle_event,
 )
+from agno.db.base import BaseDb
 from agno.utils.log import log_debug, log_warning
 
 
@@ -103,21 +104,35 @@ def _raise_if_async_tools_in_list(tools: list) -> None:
 
 
 def _wire_google_auth(agent: Agent, user_id: Optional[str] = None) -> None:
-    """Auto-wire GoogleAuth._db and user_id from agent context."""
+    """Auto-wire GoogleAuth._db and user_id from agent context.
+
+    Only assigns sync BaseDb instances — async DBs are incompatible
+    with GoogleAuth's sync load_token/store_token methods.
+    """
     if not agent.tools or not isinstance(agent.tools, list):
         return
     try:
         from agno.tools.google.auth import GoogleAuth
     except ImportError:
         return
+
+    user_changed = False
     for tool in agent.tools:
         if not isinstance(tool, GoogleAuth):
             continue
-        if tool._db is None and agent.db is not None:
+        # Only wire sync DB — async would return coroutines from sync callers
+        if tool._db is None and agent.db is not None and isinstance(agent.db, BaseDb):
             tool._db = agent.db
-        # Per-request user_id takes precedence for multi-user isolation
-        tool.user_id = user_id or tool.user_id or agent.user_id
+        new_user_id = user_id or tool.user_id or agent.user_id
+        user_changed = bool(tool.user_id and new_user_id != tool.user_id)
+        tool.user_id = new_user_id
         break
+
+    if user_changed:
+        for tool in agent.tools:
+            if getattr(tool, "google_auth", None) is not None:
+                tool.creds = None
+                tool.service = None
 
 
 def get_tools(

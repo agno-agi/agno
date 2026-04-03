@@ -206,33 +206,38 @@ class GoogleSheetsTools(Toolkit):
         creds_file = Path(self.credentials_path or "credentials.json")
 
         if token_file.exists():
-            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            try:
+                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            except ValueError:
+                self.creds = None
+
+        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
+            try:
+                self.creds.refresh(Request())
+            except Exception:
+                self.creds = None
 
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
-                self.creds.refresh(Request())
-            else:
-                client_config = {
-                    "installed": {
-                        "client_id": getenv("GOOGLE_CLIENT_ID"),
-                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                        "project_id": getenv("GOOGLE_PROJECT_ID"),
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                    }
+            client_config = {
+                "installed": {
+                    "client_id": getenv("GOOGLE_CLIENT_ID"),
+                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                    "project_id": getenv("GOOGLE_PROJECT_ID"),
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                 }
-                # File based authentication
-                if creds_file.exists():
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-                else:
-                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                # Opens up a browser window for OAuth authentication
-                self.creds = flow.run_local_server(port=self.oauth_port)
-            if self.creds:
-                token_file.write_text(self.creds.to_json())  # type: ignore
-                google_auth_save_to_store(self, "sheets")
+            }
+            if creds_file.exists():
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+            else:
+                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+            self.creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
+
+        if self.creds and self.creds.valid:
+            token_file.write_text(self.creds.to_json())  # type: ignore
+            google_auth_save_to_store(self, "sheets")
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

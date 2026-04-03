@@ -1,7 +1,7 @@
 import json
 import os
 from functools import wraps
-from typing import Any, Dict, List, Literal, Optional, Set, Union
+from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
