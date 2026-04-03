@@ -29,7 +29,7 @@ def on_fallback(
 # Create Agent with callback
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-invalid"),
+    model=OpenAIChat(id="gpt-4o", base_url="http://localhost:1/v1", retries=0),
     fallback_config=FallbackConfig(
         on_error=[Claude(id="claude-sonnet-4-20250514")],
         callback=on_fallback,

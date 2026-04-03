@@ -396,8 +396,8 @@ def process_learnings(
 
     collector = RunMetrics()
     try:
-        # Convert run messages to list format expected by LearningMachine
-        messages = run_messages.messages if run_messages else []
+        # Snapshot: learning runs concurrently while the model call appends to the live list
+        messages = list(run_messages.messages) if run_messages else []
 
         agent._learning.process(
             messages=messages,
@@ -427,7 +427,8 @@ async def aprocess_learnings(
 
     collector = RunMetrics()
     try:
-        messages = run_messages.messages if run_messages else []
+        # Snapshot: learning runs concurrently while the model call appends to the live list
+        messages = list(run_messages.messages) if run_messages else []
         await agent._learning.aprocess(
             messages=messages,
             user_id=user_id,
