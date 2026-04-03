@@ -247,6 +247,40 @@ class RunRequirement:
         requirement.member_agent_name = data.get("member_agent_name")
         requirement.member_run_id = data.get("member_run_id")
 
+        # Propagate requirement-level resolution fields to tool_execution so that
+        # handle_tool_call_updates (which only looks at tool_execution fields) can
+        # process the resolution correctly.  API clients may omit HITL flags like
+        # requires_user_input while still sending answered=true and filled values.
+        if tool_execution:
+            # Restore external execution flag
+            if requirement.external_execution_result is not None:
+                tool_execution.result = requirement.external_execution_result
+                if tool_execution.external_execution_required is None:
+                    tool_execution.external_execution_required = True
+
+            # Restore requires_user_input flag when the tool was answered.
+            # This takes priority over confirmation since some API clients send
+            # confirmation=True as a generic "resolved" signal even for user-input tools.
+            if tool_execution.answered is True and tool_execution.requires_user_input is None:
+                tool_execution.requires_user_input = True
+
+            # Restore confirmation flag only if this is genuinely a confirmation tool
+            # (i.e. not already flagged as user-input or external-execution).
+            if (
+                requirement.confirmation is not None
+                and not tool_execution.requires_user_input
+                and not tool_execution.external_execution_required
+            ):
+                if requirement.confirmation is True:
+                    tool_execution.confirmed = True
+                    if tool_execution.requires_confirmation is None:
+                        tool_execution.requires_confirmation = True
+                else:
+                    tool_execution.confirmed = False
+                    tool_execution.confirmation_note = requirement.confirmation_note
+                    if tool_execution.requires_confirmation is None:
+                        tool_execution.requires_confirmation = True
+
         # Handle user_input_schema
         schema_raw = data.get("user_input_schema")
         if schema_raw is not None:
