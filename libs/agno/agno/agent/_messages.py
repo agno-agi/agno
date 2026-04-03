@@ -1346,7 +1346,29 @@ def get_run_messages(
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {e}")
+    # --- NEW FEATURE: add file metadata to session_state ---
+    if (
+        run_context is not None
+        and not agent.send_media_to_model
+        and files is not None
+        and getattr(agent, "add_file_ids_to_session_state", False)
+    ):
+        file_list = []
+        for f in files:
+            try:
+                file_list.append({
+                    "file_id": getattr(f, "id", None),
+                    "filename": getattr(f, "name", None),
+                })
+            except Exception:
+                continue
 
+        if file_list:
+            if run_context.session_state is None:
+                run_context.session_state = {}
+
+            existing = run_context.session_state.get("files", [])
+            run_context.session_state["files"] = existing + file_list
     # Add user message to run_messages
     if user_message is not None:
         run_messages.user_message = user_message
