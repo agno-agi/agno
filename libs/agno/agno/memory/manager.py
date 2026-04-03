@@ -843,18 +843,24 @@ class MemoryManager:
                 log_warning("Memory DB not provided. Cannot apply optimized memories.")
                 return optimized_memories
 
-            # Clear all existing memories for the user
-            self.clear_user_memories(user_id=user_id)
-
-            # Add all optimized memories
+            # Ensure memory has an ID (generate if needed for new memories)
             for opt_mem in optimized_memories:
-                # Ensure memory has an ID (generate if needed for new memories)
                 if not opt_mem.memory_id:
                     from uuid import uuid4
 
                     opt_mem.memory_id = str(uuid4())
 
+            # Upsert new optimized memories first to prevent data loss if connection drops
+            for opt_mem in optimized_memories:
                 self.db.upsert_user_memory(memory=opt_mem)
+
+            # Delete old memories that are no longer present
+            old_memory_ids = [mem.memory_id for mem in memories if mem.memory_id]
+            new_memory_ids = {opt_mem.memory_id for opt_mem in optimized_memories if opt_mem.memory_id}
+            ids_to_delete = [mid for mid in old_memory_ids if mid not in new_memory_ids]
+
+            if ids_to_delete:
+                self.db.delete_user_memories(memory_ids=ids_to_delete, user_id=user_id)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
         log_debug(f"Optimization complete. New token count: {optimized_tokens}")
@@ -913,21 +919,30 @@ class MemoryManager:
                 log_warning("Memory DB not provided. Cannot apply optimized memories.")
                 return optimized_memories
 
-            # Clear all existing memories for the user
-            await self.aclear_user_memories(user_id=user_id)
-
-            # Add all optimized memories
+            # Ensure memory has an ID (generate if needed for new memories)
             for opt_mem in optimized_memories:
-                # Ensure memory has an ID (generate if needed for new memories)
                 if not opt_mem.memory_id:
                     from uuid import uuid4
 
                     opt_mem.memory_id = str(uuid4())
 
+            # Upsert new optimized memories first to prevent data loss if connection drops
+            for opt_mem in optimized_memories:
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_user_memory(memory=opt_mem)
                 elif isinstance(self.db, BaseDb):
                     self.db.upsert_user_memory(memory=opt_mem)
+
+            # Delete old memories that are no longer present
+            old_memory_ids = [mem.memory_id for mem in memories if mem.memory_id]
+            new_memory_ids = {opt_mem.memory_id for opt_mem in optimized_memories if opt_mem.memory_id}
+            ids_to_delete = [mid for mid in old_memory_ids if mid not in new_memory_ids]
+
+            if ids_to_delete:
+                if isinstance(self.db, AsyncBaseDb):
+                    await self.db.delete_user_memories(memory_ids=ids_to_delete, user_id=user_id)
+                elif isinstance(self.db, BaseDb):
+                    self.db.delete_user_memories(memory_ids=ids_to_delete, user_id=user_id)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
         log_debug(f"Memory optimization complete. New token count: {optimized_tokens}")
