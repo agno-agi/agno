@@ -202,7 +202,7 @@ def test_search_session_history(shared_db):
         model=OpenAIChat(id="gpt-5-mini"),
         members=[],
         db=shared_db,
-        instructions="You can search through previous sessions using available tools.",
+        instructions="You MUST always search through previous sessions using available tools when asked about past conversations. Never ask clarifying questions - just search and respond with what you find.",
         search_past_sessions=True,  # Enable searching previous sessions
         num_past_sessions_to_search=2,  # Include last 2 sessions
     )
@@ -217,7 +217,10 @@ def test_search_session_history(shared_db):
 
     # Session 3 - should be able to search previous sessions
     session_3 = "session_3"
-    response = team.run("What did I say in previous sessions?", session_id=session_3)
+    response = team.run(
+        "Search all my previous sessions and tell me exactly what I said. List all my favorite things.",
+        session_id=session_3,
+    )
 
     assert "pizza" in response.content.lower()
     assert "coffee" in response.content.lower()

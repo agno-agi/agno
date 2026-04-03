@@ -41,6 +41,7 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -1101,7 +1102,7 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             # Search for existing learnings to avoid duplicates
             existing = self.search(query=conversation_text[:500], limit=5)
@@ -1152,7 +1153,7 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             # Search for existing learnings to avoid duplicates
             existing = await self.asearch(query=conversation_text[:500], limit=5)
@@ -1373,20 +1374,6 @@ These insights are already in the knowledge base. Do not save variations of thes
                 log_warning(f"Could not add function {tool}: {e}")
 
         return functions
-
-    def _messages_to_text(self, messages: List[Any]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     def _summarize_existing(self, learnings: List[Any]) -> str:
         """Summarize existing learnings to help avoid duplicates."""

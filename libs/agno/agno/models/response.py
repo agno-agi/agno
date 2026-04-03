@@ -21,6 +21,7 @@ class ModelResponseEvent(str, Enum):
     compression_completed = "CompressionCompleted"
     model_request_started = "ModelRequestStarted"
     model_request_completed = "ModelRequestCompleted"
+    fallback_model_activated = "FallbackModelActivated"
 
 
 @dataclass
