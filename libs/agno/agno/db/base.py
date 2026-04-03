@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -32,6 +32,15 @@ class BaseDb(ABC):
 
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
+
+    @staticmethod
+    def _get_memory_id(memory_record: Union[UserMemory, Dict[str, Any]]) -> Optional[str]:
+        if isinstance(memory_record, UserMemory):
+            return memory_record.memory_id
+        if isinstance(memory_record, dict):
+            memory_id = memory_record.get("memory_id")
+            return memory_id if isinstance(memory_id, str) else None
+        return None
 
     def __init__(
         self,
@@ -213,6 +222,18 @@ class BaseDb(ABC):
     @abstractmethod
     def clear_memories(self) -> None:
         raise NotImplementedError
+
+    def clear_user_memories(self, user_id: Optional[str] = None) -> None:
+        """Delete all user memories for the provided user, with a safe fallback implementation."""
+        memories = self.get_user_memories(user_id=user_id, deserialize=True)
+        if isinstance(memories, tuple):
+            memory_records = cast(List[Union[UserMemory, Dict[str, Any]]], memories[0])
+        else:
+            memory_records = cast(List[Union[UserMemory, Dict[str, Any]]], memories)
+
+        memory_ids = [memory_id for memory in memory_records if (memory_id := self._get_memory_id(memory)) is not None]
+        if memory_ids:
+            self.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
 
     @abstractmethod
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
@@ -1226,6 +1247,20 @@ class AsyncBaseDb(ABC):
     @abstractmethod
     async def clear_memories(self) -> None:
         raise NotImplementedError
+
+    async def clear_user_memories(self, user_id: Optional[str] = None) -> None:
+        """Delete all user memories for the provided user, with a safe fallback implementation."""
+        memories = await self.get_user_memories(user_id=user_id, deserialize=True)
+        if isinstance(memories, tuple):
+            memory_records = cast(List[Union[UserMemory, Dict[str, Any]]], memories[0])
+        else:
+            memory_records = cast(List[Union[UserMemory, Dict[str, Any]]], memories)
+
+        memory_ids = [
+            memory_id for memory in memory_records if (memory_id := BaseDb._get_memory_id(memory)) is not None
+        ]
+        if memory_ids:
+            await self.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
 
     @abstractmethod
     async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
