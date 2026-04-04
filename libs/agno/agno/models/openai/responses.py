@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
@@ -517,6 +517,13 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+        # Remap foreign tool call IDs (e.g. call_*, toolu_*) to fc_* prefix for Responses API
+        messages = reformat_tool_call_ids(messages, provider="openai_responses")
+
         formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
         messages_to_format = messages
@@ -702,7 +709,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -719,12 +729,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -772,7 +791,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -789,12 +811,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -846,7 +877,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -863,12 +897,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -917,7 +960,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -934,12 +980,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -961,27 +1016,14 @@ class OpenAIResponses(Model):
         **kwargs,
     ) -> None:
         """
-        Handle the results of function calls.
+        Format function call results for Responses API.
 
-        Translates each result's tool_call_id from fc_id format (fc_*) to call_id format (call_*)
-        using fc_id-based lookup from the assistant message's tool_calls. This is necessary because
-        index-based mapping breaks when external_execution tools are present — tool_call_ids has
-        entries for ALL tool calls while function_call_results only has internally-executed ones.
-
-        Args:
-            messages (List[Message]): The list of conversation messages.
-            function_call_results (List[Message]): The results of the function calls.
-            compress_tool_results (bool): Whether to compress tool results.
-            **kwargs: Additional keyword arguments (e.g. tool_call_ids) passed from base class.
+        Stores tool results with the canonical fc_* tool_call_id (matching the assistant's
+        tool_calls[].id). The fc_* to call_* translation needed by the API happens at
+        runtime in _format_messages via _build_fc_id_to_call_id_map.
         """
         if len(function_call_results) > 0:
-            fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
-
-            for _fc_message in function_call_results:
-                # Translate fc_id to call_id if needed
-                if _fc_message.tool_call_id and _fc_message.tool_call_id in fc_id_to_call_id:
-                    _fc_message.tool_call_id = fc_id_to_call_id[_fc_message.tool_call_id]
-                messages.append(_fc_message)
+            messages.extend(function_call_results)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
