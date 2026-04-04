@@ -4578,6 +4578,776 @@ async def acleanup_and_store(
 
 
 # ---------------------------------------------------------------------------
+# Regenerate — re-generate the last run's response
+# ---------------------------------------------------------------------------
+
+
+def _strip_final_assistant_messages(messages: List[Message]) -> List[Message]:
+    """Strip trailing assistant messages that are the final response (not intermediate tool-calling ones).
+
+    Walks backwards from the end removing assistant messages that have no tool_calls,
+    which represent the final response turn. Intermediate assistant messages with tool_calls
+    (part of the tool-calling loop) are preserved.
+    """
+    result = list(messages)
+    while result and result[-1].role == "assistant" and not result[-1].tool_calls:
+        result.pop()
+    return result
+
+
+def regenerate_dispatch(
+    agent: Agent,
+    *,
+    additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
+    yield_run_output: Optional[bool] = None,
+    **kwargs: Any,
+) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
+    """Regenerate the last run's response in the given session.
+
+    By default the original run is **replaced** by the new one. Set
+    ``preserve_original=True`` to keep it with a ``regenerated`` status instead.
+
+    Args:
+        additional_instructions: Optional extra guidance appended as a user message
+            before re-generation so the caller can steer the new response.
+        preserve_original: If True, keep the original run with status ``regenerated``
+            instead of replacing it.  Defaults to False (replace).
+        stream: Whether to stream the response.
+        stream_events: Whether to stream all events.
+        user_id: The user id for the session.
+        session_id: The session id to regenerate in.
+        knowledge_filters: Knowledge filters for the new run.
+        dependencies: Dependencies for the new run.
+        metadata: Metadata for the new run.
+        debug_mode: Whether to enable debug mode.
+        yield_run_output: Whether to yield the run output.
+    """
+    from agno.agent._init import has_async_db, set_default_model
+    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+    from agno.agent._tools import determine_tools_for_model
+
+    if has_async_db(agent):
+        raise RuntimeError(
+            "`regenerate` method is not supported with an async database. Please use `aregenerate` method instead."
+        )
+
+    session_id = session_id or agent.session_id
+    if session_id is None:
+        raise ValueError("session_id is required to regenerate a run.")
+
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
+
+    # Initialize the Agent
+    agent.initialize_agent(debug_mode=debug_mode)
+
+    # Read existing session from storage
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    # Find the last run
+    if not agent_session.runs:
+        raise ValueError("No runs found in session to regenerate.")
+
+    last_run = cast(RunOutput, agent_session.runs[-1])
+    if not last_run.messages:
+        raise ValueError("Last run has no messages to regenerate from.")
+
+    # Build message context: everything except the final assistant response
+    trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+
+    # Handle the original run
+    if preserve_original:
+        # Keep the old run with regenerated status
+        last_run.status = RunStatus.regenerated
+    else:
+        # Replace: remove the old run from the session
+        agent_session.runs.pop()  # type: ignore[union-attr]
+
+    # Optionally append additional instructions as a user message
+    if additional_instructions is not None:
+        trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
+
+    # Initialize session state
+    session_state = load_session_state(agent, session=agent_session, session_state={})
+
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+    )
+
+    # Create a new run id
+    new_run_id = str(uuid4())
+
+    # Initialize run context
+    run_context = RunContext(
+        run_id=new_run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    # Resolve dependencies
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(agent, run_context=run_context)
+
+    # Prepare arguments for the model
+    set_default_model(agent)
+    response_format = get_response_format(agent, run_context=run_context)
+    agent.model = cast(Model, agent.model)
+
+    # Create a new RunOutput
+    run_response = RunOutput(
+        run_id=new_run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        input=last_run.input,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+    )
+    run_response.model = agent.model.id if agent.model is not None else None
+    run_response.model_provider = agent.model.provider if agent.model is not None else None
+    run_response.metrics = RunMetrics()
+    run_response.metrics.start_timer()
+
+    processed_tools = agent.get_tools(
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+        user_id=user_id,
+    )
+    _tools = determine_tools_for_model(
+        agent,
+        model=agent.model,
+        processed_tools=processed_tools,
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+    )
+
+    log_debug(f"Agent Regenerate Run Start: {new_run_id}", center=True)
+
+    # Build run messages from the trimmed context.
+    # Respect the agent's add_history_to_context setting so that prior turns
+    # are included when store_history_messages=False (the default) strips them
+    # from stored runs.
+    run_messages = get_continue_run_messages(
+        agent,
+        input=trimmed_messages,
+        session=agent_session,
+        add_history_to_context=agent.add_history_to_context,
+        run_context=run_context,
+    )
+
+    run_response.status = RunStatus.running
+
+    if opts.stream:
+        response_iterator = _continue_run_stream(
+            agent,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            tools=_tools,
+            user_id=user_id,
+            session=agent_session,
+            response_format=response_format,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        return response_iterator
+    else:
+        response = _continue_run(
+            agent,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            tools=_tools,
+            user_id=user_id,
+            session=agent_session,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        return response
+
+
+def aregenerate_dispatch(  # type: ignore
+    agent: Agent,
+    *,
+    additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
+    yield_run_output: Optional[bool] = None,
+    **kwargs: Any,
+) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
+    """Async variant of regenerate_dispatch.
+
+    Regenerate the last run's response in the given session.
+
+    By default the original run is **replaced** by the new one. Set
+    ``preserve_original=True`` to keep it with a ``regenerated`` status instead.
+
+    Args:
+        additional_instructions: Optional extra guidance appended as a user message
+            before re-generation so the caller can steer the new response.
+        preserve_original: If True, keep the original run with status ``regenerated``
+            instead of replacing it.  Defaults to False (replace).
+        stream: Whether to stream the response.
+        stream_events: Whether to stream all events.
+        user_id: The user id for the session.
+        session_id: The session id to regenerate in.
+        knowledge_filters: Knowledge filters for the new run.
+        dependencies: Dependencies for the new run.
+        metadata: Metadata for the new run.
+        debug_mode: Whether to enable debug mode.
+        yield_run_output: Whether to yield the run output.
+    """
+    from agno.agent._init import has_async_db
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import load_session_state, update_metadata
+
+    session_id = session_id or agent.session_id
+    if session_id is None:
+        raise ValueError("session_id is required to regenerate a run.")
+
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
+
+    # Initialize the Agent
+    agent.initialize_agent(debug_mode=debug_mode)
+
+    # Read existing session and update metadata (sync pre-read; async DB defers to inner function)
+    _session_state: Dict[str, Any] = {}
+    if not has_async_db(agent):
+        from agno.agent._storage import read_or_create_session
+
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=_pre_session)
+        _session_state = load_session_state(agent, session=_pre_session, session_state={})
+
+        if not _pre_session.runs:
+            raise ValueError("No runs found in session to regenerate.")
+
+        last_run = cast(RunOutput, _pre_session.runs[-1])
+
+        if not last_run.messages:
+            raise ValueError("Last run has no messages to regenerate from.")
+
+        # Build message context: everything except the final assistant response
+        trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+
+        # Handle the original run
+        if preserve_original:
+            last_run.status = RunStatus.regenerated
+        else:
+            _pre_session.runs.pop()  # type: ignore[union-attr]
+
+        # Persist session changes (pop/status) so async continue functions
+        # re-read the updated session from DB.
+        from agno.agent._session import save_session as _sync_save_session
+
+        _sync_save_session(agent, session=_pre_session)
+
+        # Optionally append additional instructions as a user message
+        if additional_instructions is not None:
+            trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
+    else:
+        # Async DB — we can't read session synchronously. Delegate to the async helper
+        # which will read session, strip messages, and call the model.
+        trimmed_messages = None
+        last_run = None  # type: ignore[assignment]
+
+    # Resolve all run options centrally
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+    )
+
+    # Create a new run id
+    new_run_id = str(uuid4())
+
+    from agno.agent._init import set_default_model
+
+    set_default_model(agent)
+    agent.model = cast(Model, agent.model)
+
+    # Initialize run context
+    run_context = RunContext(
+        run_id=new_run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=_session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    response_format = get_response_format(agent, run_context=run_context)
+
+    if trimmed_messages is not None and last_run is not None:
+        # Sync DB path: we already have the trimmed messages
+        new_run_response = RunOutput(
+            run_id=new_run_id,
+            session_id=session_id,
+            agent_id=agent.id,
+            user_id=user_id,
+            agent_name=agent.name,
+            input=last_run.input,
+            metadata=run_context.metadata,
+        )
+        new_run_response.model = agent.model.id if agent.model is not None else None
+        new_run_response.model_provider = agent.model.provider if agent.model is not None else None
+        new_run_response.metrics = RunMetrics()
+        new_run_response.metrics.start_timer()
+        # Set the trimmed messages so _acontinue_run uses them as input
+        new_run_response.messages = trimmed_messages
+
+        if opts.stream:
+            return _acontinue_run_stream(
+                agent,
+                run_response=new_run_response,
+                run_context=run_context,
+                updated_tools=None,
+                requirements=None,
+                run_id=None,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        else:
+            return _acontinue_run(  # type: ignore
+                agent,
+                session_id=session_id,
+                run_response=new_run_response,
+                run_context=run_context,
+                updated_tools=None,
+                requirements=None,
+                run_id=None,
+                user_id=user_id,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+    else:
+        # Async DB path: delegate to async helper that reads session first
+        if opts.stream:
+            return _aregenerate_run_stream(
+                agent,
+                run_context=run_context,
+                additional_instructions=additional_instructions,
+                preserve_original=preserve_original,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        else:
+            return _aregenerate_run(  # type: ignore
+                agent,
+                run_context=run_context,
+                additional_instructions=additional_instructions,
+                preserve_original=preserve_original,
+                session_id=session_id,
+                user_id=user_id,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+
+
+async def _aregenerate_run(
+    agent: Agent,
+    run_context: RunContext,
+    session_id: str,
+    additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> RunOutput:
+    """Async helper for regeneration when an async DB is used.
+
+    Reads the session asynchronously, extracts and trims messages from the last run,
+    then delegates to _acontinue_run for model execution.
+    """
+    from agno.agent._session import asave_session as _async_save_session
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    if not agent_session.runs:
+        raise ValueError("No runs found in session to regenerate.")
+
+    last_run = cast(RunOutput, agent_session.runs[-1])
+    if not last_run.messages:
+        raise ValueError("Last run has no messages to regenerate from.")
+
+    trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if preserve_original:
+        last_run.status = RunStatus.regenerated
+    else:
+        agent_session.runs.pop()  # type: ignore[union-attr]
+
+    # Persist session changes so _acontinue_run re-reads the updated state.
+    await _async_save_session(agent, session=agent_session)
+
+    if additional_instructions is not None:
+        trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
+
+    new_run_response = RunOutput(
+        run_id=run_context.run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        input=last_run.input,
+        metadata=run_context.metadata,
+    )
+    agent.model = cast(Model, agent.model)
+    new_run_response.model = agent.model.id if agent.model is not None else None
+    new_run_response.model_provider = agent.model.provider if agent.model is not None else None
+    new_run_response.metrics = RunMetrics()
+    new_run_response.metrics.start_timer()
+    new_run_response.messages = trimmed_messages
+
+    run_context.session_state = load_session_state(
+        agent,
+        session=agent_session,
+        session_state=run_context.session_state if run_context.session_state is not None else {},
+    )
+
+    return await _acontinue_run(
+        agent,
+        session_id=session_id,
+        run_response=new_run_response,
+        run_context=run_context,
+        updated_tools=None,
+        requirements=None,
+        run_id=None,
+        user_id=user_id,
+        response_format=response_format,
+        debug_mode=debug_mode,
+        background_tasks=background_tasks,
+        **kwargs,
+    )
+
+
+async def _aregenerate_run_stream(
+    agent: Agent,
+    run_context: RunContext,
+    session_id: str,
+    additional_instructions: Optional[str] = None,
+    preserve_original: bool = False,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: bool = False,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
+    """Async streaming helper for regeneration when an async DB is used."""
+    from agno.agent._session import asave_session as _async_save_session
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    if not agent_session.runs:
+        raise ValueError("No runs found in session to regenerate.")
+
+    last_run = cast(RunOutput, agent_session.runs[-1])
+    if not last_run.messages:
+        raise ValueError("Last run has no messages to regenerate from.")
+
+    trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if preserve_original:
+        last_run.status = RunStatus.regenerated
+    else:
+        agent_session.runs.pop()  # type: ignore[union-attr]
+
+    # Persist session changes so _acontinue_run_stream re-reads the updated state.
+    await _async_save_session(agent, session=agent_session)
+
+    if additional_instructions is not None:
+        trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
+
+    new_run_response = RunOutput(
+        run_id=run_context.run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        input=last_run.input,
+        metadata=run_context.metadata,
+    )
+    agent.model = cast(Model, agent.model)
+    new_run_response.model = agent.model.id if agent.model is not None else None
+    new_run_response.model_provider = agent.model.provider if agent.model is not None else None
+    new_run_response.metrics = RunMetrics()
+    new_run_response.metrics.start_timer()
+    new_run_response.messages = trimmed_messages
+
+    run_context.session_state = load_session_state(
+        agent,
+        session=agent_session,
+        session_state=run_context.session_state if run_context.session_state is not None else {},
+    )
+
+    async for event in _acontinue_run_stream(
+        agent,
+        run_response=new_run_response,
+        run_context=run_context,
+        updated_tools=None,
+        requirements=None,
+        run_id=None,
+        user_id=user_id,
+        session_id=session_id,
+        response_format=response_format,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        debug_mode=debug_mode,
+        background_tasks=background_tasks,
+        **kwargs,
+    ):
+        yield event
+
+
+# ---------------------------------------------------------------------------
+# Branch session — copy a session into a new independent session
+# ---------------------------------------------------------------------------
+
+
+def branch_session_dispatch(
+    agent: Agent,
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Branch the current session into a new independent session.
+
+    Copies all runs from the source session so the new session can continue
+    the conversation independently.
+
+    Args:
+        source_session_id: The session to branch. Defaults to the agent's current session.
+        user_id: The user performing the branch. Must own the source session.
+            The new session inherits the same user_id.
+
+    Returns:
+        The new session_id.
+    """
+    import copy
+
+    from agno.agent._init import has_async_db
+    from agno.agent._session import save_session
+    from agno.agent._storage import read_or_create_session
+
+    if has_async_db(agent):
+        raise RuntimeError(
+            "`branch_session` is not supported with an async database. Please use `abranch_session` instead."
+        )
+
+    source_session_id = source_session_id or agent.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to branch a session.")
+
+    agent.initialize_agent()
+
+    # Read the source session scoped to the caller's user_id.
+    # This ensures users can only branch their own sessions.
+    source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to branch.")
+
+    # Create a new session with a deep copy of the runs
+    import time
+
+    now = int(time.time())
+    new_session_id = str(uuid4())
+    new_user_id = user_id or source_session.user_id
+    branched_runs = copy.deepcopy(source_session.runs)
+
+    # Rewrite session_id on each copied run so the new session's run metadata
+    # is internally consistent (runs should reference their owning session).
+    # Also assign new run_ids so they are globally unique.
+    for run in branched_runs or []:
+        run.run_id = str(uuid4())
+        run.session_id = new_session_id
+
+    new_session = AgentSession(
+        session_id=new_session_id,
+        agent_id=source_session.agent_id,
+        user_id=new_user_id,
+        team_id=source_session.team_id,
+        workflow_id=source_session.workflow_id,
+        session_data=copy.deepcopy(source_session.session_data),
+        metadata=copy.deepcopy(source_session.metadata),
+        agent_data=copy.deepcopy(source_session.agent_data),
+        runs=branched_runs,
+        summary=copy.deepcopy(source_session.summary),
+        created_at=now,
+        updated_at=now,
+    )
+
+    # Save the new session
+    save_session(agent, session=new_session)
+
+    return new_session_id
+
+
+async def abranch_session_dispatch(
+    agent: Agent,
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Async variant of branch_session_dispatch.
+
+    Branch the current session into a new independent session.
+
+    Copies all runs from the source session so the new session can continue
+    the conversation independently.
+
+    Args:
+        source_session_id: The session to branch. Defaults to the agent's current session.
+        user_id: The user performing the branch. Must own the source session.
+            The new session inherits the same user_id.
+
+    Returns:
+        The new session_id.
+    """
+    import copy
+
+    from agno.agent._init import has_async_db
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, read_or_create_session
+
+    source_session_id = source_session_id or agent.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to branch a session.")
+
+    agent.initialize_agent()
+
+    # Read the source session scoped to the caller's user_id.
+    # This ensures users can only branch their own sessions.
+    if has_async_db(agent):
+        source_session = await aread_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    else:
+        source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to branch.")
+
+    # Create a new session with a deep copy of the runs
+    import time
+
+    now = int(time.time())
+    new_session_id = str(uuid4())
+    new_user_id = user_id or source_session.user_id
+    branched_runs = copy.deepcopy(source_session.runs)
+
+    # Rewrite session_id and run_id on each copied run so run metadata is consistent.
+    for run in branched_runs or []:
+        run.run_id = str(uuid4())
+        run.session_id = new_session_id
+
+    new_session = AgentSession(
+        session_id=new_session_id,
+        agent_id=source_session.agent_id,
+        user_id=new_user_id,
+        team_id=source_session.team_id,
+        workflow_id=source_session.workflow_id,
+        session_data=copy.deepcopy(source_session.session_data),
+        metadata=copy.deepcopy(source_session.metadata),
+        agent_data=copy.deepcopy(source_session.agent_data),
+        runs=branched_runs,
+        summary=copy.deepcopy(source_session.summary),
+        created_at=now,
+        updated_at=now,
+    )
+
+    # Save the new session
+    await asave_session(agent, session=new_session)
+
+    return new_session_id
+
+
+# ---------------------------------------------------------------------------
 # Run cancellation — re-export from agno.run.cancel
 # ---------------------------------------------------------------------------
 
