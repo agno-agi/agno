@@ -452,6 +452,7 @@ module = [
   "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
+  "claude_agent_sdk.*",
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",

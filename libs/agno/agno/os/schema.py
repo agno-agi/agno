@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.protocol import AgentLike
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
@@ -103,8 +104,14 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+    def from_agent(cls, agent: Union[Agent, AgentLike, RemoteAgent]) -> "AgentSummaryResponse":
+        agent_db = getattr(agent, "db", None)
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            description=getattr(agent, "description", None),
+            db_id=agent_db.id if agent_db else None,
+        )
 
 
 class TeamSummaryResponse(BaseModel):

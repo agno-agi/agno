@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -8,6 +8,7 @@ from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentLike
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
@@ -505,12 +506,12 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
 def get_agent_by_id(
     agent_id: str,
-    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentLike]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
     create_fresh: bool = False,
-) -> Optional[Union[Agent, RemoteAgent]]:
+) -> Optional[Union[Agent, RemoteAgent, AgentLike]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new agent instance using deep_copy() to prevent
