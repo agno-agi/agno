@@ -196,7 +196,7 @@ class CouchbaseSearch(VectorDb):
                 )
                 collection_manager.drop_collection(collection_name=self.collection_name, scope_name=self.scope_name)
                 logger.info(f"Successfully dropped collection '{self.collection_name}'.")
-                time.sleep(1)  # Brief wait after drop, as in original code
+                asyncio.sleep(1)  # Brief wait after drop, as in original code
             except CollectionNotFoundException:
                 logger.info(
                     f"Collection '{self.collection_name}' not found in scope '{self.scope_name}'. No need to drop."
@@ -292,7 +292,7 @@ class CouchbaseSearch(VectorDb):
                 if time.time() - start_time > self.wait_until_index_ready:
                     logger.error(f"Error checking index status: {e}")
                     raise TimeoutError("Timeout waiting for FTS index to become ready")
-                time.sleep(1)
+                asyncio.sleep(1)
 
     def create(self) -> None:
         """Create the collection and FTS index if they don't exist."""
@@ -749,7 +749,7 @@ class CouchbaseSearch(VectorDb):
                     collection_name=self.collection_name, scope_name=self.scope_name
                 )
                 logger.info(f"Successfully dropped collection '{self.collection_name}'.")
-                time.sleep(1)  # Brief wait after drop, as in original code
+                asyncio.sleep(1)  # Brief wait after drop, as in original code
             except CollectionNotFoundException:
                 logger.info(
                     f"Collection '{self.collection_name}' not found in scope '{self.scope_name}'. No need to drop."
