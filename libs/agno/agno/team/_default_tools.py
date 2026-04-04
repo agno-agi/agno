@@ -561,6 +561,14 @@ def _get_delegate_task_function(
         member_session_state_copy = copy(run_context.session_state)
 
         if stream:
+            if hasattr(member_agent, "tools") and member_agent.tools:
+                for tool in member_agent.tools:
+                    if hasattr(tool, "connect") and not getattr(tool, "initialized", False):
+                        try:
+                            asyncio.run(tool.connect())
+                        except RuntimeError:
+                            loop = asyncio.get_event_loop()
+                            loop.run_until_complete(tool.connect())
             member_agent_run_response_stream = member_agent.run(
                 input=member_agent_task if not history else history,
                 user_id=user_id,
@@ -599,6 +607,14 @@ def _get_delegate_task_function(
                 )
                 yield member_agent_run_output_event  # type: ignore
         else:
+            if hasattr(member_agent, "tools") and member_agent.tools:
+                for tool in member_agent.tools:
+                    if hasattr(tool, "connect") and not getattr(tool, "initialized", False):
+                        try:
+                            asyncio.run(tool.connect())
+                        except RuntimeError:
+                            loop = asyncio.get_event_loop()
+                            loop.run_until_complete(tool.connect())
             member_agent_run_response = member_agent.run(  # type: ignore
                 input=member_agent_task if not history else history,  # type: ignore
                 user_id=user_id,
@@ -830,6 +846,14 @@ def _get_delegate_task_function(
 
             member_session_state_copy = copy(run_context.session_state)
             if stream:
+                if hasattr(member_agent, "tools") and member_agent.tools:
+                    for tool in member_agent.tools:
+                        if hasattr(tool, "connect") and not getattr(tool, "initialized", False):
+                            try:
+                                asyncio.run(tool.connect())
+                            except RuntimeError:
+                                loop = asyncio.get_event_loop()
+                                loop.run_until_complete(tool.connect())
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -869,6 +893,14 @@ def _get_delegate_task_function(
                     yield member_agent_run_response_chunk  # type: ignore
 
             else:
+                if hasattr(member_agent, "tools") and member_agent.tools:
+                    for tool in member_agent.tools:
+                        if hasattr(tool, "connect") and not getattr(tool, "initialized", False):
+                            try:
+                                asyncio.run(tool.connect())
+                            except RuntimeError:
+                                loop = asyncio.get_event_loop()
+                                loop.run_until_complete(tool.connect())
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
