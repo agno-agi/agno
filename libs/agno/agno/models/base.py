@@ -1855,7 +1855,20 @@ class Model(ABC):
         if stream_data.response_metrics is not None:
             assistant_message.metrics = stream_data.response_metrics
         if stream_data.response_content:
-            assistant_message.content = stream_data.response_content
+            # Extract thinking content from accumulated stream if present (e.g. DeepSeek <think> tags)
+            if "<think>" in stream_data.response_content or "</think>" in stream_data.response_content:
+                from agno.utils.reasoning import extract_thinking_content
+
+                reasoning_content, clean_content = extract_thinking_content(stream_data.response_content)
+                if reasoning_content:
+                    assistant_message.content = clean_content
+                    # Only set reasoning_content if not already populated by native reasoning
+                    if not stream_data.response_reasoning_content:
+                        assistant_message.reasoning_content = reasoning_content
+                else:
+                    assistant_message.content = stream_data.response_content
+            else:
+                assistant_message.content = stream_data.response_content
         if stream_data.response_reasoning_content:
             assistant_message.reasoning_content = stream_data.response_reasoning_content
         if stream_data.response_redacted_reasoning_content:
