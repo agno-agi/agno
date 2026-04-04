@@ -748,6 +748,16 @@ class SurrealDb(BaseDb):
                 f"DELETE FROM {table} WHERE id IN $records AND user = $user", {"records": records, "user": user_rec_id}
             )
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+        """
+        table = self._get_table("memories")
+        user_rec_id = RecordID(self._get_table("users"), user_id)
+        _ = self.client.query(f"DELETE FROM {table} WHERE user = $user", {"user": user_rec_id})
+
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 

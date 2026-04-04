@@ -222,6 +222,17 @@ class BaseDb(ABC):
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        This is more efficient than fetching all memory IDs and then deleting them.
+        Subclasses should override this with a direct bulk-delete query.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         raise NotImplementedError
@@ -1233,6 +1244,17 @@ class AsyncBaseDb(ABC):
 
     @abstractmethod
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        raise NotImplementedError
+
+    async def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation (async).
+
+        This is more efficient than fetching all memory IDs and then deleting them.
+        Subclasses should override this with a direct bulk-delete query.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+        """
         raise NotImplementedError
 
     @abstractmethod

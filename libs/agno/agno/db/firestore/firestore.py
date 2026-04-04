@@ -794,6 +794,36 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting memories: {e}")
             raise e
 
+    def clear_user_memories(self, user_id: str) -> None:
+        """Delete all memories for a given user in a single operation.
+
+        Args:
+            user_id (str): The user ID whose memories should be deleted.
+
+        Raises:
+            Exception: If there is an error deleting the memories.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="memories")
+            batch = self.db_client.batch()
+            deleted_count = 0
+
+            docs = collection_ref.where(filter=FieldFilter("user_id", "==", user_id)).stream()
+            for doc in docs:
+                batch.delete(doc.reference)
+                deleted_count += 1
+
+            batch.commit()
+
+            if deleted_count == 0:
+                log_debug(f"No memories found for user {user_id}")
+            else:
+                log_info(f"Successfully deleted {deleted_count} memories for user {user_id}")
+
+        except Exception as e:
+            log_error(f"Error clearing memories for user {user_id}: {e}")
+            raise e
+
     def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
 
