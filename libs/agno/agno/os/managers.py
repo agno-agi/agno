@@ -5,10 +5,12 @@ This module provides various manager classes for AgentOS:
 - WebSocketManager: WebSocket connection management for real-time streaming
 - EventsBuffer: Event buffering for agent/team/workflow reconnection support
 - WebSocketHandler: Handler for sending events over WebSocket connections
+- SSESubscriberManager: Subscriber management for SSE-based reconnection
 
 These managers are used by agents, teams, and workflows for background WebSocket execution.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from time import time
@@ -315,6 +317,56 @@ class EventsBuffer:
         return metadata["status"] if metadata else None
 
 
+class SSESubscriberManager:
+    """
+    Manages asyncio.Queue subscribers for SSE-based reconnection.
+
+    When a client reconnects to a still-running agent/team via the /resume SSE endpoint,
+    it registers a Queue here. The response streamer pushes SSE-formatted events to all
+    registered queues. A None sentinel signals run completion.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: Dict[str, List[asyncio.Queue[Optional[tuple[int, str]]]]] = {}
+
+    def subscribe(self, run_id: str) -> "asyncio.Queue[Optional[tuple[int, str]]]":
+        """Register a new subscriber queue for a run. Returns the queue."""
+        if run_id not in self._subscribers:
+            self._subscribers[run_id] = []
+        queue: asyncio.Queue[Optional[tuple[int, str]]] = asyncio.Queue()
+        self._subscribers[run_id].append(queue)
+        log_debug(f"SSE subscriber registered for run {run_id}")
+        return queue
+
+    def unsubscribe(self, run_id: str, queue: "asyncio.Queue[Optional[tuple[int, str]]]") -> None:
+        """Remove a subscriber queue."""
+        if run_id in self._subscribers:
+            try:
+                self._subscribers[run_id].remove(queue)
+            except ValueError:
+                pass
+            if not self._subscribers[run_id]:
+                del self._subscribers[run_id]
+
+    async def publish(self, run_id: str, event_index: int, sse_data: str) -> None:
+        """Push an (event_index, sse_data) tuple to all subscriber queues for a run."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
+            try:
+                await queue.put((event_index, sse_data))
+            except Exception:
+                pass
+
+    async def complete(self, run_id: str) -> None:
+        """Signal all subscribers that the run is done by pushing None sentinel."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
+            try:
+                await queue.put(None)
+            except Exception:
+                pass
+
+
 # Global manager instances
 websocket_manager = WebSocketManager(
     active_connections={},
@@ -324,3 +376,5 @@ event_buffer = EventsBuffer(
     max_events_per_run=10000,  # Keep last 10000 events per run
     cleanup_interval=1800,  # Clean up completed runs after 30 minutes
 )
+
+sse_subscriber_manager = SSESubscriberManager()

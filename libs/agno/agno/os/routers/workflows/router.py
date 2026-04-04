@@ -84,7 +84,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             else:
                 session_id = str(uuid4())
 
-        # Execute workflow in background with streaming
+        # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
@@ -93,6 +93,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             stream_events=True,
             background=True,
             websocket=websocket,
+            enable_websocket=True,
         )
 
         # NOTE: Don't register the original websocket in the manager
@@ -342,6 +343,201 @@ async def workflow_response_streamer(
         )
         yield format_sse_event(error_response)
         return
+
+
+async def workflow_resumable_response_streamer(
+    workflow: Union[Workflow, RemoteWorkflow],
+    input: Union[str, Dict[str, Any], List[Any], BaseModel],
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+    **kwargs: Any,
+) -> AsyncGenerator:
+    """Resumable SSE generator for background=True, stream=True.
+
+    Delegates to workflow.arun(background=True, stream=True) which handles:
+    - Persisting RUNNING status in DB
+    - Running workflow in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    if background_tasks is not None:
+        kwargs["background_tasks"] = background_tasks
+
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
+
+    if auth_token and isinstance(workflow, RemoteWorkflow):
+        kwargs["auth_token"] = auth_token
+
+    async for sse_data in workflow.arun(  # type: ignore
+        input=input,
+        session_id=session_id,
+        user_id=user_id,
+        stream=True,
+        stream_events=stream_events,
+        background=True,
+        **kwargs,
+    ):
+        yield sse_data
+
+
+async def _resume_stream_generator(
+    workflow: Union[Workflow, RemoteWorkflow],
+    run_id: str,
+    last_event_index: Optional[int],
+    session_id: Optional[str],
+) -> AsyncGenerator:
+    """SSE generator for the /resume endpoint.
+
+    Three reconnection paths:
+    1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
+    2. Run completed (in buffer): replay all events since last_event_index
+    3. Not in buffer: fall back to database replay
+    """
+    from agno.os.managers import sse_subscriber_manager
+
+    buffer_status = event_buffer.get_run_status(run_id)
+
+    if buffer_status is None:
+        # PATH 3: Not in buffer -- fall back to database
+        if session_id and not isinstance(workflow, RemoteWorkflow):
+            try:
+                run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+            except Exception as e:
+                error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
+                yield f"event: error\ndata: {json.dumps(error)}\n\n"
+                return
+            if run_output and run_output.events:
+                meta: dict = {
+                    "event": "replay",
+                    "run_id": run_id,
+                    "status": run_output.status.value if run_output.status else "unknown",
+                    "total_events": len(run_output.events),
+                    "message": "Run completed. Replaying all events from database.",
+                }
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+
+                for idx, event in enumerate(run_output.events):
+                    event_dict = event.to_dict()
+                    event_dict["event_index"] = idx
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = run_id
+                    event_type = event_dict.get("event", "message")
+                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                return
+            elif run_output:
+                meta = {
+                    "event": "replay",
+                    "run_id": run_id,
+                    "status": run_output.status.value if run_output.status else "unknown",
+                    "total_events": 0,
+                    "message": "Run completed but no events stored.",
+                }
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                return
+
+        # Run not found anywhere
+        error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
+        yield f"event: error\ndata: {json.dumps(error)}\n\n"
+        return
+
+    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        # PATH 2: Run finished -- replay missed events from buffer
+        total_buffered = event_buffer.get_event_count(run_id)
+        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        log_debug(
+            f"Workflow resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
+            f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
+            f"missed_events={len(missed_events)}"
+        )
+
+        meta = {
+            "event": "replay",
+            "run_id": run_id,
+            "status": buffer_status.value,
+            "total_events": len(missed_events),
+            "total_buffered": total_buffered,
+            "last_event_index_requested": last_event_index if last_event_index is not None else -1,
+            "message": f"Run {buffer_status.value}. Replaying {len(missed_events)} missed events (of {total_buffered} total).",
+        }
+        yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+
+        start_index = (last_event_index + 1) if last_event_index is not None else 0
+        for idx, buffered_event in enumerate(missed_events):
+            event_dict = buffered_event.to_dict()
+            event_dict["event_index"] = start_index + idx
+            if "run_id" not in event_dict:
+                event_dict["run_id"] = run_id
+            event_type = event_dict.get("event", "message")
+            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        return
+
+    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
+    queue = sse_subscriber_manager.subscribe(run_id)
+
+    try:
+        missed_events = event_buffer.get_events(run_id, last_event_index)
+        current_count = event_buffer.get_event_count(run_id)
+
+        # Track the highest replayed event_index for dedup against queue events
+        last_replayed_index = last_event_index if last_event_index is not None else -1
+
+        if missed_events:
+            meta = {
+                "event": "catch_up",
+                "run_id": run_id,
+                "status": "running",
+                "missed_events": len(missed_events),
+                "current_event_count": current_count,
+                "message": f"Catching up on {len(missed_events)} missed events.",
+            }
+            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
+
+            start_index = (last_event_index + 1) if last_event_index is not None else 0
+            for idx, buffered_event in enumerate(missed_events):
+                current_idx = start_index + idx
+                event_dict = buffered_event.to_dict()
+                event_dict["event_index"] = current_idx
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+                event_type = event_dict.get("event", "message")
+                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                last_replayed_index = current_idx
+
+        # Re-check buffer status after subscribing
+        updated_status = event_buffer.get_run_status(run_id)
+        if updated_status is not None and updated_status != RunStatus.running:
+            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+            if remaining:
+                replay_start = last_replayed_index + 1
+                for idx, buffered_event in enumerate(remaining):
+                    current_idx = replay_start + idx
+                    event_dict = buffered_event.to_dict()
+                    event_dict["event_index"] = current_idx
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = run_id
+                    event_type = event_dict.get("event", "message")
+                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+            return
+
+        # Stream live events from queue (dedup by event_index)
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            event_index, sse_data = item
+            if event_index <= last_replayed_index:
+                continue
+            last_replayed_index = event_index
+            yield sse_data
+
+    finally:
+        sse_subscriber_manager.unsubscribe(run_id, queue)
 
 
 def get_websocket_router(
@@ -650,6 +846,10 @@ def get_workflow_router(
         background_tasks: BackgroundTasks,
         message: str = Form(..., description="The input message or prompt to send to the workflow"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        background: bool = Form(
+            False,
+            description="Run workflow in background (survives client disconnect). Requires database. Use /resume to reconnect.",
+        ),
         session_id: Optional[str] = Form(
             None, description="Session ID for conversation continuity. If not provided, a new session is created"
         ),
@@ -702,6 +902,55 @@ def get_workflow_router(
 
         # Extract auth token for remote workflows
         auth_token = get_auth_token_from_request(request)
+
+        # Background execution
+        if background:
+            if isinstance(workflow, RemoteWorkflow):
+                raise HTTPException(
+                    status_code=400, detail="Background execution is not supported for remote workflows"
+                )
+
+            if stream:
+                # background=True, stream=True: resumable SSE streaming
+                # Workflow runs in a detached asyncio.Task that survives client disconnections.
+                # Events are buffered for reconnection via /resume endpoint.
+                return StreamingResponse(
+                    workflow_resumable_response_streamer(
+                        workflow,
+                        input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        background_tasks=background_tasks,
+                        auth_token=auth_token,
+                        **kwargs,
+                    ),
+                    media_type="text/event-stream",
+                )
+
+            # background=True, stream=False: return 202 immediately with run metadata
+            if not workflow.db:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Background execution requires a database to be configured on the workflow",
+                )
+
+            run_response = await workflow.arun(
+                input=message,
+                session_id=session_id,
+                user_id=user_id,
+                stream=False,
+                background=True,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "run_id": run_response.run_id,
+                    "session_id": run_response.session_id,
+                    "status": run_response.status.value if run_response.status else "PENDING",
+                },
+            )
 
         # Return based on stream parameter
         try:
@@ -767,6 +1016,52 @@ def get_workflow_router(
         # in cancel-before-start scenarios), so we always return success.
         await workflow.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
+
+    @router.post(
+        "/workflows/{workflow_id}/runs/{run_id}/resume",
+        tags=["Workflows"],
+        operation_id="resume_workflow_run_stream",
+        summary="Resume Workflow Run Stream",
+        description=(
+            "Resume an SSE stream for a workflow run after disconnection.\n\n"
+            "Sends missed events since `last_event_index`, then continues streaming "
+            "live events if the run is still active.\n\n"
+            "**Three reconnection paths:**\n"
+            "1. **Run still active**: Sends catch-up events + continues live streaming\n"
+            "2. **Run completed (in buffer)**: Replays missed buffered events\n"
+            "3. **Run completed (in database)**: Replays events from database\n\n"
+            "**Client usage:**\n"
+            "Track `event_index` from each SSE event. On reconnection, pass the last "
+            "received `event_index` as `last_event_index`."
+        ),
+        responses={
+            200: {
+                "description": "SSE stream of catch-up and/or live events",
+                "content": {"text/event-stream": {}},
+            },
+            400: {"description": "Not supported for remote workflows", "model": BadRequestResponse},
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+    )
+    async def resume_workflow_run_stream(
+        workflow_id: str,
+        run_id: str,
+        last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
+        session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
+    ):
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if isinstance(workflow, RemoteWorkflow):
+            raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote workflows")
+
+        return StreamingResponse(
+            _resume_stream_generator(workflow, run_id, last_event_index, session_id),
+            media_type="text/event-stream",
+        )
 
     @router.get(
         "/workflows/{workflow_id}/runs/{run_id}",

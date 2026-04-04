@@ -69,6 +69,7 @@ from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
     log_error,
+    log_info,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -108,6 +109,9 @@ from agno.workflow.utils import (
     save_paused_session,
     step_pause_status,
 )
+
+# Set to prevent background tasks from being garbage-collected
+_workflow_background_tasks: set[asyncio.Task[None]] = set()
 
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
@@ -3303,7 +3307,7 @@ class Workflow:
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
-    async def _arun_background_stream(
+    async def _arun_background_stream_ws(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -3322,7 +3326,7 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
-        """Execute workflow in background with streaming and WebSocket broadcasting"""
+        """Execute workflow in background with streaming and WebSocket broadcasting (opt-in)"""
 
         run_id = str(uuid4())
 
@@ -3448,6 +3452,223 @@ class Workflow:
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
+
+    async def _arun_background_stream(
+        self,
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
+        stream_events: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        """Background streaming workflow run that survives client disconnections.
+
+        1. Persists RUNNING status in DB
+        2. Spawns a detached asyncio.Task that runs _aexecute_stream
+        3. Buffers events (via event_buffer) and publishes to SSE subscribers
+        4. Yields SSE-formatted strings via an asyncio.Queue
+
+        The detached task keeps running even if the client disconnects.
+        The caller (router) just yields the SSE strings to the client.
+        """
+        from agno.run.workflow import WorkflowRunOutput as WfRunOutput
+
+        run_id = run_id or str(uuid4())
+
+        if not self.db:
+            raise ValueError("Background execution requires a database to be configured on the workflow")
+
+        self.initialize_workflow()
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+        # Read existing session from database
+        workflow_session, session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
+
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+        )
+
+        self._prepare_steps()
+
+        # Create workflow run response with RUNNING status
+        workflow_run_response = WfRunOutput(
+            run_id=run_id,
+            input=input,
+            session_id=session_id,
+            user_id=user_id,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            created_at=int(datetime.now().timestamp()),
+            status=RunStatus.running,
+        )
+
+        # Start the run metrics timer
+        workflow_run_response.metrics = WorkflowMetrics(steps={})
+        workflow_run_response.metrics.start_timer()
+
+        # Persist RUNNING status so the run is visible in the DB immediately
+        workflow_session.upsert_run(run=workflow_run_response)
+        if self._has_async_db():
+            await self.asave_session(session=workflow_session)
+        else:
+            self.save_session(session=workflow_session)
+
+        log_info(f"Background stream workflow run {run_id} persisted with RUNNING status")
+
+        # Prepare execution input
+        inputs = WorkflowExecutionInput(
+            input=input,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            files=files,  # type: ignore
+        )
+
+        self.update_agents_and_teams_session_info()
+
+        # Create queue for forwarding SSE strings to the caller
+        sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        # Spawn detached background task
+        async def _background_producer() -> None:
+            from agno.os.managers import event_buffer, sse_subscriber_manager
+            from agno.os.utils import format_sse_event_with_index
+
+            # _handle_event (called inside _aexecute_stream) already adds events to
+            # event_buffer.  We must NOT add them again here to avoid duplication.
+            # Instead, we read the current buffer count to derive the event_index
+            # that _handle_event just assigned.
+
+            try:
+                if self.agent is not None:
+                    result = self._aexecute_workflow_agent(
+                        user_input=input,  # type: ignore
+                        run_context=run_context,
+                        execution_input=inputs,
+                        stream=True,
+                        **kwargs,
+                    )
+                    async for event in result:  # type: ignore
+                        if isinstance(event, WfRunOutput):
+                            continue
+
+                        # Get the event_index that _handle_event already assigned
+                        event_index = event_buffer.get_event_count(run_id) - 1
+
+                        # Format as SSE
+                        sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                        # Push to primary queue (original client)
+                        try:
+                            await sse_queue.put(sse_data)
+                        except Exception:
+                            log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
+
+                        # Publish to SSE subscribers (resumed clients)
+                        try:
+                            await sse_subscriber_manager.publish(
+                                run_id, event_index if event_index is not None else -1, sse_data
+                            )
+                        except Exception:
+                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
+                else:
+                    async for event in self._aexecute_stream(
+                        session_id=session_id,
+                        user_id=user_id,
+                        execution_input=inputs,
+                        workflow_run_response=workflow_run_response,
+                        stream_events=stream_events,
+                        run_context=run_context,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    ):
+                        if isinstance(event, WfRunOutput):
+                            continue
+
+                        # Get the event_index that _handle_event already assigned
+                        event_index = event_buffer.get_event_count(run_id) - 1
+
+                        # Format as SSE
+                        sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                        # Push to primary queue (original client)
+                        try:
+                            await sse_queue.put(sse_data)
+                        except Exception:
+                            log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
+
+                        # Publish to SSE subscribers (resumed clients)
+                        try:
+                            await sse_subscriber_manager.publish(
+                                run_id, event_index if event_index is not None else -1, sse_data
+                            )
+                        except Exception:
+                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
+
+                log_debug(
+                    f"Background stream workflow run {run_id} completed with status: {workflow_run_response.status}"
+                )
+
+            except Exception:
+                log_error(f"Background stream workflow run {run_id} failed", exc_info=True)
+                # Persist ERROR status
+                try:
+                    workflow_run_response.status = RunStatus.error
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+                except Exception:
+                    log_error(
+                        f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
+                    )
+
+            finally:
+                # Mark run completed in event buffer
+                try:
+                    event_buffer.set_run_completed(run_id, workflow_run_response.status or RunStatus.completed)
+                except Exception:
+                    log_warning(f"Failed to mark workflow run {run_id} as completed in event buffer")
+
+                # Signal SSE subscribers that run is done
+                try:
+                    await sse_subscriber_manager.complete(run_id)
+                except Exception:
+                    log_warning(f"Failed to signal SSE subscribers for workflow run {run_id} completion")
+
+                # Signal primary queue that run is done
+                try:
+                    await sse_queue.put(None)
+                except Exception:
+                    log_warning(f"Failed to signal primary queue for workflow run {run_id} completion")
+
+        task = asyncio.create_task(_background_producer())
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
+
+        # Yield SSE strings from the queue
+        while True:
+            sse_data = await sse_queue.get()
+            if sse_data is None:
+                break
+            yield sse_data
 
     async def aget_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
@@ -6433,6 +6654,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -6457,6 +6679,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -6480,6 +6703,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -6487,7 +6711,12 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
-        """Execute the workflow synchronously with optional streaming"""
+        """Execute the workflow with optional streaming.
+
+        Args:
+            enable_websocket: When True and background+stream are also True, uses WebSocket
+                transport instead of the default SSE transport. Requires ``websocket`` param.
+        """
 
         if input is None and self.input_schema is not None:
             raise ValueError("Input is required when input_schema is provided")
@@ -6500,11 +6729,17 @@ class Workflow:
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 
+        # Backward compat: if websocket is passed, treat as enable_websocket=True
+        if websocket and not enable_websocket:
+            enable_websocket = True
+
         if background:
-            if stream and websocket:
+            if stream and enable_websocket:
+                if not websocket:
+                    raise ValueError("enable_websocket=True requires a websocket parameter")
                 stream_events = stream_events or False
-                # Background + Streaming + WebSocket = Real-time events
-                return self._arun_background_stream(  # type: ignore
+                # Background + Streaming + WebSocket = Real-time events (opt-in)
+                return self._arun_background_stream_ws(  # type: ignore
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -6522,9 +6757,25 @@ class Workflow:
                     add_session_state_to_context=add_session_state_to_context,
                     **kwargs,
                 )
-            elif stream and not websocket:
-                # Background + Streaming but no WebSocket = Not supported
-                raise ValueError("Background streaming execution requires a WebSocket for real-time events")
+            elif stream:
+                stream_events = stream_events or False
+                # Background + Streaming via SSE (default)
+                return self._arun_background_stream(  # type: ignore[return-value]
+                    input=input,
+                    additional_data=additional_data,
+                    user_id=user_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                    session_state=session_state,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream_events=stream_events,
+                    dependencies=dependencies,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
             else:
                 # Background + Non-streaming = Polling (existing)
                 return self._arun_background(  # type: ignore

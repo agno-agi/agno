@@ -199,6 +199,42 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+def format_sse_event_with_index(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    event_index: Optional[int] = None,
+    run_id: Optional[str] = None,
+) -> str:
+    """Format an event as SSE with injected event_index and run_id.
+
+    Used by the agent/team response streamers to include reconnection metadata
+    in SSE payloads without modifying the core event dataclasses.
+
+    Args:
+        event: The event object to serialize.
+        event_index: Buffer index for reconnection tracking.
+        run_id: Run ID to inject if not already present on the event.
+
+    Returns:
+        SSE-formatted string with event_index in the data payload.
+    """
+    from agno.utils.serialize import json_serializer
+
+    try:
+        event_type = event.event or "message"
+        event_dict = event.to_dict()
+
+        if event_index is not None:
+            event_dict["event_index"] = event_index
+        if run_id and "run_id" not in event_dict:
+            event_dict["run_id"] = run_id
+
+        clean_json = json.dumps(event_dict, separators=(",", ":"), default=json_serializer, ensure_ascii=False)
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except Exception:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
+
+
 async def get_db(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
 ) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
