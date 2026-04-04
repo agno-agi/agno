@@ -463,6 +463,228 @@ async def test_hitl_params_with_tool_name_prefix():
 
 
 # =============================================================================
+# Lazy Load / Dynamic Tool Discovery tests (Issue #6919)
+# =============================================================================
+
+
+def _create_mock_tool(name: str, description: str):
+    """Helper to create a mock MCP tool object."""
+    mock_tool = MagicMock()
+    mock_tool.name = name
+    mock_tool.description = description
+    mock_tool.inputSchema = {"type": "object", "properties": {}}
+    return mock_tool
+
+
+def _setup_lazy_tools(mock_tools_list, **kwargs):
+    """Helper to create an MCPTools instance with lazy_load_tools=True and mock session."""
+    tools = MCPTools(url="https://example.com/mcp", lazy_load_tools=True, **kwargs)
+
+    mock_tools_result = MagicMock()
+    mock_tools_result.tools = mock_tools_list
+
+    mock_session = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+    tools.session = mock_session
+
+    return tools
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_only_registers_search_tools():
+    """With lazy_load_tools=True, only search_tools should be in functions after build_tools."""
+    mock_tools = [
+        _create_mock_tool("tool_a", "Does A things"),
+        _create_mock_tool("tool_b", "Does B things"),
+        _create_mock_tool("tool_c", "Does C things"),
+    ]
+    tools = _setup_lazy_tools(mock_tools)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+    # Only search_tools should be registered, not tool_a/b/c
+    assert "search_tools" in tools.functions
+    assert len(tools.functions) == 1
+    assert "tool_a" not in tools.functions
+    assert "tool_b" not in tools.functions
+    assert "tool_c" not in tools.functions
+
+    # But tools should be in the internal registry
+    assert len(tools._tool_registry) == 3
+    assert "tool_a" in tools._tool_registry
+    assert "tool_b" in tools._tool_registry
+    assert "tool_c" in tools._tool_registry
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_search_returns_matches():
+    """search_tools should return tools whose name/description matches the query."""
+    mock_tools = [
+        _create_mock_tool("similarity_search", "Search vectors in a database"),
+        _create_mock_tool("insert_vector", "Insert a vector into the database"),
+        _create_mock_tool("send_email", "Send an email to a recipient"),
+    ]
+    tools = _setup_lazy_tools(mock_tools)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+        result = await tools._search_tools_entrypoint("vector database")
+
+    # Should find the two vector-related tools
+    assert "similarity_search" in result
+    assert "insert_vector" in result
+    assert "send_email" not in result
+    assert "Found 2 matching tool(s)" in result
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_search_no_matches():
+    """search_tools should return a 'no matches' message for irrelevant queries."""
+    mock_tools = [
+        _create_mock_tool("tool_a", "Does A things"),
+        _create_mock_tool("tool_b", "Does B things"),
+    ]
+    tools = _setup_lazy_tools(mock_tools)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+        result = await tools._search_tools_entrypoint("quantum computing")
+
+    assert "No matching tools found" in result
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_activates_tools():
+    """After a search, matched tools should be added to self.functions."""
+    mock_tools = [
+        _create_mock_tool("similarity_search", "Search vectors in a database"),
+        _create_mock_tool("send_email", "Send an email to a recipient"),
+    ]
+    tools = _setup_lazy_tools(mock_tools)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+        # Before search, only search_tools is available
+        assert len(tools.functions) == 1
+
+        await tools._search_tools_entrypoint("vector")
+
+    # After search, similarity_search should be activated
+    assert "similarity_search" in tools.functions
+    assert "send_email" not in tools.functions
+    assert "search_tools" in tools.functions
+    assert "similarity_search" in tools._activated_tools
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_idempotent_activation():
+    """Searching the same query twice should not duplicate function registrations."""
+    mock_tools = [
+        _create_mock_tool("similarity_search", "Search vectors in a database"),
+    ]
+    tools = _setup_lazy_tools(mock_tools)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+        result1 = await tools._search_tools_entrypoint("vector")
+        functions_after_first = dict(tools.functions)
+
+        result2 = await tools._search_tools_entrypoint("vector")
+        functions_after_second = dict(tools.functions)
+
+    # Same results and same function set
+    assert "similarity_search" in result1
+    assert "similarity_search" in result2
+    assert functions_after_first.keys() == functions_after_second.keys()
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_respects_max_discovered_tools():
+    """Only max_discovered_tools should be returned per search."""
+    # Create 5 tools that all match "tool"
+    mock_tools = [_create_mock_tool(f"tool_{i}", f"Tool number {i}") for i in range(5)]
+    tools = _setup_lazy_tools(mock_tools, max_discovered_tools=2)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+        result = await tools._search_tools_entrypoint("tool")
+
+    assert "Found 2 matching tool(s)" in result
+    # Only 2 tools should be activated (plus search_tools = 3 total)
+    assert len(tools._activated_tools) == 2
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_preserves_hitl_settings():
+    """Activated tools should have correct HITL flags."""
+    mock_tools = [
+        _create_mock_tool("SearchTool", "Search for things"),
+        _create_mock_tool("DangerousTool", "Dangerous operation"),
+    ]
+    tools = _setup_lazy_tools(
+        mock_tools,
+        requires_confirmation_tools=["DangerousTool"],
+        stop_after_tool_call_tools=["SearchTool"],
+    )
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+        await tools._search_tools_entrypoint("search dangerous")
+
+    assert tools.functions["SearchTool"].stop_after_tool_call is True
+    assert tools.functions["SearchTool"].show_result is True
+    assert tools.functions["DangerousTool"].requires_confirmation is True
+
+
+@pytest.mark.asyncio
+async def test_eager_mode_unchanged():
+    """Default behavior (no lazy_load_tools) should remain identical to current."""
+    mock_tools = [
+        _create_mock_tool("tool_a", "Does A things"),
+        _create_mock_tool("tool_b", "Does B things"),
+    ]
+
+    # Eager mode (default)
+    tools = MCPTools(url="https://example.com/mcp")
+
+    mock_tools_result = MagicMock()
+    mock_tools_result.tools = mock_tools
+
+    mock_session = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+    tools.session = mock_session
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+    # All tools should be registered directly
+    assert "tool_a" in tools.functions
+    assert "tool_b" in tools.functions
+    assert "search_tools" not in tools.functions
+    assert len(tools._tool_registry) == 0
+
+
+@pytest.mark.asyncio
+async def test_lazy_load_search_tools_has_stop_after_tool_call():
+    """Verify search_tools has stop_after_tool_call=True so the model loop
+    pauses after discovery, allowing discovered tools to be available on the
+    next model call."""
+    mock_tools_list = [
+        _create_mock_tool("tool_a", "Does A things"),
+        _create_mock_tool("tool_b", "Does B things"),
+    ]
+    tools = _setup_lazy_tools(mock_tools_list)
+
+    with patch("agno.tools.mcp.mcp.get_entrypoint_for_tool", return_value=lambda: "result"):
+        await tools.build_tools()
+
+    assert "search_tools" in tools.functions
+    assert tools.functions["search_tools"].stop_after_tool_call is True
+
+
 # Parallel tool call session tests (issue #6094)
 # =============================================================================
 
