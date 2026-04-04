@@ -66,6 +66,9 @@ class MessageData:
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Metadata for tracking tool call id/name across streaming deltas
+    tool_call_metadata: Dict[int, Dict[str, Optional[str]]] = field(default_factory=dict)
+
     response_audio: Optional[Audio] = None
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
@@ -1935,6 +1938,35 @@ class Model(ABC):
             if stream_data.response_tool_calls is None:
                 stream_data.response_tool_calls = []
             stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
+
+            # Build tool_call_deltas from the raw tool_calls for streaming
+            deltas: List[Dict[str, Any]] = []
+            for tc in model_response_delta.tool_calls:
+                index = getattr(tc, "index", None) or 0
+                tc_id = getattr(tc, "id", None)
+                func = getattr(tc, "function", None)
+                func_name = getattr(func, "name", None) if func else None
+                func_args = getattr(func, "arguments", None) if func else None
+
+                if index not in stream_data.tool_call_metadata:
+                    stream_data.tool_call_metadata[index] = {"id": None, "name": None}
+                if tc_id:
+                    stream_data.tool_call_metadata[index]["id"] = tc_id
+                if func_name:
+                    stream_data.tool_call_metadata[index]["name"] = func_name
+
+                if func_args:
+                    deltas.append(
+                        {
+                            "index": index,
+                            "id": stream_data.tool_call_metadata[index]["id"],
+                            "name": stream_data.tool_call_metadata[index]["name"],
+                            "arguments_delta": func_args,
+                        }
+                    )
+            if deltas:
+                model_response_delta.tool_call_deltas = deltas
+
             should_yield = True
 
         if model_response_delta.audio is not None and isinstance(model_response_delta.audio, Audio):
