@@ -442,16 +442,21 @@ class MCPTools(Toolkit):
             pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
+        import asyncio
+
         if self.session is None:
             return False
         try:
             await self.session.send_ping()
             return True
+        except asyncio.CancelledError:
+            raise
         except (RuntimeError, BaseException):
             return False
 
     async def connect(self, force: bool = False):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
+        import asyncio
 
         if force:
             # Clean up the session and context so we force a new connection
@@ -467,6 +472,9 @@ class MCPTools(Toolkit):
 
         try:
             await self._connect()
+        except asyncio.CancelledError:
+            log_warning("MCP connection was cancelled")
+            raise
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to connect to {str(self)}: {e}")
 
@@ -573,6 +581,8 @@ class MCPTools(Toolkit):
 
     async def build_tools(self) -> None:
         """Build the tools for the MCP toolkit"""
+        import asyncio
+
         if self.session is None:
             raise ValueError("Session is not initialized")
 
@@ -638,12 +648,17 @@ class MCPTools(Toolkit):
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {e}")
 
+        except asyncio.CancelledError:
+            log_warning("MCP build_tools was cancelled")
+            raise
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to get tools for {str(self)}: {e}")
             raise
 
     async def initialize(self) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
+        import asyncio
+
         if self._initialized:
             return
 
@@ -658,5 +673,8 @@ class MCPTools(Toolkit):
 
             self._initialized = True
 
+        except asyncio.CancelledError:
+            log_warning("MCP initialization was cancelled")
+            raise
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to initialize MCP toolkit: {e}")
