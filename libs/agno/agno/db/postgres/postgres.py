@@ -303,7 +303,7 @@ class PostgresDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             # Composite PK
             if schema_primary_key is not None:

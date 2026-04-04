@@ -238,7 +238,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
