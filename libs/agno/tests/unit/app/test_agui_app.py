@@ -1358,3 +1358,211 @@ def test_validate_agui_state_with_invalid_to_dict():
     obj = TestClass()
     result = validate_agui_state(obj, "test_thread")
     assert result is None
+
+
+# ── raw_event passthrough tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_raw_event_on_text_content_events():
+    """Text content events carry raw_event with the original agno event dict."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        content_chunk = RunContentEvent()
+        content_chunk.event = RunEvent.run_content
+        content_chunk.content = "Hello"
+        yield content_chunk
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    text_start = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    text_content = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    text_end = [e for e in events if e.type == EventType.TEXT_MESSAGE_END]
+
+    assert len(text_start) == 1
+    assert text_start[0].raw_event is not None
+    assert isinstance(text_start[0].raw_event, dict)
+    assert text_start[0].raw_event.get("event") == RunEvent.run_content.value
+
+    assert len(text_content) == 1
+    assert text_content[0].raw_event is not None
+    assert isinstance(text_content[0].raw_event, dict)
+
+    # TextMessageEndEvent from completion also has raw_event
+    assert len(text_end) == 1
+    assert text_end[0].raw_event is not None
+
+
+@pytest.mark.asyncio
+async def test_raw_event_on_tool_call_events():
+    """Tool call events carry raw_event with the original agno event dict."""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        tool = ToolExecution(tool_call_id="tc_1", tool_name="search", tool_args={"q": "test"})
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool
+        yield tool_start
+
+        tool.result = "found it"
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    tool_start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    tool_args_events = [e for e in events if e.type == EventType.TOOL_CALL_ARGS]
+    tool_end_events = [e for e in events if e.type == EventType.TOOL_CALL_END]
+    tool_result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+    assert len(tool_start_events) == 1
+    assert tool_start_events[0].raw_event is not None
+    assert tool_start_events[0].raw_event.get("event") == RunEvent.tool_call_started.value
+
+    assert len(tool_args_events) == 1
+    assert tool_args_events[0].raw_event is not None
+
+    assert len(tool_end_events) == 1
+    assert tool_end_events[0].raw_event is not None
+    assert tool_end_events[0].raw_event.get("event") == RunEvent.tool_call_completed.value
+
+    assert len(tool_result_events) == 1
+    assert tool_result_events[0].raw_event is not None
+
+
+@pytest.mark.asyncio
+async def test_raw_event_catch_all_unmapped_events():
+    """Unmapped agno events produce RawEvent with type=RAW and source='agno'."""
+    from agno.run.agent import MemoryUpdateStartedEvent, ModelRequestStartedEvent, RunEvent
+
+    async def mock_stream():
+        mem_event = MemoryUpdateStartedEvent()
+        yield mem_event
+
+        model_event = ModelRequestStartedEvent()
+        yield model_event
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    raw_events = [e for e in events if e.type == EventType.RAW]
+
+    assert len(raw_events) == 2, f"Expected 2 RawEvents for unmapped types, got {len(raw_events)}"
+
+    for raw_ev in raw_events:
+        assert raw_ev.source == "agno"
+        assert isinstance(raw_ev.event, dict)
+        assert "event" in raw_ev.event
+
+    # Verify specific event types
+    raw_event_names = [e.event.get("event") for e in raw_events]
+    assert RunEvent.memory_update_started.value in raw_event_names
+    assert RunEvent.model_request_started.value in raw_event_names
+
+
+@pytest.mark.asyncio
+async def test_no_raw_event_duplication_for_handled_types():
+    """Mapped event types produce only their proper AG-UI events, not extra RawEvents."""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        # Text content - mapped
+        text = RunContentEvent()
+        text.event = RunEvent.run_content
+        text.content = "Hello"
+        yield text
+
+        # Tool call - mapped
+        tool = ToolExecution(tool_call_id="tc_1", tool_name="test_tool", tool_args={})
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool
+        yield tool_start
+
+        tool.result = "done"
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    raw_events = [e for e in events if e.type == EventType.RAW]
+    assert len(raw_events) == 0, f"Mapped events should not produce RawEvent, got {len(raw_events)}: {raw_events}"
+
+
+@pytest.mark.asyncio
+async def test_raw_event_graceful_on_serialization_failure():
+    """Events still emit with raw_event=None when to_dict() raises, and catch-all uses fallback."""
+    from unittest.mock import patch
+
+    from agno.run.agent import MemoryUpdateStartedEvent, RunEvent
+
+    async def mock_stream():
+        # Content event with broken serialization
+        text = RunContentEvent()
+        text.event = RunEvent.run_content
+        text.content = "Hello"
+        yield text
+
+        # Unmapped event with broken serialization
+        mem_event = MemoryUpdateStartedEvent()
+        yield mem_event
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    with (
+        patch.object(RunContentEvent, "to_dict", side_effect=RuntimeError("serialize error")),
+        patch.object(MemoryUpdateStartedEvent, "to_dict", side_effect=RuntimeError("serialize error")),
+    ):
+        async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+            events.append(event)
+
+    # Text events should still be emitted with raw_event=None
+    text_start = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    assert len(text_start) == 1
+    assert text_start[0].raw_event is None
+
+    text_content = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    assert len(text_content) == 1
+    assert text_content[0].raw_event is None
+
+    # Unmapped event should produce RawEvent with fallback event dict
+    raw_events = [e for e in events if e.type == EventType.RAW]
+    assert len(raw_events) == 1
+    assert raw_events[0].source == "agno"
+    assert raw_events[0].event == {"event": RunEvent.memory_update_started.value}
