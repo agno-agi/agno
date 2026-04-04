@@ -14,19 +14,19 @@ class Api:
             "Content-Type": "application/json",
         }
 
-    def Client(self) -> HttpxClient:
+    def Client(self, timeout: int = 60) -> HttpxClient:
         return HttpxClient(
             base_url=agno_api_settings.api_url,
             headers=self.headers,
-            timeout=60,
+            timeout=timeout,
             http2=True,
         )
 
-    def AsyncClient(self) -> HttpxAsyncClient:
+    def AsyncClient(self, timeout: int = 60) -> HttpxAsyncClient:
         return HttpxAsyncClient(
             base_url=agno_api_settings.api_url,
             headers=self.headers,
-            timeout=60,
+            timeout=timeout,
             http2=True,
         )
 
