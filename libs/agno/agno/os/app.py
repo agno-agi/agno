@@ -36,7 +36,7 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
+from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
@@ -448,6 +448,7 @@ class AgentOS:
             self._add_router(app, get_home_router(self))
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
+        self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
@@ -874,6 +875,29 @@ class AgentOS:
         )
         fastapi_app.state.jwt_validator = jwt_validator
 
+        # Collect interface route prefixes to exclude from JWT auth.
+        # Interfaces use their own authentication mechanisms
+        # (e.g. Slack HMAC-SHA256 signing, Telegram webhook verification).
+        excluded_route_paths: Optional[List[str]] = None
+        if self.interfaces:
+            interface_prefixes = [
+                f"{interface.prefix}/*"
+                for interface in self.interfaces
+                if hasattr(interface, "prefix") and interface.prefix
+            ]
+            if interface_prefixes:
+                # Passing excluded_route_paths replaces the middleware defaults,
+                # so include the default excluded routes as well.
+                excluded_route_paths = [
+                    "/",
+                    "/health",
+                    "/info",
+                    "/docs",
+                    "/redoc",
+                    "/openapi.json",
+                    "/docs/oauth2-redirect",
+                ] + interface_prefixes
+
         # Add middleware to stack
         fastapi_app.add_middleware(
             JWTMiddleware,
@@ -882,6 +906,7 @@ class AgentOS:
             algorithm=algorithm,
             authorization=self.authorization,
             verify_audience=verify_audience,
+            excluded_route_paths=excluded_route_paths,
         )
 
     def get_routes(self) -> List[Any]:

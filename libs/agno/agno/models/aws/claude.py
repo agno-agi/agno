@@ -45,9 +45,7 @@ class Claude(AnthropicClaude):
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
-        # Validate thinking support immediately at model creation
-        if self.thinking:
-            self._validate_thinking_support()
+        super().__post_init__()
         # Overwrite output schema support for AWS Bedrock Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
@@ -227,6 +225,7 @@ class Claude(AnthropicClaude):
         system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        messages: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
@@ -235,6 +234,7 @@ class Claude(AnthropicClaude):
             system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
+            messages: Optional list of Message objects for the conversation.
 
         Returns:
             Dict[str, Any]: The request keyword arguments.
