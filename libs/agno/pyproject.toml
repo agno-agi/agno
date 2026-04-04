@@ -144,6 +144,7 @@ zep = ["zep-cloud"]
 daytona = ["daytona"]
 oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
+n8n = ["httpx"]
 neo4j = ["neo4j"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 
@@ -277,6 +278,7 @@ tools = [
   "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
+  "agno[n8n]",
   "agno[neo4j]",
 ]
 
