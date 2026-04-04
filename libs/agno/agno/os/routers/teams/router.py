@@ -111,6 +111,107 @@ async def team_response_streamer(
         return
 
 
+async def team_continue_response_streamer(
+    team: Union[Team, RemoteTeam],
+    run_id: str,
+    requirements: List,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> AsyncGenerator:
+    try:
+        if isinstance(team, RemoteTeam):
+            result = await team.acontinue_run(
+                run_id=run_id,
+                stream=True,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            yield format_sse_event(result)  # type: ignore[arg-type]
+            return
+
+        continue_response = team.acontinue_run(  # type: ignore[call-overload]
+            run_id=run_id,
+            requirements=requirements,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background_tasks=background_tasks,
+        )
+        async for chunk in continue_response:  # type: ignore[union-attr]
+            yield format_sse_event(chunk)  # type: ignore[arg-type]
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+        )
+        yield format_sse_event(error_response)
+    except BaseException as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+        return
+
+
+async def _enrich_requirements_from_session(
+    team: Team,
+    run_id: str,
+    session_id: Optional[str],
+    incoming_tools: List,
+) -> List:
+    import asyncio
+
+    from agno.db.base import SessionType
+    from agno.run.requirement import RunRequirement
+
+    confirmed_map = {t.tool_call_id: t for t in incoming_tools if t.tool_call_id}
+
+    db = getattr(team, "db", None)
+    if db is not None and session_id:
+        try:
+            loop = asyncio.get_running_loop()
+            team_session = await loop.run_in_executor(
+                None,
+                lambda: db.get_session(session_id=session_id, session_type=SessionType.TEAM),
+            )
+            if team_session is not None:
+                stored_run = team_session.get_run(run_id)
+                if stored_run is not None and getattr(stored_run, "requirements", None):
+                    for req in stored_run.requirements:
+                        tcid = req.tool_execution.tool_call_id if req.tool_execution else None
+                        if tcid and tcid in confirmed_map:
+                            incoming = confirmed_map[tcid]
+                            req.confirmation = incoming.confirmed
+                            req.confirmation_note = getattr(incoming, "confirmation_note", None)
+                            if req.tool_execution:
+                                req.tool_execution.confirmed = incoming.confirmed
+
+                        if req.member_run_id and req._member_run_response is None:
+                            member_run = team_session.get_run(req.member_run_id)
+                            if member_run is not None:
+                                req._member_run_response = member_run
+
+                    return list(stored_run.requirements)
+        except Exception:
+            pass
+
+    requirements = []
+    for tool_exec in incoming_tools:
+        req = RunRequirement(tool_execution=tool_exec)
+        req.confirmation = tool_exec.confirmed
+        req.confirmation_note = getattr(tool_exec, "confirmation_note", None)
+        requirements.append(req)
+    return requirements
+
+
 def get_team_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -381,6 +482,114 @@ def get_team_router(
         # in cancel-before-start scenarios), so we always return success.
         await team.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
+
+    @router.post(
+        "/teams/{team_id}/runs/{run_id}/continue",
+        tags=["Teams"],
+        operation_id="continue_team_run",
+        response_model_exclude_none=True,
+        summary="Continue Team Run",
+        description=(
+            "Continue a paused team run with updated tool results.\n\n"
+            "**Use Cases:**\n"
+            "- Resume execution after tool approval/rejection in a HITL flow\n\n"
+            "**Tools Parameter:**\n"
+            "JSON string containing array of tool execution objects with confirmation results."
+        ),
+        responses={
+            200: {
+                "description": "Team run continued successfully",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunContent\ndata: {"created_at": 1757348314, "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def continue_team_run(
+        team_id: str,
+        run_id: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        tools: str = Form(...),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        import json
+
+        from agno.models.response import ToolExecution
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            session_id = request.state.session_id
+
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        try:
+            tools_data = json.loads(tools) if tools else []
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        incoming_tools = []
+        for tool_data in tools_data:
+            try:
+                incoming_tools.append(ToolExecution.from_dict(tool_data))
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        if isinstance(team, RemoteTeam):
+            if stream:
+                return StreamingResponse(
+                    team_continue_response_streamer(
+                        team,
+                        run_id=run_id,
+                        requirements=[],
+                        session_id=session_id,
+                        user_id=user_id,
+                        background_tasks=background_tasks,
+                    ),
+                    media_type="text/event-stream",
+                )
+            result = await team.acontinue_run(
+                run_id=run_id,
+                stream=False,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return result.to_dict()
+
+        requirements = await _enrich_requirements_from_session(team, run_id, session_id, incoming_tools)
+
+        if stream:
+            return StreamingResponse(
+                team_continue_response_streamer(
+                    team,
+                    run_id=run_id,
+                    requirements=requirements,
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                ),
+                media_type="text/event-stream",
+            )
+
+        run_response_obj = await team.acontinue_run(  # type: ignore[misc]
+            run_id=run_id,
+            requirements=requirements,
+            session_id=session_id,
+            user_id=user_id,
+            stream=False,
+            background_tasks=background_tasks,
+        )
+        return run_response_obj.to_dict()
 
     @router.get(
         "/teams",
