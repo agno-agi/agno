@@ -50,6 +50,9 @@ class LiteLLM(Model):
     append_trailing_user_message: Optional[bool] = None
     trailing_user_message_content: str = "continue"
 
+    # When True, extract text from files and send as {"type": "text"} instead of {"type": "file"}.
+    extract_file_text: bool = False
+
     client: Optional[Any] = None
 
     # Store the original client to preserve it across copies (e.g., for Router instances)
@@ -158,7 +161,7 @@ class LiteLLM(Model):
                 else:
                     content_list = msg["content"] if isinstance(msg["content"], list) else []
                 for file in m.files:
-                    file_part = _format_file_for_message(file)
+                    file_part = _format_file_for_message(file, extract_text=self.extract_file_text)
                     if file_part:
                         content_list.append(file_part)
                 msg["content"] = content_list

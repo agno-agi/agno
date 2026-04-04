@@ -194,13 +194,114 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     return image_messages
 
 
-def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
+def _extract_text_from_file(content: bytes, mime_type: Optional[str], filename: Optional[str]) -> Optional[str]:
+    """Extract plain text from file content based on MIME type.
+
+    Returns extracted text, or ``None`` if the format is unsupported or
+    extraction fails.  Libraries for PDF and DOCX are imported lazily so
+    they remain optional dependencies.
+    """
+    if mime_type is None and filename:
+        mime_type = mimetypes.guess_type(filename)[0]
+
+    if mime_type is None:
+        return None
+
+    # Text-based MIME types: decode directly
+    _text_mime_types = {
+        "text/plain",
+        "text/csv",
+        "text/html",
+        "text/css",
+        "text/xml",
+        "text/rtf",
+        "text/md",
+        "text/markdown",
+        "text/javascript",
+        "application/json",
+        "application/x-javascript",
+        "application/x-python",
+        "text/x-python",
+    }
+    if mime_type in _text_mime_types or mime_type.startswith("text/"):
+        try:
+            return content.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+    # PDF extraction via pypdf
+    if mime_type == "application/pdf":
+        try:
+            from io import BytesIO
+
+            from pypdf import PdfReader
+
+            reader = PdfReader(BytesIO(content))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n".join(pages).strip()
+            return text if text else None
+        except Exception:
+            return None
+
+    # DOCX extraction via python-docx
+    if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        try:
+            from io import BytesIO
+
+            from docx import Document as DocxDocument  # type: ignore
+
+            doc = DocxDocument(BytesIO(content))
+            text = "\n\n".join(para.text for para in doc.paragraphs).strip()
+            return text if text else None
+        except Exception:
+            return None
+
+    return None
+
+
+def _format_file_for_message(file: File, extract_text: bool = False) -> Optional[Dict[str, Any]]:
     """
     Add a document url, base64 encoded content or OpenAI file to a message.
+
+    When *extract_text* is ``True``, the function attempts to extract plain
+    text from the file and returns a ``{"type": "text", ...}`` content block
+    instead of ``{"type": "file", ...}``.  This is useful for models that do
+    not support the ``file`` content type (e.g. ``gpt-4.1-mini`` via Azure).
+    Falls back to the standard ``file`` format if extraction fails.
     """
     import base64
     import mimetypes
     from pathlib import Path
+
+    # When extract_text is requested, try to extract text first
+    if extract_text:
+        content_bytes: Optional[bytes] = None
+        _filename: Optional[str] = file.filename
+        _mime: Optional[str] = file.mime_type
+
+        if file.url is not None:
+            from urllib.parse import urlparse
+
+            result = file.file_url_content
+            if result:
+                content_bytes, url_mime = result
+                _filename = _filename or Path(urlparse(file.url).path).name or "file"
+                _mime = _mime or url_mime
+        elif file.filepath is not None:
+            path = Path(file.filepath)
+            if path.is_file():
+                content_bytes = path.read_bytes()
+                _filename = _filename or path.name
+                _mime = _mime or mimetypes.guess_type(path.name)[0]
+        elif file.content is not None:
+            content_bytes = file.content if isinstance(file.content, bytes) else file.content.encode("utf-8")
+            _filename = _filename or "file"
+
+        if content_bytes is not None:
+            extracted = _extract_text_from_file(content_bytes, _mime, _filename)
+            if extracted is not None:
+                display_name = _filename or "file"
+                return {"type": "text", "text": f"[File: {display_name}]\n{extracted}"}
 
     # Case 1: Document is a URL
     if file.url is not None:
@@ -210,11 +311,11 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         if not result:
             log_error(f"Failed to fetch file from URL: {file.url}")
             return None
-        content_bytes, mime_type = result
+        content_bytes_url, mime_type = result
         name = Path(urlparse(file.url).path).name or "file"
-        _mime = mime_type or file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
-        _encoded = base64.b64encode(content_bytes).decode("utf-8")
-        _data_url = f"data:{_mime};base64,{_encoded}"
+        _mime_url = mime_type or file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
+        _encoded = base64.b64encode(content_bytes_url).decode("utf-8")
+        _data_url = f"data:{_mime_url};base64,{_encoded}"
         return {"type": "file", "file": {"filename": name, "file_data": _data_url}}
 
     # Case 2: Document is a local file path
@@ -225,17 +326,17 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
             return None
         data = path.read_bytes()
 
-        _mime = file.mime_type or mimetypes.guess_type(path.name)[0] or "application/pdf"
+        _mime_path = file.mime_type or mimetypes.guess_type(path.name)[0] or "application/pdf"
         _encoded = base64.b64encode(data).decode("utf-8")
-        _data_url = f"data:{_mime};base64,{_encoded}"
+        _data_url = f"data:{_mime_path};base64,{_encoded}"
         return {"type": "file", "file": {"filename": path.name, "file_data": _data_url}}
 
     # Case 3: Document is bytes content
     if file.content is not None:
         name = file.filename or "file"
-        _mime = file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
+        _mime_bytes = file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
         _encoded = base64.b64encode(file.content).decode("utf-8")
-        _data_url = f"data:{_mime};base64,{_encoded}"
+        _data_url = f"data:{_mime_bytes};base64,{_encoded}"
         return {"type": "file", "file": {"filename": name, "file_data": _data_url}}
 
     return None
