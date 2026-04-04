@@ -45,7 +45,7 @@ from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
-from agno.session import SessionSummaryManager, TeamSession
+from agno.session import ContextCompactionManager, SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.team import (
     _cli,
@@ -325,6 +325,10 @@ class Team:
     num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
+    # If True, automatically compact long history into the session summary.
+    enable_context_compaction: bool = False
+    # Manager for automatic history compaction.
+    context_compaction_manager: Optional[ContextCompactionManager] = None
 
     # --- Team Storage ---
     # Metadata stored with this team
@@ -489,6 +493,8 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        enable_context_compaction: bool = False,
+        context_compaction_manager: Optional[ContextCompactionManager] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -610,6 +616,8 @@ class Team:
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
+            enable_context_compaction=enable_context_compaction,
+            context_compaction_manager=context_compaction_manager,
             tools=tools,
             tool_call_limit=tool_call_limit,
             tool_choice=tool_choice,
