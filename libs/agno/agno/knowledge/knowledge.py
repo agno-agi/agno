@@ -1563,15 +1563,20 @@ class Knowledge(RemoteKnowledge):
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
+        # Web-content extensions must not be fetched into BytesIO: readers like
+        # WebsiteReader expect a plain URL string, not a binary stream.
+        _WEB_EXTENSIONS = {".html", ".htm", ".xhtml"}
+        is_web_extension = file_extension in _WEB_EXTENSIONS
+
         bytes_content = None
-        if file_extension:
+        if file_extension and not is_web_extension:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if file_extension and not is_web_extension:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
@@ -1715,14 +1720,19 @@ class Knowledge(RemoteKnowledge):
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
+        # Web-content extensions must not be fetched into BytesIO: readers like
+        # WebsiteReader expect a plain URL string, not a binary stream.
+        _WEB_EXTENSIONS = {".html", ".htm", ".xhtml"}
+        is_web_extension = file_extension in _WEB_EXTENSIONS
+
         bytes_content = None
-        if file_extension:
+        if file_extension and not is_web_extension:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if file_extension and not is_web_extension:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
