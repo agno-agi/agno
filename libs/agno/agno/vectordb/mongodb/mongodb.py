@@ -8,7 +8,7 @@ from bson import ObjectId
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -1027,23 +1027,35 @@ class MongoDb(VectorDb):
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
+        # Separate media docs from text docs for batch embedding
+        text_docs = [doc for doc in documents if not doc.has_media]
+        media_docs = [doc for doc in documents if doc.has_media]
+
+        # Individually embed media docs (they use different embedding methods)
+        for doc in media_docs:
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
+
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
                 # Extract content from all documents
-                doc_contents = [doc.content for doc in documents]
+                doc_contents = [doc.content for doc in text_docs]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                if doc_contents:
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                # Process documents with pre-computed embeddings
-                for j, doc in enumerate(documents):
-                    try:
-                        if j < len(embeddings):
-                            doc.embedding = embeddings[j]
-                            doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    # Process documents with pre-computed embeddings
+                    for j, doc in enumerate(text_docs):
+                        try:
+                            if j < len(embeddings):
+                                doc.embedding = embeddings[j]
+                                doc.usage = usages[j] if j < len(usages) else None
+                        except Exception as e:
+                            logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -1059,11 +1071,11 @@ class MongoDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
         else:
             # Use individual embedding
-            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in text_docs]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         prepared_docs = []
@@ -1092,23 +1104,35 @@ class MongoDb(VectorDb):
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
+        # Separate media docs from text docs for batch embedding
+        text_docs = [doc for doc in documents if not doc.has_media]
+        media_docs = [doc for doc in documents if doc.has_media]
+
+        # Individually embed media docs (they use different embedding methods)
+        for doc in media_docs:
+            try:
+                await doc.async_embed(embedder=self.embedder)
+            except Exception as e:
+                log_error(f"Error embedding media document '{doc.name}': {e}")
+
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
                 # Extract content from all documents
-                doc_contents = [doc.content for doc in documents]
+                doc_contents = [doc.content for doc in text_docs]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                if doc_contents:
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                # Process documents with pre-computed embeddings
-                for j, doc in enumerate(documents):
-                    try:
-                        if j < len(embeddings):
-                            doc.embedding = embeddings[j]
-                            doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    # Process documents with pre-computed embeddings
+                    for j, doc in enumerate(text_docs):
+                        try:
+                            if j < len(embeddings):
+                                doc.embedding = embeddings[j]
+                                doc.usage = usages[j] if j < len(usages) else None
+                        except Exception as e:
+                            logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -1124,11 +1148,11 @@ class MongoDb(VectorDb):
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in text_docs]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
         else:
             # Use individual embedding
-            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in text_docs]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
