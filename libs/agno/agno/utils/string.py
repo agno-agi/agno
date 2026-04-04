@@ -250,6 +250,24 @@ def parse_response_dict_str(content: str) -> Optional[dict]:
         return None
 
 
+def sanitize_tool_name(name: str) -> str:
+    """Sanitize a name for use in tool function names.
+
+    Replaces non-alphanumeric characters (except underscores and hyphens) with
+    underscores, collapses consecutive underscores, strips leading/trailing
+    underscores, and lowercases the result.
+
+    Args:
+        name: The raw name to sanitize.
+
+    Returns:
+        A cleaned string safe for use as part of a Python identifier or tool name.
+    """
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("_").lower()
+
+
 def generate_id(seed: Optional[str] = None) -> str:
     """
     Generate a deterministic UUID5 based on a seed string.

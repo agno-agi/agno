@@ -747,13 +747,25 @@ async def areason(
 # ---------------------------------------------------------------------------
 
 
+def _is_think_tool(tool_name: str) -> bool:
+    """Check if a tool name is a think tool (exact match or namespaced like think_*)."""
+    name = tool_name.lower()
+    return name == "think" or name.startswith("think_")
+
+
+def _is_analyze_tool(tool_name: str) -> bool:
+    """Check if a tool name is an analyze tool (exact match or namespaced like analyze_*)."""
+    name = tool_name.lower()
+    return name == "analyze" or name.startswith("analyze_")
+
+
 def update_reasoning_content_from_tool_call(
     team: "Team", run_response: TeamRunOutput, tool_name: str, tool_args: Dict[str, Any]
 ) -> Optional[ReasoningStep]:
     """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
 
     # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
-    if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
+    if _is_think_tool(tool_name) and "title" in tool_args and "thought" in tool_args:
         title = tool_args["title"]
         thought = tool_args["thought"]
         action = tool_args.get("action", "")
@@ -783,7 +795,7 @@ def update_reasoning_content_from_tool_call(
         return reasoning_step
 
     # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
-    elif tool_name.lower() == "analyze" and "title" in tool_args:
+    elif _is_analyze_tool(tool_name) and "title" in tool_args:
         title = tool_args["title"]
         result = tool_args.get("result", "")
         analysis = tool_args.get("analysis", "")
@@ -825,7 +837,7 @@ def update_reasoning_content_from_tool_call(
         return reasoning_step
 
     # Case 3: ReasoningTool.think (simple format, just has 'thought')
-    elif tool_name.lower() == "think" and "thought" in tool_args:
+    elif _is_think_tool(tool_name) and "thought" in tool_args:
         thought = tool_args["thought"]
         reasoning_step = ReasoningStep(
             title="Thinking",
@@ -908,7 +920,7 @@ def _update_run_response(
     if model_response.tool_executions:
         for tool_call in model_response.tool_executions:
             tool_name = tool_call.tool_name
-            if tool_name and tool_name.lower() in ["think", "analyze"]:
+            if tool_name and (_is_think_tool(tool_name) or _is_analyze_tool(tool_name)):
                 tool_args = tool_call.tool_args or {}
                 update_reasoning_content_from_tool_call(team, run_response, tool_name, tool_args)
 
@@ -1502,7 +1514,7 @@ def _handle_model_response_chunk(
                 # Only iterate through new tool calls
                 for tool_call in tool_executions_list:
                     tool_name = tool_call.tool_name or ""
-                    if tool_name.lower() in ["think", "analyze"]:
+                    if _is_think_tool(tool_name) or _is_analyze_tool(tool_name):
                         tool_args = tool_call.tool_args or {}
 
                         reasoning_step = update_reasoning_content_from_tool_call(
