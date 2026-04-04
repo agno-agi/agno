@@ -895,3 +895,89 @@ def test_upsert_sessions_performance(sqlite_db_real: SqliteDb):
     assert bulk_time < individual_time / 2, (
         f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
     )
+
+
+def test_session_json_not_double_encoded(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
+    """Verify that JSON fields are not double-encoded in SQLite storage."""
+    import json
+
+    from sqlalchemy import text
+
+    sqlite_db_real.upsert_session(sample_agent_session)
+
+    # Read raw SQL — should be valid JSON, not a quoted string
+    with sqlite_db_real.Session() as sess:
+        raw = sess.execute(
+            text(f"SELECT runs, agent_data, session_data, metadata FROM {sqlite_db_real.session_table_name}")
+        ).fetchone()
+
+    assert raw is not None
+
+    # Each raw value should parse as the expected type, not as a string wrapping JSON
+    for col_name, col_value in zip(["runs", "agent_data", "session_data", "metadata"], raw):
+        parsed = json.loads(col_value)
+        assert not isinstance(parsed, str), (
+            f"Column '{col_name}' is double-encoded: raw value is a JSON string wrapping JSON"
+        )
+
+    # Verify runs specifically
+    runs_parsed = json.loads(raw[0])
+    assert isinstance(runs_parsed, list), f"Expected list, got {type(runs_parsed)}"
+    assert runs_parsed[0]["run_id"] == "test_agent_run_1"
+
+    # Verify agent_data
+    agent_data_parsed = json.loads(raw[1])
+    assert isinstance(agent_data_parsed, dict)
+    assert agent_data_parsed["name"] == "Test Agent"
+
+    # Verify session_data
+    session_data_parsed = json.loads(raw[2])
+    assert isinstance(session_data_parsed, dict)
+    assert session_data_parsed["session_name"] == "Test Agent Session"
+
+    # Verify metadata
+    metadata_parsed = json.loads(raw[3])
+    assert isinstance(metadata_parsed, dict)
+    assert metadata_parsed["extra_key"] == "extra_value"
+
+
+def test_session_json_not_double_encoded_bulk(sqlite_db_real: SqliteDb):
+    """Verify that bulk upsert also does not double-encode JSON fields."""
+    import json
+
+    from sqlalchemy import text
+
+    sessions = [
+        AgentSession(
+            session_id=f"bulk_encode_test_{i}",
+            agent_id=f"agent_{i}",
+            user_id="test_user",
+            agent_data={"name": f"Agent {i}"},
+            session_data={"index": i},
+            metadata={"key": f"value_{i}"},
+            runs=[
+                RunOutput(
+                    run_id=f"run_{i}",
+                    agent_id=f"agent_{i}",
+                    status=RunStatus.completed,
+                    messages=[],
+                )
+            ],
+            created_at=int(time.time()),
+        )
+        for i in range(3)
+    ]
+
+    sqlite_db_real.upsert_sessions(sessions)
+
+    with sqlite_db_real.Session() as sess:
+        rows = sess.execute(
+            text(f"SELECT session_id, runs, agent_data FROM {sqlite_db_real.session_table_name} ORDER BY session_id")
+        ).fetchall()
+
+    assert len(rows) == 3
+    for row in rows:
+        runs_parsed = json.loads(row[1])
+        assert isinstance(runs_parsed, list), f"runs double-encoded for {row[0]}"
+        agent_data_parsed = json.loads(row[2])
+        assert isinstance(agent_data_parsed, dict), f"agent_data double-encoded for {row[0]}"
