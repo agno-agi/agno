@@ -361,6 +361,18 @@ def _create_events_from_chunk(
                 delta=reasoning_content,
             )
             events_to_emit.append(reasoning_content_event)
+    elif chunk.event == RunEvent.reasoning_content_delta:
+        # Handle streaming reasoning deltas (e.g. from OpenAIResponses)
+        if reasoning_message_id is None:
+            reasoning_message_id = str(uuid.uuid4())
+        reasoning_content = getattr(chunk, "reasoning_content", None) or ""
+        if reasoning_content:
+            reasoning_content_event = ReasoningMessageContentEvent(
+                type=EventType.REASONING_MESSAGE_CONTENT,
+                message_id=reasoning_message_id,
+                delta=reasoning_content,
+            )
+            events_to_emit.append(reasoning_content_event)
     elif chunk.event == RunEvent.reasoning_completed:
         step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
         events_to_emit.append(step_finished_event)
