@@ -68,12 +68,12 @@ import re
 import tempfile
 import textwrap
 from datetime import datetime, timedelta
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
+from agno.tools.google.auth import google_authenticate
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -93,22 +93,7 @@ except ImportError:
     )
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                self.service = build("gmail", "v1", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Gmail authentication failed: {e}")
-            return json.dumps({"error": f"Gmail authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("gmail")
 
 
 def validate_email(email: str) -> bool:
@@ -237,7 +222,6 @@ class GmailTools(Toolkit):
         self.max_batch_size = max(min(max_batch_size, 100), 1)
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
-
         tools: List[Any] = []
         # Reading emails
         if get_latest_emails:
@@ -369,6 +353,9 @@ class GmailTools(Toolkit):
             modify_scope = "https://www.googleapis.com/auth/gmail.modify"
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
+
+    def _build_service(self):
+        return build("gmail", "v1", credentials=self.creds)
 
     def _auth(self) -> None:
         """Authenticate with Gmail API using service account (priority) or OAuth flow."""
