@@ -5,6 +5,7 @@ across OpenAI Chat (call_*), OpenAI Responses (fc_*/call_*), Claude (toolu_*),
 and Gemini (UUID-style) ID formats.
 """
 
+from agno.media import Image
 from agno.models.message import Message
 from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
@@ -357,6 +358,47 @@ class TestClaudeFormatMessages:
         assert formatted[0]["role"] == "user"
         assert formatted[1]["role"] == "assistant"
         assert formatted[2]["role"] == "user"
+
+    def test_tool_result_with_images_merged(self):
+        """Tool result with images merges correctly with consecutive tool results."""
+        from agno.utils.models.claude import format_messages
+
+        # Minimal 1x1 PNG
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
+            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        tc1 = _make_tool_call("toolu_001", name="screenshot")
+        tc2 = _make_tool_call("toolu_002", name="search")
+
+        msgs = [
+            Message(role="user", content="Do both"),
+            _assistant_msg([tc1, tc2]),
+            Message(
+                role="tool",
+                tool_call_id="toolu_001",
+                tool_name="screenshot",
+                content="Screenshot taken",
+                images=[Image(content=png_bytes, format="png")],
+            ),
+            _tool_msg("toolu_002", content="Search result"),
+        ]
+        formatted, _system = format_messages(msgs)
+
+        # Should merge into 3 messages: user, assistant, user (merged tool results)
+        assert len(formatted) == 3
+        merged_content = formatted[2]["content"]
+        assert len(merged_content) == 2
+
+        # First tool result has image content (list)
+        assert merged_content[0]["type"] == "tool_result"
+        assert isinstance(merged_content[0]["content"], list)
+
+        # Second tool result has plain string content
+        assert merged_content[1]["type"] == "tool_result"
+        assert merged_content[1]["content"] == "Search result"
 
 
 # ---------------------------------------------------------------------------
