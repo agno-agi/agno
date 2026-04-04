@@ -125,6 +125,7 @@ def attach_routes(
     access_token: Optional[str] = None,
     phone_number_id: Optional[str] = None,
     verify_token: Optional[str] = None,
+    app_secret: Optional[str] = None,
     media_timeout: int = 30,
     enable_encryption: bool = False,
     encryption_key: Optional[bytes] = None,
@@ -142,6 +143,18 @@ def attach_routes(
     # Multiple WhatsApp routers on one app need unique operation_ids
     op_suffix = entity_name.lower().replace(" ", "_")
     entity_id = getattr(entity, "id", None) or entity_name
+
+    _log_prefix = f"[{entity_name}]"
+
+    # Detect duplicate entity_id by checking existing operation_ids on this router
+    _expected_op = f"whatsapp_webhook_{op_suffix}"
+    for route in getattr(router, "routes", []):
+        if getattr(route, "operation_id", None) == _expected_op:
+            log_warning(
+                f"{_log_prefix} entity_id '{entity_id}' is already registered on this router. "
+                "Multiple routers sharing the same entity_id will collide on session namespaces."
+            )
+            break
 
     # Used by /new handler (create sessions) and process_message (find latest)
     session_config = _resolve_session_config(entity, entity_type)
@@ -193,14 +206,14 @@ def attach_routes(
         payload = await request.body()
         signature = request.headers.get("X-Hub-Signature-256")
 
-        if not validate_webhook_signature(payload, signature):
-            log_warning("Invalid webhook signature")
+        if not validate_webhook_signature(payload, signature, app_secret=app_secret):
+            log_warning(f"{_log_prefix} Invalid webhook signature")
             raise HTTPException(status_code=403, detail="Invalid signature")
 
         body = await request.json()
 
         if body.get("object") != "whatsapp_business_account":
-            log_warning(f"Received non-WhatsApp webhook object: {body.get('object')}")
+            log_warning(f"{_log_prefix} Received non-WhatsApp webhook object: {body.get('object')}")
             return WhatsAppWebhookResponse(status="ignored")
 
         # ACK immediately, process in background. Meta retries if no 200 within ~20s
@@ -215,7 +228,7 @@ def attach_routes(
         # Extract early so error handler can notify the user
         phone_number = message.get("from")
         if not phone_number:
-            log_warning("Message missing 'from' field, skipping")
+            log_warning(f"{_log_prefix} Message missing 'from' field, skipping")
             return
         # Splits identity: user_id (possibly encrypted) for DB storage, phone_number (raw) for API sends
         user_id = _encrypt_phone(phone_number, encryption_key) if enable_encryption and encryption_key else phone_number
@@ -254,11 +267,11 @@ def attach_routes(
                         session_config.db.upsert_session(new_session)
                     await send_whatsapp_message_async(phone_number, _SESSION_RESET_MESSAGE, config)
                 except Exception as e:
-                    log_warning(f"Failed to persist /new session: {e}")
+                    log_warning(f"{_log_prefix} Failed to persist /new session: {e}")
                     await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
                 return
 
-            log_info(f"Processing message from {user_id[:12]}: {parsed.text}")
+            log_info(f"{_log_prefix} Processing message from {user_id[:12]}: {parsed.text}")
 
             # Resolve session: check DB for latest, fall back to deterministic ID
             default_session_id = f"wa:{entity_id}:{user_id}"
@@ -281,7 +294,7 @@ def attach_routes(
                     if sessions:
                         session_id = sessions[0].session_id
                 except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {e}")
+                    log_warning(f"{_log_prefix} Session lookup failed, using default: {e}")
 
             # Download media from Meta servers and wrap as Agno media objects
             media_kwargs, skipped_media = await download_event_media_async(parsed, config)
@@ -321,7 +334,7 @@ def attach_routes(
 
             if response.status == "ERROR":
                 await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
-                log_error(response.content)
+                log_error(f"{_log_prefix} {response.content}")
                 return
 
             if show_reasoning and hasattr(response, "reasoning_content") and response.reasoning_content:
@@ -353,10 +366,10 @@ def attach_routes(
                 await send_whatsapp_message_async(phone_number, response.content, config)
 
         except Exception as e:
-            log_error(f"Error processing message: {e}")
+            log_error(f"{_log_prefix} Error processing message: {repr(e)}", exc_info=True)
             try:
                 await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
             except Exception as send_error:
-                log_error(f"Error sending error message: {send_error}")
+                log_error(f"{_log_prefix} Error sending error message: {repr(send_error)}")
 
     return router
