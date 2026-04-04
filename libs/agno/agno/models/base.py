@@ -2139,8 +2139,15 @@ class Model(ABC):
         function_call_output: str = ""
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
+            generator_return_value = None
             try:
-                for item in function_execution_result.result:
+                _iter = iter(function_execution_result.result)
+                while True:
+                    try:
+                        item = next(_iter)
+                    except StopIteration as _stop:
+                        generator_return_value = _stop.value
+                        break
                     # This function yields agent/team/workflow run events
                     if (
                         isinstance(item, tuple(get_args(RunOutputEvent)))
@@ -2159,7 +2166,6 @@ class Model(ABC):
                                 yield ModelResponse(content=item.content)
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
@@ -2183,6 +2189,10 @@ class Model(ABC):
                 log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                 function_call.error = str(e)
                 function_call_success = False
+
+            # If the generator returned a value, use it as the tool output
+            if generator_return_value is not None:
+                function_call_output = str(generator_return_value)
 
             # For generators, re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
@@ -2690,7 +2700,6 @@ class Model(ABC):
                                 continue
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
@@ -2800,8 +2809,15 @@ class Model(ABC):
                 function_call_output = async_function_call_output
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+                generator_return_value = None
                 try:
-                    for item in function_call.result:
+                    _iter = iter(function_call.result)
+                    while True:
+                        try:
+                            item = next(_iter)
+                        except StopIteration as _stop:
+                            generator_return_value = _stop.value
+                            break
                         # This function yields agent/team/workflow run events
                         if isinstance(
                             item,
@@ -2822,7 +2838,6 @@ class Model(ABC):
                                     continue
 
                             elif isinstance(item, CustomEvent):
-                                function_call_output += str(item)
                                 item.tool_call_id = function_call.call_id
 
                             # Yield the event itself to bubble it up
@@ -2835,6 +2850,10 @@ class Model(ABC):
                     log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                     function_call.error = str(e)
                     function_call_success = False
+
+                # If the generator returned a value, use it as the tool output
+                if generator_return_value is not None:
+                    function_call_output = str(generator_return_value)
 
             # For generators (sync or async), re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
