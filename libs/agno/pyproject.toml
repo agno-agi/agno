@@ -366,6 +366,7 @@ demo = [
     "agno[dev]",
     "agno[scheduler]",
     "anthropic",
+    "boto3",
     "chromadb",
     "ddgs",
     "duckdb",

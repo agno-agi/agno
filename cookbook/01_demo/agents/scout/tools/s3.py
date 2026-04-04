@@ -12,9 +12,15 @@ from ..connectors.s3 import S3Connector
 class S3Tools(Toolkit):
     """Toolkit for interacting with S3."""
 
-    def __init__(self, default_bucket: str | None = None):
+    def __init__(
+        self,
+        default_bucket: str | None = None,
+        allowed_prefixes: list[str] | None = None,
+    ):
         super().__init__(name="s3_tools")
-        self.connector = S3Connector(bucket=default_bucket)
+        self.connector = S3Connector(
+            bucket=default_bucket, allowed_prefixes=allowed_prefixes
+        )
         self.connector.authenticate()
 
         # Register tools
