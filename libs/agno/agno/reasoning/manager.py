@@ -130,6 +130,7 @@ class ReasoningManager:
         from agno.reasoning.ollama import is_ollama_reasoning_model
         from agno.reasoning.openai import is_openai_reasoning_model
         from agno.reasoning.vertexai import is_vertexai_reasoning_model
+        from agno.reasoning.vllm import is_vllm_reasoning_model
 
         if is_deepseek_reasoning_model(model):
             return "deepseek"
@@ -137,6 +138,9 @@ class ReasoningManager:
             return "anthropic"
         if is_openai_reasoning_model(model):
             return "openai"
+        # Check VLLM before groq/ollama — VLLM subclasses OpenAILike
+        if is_vllm_reasoning_model(model):
+            return "vllm"
         if is_groq_reasoning_model(model):
             return "groq"
         if is_ollama_reasoning_model(model):
@@ -236,6 +240,12 @@ class ReasoningManager:
                 log_debug("Starting Ollama Reasoning", center=True, symbol="=")
                 reasoning_message = get_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
+            elif model_type == "vllm":
+                from agno.reasoning.vllm import get_vllm_reasoning
+
+                log_debug("Starting VLLM Reasoning", center=True, symbol="=")
+                reasoning_message = get_vllm_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+
             elif model_type == "ai_foundry":
                 from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
 
@@ -311,6 +321,12 @@ class ReasoningManager:
 
                 log_debug("Starting Ollama Reasoning", center=True, symbol="=")
                 reasoning_message = await aget_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+
+            elif model_type == "vllm":
+                from agno.reasoning.vllm import aget_vllm_reasoning
+
+                log_debug("Starting VLLM Reasoning", center=True, symbol="=")
+                reasoning_message = await aget_vllm_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "ai_foundry":
                 from agno.reasoning.azure_ai_foundry import aget_ai_foundry_reasoning
@@ -562,6 +578,30 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
+        elif model_type == "vllm":
+            from agno.reasoning.vllm import get_vllm_reasoning_stream
+
+            log_debug("Starting VLLM Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_vllm_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
         else:
             # Fall back to non-streaming for other models
             result = self.get_native_reasoning(model, messages)
@@ -760,6 +800,30 @@ class ReasoningManager:
             log_debug("Starting Ollama Reasoning (streaming)", center=True, symbol="=")
             final_message = None
             async for reasoning_delta, message in aget_ollama_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "vllm":
+            from agno.reasoning.vllm import aget_vllm_reasoning_stream
+
+            log_debug("Starting VLLM Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_vllm_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:

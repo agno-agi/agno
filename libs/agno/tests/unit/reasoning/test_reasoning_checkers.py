@@ -8,6 +8,7 @@ from agno.reasoning.groq import is_groq_reasoning_model
 from agno.reasoning.ollama import is_ollama_reasoning_model
 from agno.reasoning.openai import is_openai_reasoning_model
 from agno.reasoning.vertexai import is_vertexai_reasoning_model
+from agno.reasoning.vllm import is_vllm_reasoning_model
 
 
 # Mock model classes for testing
@@ -255,6 +256,15 @@ def test_openai_like_without_deepseek_r1():
     model = OpenAILike(
         id="gpt-4-turbo",
         name="GPT-4",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_vllm_not_matched_by_openai_checker():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="Qwen/Qwen3-8B",
+        enable_thinking=True,
     )
     assert is_openai_reasoning_model(model) is False
 
@@ -639,6 +649,77 @@ def test_ai_foundry_non_ai_foundry_model():
 
 
 # ============================================================================
+# VLLM Reasoning Model Tests
+# ============================================================================
+
+
+def test_vllm_with_enable_thinking():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="custom-finetune-v2",
+        enable_thinking=True,
+    )
+    assert is_vllm_reasoning_model(model) is True
+
+
+def test_vllm_with_qwq():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="qwq-32b",
+    )
+    assert is_vllm_reasoning_model(model) is True
+
+
+def test_vllm_with_qwen3():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="Qwen/Qwen3-30B-A3B",
+    )
+    assert is_vllm_reasoning_model(model) is True
+
+
+def test_vllm_with_deepseek_r1():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="deepseek-r1-distill-qwen-32b",
+    )
+    assert is_vllm_reasoning_model(model) is True
+
+
+def test_vllm_with_openthinker():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="openthinker-7b",
+    )
+    assert is_vllm_reasoning_model(model) is True
+
+
+def test_vllm_without_reasoning_model():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+    )
+    assert is_vllm_reasoning_model(model) is False
+
+
+def test_vllm_without_reasoning_model_enable_thinking_false():
+    model = MockModel(
+        class_name="VLLM",
+        model_id="some-random-model",
+        enable_thinking=False,
+    )
+    assert is_vllm_reasoning_model(model) is False
+
+
+def test_vllm_non_vllm_model():
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="qwq-32b",
+    )
+    assert is_vllm_reasoning_model(model) is False
+
+
+# ============================================================================
 # Cross-checker validation tests
 # ============================================================================
 
@@ -680,3 +761,4 @@ def test_all_checkers_return_false_for_non_reasoning_model():
     assert is_groq_reasoning_model(model) is False
     assert is_ollama_reasoning_model(model) is False
     assert is_ai_foundry_reasoning_model(model) is False
+    assert is_vllm_reasoning_model(model) is False
