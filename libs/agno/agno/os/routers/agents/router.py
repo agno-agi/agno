@@ -103,7 +103,7 @@ async def agent_response_streamer(
             additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
-    except Exception as e:
+    except BaseException as e:
         import traceback
 
         traceback.print_exc(limit=3)
@@ -149,7 +149,7 @@ async def agent_continue_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except Exception as e:
+    except BaseException as e:
         import traceback
 
         traceback.print_exc(limit=3)
