@@ -454,9 +454,18 @@ class UserProfileStore(LearningStore):
 
                 changed = []
                 for field_name, value in kwargs.items():
-                    if value is not None and field_name in updateable:
-                        setattr(profile, field_name, value)
-                        changed.append(f"{field_name}={value}")
+                    if value is None or field_name not in updateable:
+                        continue
+
+                    existing_value = getattr(profile, field_name, None)
+                    normalized_existing = existing_value.strip() if isinstance(existing_value, str) else existing_value
+                    normalized_new = value.strip() if isinstance(value, str) else value
+
+                    if normalized_new == normalized_existing:
+                        continue
+
+                    setattr(profile, field_name, value)
+                    changed.append(f"{field_name}={value}")
 
                 if changed:
                     store.save(
@@ -531,9 +540,18 @@ class UserProfileStore(LearningStore):
 
                 changed = []
                 for field_name, value in kwargs.items():
-                    if value is not None and field_name in updateable:
-                        setattr(profile, field_name, value)
-                        changed.append(f"{field_name}={value}")
+                    if value is None or field_name not in updateable:
+                        continue
+
+                    existing_value = getattr(profile, field_name, None)
+                    normalized_existing = existing_value.strip() if isinstance(existing_value, str) else existing_value
+                    normalized_new = value.strip() if isinstance(value, str) else value
+
+                    if normalized_new == normalized_existing:
+                        continue
+
+                    setattr(profile, field_name, value)
+                    changed.append(f"{field_name}={value}")
 
                 if changed:
                     await store.asave(
