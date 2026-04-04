@@ -531,7 +531,16 @@ class LanceDb(VectorDb):
                 # Check if all filter criteria match
                 match = True
                 for key, value in filters.items():
-                    if key not in doc.meta_data or doc.meta_data[key] != value:
+                    if key not in doc.meta_data:
+                        match = False
+                        break
+                    meta_value = doc.meta_data[key]
+                    # When metadata value is a list, check if the filter value is contained in it
+                    if isinstance(meta_value, list):
+                        if value not in meta_value:
+                            match = False
+                            break
+                    elif meta_value != value:
                         match = False
                         break
 
