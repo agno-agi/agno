@@ -1,3 +1,5 @@
+import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -185,15 +187,35 @@ class OpenAIEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {e}")
-                # Fallback to individual calls for this batch
-                for text in batch_texts:
-                    try:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
-                    except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
+                # Fallback to PARALLEL individual calls for this batch
+                # Configurable via EMBEDDER_FALLBACK_CONCURRENCY env var (default: 5)
+                try:
+                    max_concurrent = int(os.getenv("EMBEDDER_FALLBACK_CONCURRENCY", "5"))
+                except (ValueError, TypeError):
+                    max_concurrent = 5
+                max_concurrent = max(1, max_concurrent)
+                semaphore = asyncio.Semaphore(max_concurrent)
+
+                async def get_single_embedding(text: str) -> Tuple[List[float], Optional[Dict]]:
+                    async with semaphore:
+                        try:
+                            embedding, usage = await self.async_get_embedding_and_usage(text)
+                            return embedding, usage
+                        except Exception as e2:
+                            log_warning(f"Error in individual async embedding fallback: {e2}")
+                            return [], None
+
+                results = await asyncio.gather(
+                    *[get_single_embedding(text) for text in batch_texts],
+                    return_exceptions=True,
+                )
+
+                for result in results:
+                    if isinstance(result, Exception):
                         all_embeddings.append([])
                         all_usage.append(None)
+                    else:
+                        all_embeddings.append(result[0])
+                        all_usage.append(result[1])
 
         return all_embeddings, all_usage
