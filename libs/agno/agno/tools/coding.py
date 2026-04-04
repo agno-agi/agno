@@ -248,6 +248,12 @@ class CodingTools(Toolkit):
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
 
+    # Interpreter binaries that support inline code execution
+    _INTERPRETER_COMMANDS: List[str] = ["python", "python3", "node", "perl", "ruby", "bash", "sh"]
+
+    # Flags that enable inline code execution in interpreters
+    _CODE_INJECTION_FLAGS: List[str] = ["-c", "-e", "-exec", "--exec"]
+
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
 
@@ -278,10 +284,20 @@ class CodingTools(Toolkit):
             if cmd_base not in self.allowed_commands:
                 return f"Error: Command '{cmd_base}' is not in the allowed commands list."
 
+        # Determine the base command name for interpreter detection
+        cmd_base = Path(tokens[0]).name if tokens else ""
+
         for i, token in enumerate(tokens):
             # Skip the command itself (already validated by allowlist above)
             if i == 0:
                 continue
+            # Block inline-execution flags when the command is an interpreter
+            if token.startswith("-") and cmd_base in self._INTERPRETER_COMMANDS:
+                if token in self._CODE_INJECTION_FLAGS:
+                    return (
+                        f"Error: Inline code execution flag '{token}' is not allowed "
+                        f"with interpreter '{cmd_base}' in restricted mode."
+                    )
             # Skip flags
             if token.startswith("-"):
                 continue
