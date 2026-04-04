@@ -275,6 +275,29 @@ def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> No
         agent.tools = []
     agent.tools.append(tool)  # type: ignore[union-attr]
 
+    # If mid-execution, also add processed tool(s) to the active model tools list
+    # so they become visible in the current run's tool execution loop.
+    active_tools: Optional[list] = getattr(agent, "_active_model_tools", None)
+    if active_tools is not None:
+        if isinstance(tool, Function):
+            func = tool.model_copy(deep=True)
+            func.process_entrypoint()
+            func._agent = agent
+            active_tools.append(func)
+        elif isinstance(tool, dict):
+            active_tools.append(tool)
+        elif isinstance(tool, Toolkit):
+            for _name, func in tool.get_functions().items():
+                func = func.model_copy(deep=True)
+                func.process_entrypoint()
+                func._agent = agent
+                active_tools.append(func)
+        elif callable(tool):
+            func = Function.from_callable(tool)
+            func = func.model_copy(deep=True)
+            func._agent = agent
+            active_tools.append(func)
+
 
 def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
     from agno.utils.callables import is_callable_factory
