@@ -1,5 +1,5 @@
 """
-‍ Agent with Daytona tools
+Agent with Daytona tools
 
 This example shows how to use Agno's Daytona integration to run Agent-generated code in a remote, secure sandbox.
 
@@ -15,9 +15,8 @@ from agno.agent import Agent
 from agno.tools.daytona import DaytonaTools
 
 # ---------------------------------------------------------------------------
-# Create Agent
+# Example 1: Basic persistent sandbox (default behaviour)
 # ---------------------------------------------------------------------------
-
 
 agent = Agent(
     name="Coding Agent with Daytona tools",
@@ -39,6 +38,45 @@ agent = Agent(
         "- Always show both the code AND the execution output",
         "- Handle errors gracefully and explain any issues encountered",
     ],
+)
+
+# ---------------------------------------------------------------------------
+# Example 2: Ephemeral sandbox — auto-deleted once stopped
+#
+# Useful for one-shot tasks where you don't want sandbox state to linger.
+# auto_stop_interval stops the sandbox after 30 minutes of inactivity;
+# ephemeral=True ensures it is deleted immediately on stop.
+# ---------------------------------------------------------------------------
+
+ephemeral_agent = Agent(
+    name="Ephemeral Coding Agent",
+    tools=[
+        DaytonaTools(
+            ephemeral=True,
+            auto_stop_interval=30,  # stop after 30 minutes of inactivity
+        )
+    ],
+    markdown=True,
+    instructions=["Execute the requested code and return the results."],
+)
+
+# ---------------------------------------------------------------------------
+# Example 3: Sandbox with lifecycle management
+#
+# auto_delete_interval removes the sandbox after it has been stopped for
+# 4 hours, preventing stale sandboxes from accumulating.
+# ---------------------------------------------------------------------------
+
+managed_agent = Agent(
+    name="Managed Coding Agent",
+    tools=[
+        DaytonaTools(
+            auto_stop_interval=60,  # stop after 1 hour idle
+            auto_archive_interval=120,  # archive after 2 hours stopped
+            auto_delete_interval=240,  # delete after 4 hours stopped
+        )
+    ],
+    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
