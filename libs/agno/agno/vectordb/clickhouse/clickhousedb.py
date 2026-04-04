@@ -17,6 +17,7 @@ from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.search import SearchType
 
 
 class Clickhouse(VectorDb):
@@ -832,4 +833,4 @@ class Clickhouse(VectorDb):
 
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""
-        return []  # Clickhouse doesn't use SearchType enum
+        return [SearchType.vector]
