@@ -68,6 +68,7 @@ class PageIndexKnowledge:
     structure_cache_size: int = 256
     llm_provider: str = "openai"
     openai_model: str = "gpt-4o-2024-11-20"
+    anthropic_model: str = "claude-sonnet-4-6"
     ollama_model: str = "qwen2.5:7b"
     ollama_base_url: str = "http://localhost:11434/v1"
     model: Optional[str] = None
@@ -89,6 +90,7 @@ class PageIndexKnowledge:
             llm_provider=self.llm_provider,
             model=self.model,
             openai_model=self.openai_model,
+            anthropic_model=self.anthropic_model,
             ollama_model=self.ollama_model,
             ollama_base_url=self.ollama_base_url,
             results_dir=Path(self.results_dir),

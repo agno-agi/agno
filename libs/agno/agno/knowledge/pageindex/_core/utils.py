@@ -21,13 +21,27 @@ from types import SimpleNamespace as config
 
 import yaml
 
+# ---------------------------------------------------------------------------
+# Multi-provider LLM support via litellm (optional).
+# When litellm is installed, any model string it recognises is routed to the
+# right provider automatically (OpenAI, Anthropic, Ollama, Bedrock, …).
+# When litellm is NOT installed, the original openai-only path is used.
+# ---------------------------------------------------------------------------
+try:
+    import litellm
+
+    litellm.drop_params = True  # silently ignore unsupported params per provider
+    _HAS_LITELLM = True
+except ImportError:
+    _HAS_LITELLM = False
+
 
 def _get_tiktoken_encoder(model=None):
     if model:
         try:
             return tiktoken.encoding_for_model(model)
         except KeyError:
-            # Non-OpenAI model IDs (e.g. Ollama) are not always recognized.
+            # Non-OpenAI model IDs (e.g. Ollama, Anthropic) are not always recognized.
             pass
     return tiktoken.get_encoding("cl100k_base")
 
@@ -43,9 +57,32 @@ def _resolve_openai_client_kwargs(api_key=None, base_url=None):
     return kwargs
 
 
+def _completion(model, messages, api_key=None, base_url=None, **kwargs):
+    """Unified sync completion: litellm when available, else openai."""
+    if _HAS_LITELLM:
+        return litellm.completion(model=model, messages=messages, **kwargs)
+    client = openai.OpenAI(**_resolve_openai_client_kwargs(api_key=api_key, base_url=base_url))
+    return client.chat.completions.create(model=model, messages=messages, **kwargs)
+
+
+async def _acompletion(model, messages, api_key=None, base_url=None, **kwargs):
+    """Unified async completion: litellm when available, else openai."""
+    if _HAS_LITELLM:
+        return await litellm.acompletion(model=model, messages=messages, **kwargs)
+    async with openai.AsyncOpenAI(
+        **_resolve_openai_client_kwargs(api_key=api_key, base_url=base_url)
+    ) as client:
+        return await client.chat.completions.create(model=model, messages=messages, **kwargs)
+
+
 def count_tokens(text, model=None):
     if not text:
         return 0
+    if _HAS_LITELLM:
+        try:
+            return litellm.token_counter(model=model or "gpt-4o", text=text)
+        except Exception:
+            pass
     enc = _get_tiktoken_encoder(model)
     tokens = enc.encode(text)
     return len(tokens)
@@ -53,7 +90,6 @@ def count_tokens(text, model=None):
 
 def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, base_url=None, chat_history=None):
     max_retries = 10
-    client = openai.OpenAI(**_resolve_openai_client_kwargs(api_key=api_key, base_url=base_url))
     for i in range(max_retries):
         try:
             if chat_history:
@@ -62,11 +98,7 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, base_url=None, c
             else:
                 messages = [{"role": "user", "content": prompt}]
 
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
+            response = _completion(model=model, messages=messages, api_key=api_key, base_url=base_url, temperature=0)
             if response.choices[0].finish_reason == "length":
                 return response.choices[0].message.content, "max_output_reached"
             else:
@@ -76,7 +108,7 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, base_url=None, c
             print("************* Retrying *************")
             logging.error(f"Error: {e}")
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                time.sleep(1)
             else:
                 logging.error("Max retries reached for prompt: " + prompt)
                 return "Error", "error"
@@ -84,7 +116,6 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, base_url=None, c
 
 def ChatGPT_API(model, prompt, api_key=None, base_url=None, chat_history=None):
     max_retries = 10
-    client = openai.OpenAI(**_resolve_openai_client_kwargs(api_key=api_key, base_url=base_url))
     for i in range(max_retries):
         try:
             if chat_history:
@@ -93,18 +124,13 @@ def ChatGPT_API(model, prompt, api_key=None, base_url=None, chat_history=None):
             else:
                 messages = [{"role": "user", "content": prompt}]
 
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
-
+            response = _completion(model=model, messages=messages, api_key=api_key, base_url=base_url, temperature=0)
             return response.choices[0].message.content
         except Exception as e:
             print("************* Retrying *************")
             logging.error(f"Error: {e}")
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                time.sleep(1)
             else:
                 logging.error("Max retries reached for prompt: " + prompt)
                 return "Error"
@@ -115,20 +141,13 @@ async def ChatGPT_API_async(model, prompt, api_key=None, base_url=None):
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
-            async with openai.AsyncOpenAI(
-                **_resolve_openai_client_kwargs(api_key=api_key, base_url=base_url)
-            ) as client:
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=0,
-                )
-                return response.choices[0].message.content
+            response = await _acompletion(model=model, messages=messages, api_key=api_key, base_url=base_url, temperature=0)
+            return response.choices[0].message.content
         except Exception as e:
             print("************* Retrying *************")
             logging.error(f"Error: {e}")
             if i < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1s before retrying
+                await asyncio.sleep(1)
             else:
                 logging.error("Max retries reached for prompt: " + prompt)
                 return "Error"

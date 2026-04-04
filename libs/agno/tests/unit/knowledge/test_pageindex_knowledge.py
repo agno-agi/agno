@@ -1,6 +1,7 @@
 """Unit tests for PageIndexKnowledge implementation."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -86,6 +87,16 @@ def test_settings_defaults():
 def test_settings_ollama_provider():
     settings = PageIndexSettings(llm_provider="ollama")
     assert settings.active_model == "qwen2.5:7b"
+
+
+def test_settings_anthropic_provider():
+    settings = PageIndexSettings(llm_provider="anthropic")
+    assert settings.active_model == "claude-sonnet-4-6"
+
+
+def test_settings_anthropic_custom_model():
+    settings = PageIndexSettings(llm_provider="anthropic", anthropic_model="claude-haiku-4-5-20251001")
+    assert settings.active_model == "claude-haiku-4-5-20251001"
 
 
 def test_settings_model_override():
@@ -766,3 +777,49 @@ def test_structure_cache_invalidation(knowledge_dir):
     # The fresh results should find the modified title
     has_modified = any(r.title == "Modified Title" for r in results_fresh if not r.insufficient_evidence)
     assert has_modified
+
+
+# -- Multi-provider support ----------------------------------------------------
+
+
+def test_utils_completion_wrappers_exist():
+    """The _completion and _acompletion wrappers should be importable."""
+    from agno.knowledge.pageindex._core.utils import _acompletion, _completion
+
+    assert callable(_completion)
+    assert callable(_acompletion)
+
+
+def test_utils_has_litellm_flag():
+    """_HAS_LITELLM flag should be a bool."""
+    from agno.knowledge.pageindex._core.utils import _HAS_LITELLM
+
+    assert isinstance(_HAS_LITELLM, bool)
+
+
+def test_anthropic_provider_prepare_environment(tmp_path):
+    """Anthropic provider should set ANTHROPIC_API_KEY."""
+    settings = PageIndexSettings(
+        llm_provider="anthropic",
+        results_dir=tmp_path / "results",
+        upload_dir=tmp_path / "uploads",
+        tenant_id="test_anthropic",
+    )
+    # Remove key if set from a previous test
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    settings.prepare_environment()
+    assert (tmp_path / "results" / "test_anthropic").is_dir()
+
+
+def test_knowledge_anthropic_provider(tmp_path):
+    """PageIndexKnowledge should accept anthropic as llm_provider."""
+    from agno.knowledge.pageindex import PageIndexKnowledge
+
+    knowledge = PageIndexKnowledge(
+        results_dir=str(tmp_path / "results"),
+        upload_dir=str(tmp_path / "uploads"),
+        tenant_id="anthropic_test",
+        llm_provider="anthropic",
+    )
+    assert knowledge.settings.llm_provider == "anthropic"
+    assert knowledge.settings.active_model == "claude-sonnet-4-6"
