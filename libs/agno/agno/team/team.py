@@ -111,6 +111,8 @@ class Team:
     determine_input_for_members: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
     max_iterations: int = 10
+    # Maximum character length for task result previews in the task summary
+    task_result_summary_limit: int = 500
 
     # --- User settings ---
     # Default user ID for this team
@@ -435,6 +437,7 @@ class Team:
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
         max_iterations: int = 10,
+        task_result_summary_limit: int = 500,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -557,6 +560,7 @@ class Team:
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
             max_iterations=max_iterations,
+            task_result_summary_limit=task_result_summary_limit,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,

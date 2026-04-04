@@ -73,6 +73,7 @@ def __init__(
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
+    task_result_summary_limit: int = 500,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -203,6 +204,7 @@ def __init__(
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
+    team.task_result_summary_limit = task_result_summary_limit
 
     # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
     from agno.team.mode import TeamMode
