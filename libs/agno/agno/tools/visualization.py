@@ -15,6 +15,7 @@ class VisualizationTools(Toolkit):
         enable_create_pie_chart: bool = True,
         enable_create_scatter_plot: bool = True,
         enable_create_histogram: bool = True,
+        enable_create_multi_line_chart: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -50,6 +51,8 @@ class VisualizationTools(Toolkit):
             tools.append(self.create_scatter_plot)
         if enable_create_histogram or all:
             tools.append(self.create_histogram)
+        if enable_create_multi_line_chart or all:
+            tools.append(self.create_multi_line_chart)
 
         super().__init__(name="visualization_tools", tools=tools, **kwargs)
 
@@ -465,3 +468,100 @@ class VisualizationTools(Toolkit):
         except Exception as e:
             logger.error(f"Error creating histogram: {str(e)}")
             return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})
+
+    def create_multi_line_chart(
+        self,
+        data: Union[Dict[str, Any], str],
+        title: str = "Multi Line Chart",
+        x_label: str = "X-axis",
+        y_label: str = "Y-axis",
+        filename: Optional[str] = None,
+    ) -> str:
+        """
+        Create a multi-line chart from the provided data.
+
+        Args:
+            data: Dictionary where each key is a series name and value is
+                chart data (dict, list of dicts, etc.), or JSON string
+            title (str): Title of the chart
+            x_label (str): Label for x-axis
+            y_label (str): Label for y-axis
+            filename (Optional[str]): Custom filename for the chart image
+
+        Returns:
+            str: JSON string with chart information and file path
+        """
+        try:
+            import matplotlib.pyplot as plt
+
+            # Handle string input (JSON)
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except json.JSONDecodeError:
+                    pass
+
+            if not isinstance(data, dict):
+                raise ValueError("Multi-line chart data must be a dictionary of series")
+
+            plt.figure(figsize=(10, 6))
+
+            total_points = 0
+
+            # Plot each series
+            for series_name, series_data in data.items():
+                normalized_data = self._normalize_data_for_charts(series_data)
+
+                x_values = list(normalized_data.keys())
+                y_values = list(normalized_data.values())
+
+                plt.plot(
+                    x_values,
+                    y_values,
+                    marker="o",
+                    linewidth=2,
+                    markersize=5,
+                    label=series_name,
+                )
+
+                total_points += len(normalized_data)
+
+            # Styling
+            plt.title(title)
+            plt.xlabel(x_label)
+            plt.ylabel(y_label)
+            plt.xticks(rotation=45, ha="right")
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.tight_layout()
+
+            # Save the chart
+            if filename is None:
+                filename = f"multi_line_chart_{len(os.listdir(self.output_dir)) + 1}.png"
+
+            file_path = os.path.join(self.output_dir, filename)
+            plt.savefig(file_path, dpi=300, bbox_inches="tight")
+            plt.close()
+
+            log_info(f"Multi-line chart created and saved to {file_path}")
+
+            return json.dumps(
+                {
+                    "chart_type": "multi_line_chart",
+                    "title": title,
+                    "file_path": file_path,
+                    "series_count": len(data),
+                    "total_data_points": total_points,
+                    "status": "success",
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error creating multi-line chart: {str(e)}")
+            return json.dumps(
+                {
+                    "chart_type": "multi_line_chart",
+                    "error": str(e),
+                    "status": "error",
+                }
+            )
