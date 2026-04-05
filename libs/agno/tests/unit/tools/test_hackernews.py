@@ -171,6 +171,59 @@ class TestGetTopHackerNewsStories:
         stories = json.loads(result)
         assert len(stories) == 0
 
+    def test_get_top_stories_error_handling(self, hackernews_tools):
+        """Test error handling when API call fails."""
+        with patch("agno.tools.hackernews.httpx.get", side_effect=Exception("Network error")):
+            result = hackernews_tools.get_top_hackernews_stories(num_stories=5)
+
+        assert "Error fetching stories" in result
+        assert "Network error" in result
+
+    def test_get_top_stories_null_story_skipped(self, hackernews_tools):
+        """Test that null/deleted stories are skipped without crashing."""
+        mock_story_ids = [12345, 0, 67890]
+        mock_stories = {
+            12345: {"id": 12345, "title": "Story 1", "by": "user1"},
+            0: None,  # Deleted/null story
+            67890: {"id": 67890, "title": "Story 2", "by": "user2"},
+        }
+
+        def mock_get(url):
+            response = MagicMock()
+            if "topstories" in url:
+                response.json.return_value = mock_story_ids
+            else:
+                story_id = int(url.split("/")[-1].replace(".json", ""))
+                response.json.return_value = mock_stories.get(story_id)
+            return response
+
+        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+            result = hackernews_tools.get_top_hackernews_stories(num_stories=3)
+
+        stories = json.loads(result)
+        assert len(stories) == 2
+        assert stories[0]["title"] == "Story 1"
+        assert stories[1]["title"] == "Story 2"
+
+    def test_get_top_stories_missing_by_field(self, hackernews_tools):
+        """Test that stories without 'by' field use 'unknown' as fallback."""
+        mock_story_ids = [12345]
+        mock_story = {"id": 12345, "title": "Job Posting", "type": "job", "url": "https://example.com"}
+
+        def mock_get(url):
+            response = MagicMock()
+            if "topstories" in url:
+                response.json.return_value = mock_story_ids
+            else:
+                response.json.return_value = mock_story
+            return response
+
+        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+            result = hackernews_tools.get_top_hackernews_stories(num_stories=1)
+
+        stories = json.loads(result)
+        assert stories[0]["username"] == "unknown"
+
     def test_get_top_stories_with_story_metadata(self, hackernews_tools):
         """Test that all story metadata is preserved."""
         mock_story_ids = [12345]
