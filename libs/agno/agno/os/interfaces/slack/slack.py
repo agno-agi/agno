@@ -1,7 +1,8 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from ssl import SSLContext
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi.routing import APIRouter
 
@@ -64,6 +65,13 @@ class Slack(BaseInterface):
             raise ValueError("Slack requires an agent, team, or workflow")
 
     def get_router(self) -> APIRouter:
+        # Socket Mode does not use HTTP routes — events arrive over a WebSocket
+        # that is started via get_lifespan().  Return an empty router so AgentOS
+        # can still call get_router() uniformly without mounting unused endpoints.
+        if self.socket_mode:
+            self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
+            return self.router
+
         self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
             agent=self.agent,
@@ -85,6 +93,35 @@ class Slack(BaseInterface):
 
         return self.router
 
+    def get_lifespan(self) -> Optional[Any]:
+        """Return a lifespan context manager that runs Socket Mode in the background.
+
+        When this interface is added to an AgentOS app, the app includes this
+        lifespan so the WebSocket connection to Slack starts with the FastAPI
+        server and is cleanly cancelled on shutdown.
+
+        Returns ``None`` when ``socket_mode=False`` so HTTP-mode instances do
+        not affect the app lifespan.
+        """
+        if not self.socket_mode:
+            return None
+
+        slack_interface = self
+
+        @asynccontextmanager
+        async def _socket_mode_lifespan(app: Any):
+            task = asyncio.create_task(slack_interface.astart())
+            try:
+                yield
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        return _socket_mode_lifespan
+
     async def astart(self) -> None:
         """Start the Slack bot using Socket Mode.
 
@@ -101,8 +138,7 @@ class Slack(BaseInterface):
         """
         if not self.socket_mode:
             raise RuntimeError(
-                "astart() is only available in Socket Mode. "
-                "Set socket_mode=True when creating the Slack interface."
+                "astart() is only available in Socket Mode. Set socket_mode=True when creating the Slack interface."
             )
 
         app_token = self.app_token or os.environ.get("SLACK_APP_TOKEN")

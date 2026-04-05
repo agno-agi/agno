@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter
 
@@ -23,3 +23,13 @@ class BaseInterface(ABC):
     @abstractmethod
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
         pass
+
+    def get_lifespan(self) -> Optional[Any]:
+        """Return an optional asynccontextmanager lifespan for this interface.
+
+        Interfaces that need startup/shutdown behaviour (e.g. Slack Socket Mode)
+        can override this method.  AgentOS will include the returned lifespan in
+        its combined app lifespan so the interface starts and stops alongside the
+        FastAPI application.
+        """
+        return None
