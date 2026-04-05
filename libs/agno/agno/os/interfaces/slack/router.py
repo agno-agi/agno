@@ -9,8 +9,10 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
+    build_run_metadata,
     download_event_files_async,
     extract_event_context,
+    resolve_channel_name,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -41,8 +43,9 @@ _IGNORED_SUBTYPES = frozenset(
 # User-facing error message for failed requests
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
-# Slack caps streamed messages at ~40K chars; rotate before hitting the limit
+# Slack caps streamed messages at ~40K total payload (text + task card blocks)
 _STREAM_CHAR_LIMIT = 39000
+_STREAM_CARD_LIMIT = 45
 
 
 class SlackEventResponse(BaseModel):
@@ -178,6 +181,8 @@ def attach_routes(
             if resolve_user_identity:
                 resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
 
+            channel_name = await resolve_channel_name(async_client, ctx["channel_id"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -186,11 +191,16 @@ def attach_routes(
             if skipped:
                 notice = "[Skipped files: " + ", ".join(skipped) + "]"
                 message_text = f"{notice}\n{message_text}"
-
             run_kwargs: Dict[str, Any] = {
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
+                "metadata": build_run_metadata(display_name, resolved_user_id, ctx),
+                "dependencies": {
+                    "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
+                    "Slack channel_id": ctx["channel_id"],
+                    "Slack thread_ts": ctx["thread_id"],
+                },
+                "add_dependencies_to_context": True,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
@@ -292,6 +302,8 @@ def attach_routes(
             if resolve_user_identity:
                 resolved_user_id, display_name = await resolve_slack_user(async_client, ctx["user"])
 
+            channel_name = await resolve_channel_name(async_client, ctx["channel_id"])
+
             files, images, videos, audio, skipped = await download_event_files_async(
                 slack_tools.token, event, slack_tools.max_file_size
             )
@@ -300,14 +312,19 @@ def attach_routes(
             if skipped:
                 notice = "[Skipped files: " + ", ".join(skipped) + "]"
                 message_text = f"{notice}\n{message_text}"
-
             run_kwargs: Dict[str, Any] = {
                 "stream": True,
                 # Enables event-level chunks for task card and tool lifecycle rendering
                 "stream_events": True,
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
+                "metadata": build_run_metadata(display_name, resolved_user_id, ctx),
+                "dependencies": {
+                    "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
+                    "Slack channel_id": ctx["channel_id"],
+                    "Slack thread_ts": ctx["thread_id"],
+                },
+                "add_dependencies_to_context": True,
                 "files": files or None,
                 "images": images or None,
                 "videos": videos or None,
@@ -377,6 +394,10 @@ def attach_routes(
                     if await process_event(ev, chunk, state, stream):
                         break
 
+                # Card overflow: rotate before Slack rejects the payload
+                if len(state.task_cards) >= _STREAM_CARD_LIMIT:
+                    await _rotate_stream(state.flush() if state.has_content() else "")
+
                 if state.has_content():
                     if not state.title_set:
                         state.title_set = True
@@ -395,7 +416,6 @@ def attach_routes(
                         state.stream_chars_sent += content_len
                     else:
                         await _rotate_stream(content)
-
             # Default to complete when no terminal error/cancel event arrived
             final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []

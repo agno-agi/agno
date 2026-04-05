@@ -163,7 +163,7 @@ async def test_user_name_passed_as_metadata_when_opted_in():
 
         call_kwargs = agent_mock.arun.call_args
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
-        assert metadata == {"user_name": "Test User", "user_email": "test@example.com"}
+        assert metadata == {"user_name": "Test User", "user_id": "test@example.com"}
 
 
 @pytest.mark.asyncio
@@ -625,7 +625,7 @@ class TestStreamingUserIsolation:
 
             await wait_for_call(mock_stream.stop)
             assert captured.get("user_id") == "test@example.com"
-            assert captured.get("metadata") == {"user_name": "Test User", "user_email": "test@example.com"}
+            assert captured.get("metadata") == {"user_name": "Test User", "user_id": "test@example.com"}
 
 
 class TestStreamingFallbacks:
