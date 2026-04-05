@@ -118,7 +118,15 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
             try:
                 await state.send_or_edit(state.build_display_html())
             except Exception as e:
-                log_warning(f"Stream edit failed (will retry on next chunk): {e}")
+                # Check for Telegram 429 rate limit and extract retry_after
+                from agno.os.interfaces.telegram.state import _RETRY_AFTER_RE
+                match = _RETRY_AFTER_RE.search(str(e))
+                if match:
+                    retry_seconds = float(match.group(1))
+                    state._rate_limited_until = time.monotonic() + retry_seconds
+                    log_warning(f"Rate limited by Telegram, pausing edits for {retry_seconds}s")
+                else:
+                    log_warning(f"Stream edit failed (will retry on next chunk): {e}")
     return False
 
 
