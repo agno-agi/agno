@@ -2455,6 +2455,7 @@ class Workflow:
                 "Async function signature inspection failed. Falling back to original calling convention.",
                 exc_info=True,
             )
+
             if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
                 return func(**call_kwargs)  # type: ignore

@@ -56,6 +56,7 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                             f"Could not determine audio format from URL: {audio_snippet.url}. Defaulting.",
                             exc_info=True,
                         )
+
                         audio_format = "wav"  # Default if guessing fails
 
         # The audio is a file path

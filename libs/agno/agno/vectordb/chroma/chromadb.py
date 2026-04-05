@@ -1422,8 +1422,10 @@ class ChromaDb(VectorDb):
                     # Known issue with ChromaDB 0.5.0 - internal bug
                     # As a workaround, assume content doesn't exist to allow processing to continue
                     logger.warning(
-                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Assuming content_hash '{content_hash}' does not exist."
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Assuming content_hash '{content_hash}' does not exist.",
+                        exc_info=True,
                     )
+
                     return False
                 else:
                     raise te
@@ -1490,8 +1492,10 @@ class ChromaDb(VectorDb):
             except TypeError as te:
                 if "object of type 'int' has no len()" in str(te):
                     log_warning(
-                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'."
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'.",
+                        exc_info=True,
                     )
+
                     return
                 else:
                     raise te

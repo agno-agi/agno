@@ -226,8 +226,10 @@ class ScheduleExecutor:
                 except Exception:
                     log_warning(
                         f"Failed to compute next_run_at for schedule {schedule_id}; "
-                        "disabling schedule to prevent it from becoming stuck"
+                        "disabling schedule to prevent it from becoming stuck",
+                        exc_info=True,
                     )
+
                     next_run_at = None
                     try:
                         if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):

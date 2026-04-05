@@ -995,8 +995,10 @@ def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
     except ImportError:
         logger.warning(
             "tracing=True but OpenTelemetry packages not installed. "
-            "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
+            "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno",
+            exc_info=True,
         )
+
     except Exception:
         logger.warning("Failed to enable tracing", exc_info=True)
 

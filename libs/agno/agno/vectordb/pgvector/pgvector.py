@@ -579,8 +579,10 @@ class PgVector(VectorDb):
                             # If it's an event loop closure error, log it but don't fail
                             if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
                                 log_warning(
-                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}",
+                                    exc_info=True,
                                 )
+
                             else:
                                 log_error(f"Error embedding document {i}: {result}")
         else:

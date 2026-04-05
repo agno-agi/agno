@@ -149,8 +149,10 @@ class CohereEmbedder(Embedder):
                 if self._is_rate_limit_error(e):
                     if not self.exponential_backoff:
                         log_warning(
-                            "Rate limit detected. To enable automatic backoff retry, set enable_backoff=True when creating the embedder."
+                            "Rate limit detected. To enable automatic backoff retry, set enable_backoff=True when creating the embedder.",
+                            exc_info=True,
                         )
+
                         raise e
 
                     log_info(f"Async rate limit detected on attempt {attempt + 1}")
@@ -290,6 +292,7 @@ class CohereEmbedder(Embedder):
                         "Rate limit hit even after retries. Consider reducing batch_size or upgrading API key.",
                         exc_info=True,
                     )
+
                     # Try with smaller batch size
                     if len(batch_texts) > 1:
                         smaller_batch_size = max(1, len(batch_texts) // 2)

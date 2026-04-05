@@ -21,8 +21,10 @@ try:
     except ImportError:
         SPIDER_AVAILABLE = False
         logger.warning(
-            "Trafilatura spider module not available. Web crawling functionality will be disabled.", exc_info=True
+            "Trafilatura spider module not available. Web crawling functionality will be disabled.",
+            exc_info=True,
         )
+
 
 except ImportError:
     raise ImportError("`trafilatura` not installed. Please install using `pip install trafilatura`")

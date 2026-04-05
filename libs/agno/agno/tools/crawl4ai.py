@@ -73,6 +73,7 @@ class Crawl4aiTools(Toolkit):
                     "crawl4ai.content_filter_strategy or crawl4ai.markdown_generation_strategy not installed",
                     exc_info=True,
                 )
+
                 pass
 
         return config_params

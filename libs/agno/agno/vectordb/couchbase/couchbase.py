@@ -1202,8 +1202,10 @@ class CouchbaseSearch(VectorDb):
                     )
                 except Exception as e:
                     logger.warning(
-                        f"[async] Error processing document {doc_id} from KV store: {e}. Value: {getattr(get_result, 'content_as', 'N/A')}"
+                        f"[async] Error processing document {doc_id} from KV store: {e}. Value: {getattr(get_result, 'content_as', 'N/A')}",
+                        exc_info=True,
                     )
+
                     continue
 
         return documents

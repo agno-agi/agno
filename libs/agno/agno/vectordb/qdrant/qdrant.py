@@ -424,8 +424,10 @@ class Qdrant(VectorDb):
                         raise e
                     else:
                         log_warning(
-                            "Async batch embedding failed, falling back to individual embeddings", exc_info=True
+                            "Async batch embedding failed, falling back to individual embeddings",
+                            exc_info=True,
                         )
+
                         # Fall back to individual embedding
                         for doc in documents:
                             if self.search_type in [SearchType.vector, SearchType.hybrid]:

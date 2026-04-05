@@ -244,8 +244,10 @@ class Step:
                         agent = registry_agent.deep_copy()
                     except Exception:
                         log_warning(
-                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance", exc_info=True
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance",
+                            exc_info=True,
                         )
+
                         agent = registry_agent
 
             # Fall back to database
@@ -272,8 +274,10 @@ class Step:
                         team = registry_team.deep_copy()
                     except Exception:
                         log_warning(
-                            f"deep_copy() failed for registry team '{team_id}', using shared instance", exc_info=True
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance",
+                            exc_info=True,
                         )
+
                         team = registry_team
 
             # Fall back to database

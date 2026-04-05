@@ -22,6 +22,7 @@ except ImportError:
         "`aioboto3` not installed. Async methods will not be available. Install via `pip install aioboto3`.",
         exc_info=True,
     )
+
     aioboto3 = None
 
 
