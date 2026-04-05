@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_exception, log_info, log_warning
 
 try:
     from google import genai
@@ -90,8 +90,8 @@ class GeminiEmbedder(Embedder):
                     return values
             log_info("No embeddings found in response")
             return []
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+        except Exception:
+            log_exception("Error extracting embeddings")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -107,8 +107,8 @@ class GeminiEmbedder(Embedder):
                     return values, usage
             log_info("No embeddings found in response")
             return [], usage
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+        except Exception:
+            log_exception("Error extracting embeddings")
             return [], usage
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -139,8 +139,8 @@ class GeminiEmbedder(Embedder):
                     return values
             log_info("No embeddings found in response")
             return []
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+        except Exception:
+            log_exception("Error extracting embeddings")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -175,8 +175,8 @@ class GeminiEmbedder(Embedder):
                     return values, usage
             log_info("No embeddings found in response")
             return [], usage
-        except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+        except Exception:
+            log_exception("Error extracting embeddings")
             return [], usage
 
     async def async_get_embeddings_batch_and_usage(
@@ -240,8 +240,8 @@ class GeminiEmbedder(Embedder):
                 # Add same usage info for each embedding in the batch
                 all_usage.extend([usage_dict] * len(batch_texts))
 
-            except Exception as e:
-                log_warning(f"Error in async batch embedding: {e}")
+            except Exception:
+                log_warning("Error in async batch embedding", exc_info=True)
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -251,7 +251,7 @@ class GeminiEmbedder(Embedder):
                         all_embeddings.append(text_embedding)
                         all_usage.append(text_usage)
                     except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
+                        log_warning(f"Error in individual async embedding fallback: {e2}", exc_info=True)
                         all_embeddings.append([])
                         all_usage.append(None)
 

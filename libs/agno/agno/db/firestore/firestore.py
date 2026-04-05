@@ -27,7 +27,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_exception, log_info
 from agno.utils.string import generate_id
 
 try:
@@ -229,8 +229,8 @@ class FirestoreDb(BaseDb):
 
             return collection_ref
 
-        except Exception as e:
-            log_error(f"Error getting collection {collection_name}: {e}")
+        except Exception:
+            log_exception(f"Error getting collection {collection_name}")
             raise
 
     # -- Session methods --
@@ -264,7 +264,7 @@ class FirestoreDb(BaseDb):
             return False
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_exception("Error deleting session")
             raise e
 
     def get_latest_schema_version(self):
@@ -301,7 +301,7 @@ class FirestoreDb(BaseDb):
             log_debug(f"Successfully deleted {deleted_count} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_exception("Error deleting sessions")
             raise e
 
     def get_session(
@@ -358,7 +358,7 @@ class FirestoreDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading session: {e}")
+            log_exception("Exception reading session")
             raise e
 
     def get_sessions(
@@ -472,7 +472,7 @@ class FirestoreDb(BaseDb):
             return sessions
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_exception("Exception reading sessions")
             raise e
 
     def rename_session(
@@ -559,7 +559,7 @@ class FirestoreDb(BaseDb):
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_exception("Exception renaming session")
             raise e
 
     def upsert_session(
@@ -666,7 +666,7 @@ class FirestoreDb(BaseDb):
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_exception("Exception upserting session")
             raise e
 
     def upsert_sessions(
@@ -702,8 +702,8 @@ class FirestoreDb(BaseDb):
                         results.append(result)
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk session upsert: {e}")
+        except Exception:
+            log_exception("Exception during bulk session upsert")
             return []
 
     # -- Memory methods --
@@ -749,7 +749,7 @@ class FirestoreDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_exception("Error deleting user memory")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -791,7 +791,7 @@ class FirestoreDb(BaseDb):
                 log_info(f"Successfully deleted {deleted_count} memories")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_exception("Error deleting memories")
             raise e
 
     def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
@@ -820,7 +820,7 @@ class FirestoreDb(BaseDb):
             return [topic for topic in all_topics if topic]
 
         except Exception as e:
-            log_error(f"Exception getting all memory topics: {e}")
+            log_exception("Exception getting all memory topics")
             raise e
 
     def get_user_memory(
@@ -863,7 +863,7 @@ class FirestoreDb(BaseDb):
             return UserMemory.from_dict(result)
 
         except Exception as e:
-            log_error(f"Exception getting user memory: {e}")
+            log_exception("Exception getting user memory")
             raise e
 
     def get_user_memories(
@@ -942,7 +942,7 @@ class FirestoreDb(BaseDb):
             return [UserMemory.from_dict(record) for record in records]
 
         except Exception as e:
-            log_error(f"Exception getting user memories: {e}")
+            log_exception("Exception getting user memories")
             raise e
 
     def get_user_memory_stats(
@@ -1005,7 +1005,7 @@ class FirestoreDb(BaseDb):
             return formatted_results, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_exception("Exception getting user memory stats")
             raise e
 
     def upsert_user_memory(
@@ -1051,7 +1051,7 @@ class FirestoreDb(BaseDb):
             return UserMemory.from_dict(update_doc)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_exception("Exception upserting user memory")
             raise e
 
     def upsert_memories(
@@ -1086,8 +1086,8 @@ class FirestoreDb(BaseDb):
                         results.append(result)
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk memory upsert: {e}")
+        except Exception:
+            log_exception("Exception during bulk memory upsert")
             return []
 
     def clear_memories(self) -> None:
@@ -1121,7 +1121,7 @@ class FirestoreDb(BaseDb):
                 batch.commit()
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_exception("Exception deleting all memories")
             raise e
 
     # -- Cultural Knowledge methods --
@@ -1156,7 +1156,7 @@ class FirestoreDb(BaseDb):
                 batch.commit()
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_exception("Exception deleting all cultural knowledge")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -1177,7 +1177,7 @@ class FirestoreDb(BaseDb):
                 log_debug(f"Deleted cultural knowledge with ID: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_exception("Error deleting cultural knowledge")
             raise e
 
     def get_cultural_knowledge(
@@ -1208,7 +1208,7 @@ class FirestoreDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_exception("Error getting cultural knowledge")
             raise e
 
     def get_all_cultural_knowledge(
@@ -1272,7 +1272,7 @@ class FirestoreDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(item) for item in paginated_results]
 
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_exception("Error getting all cultural knowledge")
             raise e
 
     def upsert_cultural_knowledge(
@@ -1328,7 +1328,7 @@ class FirestoreDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(update_doc)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_exception("Error upserting cultural knowledge")
             raise e
 
     # -- Metrics methods --
@@ -1363,7 +1363,7 @@ class FirestoreDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception getting all sessions for metrics calculation: {e}")
+            log_exception("Exception getting all sessions for metrics calculation")
             raise e
 
     def _get_metrics_calculation_starting_date(self, collection_ref) -> Optional[date]:
@@ -1395,7 +1395,7 @@ class FirestoreDb(BaseDb):
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
         except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {e}")
+            log_exception("Exception getting metrics calculation starting date")
             raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -1450,7 +1450,7 @@ class FirestoreDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception calculating metrics: {e}")
+            log_exception("Exception calculating metrics")
             raise e
 
     def get_metrics(
@@ -1487,7 +1487,7 @@ class FirestoreDb(BaseDb):
             return records, latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_exception("Exception getting metrics")
             raise e
 
     # -- Knowledge methods --
@@ -1509,7 +1509,7 @@ class FirestoreDb(BaseDb):
                 doc.reference.delete()
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_exception("Error deleting knowledge content")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1535,7 +1535,7 @@ class FirestoreDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_exception("Error getting knowledge content")
             raise e
 
     def get_knowledge_contents(
@@ -1589,7 +1589,7 @@ class FirestoreDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_exception("Error getting knowledge contents")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1620,7 +1620,7 @@ class FirestoreDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_exception("Error upserting knowledge content")
             raise e
 
     # -- Eval methods --
@@ -1643,7 +1643,7 @@ class FirestoreDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_exception("Error creating eval run")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1663,7 +1663,7 @@ class FirestoreDb(BaseDb):
                 log_info(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_exception(f"Error deleting eval run {eval_run_id}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1694,7 +1694,7 @@ class FirestoreDb(BaseDb):
                 log_info(f"Deleted {deleted_count} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_exception(f"Error deleting eval runs {eval_run_ids}")
             raise e
 
     def get_eval_run(
@@ -1735,7 +1735,7 @@ class FirestoreDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_exception(f"Exception getting eval run {eval_run_id}")
             raise e
 
     def get_eval_runs(
@@ -1836,7 +1836,7 @@ class FirestoreDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in records]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_exception("Exception getting eval runs")
             raise e
 
     def rename_eval_run(
@@ -1884,7 +1884,7 @@ class FirestoreDb(BaseDb):
             return EvalRunRecord.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error updating eval run name {eval_run_id}: {e}")
+            log_exception(f"Error updating eval run name {eval_run_id}")
             raise e
 
     # --- Traces ---
@@ -1972,8 +1972,8 @@ class FirestoreDb(BaseDb):
                 trace_dict["error_count"] = 0
                 collection_ref.add(trace_dict)
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_exception("Error creating trace")
 
     def get_trace(
         self,
@@ -2024,8 +2024,8 @@ class FirestoreDb(BaseDb):
 
             return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_exception("Error getting trace")
             return None
 
     def get_traces(
@@ -2117,8 +2117,8 @@ class FirestoreDb(BaseDb):
 
             return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_exception("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -2233,8 +2233,8 @@ class FirestoreDb(BaseDb):
 
             return paginated_stats, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_exception("Error getting trace stats")
             return [], 0
 
     # --- Spans ---
@@ -2277,8 +2277,8 @@ class FirestoreDb(BaseDb):
                 except Exception as update_error:
                     log_debug(f"Could not update trace span counts: {update_error}")
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_exception("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2342,8 +2342,8 @@ class FirestoreDb(BaseDb):
                 except Exception as update_error:
                     log_debug(f"Could not update trace span counts: {update_error}")
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_exception("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2372,8 +2372,8 @@ class FirestoreDb(BaseDb):
 
             return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_exception("Error getting span")
             return None
 
     def get_spans(
@@ -2421,8 +2421,8 @@ class FirestoreDb(BaseDb):
 
             return spans
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_exception("Error getting spans")
             return []
 
     # -- Learning methods (stubs) --

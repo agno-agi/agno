@@ -88,8 +88,8 @@ class RedditTools(Toolkit):
             # Verify authentication by checking if we can get the authenticated user
             self.reddit.user.me()
             return True
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception:
+            logger.exception("Authentication error")
             return False
 
     def get_user_info(self, username: str) -> str:
@@ -462,6 +462,6 @@ class RedditTools(Toolkit):
             _ = submission.title
             _ = submission.author
             return True
-        except Exception as e:
-            logger.error(f"Error checking post existence: {str(e)}")
+        except Exception:
+            logger.exception("Error checking post existence")
             return False

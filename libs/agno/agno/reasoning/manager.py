@@ -32,7 +32,7 @@ from agno.run.base import RunContext
 from agno.run.messages import RunMessages
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_exception, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -255,7 +255,7 @@ class ReasoningManager:
                 reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
-            log_error(f"Reasoning error: {e}")
+            log_exception("Reasoning error")
             return ReasoningResult(success=False, error=str(e))
 
         if reasoning_message is None:
@@ -331,7 +331,7 @@ class ReasoningManager:
                 reasoning_message = await aget_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
-            log_error(f"Reasoning error: {e}")
+            log_exception("Reasoning error")
             return ReasoningResult(success=False, error=str(e))
 
         if reasoning_message is None:
@@ -874,8 +874,8 @@ class ReasoningManager:
                 if next_action == NextAction.FINAL_ANSWER:
                     break
 
-            except Exception as e:
-                log_error(f"Reasoning error: {e}")
+            except Exception:
+                log_exception("Reasoning error")
                 break
 
             step_count += 1
@@ -986,8 +986,8 @@ class ReasoningManager:
                 if next_action == NextAction.FINAL_ANSWER:
                     break
 
-            except Exception as e:
-                log_error(f"Reasoning error: {e}")
+            except Exception:
+                log_exception("Reasoning error")
                 break
 
         log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")

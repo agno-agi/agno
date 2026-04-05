@@ -152,8 +152,8 @@ class RemoteTeam(BaseRemote):
         if self._team_config is not None:
             try:
                 return json.loads(self._team_config.tools["tools"]) if self._team_config.tools else None
-            except Exception as e:
-                log_warning(f"Failed to load tools for team {self.team_id}: {e}")
+            except Exception:
+                log_warning(f"Failed to load tools for team {self.team_id}", exc_info=True)
                 return None
         return None
 

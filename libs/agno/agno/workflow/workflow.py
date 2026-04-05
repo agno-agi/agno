@@ -68,7 +68,7 @@ from agno.team.team import Team
 from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
-    log_error,
+    log_exception,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -933,8 +933,8 @@ class Workflow:
 
             return config.get("version")
 
-        except Exception as e:
-            log_error(f"Error saving workflow: {e}")
+        except Exception:
+            log_exception("Error saving workflow")
             return None
 
     @classmethod
@@ -1328,8 +1328,8 @@ class Workflow:
             else:
                 session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
+        except Exception:
+            log_warning("Error getting session from db", exc_info=True)
             return None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
@@ -1339,8 +1339,8 @@ class Workflow:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
+        except Exception:
+            log_warning("Error getting session from db", exc_info=True)
             return None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1350,8 +1350,8 @@ class Workflow:
                 raise ValueError("Db not initialized")
             result = await self.db.upsert_session(session=session)  # type: ignore
             return result if isinstance(result, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
+        except Exception:
+            log_warning("Error upserting session into db", exc_info=True)
             return None
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1361,8 +1361,8 @@ class Workflow:
                 raise ValueError("Db not initialized")
             result = self.db.upsert_session(session=session)
             return result if isinstance(result, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
+        except Exception:
+            log_warning("Error upserting session into db", exc_info=True)
             return None
 
     def _update_metadata(self, session: WorkflowSession):
@@ -1765,9 +1765,9 @@ class Workflow:
 
         try:
             return func(**call_kwargs)
-        except TypeError as e:
+        except TypeError:
             # If signature inspection fails, fall back to original method
-            logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
+            logger.exception("Function signature inspection failed. Falling back to original calling convention.")
             return func(**kwargs)
 
     def _accumulate_partial_step_data(
@@ -1965,7 +1965,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_exception(f"Validation failed | Check: {e.check_trigger}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
@@ -1979,7 +1979,7 @@ class Workflow:
                 import traceback
 
                 traceback.print_exc()
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
@@ -2292,7 +2292,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_exception(f"Validation failed | Check: {e.check_trigger}")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -2353,7 +2353,7 @@ class Workflow:
                 )
                 yield self._handle_event(cancelled_event, workflow_run_response)
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -2449,11 +2449,13 @@ class Workflow:
             else:
                 # For regular async functions, await the result
                 return await func(**call_kwargs)  # type: ignore
-        except TypeError as e:
+        except TypeError:
             # If signature inspection fails, fall back to original method
             logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
+                "Async function signature inspection failed. Falling back to original calling convention.",
+                exc_info=True,
             )
+
             if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
                 return func(**call_kwargs)  # type: ignore
@@ -2688,7 +2690,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_exception(f"Validation failed | Check: {e.check_trigger}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
@@ -2699,7 +2701,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
                 raise e
@@ -3042,7 +3044,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_exception(f"Validation failed | Check: {e.check_trigger}")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -3107,7 +3109,7 @@ class Workflow:
                     websocket_handler=websocket_handler,
                 )
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -3288,7 +3290,7 @@ class Workflow:
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
-                logger.error(f"Background workflow execution failed: {e}")
+                logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 if self._has_async_db():
@@ -3434,7 +3436,7 @@ class Workflow:
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
-                logger.error(f"Background streaming workflow execution failed: {e}")
+                logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
                 if self._has_async_db():
@@ -4838,7 +4840,7 @@ class Workflow:
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -5236,7 +5238,7 @@ class Workflow:
             )
             yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -5780,7 +5782,7 @@ class Workflow:
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -6180,7 +6182,7 @@ class Workflow:
             )
             yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -7295,8 +7297,8 @@ class Workflow:
                     except Exception:
                         try:
                             fields_for_new_workflow[f.name] = copy(field_value)
-                        except Exception as e:
-                            log_warning(f"Failed to copy field: {f.name} - {e}")
+                        except Exception:
+                            log_warning(f"Failed to copy field: {f.name}", exc_info=True)
                             fields_for_new_workflow[f.name] = field_value
                 # For pydantic models, attempt a model_copy
                 elif isinstance(field_value, BaseModel):
@@ -7323,10 +7325,8 @@ class Workflow:
             new_workflow = self.__class__(**fields_for_new_workflow)
             log_debug(f"Created new {self.__class__.__name__}")
             return new_workflow
-        except Exception as e:
-            from agno.utils.log import log_error
-
-            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+        except Exception:
+            log_exception(f"Failed to create deep copy of {self.__class__.__name__}")
             raise
 
     def _deep_copy_steps(self, steps: Any) -> Any:
@@ -7499,8 +7499,8 @@ def get_workflow_by_id(
 
         return workflow
 
-    except Exception as e:
-        log_error(f"Error loading Workflow {id} from database: {e}")
+    except Exception:
+        log_exception(f"Error loading Workflow {id} from database")
         return None
 
 
@@ -7530,12 +7530,12 @@ def get_workflows(
                         workflow._version = component.get("current_version")
                         workflow._stage = config.get("stage")
                         workflows.append(workflow)
-            except Exception as e:
+            except Exception:
                 component_id = component.get("component_id", "unknown")
-                log_error(f"Error loading Workflow {component_id} from database: {e}")
+                log_exception(f"Error loading Workflow {component_id} from database")
                 continue
         return workflows
 
-    except Exception as e:
-        log_error(f"Error loading Workflows from database: {e}")
+    except Exception:
+        log_exception("Error loading Workflows from database")
         return []

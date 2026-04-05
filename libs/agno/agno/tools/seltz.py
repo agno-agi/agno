@@ -149,5 +149,5 @@ class SeltzTools(Toolkit):
             logger.error(f"Seltz error: {exc}")
             return f"Error: {exc}"
         except Exception as exc:
-            logger.error(f"Failed to search Seltz: {exc}")
+            logger.exception("Failed to search Seltz")
             return f"Error: {exc}"

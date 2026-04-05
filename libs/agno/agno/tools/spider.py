@@ -88,7 +88,7 @@ class SpiderTools(Toolkit):
             results = app.search(query, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching results from spider: {e}")
+            logger.exception("Error fetching results from spider")
             return f"Error fetching results from spider: {e}"
 
     def _scrape(self, url: str) -> str:
@@ -99,7 +99,7 @@ class SpiderTools(Toolkit):
             results = app.scrape_url(url, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching content from spider: {e}")
+            logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"
 
     def _crawl(self, url: str, limit: Optional[int] = None) -> str:
@@ -112,5 +112,5 @@ class SpiderTools(Toolkit):
             results = app.crawl_url(url, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching content from spider: {e}")
+            logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"

@@ -7,7 +7,7 @@ Changes:
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_exception, log_info
 
 try:
     from sqlalchemy import text
@@ -39,8 +39,8 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
         else:
             log_info(f"{db_type} does not require schema migrations")
         return False
-    except Exception as e:
-        log_error(f"Error running migration v2.5.6 for {db_type} on table {table_name}: {e}")
+    except Exception:
+        log_exception(f"Error running migration v2.5.6 for {db_type} on table {table_name}")
         raise
 
 
@@ -66,8 +66,8 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
         else:
             log_info(f"{db_type} does not require schema migrations")
         return False
-    except Exception as e:
-        log_error(f"Error running migration v2.5.6 for {db_type} on table {table_name}: {e}")
+    except Exception:
+        log_exception(f"Error running migration v2.5.6 for {db_type} on table {table_name}")
         raise
 
 
@@ -95,8 +95,8 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
-    except Exception as e:
-        log_error(f"Error reverting migration v2.5.6 for {db_type} on table {table_name}: {e}")
+    except Exception:
+        log_exception(f"Error reverting migration v2.5.6 for {db_type} on table {table_name}")
         raise
 
 
@@ -122,8 +122,8 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
-    except Exception as e:
-        log_error(f"Error reverting migration v2.5.6 for {db_type} on table {table_name} asynchronously: {e}")
+    except Exception:
+        log_exception(f"Error reverting migration v2.5.6 for {db_type} on table {table_name} asynchronously")
         raise
 
 

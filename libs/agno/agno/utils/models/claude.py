@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_exception, log_info, log_warning
 
 try:
     from anthropic.types import (
@@ -196,8 +196,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             },
         }
 
-    except Exception as e:
-        log_error(f"Error processing image: {e}")
+    except Exception:
+        log_exception("Error processing image")
         return None
 
 

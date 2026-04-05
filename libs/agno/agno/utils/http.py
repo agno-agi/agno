@@ -185,15 +185,15 @@ def fetch_with_retry(
             response = httpx.get(url, proxy=proxy) if proxy else httpx.get(url)
             response.raise_for_status()
             return response
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                logger.exception(f"Failed to fetch {url} after {max_retries} attempts")
                 raise
             wait_time = backoff_factor**attempt
-            logger.warning("Connection error.")
+            logger.warning("Connection error.", exc_info=True)
             sleep(wait_time)
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            logger.exception(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
 
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
@@ -221,15 +221,15 @@ async def async_fetch_with_retry(
             response = await _fetch()
             response.raise_for_status()
             return response
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                logger.exception(f"Failed to fetch {url} after {max_retries} attempts")
                 raise
             wait_time = backoff_factor**attempt
-            logger.warning("Connection error.")
+            logger.warning("Connection error.", exc_info=True)
             await asyncio.sleep(wait_time)
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            logger.exception(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
 
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")

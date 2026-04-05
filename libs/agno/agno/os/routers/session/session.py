@@ -317,7 +317,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             else:
                 return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
         except Exception as e:
-            logger.error(f"Error creating session: {e}")
+            logger.exception("Error creating session")
             raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
 
     @router.get(

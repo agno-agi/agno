@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 
 class SerperTools(Toolkit):
@@ -94,7 +94,7 @@ class SerperTools(Toolkit):
             log_debug(f"Successfully received response from {endpoint} endpoint")
             return {"success": True, "data": response.json(), "raw_response": response.text}
         except Exception as e:
-            log_error(f"Serper API error: {str(e)}")
+            log_exception("Serper API error")
             return {"success": False, "error": str(e)}
 
     def search_web(
@@ -133,7 +133,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching Google for query {query}: {e}")
+            log_exception(f"Unexpected error searching Google for query {query}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def search_news(
@@ -172,7 +172,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching news for query {query}: {e}")
+            log_exception(f"Unexpected error searching news for query {query}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def search_scholar(
@@ -211,7 +211,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching scholar for query {query}: {e}")
+            log_exception(f"Unexpected error searching scholar for query {query}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def scrape_webpage(
@@ -251,5 +251,5 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error scraping webpage {url}: {e}")
+            log_exception(f"Unexpected error scraping webpage {url}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)

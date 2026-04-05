@@ -8,7 +8,7 @@ from agno.media import Image
 from agno.models.nebius import Nebius
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_exception, log_warning
 
 
 class NebiusTools(Toolkit):
@@ -120,5 +120,5 @@ class NebiusTools(Toolkit):
             return ToolResult(content="Failed to generate image: No content received from API.")
 
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            log_exception(f"Failed to generate image using {self.image_model}")
             return ToolResult(content=f"Failed to generate image: {e}")

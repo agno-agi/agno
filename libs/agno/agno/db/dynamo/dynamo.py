@@ -37,7 +37,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_exception, log_info
 from agno.utils.string import generate_id
 
 try:
@@ -237,7 +237,7 @@ class DynamoDb(BaseDb):
             return False
 
         except Exception as e:
-            log_error(f"Failed to delete session {session_id}: {e}")
+            log_exception(f"Failed to delete session {session_id}")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -278,7 +278,7 @@ class DynamoDb(BaseDb):
                         self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
 
         except Exception as e:
-            log_error(f"Failed to delete sessions: {e}")
+            log_exception("Failed to delete sessions")
             raise e
 
     def get_session(
@@ -335,7 +335,7 @@ class DynamoDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Failed to get session {session_id}: {e}")
+            log_exception(f"Failed to get session {session_id}")
             raise e
 
     def get_sessions(
@@ -455,7 +455,7 @@ class DynamoDb(BaseDb):
             return sessions
 
         except Exception as e:
-            log_error(f"Failed to get sessions: {e}")
+            log_exception("Failed to get sessions")
             raise e
 
     def rename_session(
@@ -536,7 +536,7 @@ class DynamoDb(BaseDb):
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
-            log_error(f"Failed to rename session {session_id}: {e}")
+            log_exception(f"Failed to rename session {session_id}")
             raise e
 
     def upsert_session(
@@ -597,7 +597,7 @@ class DynamoDb(BaseDb):
             return deserialize_session_result(serialized_session, session, deserialize)
 
         except Exception as e:
-            log_error(f"Failed to upsert session {session.session_id}: {e}")
+            log_exception(f"Failed to upsert session {session.session_id}")
             raise e
 
     def upsert_sessions(
@@ -633,8 +633,8 @@ class DynamoDb(BaseDb):
                         results.append(result)
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk session upsert: {e}")
+        except Exception:
+            log_exception("Exception during bulk session upsert")
             return []
 
     # --- User Memory ---
@@ -671,7 +671,7 @@ class DynamoDb(BaseDb):
             log_debug(f"Deleted user memory {memory_id}")
 
         except Exception as e:
-            log_error(f"Failed to delete user memory {memory_id}: {e}")
+            log_exception(f"Failed to delete user memory {memory_id}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -712,7 +712,7 @@ class DynamoDb(BaseDb):
                 self.client.batch_write_item(RequestItems={self.memory_table_name: delete_requests})
 
         except Exception as e:
-            log_error(f"Failed to delete user memories: {e}")
+            log_exception("Failed to delete user memories")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -752,7 +752,7 @@ class DynamoDb(BaseDb):
             return list(all_topics)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_exception("Exception reading from memory table")
             raise e
 
     def get_user_memory(
@@ -795,7 +795,7 @@ class DynamoDb(BaseDb):
             return UserMemory.from_dict(item)
 
         except Exception as e:
-            log_error(f"Failed to get user memory {memory_id}: {e}")
+            log_exception(f"Failed to get user memory {memory_id}")
             raise e
 
     def get_user_memories(
@@ -915,7 +915,7 @@ class DynamoDb(BaseDb):
             return [UserMemory.from_dict(item) for item in items]
 
         except Exception as e:
-            log_error(f"Failed to get user memories: {e}")
+            log_exception("Failed to get user memories")
             raise e
 
     def get_user_memory_stats(
@@ -1017,7 +1017,7 @@ class DynamoDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Failed to get user memory stats: {e}")
+            log_exception("Failed to get user memory stats")
             raise e
 
     def upsert_user_memory(
@@ -1046,7 +1046,7 @@ class DynamoDb(BaseDb):
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
-            log_error(f"Failed to upsert user memory: {e}")
+            log_exception("Failed to upsert user memory")
             raise e
 
     def upsert_memories(
@@ -1082,8 +1082,8 @@ class DynamoDb(BaseDb):
                         results.append(result)
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk memory upsert: {e}")
+        except Exception:
+            log_exception("Exception during bulk memory upsert")
             return []
 
     def clear_memories(self) -> None:
@@ -1124,7 +1124,7 @@ class DynamoDb(BaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning("Exception deleting all memories", exc_info=True)
             raise e
 
     # --- Metrics ---
@@ -1202,7 +1202,7 @@ class DynamoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Failed to calculate metrics: {e}")
+            log_exception("Failed to calculate metrics")
             raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
@@ -1288,7 +1288,7 @@ class DynamoDb(BaseDb):
             return earliest_session_date
 
         except Exception as e:
-            log_error(f"Failed to get metrics calculation starting date: {e}")
+            log_exception("Failed to get metrics calculation starting date")
             raise e
 
     def _get_all_sessions_for_metrics_calculation(
@@ -1346,7 +1346,7 @@ class DynamoDb(BaseDb):
             return all_sessions
 
         except Exception as e:
-            log_error(f"Failed to get sessions for metrics calculation: {e}")
+            log_exception("Failed to get sessions for metrics calculation")
             raise e
 
     def _bulk_upsert_metrics(self, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1374,7 +1374,7 @@ class DynamoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Failed to bulk upsert metrics: {e}")
+            log_exception("Failed to bulk upsert metrics")
             raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1406,7 +1406,7 @@ class DynamoDb(BaseDb):
                 return self._create_new_metrics_record(table_name, record)
 
         except Exception as e:
-            log_error(f"Failed to upsert single metrics record: {e}")
+            log_exception("Failed to upsert single metrics record")
             raise e
 
     def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
@@ -1439,7 +1439,7 @@ class DynamoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Failed to get existing metrics record for date {date_str}: {e}")
+            log_exception(f"Failed to get existing metrics record for date {date_str}")
             raise e
 
     def _update_existing_metrics_record(
@@ -1473,7 +1473,7 @@ class DynamoDb(BaseDb):
             return new_record
 
         except Exception as e:
-            log_error(f"Failed to update existing metrics record: {e}")
+            log_exception("Failed to update existing metrics record")
             raise e
 
     def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1497,7 +1497,7 @@ class DynamoDb(BaseDb):
             return record
 
         except Exception as e:
-            log_error(f"Failed to create new metrics record: {e}")
+            log_exception("Failed to create new metrics record")
             raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -1620,7 +1620,7 @@ class DynamoDb(BaseDb):
             return metrics_data, len(metrics_data)
 
         except Exception as e:
-            log_error(f"Failed to get metrics: {e}")
+            log_exception("Failed to get metrics")
             raise e
 
     # --- Knowledge methods ---
@@ -1642,7 +1642,7 @@ class DynamoDb(BaseDb):
             log_debug(f"Deleted knowledge content {id}")
 
         except Exception as e:
-            log_error(f"Failed to delete knowledge content {id}: {e}")
+            log_exception(f"Failed to delete knowledge content {id}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1665,7 +1665,7 @@ class DynamoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Failed to get knowledge content {id}: {e}")
+            log_exception(f"Failed to get knowledge content {id}")
             raise e
 
     def get_knowledge_contents(
@@ -1713,8 +1713,8 @@ class DynamoDb(BaseDb):
                 try:
                     knowledge_row = deserialize_knowledge_row(item)
                     knowledge_rows.append(knowledge_row)
-                except Exception as e:
-                    log_error(f"Failed to deserialize knowledge row: {e}")
+                except Exception:
+                    log_exception("Failed to deserialize knowledge row")
 
             # Apply linked_to filter if provided
             if linked_to is not None:
@@ -1742,7 +1742,7 @@ class DynamoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Failed to get knowledge contents: {e}")
+            log_exception("Failed to get knowledge contents")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1763,7 +1763,7 @@ class DynamoDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {e}")
+            log_exception(f"Failed to upsert knowledge content {knowledge_row.id}")
             raise e
 
     # --- Eval ---
@@ -1793,7 +1793,7 @@ class DynamoDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Failed to create eval run: {e}")
+            log_exception("Failed to create eval run")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1811,7 +1811,7 @@ class DynamoDb(BaseDb):
                 self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
         except Exception as e:
-            log_error(f"Failed to delete eval runs: {e}")
+            log_exception("Failed to delete eval runs")
             raise e
 
     def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
@@ -1827,7 +1827,7 @@ class DynamoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Failed to get eval run {eval_run_id}: {e}")
+            log_exception(f"Failed to get eval run {eval_run_id}")
             raise e
 
     def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
@@ -1843,7 +1843,7 @@ class DynamoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Failed to get eval run {eval_run_id}: {e}")
+            log_exception(f"Failed to get eval run {eval_run_id}")
             raise e
 
     def get_eval_runs(
@@ -1944,7 +1944,7 @@ class DynamoDb(BaseDb):
             return eval_runs
 
         except Exception as e:
-            log_error(f"Failed to get eval runs: {e}")
+            log_exception("Failed to get eval runs")
             raise e
 
     def rename_eval_run(
@@ -1976,7 +1976,7 @@ class DynamoDb(BaseDb):
             return EvalRunRecord.model_validate(item) if deserialize else item
 
         except Exception as e:
-            log_error(f"Failed to rename eval run {eval_run_id}: {e}")
+            log_exception(f"Failed to rename eval run {eval_run_id}")
             raise e
 
     # -- Culture methods --
@@ -1991,7 +1991,7 @@ class DynamoDb(BaseDb):
                 for item in response.get("Items", []):
                     batch.delete_item(Key={"id": item["id"]})
         except Exception as e:
-            log_error(f"Failed to clear cultural knowledge: {e}")
+            log_exception("Failed to clear cultural knowledge")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2000,7 +2000,7 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("culture")
             self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
         except Exception as e:
-            log_error(f"Failed to delete cultural knowledge {id}: {e}")
+            log_exception(f"Failed to delete cultural knowledge {id}")
             raise e
 
     def get_cultural_knowledge(
@@ -2021,7 +2021,7 @@ class DynamoDb(BaseDb):
 
             return deserialize_cultural_knowledge_from_db(db_row)
         except Exception as e:
-            log_error(f"Failed to get cultural knowledge {id}: {e}")
+            log_exception(f"Failed to get cultural knowledge {id}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -2091,7 +2091,7 @@ class DynamoDb(BaseDb):
 
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
         except Exception as e:
-            log_error(f"Failed to get all cultural knowledge: {e}")
+            log_exception("Failed to get all cultural knowledge")
             raise e
 
     def upsert_cultural_knowledge(
@@ -2130,7 +2130,7 @@ class DynamoDb(BaseDb):
             return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Failed to upsert cultural knowledge: {e}")
+            log_exception("Failed to upsert cultural knowledge")
             raise e
 
     # --- Traces ---
@@ -2240,8 +2240,8 @@ class DynamoDb(BaseDb):
                 item = serialize_to_dynamo_item(trace_dict)
                 self.client.put_item(TableName=table_name, Item=item)
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_exception("Error creating trace")
 
     def get_trace(
         self,
@@ -2305,8 +2305,8 @@ class DynamoDb(BaseDb):
                 log_debug("get_trace called without any filter parameters")
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_exception("Error getting trace")
             return None
 
     def get_traces(
@@ -2472,8 +2472,8 @@ class DynamoDb(BaseDb):
 
             return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_exception("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -2608,8 +2608,8 @@ class DynamoDb(BaseDb):
 
             return paginated_stats, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_exception("Error getting trace stats")
             return [], 0
 
     # --- Spans ---
@@ -2651,8 +2651,8 @@ class DynamoDb(BaseDb):
                 except Exception as update_error:
                     log_debug(f"Could not update trace span counts: {update_error}")
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_exception("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2709,8 +2709,8 @@ class DynamoDb(BaseDb):
                 except Exception as update_error:
                     log_debug(f"Could not update trace span counts: {update_error}")
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_exception("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2742,8 +2742,8 @@ class DynamoDb(BaseDb):
                 return Span.from_dict(span_data)
             return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_exception("Error getting span")
             return None
 
     def get_spans(
@@ -2834,8 +2834,8 @@ class DynamoDb(BaseDb):
 
             return spans
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_exception("Error getting spans")
             return []
 
     # -- Learning methods (stubs) --

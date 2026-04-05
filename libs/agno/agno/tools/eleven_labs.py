@@ -9,7 +9,7 @@ from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_error, log_exception, log_info
 
 try:
     from elevenlabs import ElevenLabs  # type: ignore
@@ -93,7 +93,7 @@ class ElevenLabsTools(Toolkit):
             return str(response)
 
         except Exception as e:
-            log_error(f"Failed to fetch voices: {e}")
+            log_exception("Failed to fetch voices")
             return f"Error: {e}"
 
     def _process_audio(self, audio_generator: Iterator[bytes]) -> bytes:
@@ -157,7 +157,7 @@ class ElevenLabsTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Failed to generate sound effect: {e}")
+            log_exception("Failed to generate sound effect")
             return ToolResult(content=f"Error: {e}")
 
     def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
@@ -192,5 +192,5 @@ class ElevenLabsTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Failed to generate audio: {e}")
+            log_exception("Failed to generate audio")
             return ToolResult(content=f"Error: {e}")

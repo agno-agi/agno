@@ -8,7 +8,7 @@ from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_exception, log_info
 
 try:
     import cartesia  # type: ignore
@@ -74,16 +74,16 @@ class CartesiaTools(Toolkit):
                             filtered_result.append(voice_data)
                         else:
                             log_info(f"Could not extract 'id' from voice object: {voice}")
-                    except AttributeError as ae:
-                        log_error(f"AttributeError accessing voice data: {ae}. Voice data: {voice}")
+                    except AttributeError:
+                        log_exception(f"AttributeError accessing voice data. Voice data: {voice}")
                         continue
-                    except Exception as inner_e:
-                        log_error(f"Unexpected error processing voice: {inner_e}. Voice data: {voice}")
+                    except Exception:
+                        log_exception(f"Unexpected error processing voice. Voice data: {voice}")
                         continue
 
             return json.dumps(filtered_result, indent=4)
         except Exception as e:
-            log_error(f"Error listing voices from Cartesia: {e}", exc_info=True)
+            log_exception("Error listing voices from Cartesia")
             return json.dumps({"error": str(e), "detail": "Error occurred in list_voices function."})
 
     def localize_voice(
@@ -124,7 +124,7 @@ class CartesiaTools(Toolkit):
                 return result.model_dump_json(indent=4)
 
         except Exception as e:
-            log_error(f"Error localizing voice with Cartesia: {e}", exc_info=True)
+            log_exception("Error localizing voice with Cartesia")
             return json.dumps({"error": str(e), "type": type(e).__name__})
 
     def text_to_speech(
@@ -183,5 +183,5 @@ class CartesiaTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error generating speech with Cartesia: {e}", exc_info=True)
+            log_exception("Error generating speech with Cartesia")
             return ToolResult(content=f"Error generating speech: {e}")

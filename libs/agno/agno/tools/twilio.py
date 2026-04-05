@@ -126,7 +126,7 @@ class TwilioTools(Toolkit):
             log_info(f"SMS sent. SID: {message.sid}, to: {to}")
             return f"Message sent successfully. SID: {message.sid}"
         except TwilioRestException as e:
-            logger.error(f"Failed to send SMS to {to}: {e}")
+            logger.exception(f"Failed to send SMS to {to}")
             return f"Error sending message: {str(e)}"
 
     def get_call_details(self, call_sid: str) -> Dict[str, Any]:
@@ -153,7 +153,7 @@ class TwilioTools(Toolkit):
                 "end_time": str(call.end_time),
             }
         except TwilioRestException as e:
-            logger.error(f"Failed to fetch call details for SID {call_sid}: {e}")
+            logger.exception(f"Failed to fetch call details for SID {call_sid}")
             return {"error": str(e)}
 
     def list_messages(self, limit: int = 20) -> List[Dict[str, Any]]:
@@ -182,5 +182,5 @@ class TwilioTools(Toolkit):
             log_info(f"Retrieved {len(messages)} messages")
             return messages
         except TwilioRestException as e:
-            logger.error(f"Failed to list messages: {e}")
+            logger.exception("Failed to list messages")
             return [{"error": str(e)}]

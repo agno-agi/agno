@@ -23,7 +23,7 @@ from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.os.interfaces.slack.state import StreamState
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_exception
 from agno.workflow import RemoteWorkflow, Workflow
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
@@ -238,8 +238,8 @@ def attach_routes(
                     thread_ts=ctx["thread_id"],
                 )
                 await upload_response_media_async(async_client, response, ctx["channel_id"], ctx["thread_id"])
-        except Exception as e:
-            log_error(f"Error processing slack event: {e}")
+        except Exception:
+            log_exception("Error processing slack event")
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
@@ -437,8 +437,8 @@ def attach_routes(
             if not is_msg_too_long:
                 is_msg_too_long = "msg_too_long" in str(e)
             if not is_msg_too_long:
-                log_error(
-                    f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
+                log_exception(
+                    f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
                 )
             try:
                 await async_client.assistant_threads_setStatus(
@@ -483,7 +483,7 @@ def attach_routes(
             await async_client.assistant_threads_setSuggestedPrompts(
                 channel_id=channel_id, thread_ts=thread_ts, prompts=prompts
             )
-        except Exception as e:
-            log_error(f"Failed to set suggested prompts: {e}")
+        except Exception:
+            log_exception("Failed to set suggested prompts")
 
     return router

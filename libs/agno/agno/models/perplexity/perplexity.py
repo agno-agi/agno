@@ -133,8 +133,8 @@ class Perplexity(OpenAILike):
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
-            except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+            except Exception:
+                log_warning("Error processing tool calls", exc_info=True)
 
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:

@@ -129,7 +129,7 @@ class CalComTools(Toolkit):
                 return f"Available slots: {', '.join(available_slots)}"
             return f"Failed to fetch slots: {response.text}"
         except Exception as e:
-            logger.error(f"Error fetching available slots: {e}")
+            logger.exception("Error fetching available slots")
             return f"Error: {str(e)}"
 
     def create_booking(
@@ -164,7 +164,7 @@ class CalComTools(Toolkit):
                 return f"Booking created successfully for {user_time}. Booking uid: {booking_data['uid']}"
             return f"Failed to create booking: {response.text}"
         except Exception as e:
-            logger.error(f"Error creating booking: {e}")
+            logger.exception("Error creating booking")
             return f"Error: {str(e)}"
 
     def get_upcoming_bookings(self, email: Optional[str] = None) -> str:
@@ -197,7 +197,7 @@ class CalComTools(Toolkit):
                 return "Upcoming bookings:\n" + "\n".join(booking_info)
             return f"Failed to fetch bookings: {response.text}"
         except Exception as e:
-            logger.error(f"Error fetching upcoming bookings: {e}")
+            logger.exception("Error fetching upcoming bookings")
             return f"Error: {str(e)}"
 
     def reschedule_booking(
@@ -229,7 +229,7 @@ class CalComTools(Toolkit):
                 return f"Booking rescheduled to {user_time}. New booking uid: {booking_data['uid']}"
             return f"Failed to reschedule booking: {response.text}"
         except Exception as e:
-            logger.error(f"Error rescheduling booking: {e}")
+            logger.exception("Error rescheduling booking")
             return f"Error: {str(e)}"
 
     def cancel_booking(self, booking_uid: str, reason: str) -> str:
@@ -251,5 +251,5 @@ class CalComTools(Toolkit):
                 return "Booking cancelled successfully."
             return f"Failed to cancel booking: {response.text}"
         except Exception as e:
-            logger.error(f"Error cancelling booking: {e}")
+            logger.exception("Error cancelling booking")
             return f"Error: {str(e)}"

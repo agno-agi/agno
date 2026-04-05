@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_exception, log_info, log_warning
 
 try:
     from daytona import (
@@ -143,7 +143,7 @@ class DaytonaTools(Toolkit):
                 "SSL certificate verification is disabled",
             )
         except ImportError:
-            log_warning("Could not import daytona_api_client.Configuration for SSL patching")
+            log_warning("Could not import daytona_api_client.Configuration for SSL patching", exc_info=True)
 
     def _get_working_directory(self, agent: Union[Agent, Team]) -> str:
         """Get the current working directory from agent session state."""
@@ -206,7 +206,7 @@ class DaytonaTools(Toolkit):
             return sandbox
         except Exception as e:
             if self.auto_create_sandbox:
-                log_warning(f"Error in sandbox management: {e}. Creating new sandbox.")
+                log_warning("Error in sandbox management. Creating new sandbox.", exc_info=True)
                 return self._create_new_sandbox(agent)
             else:
                 raise e
@@ -240,7 +240,7 @@ class DaytonaTools(Toolkit):
             log_info(f"Created new Daytona sandbox: {sandbox.id}")
             return sandbox
         except Exception as e:
-            log_error(f"Error creating Daytona sandbox: {e}")
+            log_exception("Error creating Daytona sandbox")
             raise e
 
     # Tools

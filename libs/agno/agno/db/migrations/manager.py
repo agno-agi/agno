@@ -5,7 +5,7 @@ from packaging import version as packaging_version
 from packaging.version import Version
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_exception, log_info, log_warning
 
 
 class MigrationManager:
@@ -122,8 +122,8 @@ class MigrationManager:
                 return await migration_module.async_up(self.db, table_type, table_name)
             else:
                 return migration_module.up(self.db, table_type, table_name)
-        except Exception as e:
-            log_error(f"Error running migration to version {version}: {e}")
+        except Exception:
+            log_exception(f"Error running migration to version {version}")
             raise
 
     async def down(self, target_version: str, table_type: Optional[str] = None, force: bool = False):
@@ -200,6 +200,6 @@ class MigrationManager:
                 return await migration_module.async_down(self.db, table_type, table_name)
             else:
                 return migration_module.down(self.db, table_type, table_name)
-        except Exception as e:
-            log_error(f"Error running migration to version {version}: {e}")
+        except Exception:
+            log_exception(f"Error running migration to version {version}")
             raise

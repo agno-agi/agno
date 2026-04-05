@@ -202,7 +202,7 @@ class Toolkit:
                 log_debug(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
             func_name = self._get_tool_name(function)
-            logger.warning(f"Failed to create Function for: {func_name}")
+            logger.warning(f"Failed to create Function for: {func_name}", exc_info=True)
             raise e
 
     def _register_decorated_tool(self, function: Function, name: Optional[str] = None, is_async: bool = False) -> None:

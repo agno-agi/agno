@@ -48,7 +48,7 @@ from agno.os.utils import (
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -294,8 +294,8 @@ def get_agent_router(
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
-                    except Exception as e:
-                        log_error(f"Error processing image {file.filename}: {e}")
+                    except Exception:
+                        log_exception(f"Error processing image {file.filename}")
                         continue
                 elif file.content_type in [
                     "audio/wav",
@@ -311,8 +311,8 @@ def get_agent_router(
                     try:
                         audio = process_audio(file)
                         base64_audios.append(audio)
-                    except Exception as e:
-                        log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
+                    except Exception:
+                        log_exception(f"Error processing audio {file.filename} with content type {file.content_type}")
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -330,8 +330,8 @@ def get_agent_router(
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
-                    except Exception as e:
-                        log_error(f"Error processing video {file.filename}: {e}")
+                    except Exception:
+                        log_exception(f"Error processing video {file.filename}")
                         continue
                 elif file.content_type in [
                     "application/pdf",
@@ -355,8 +355,8 @@ def get_agent_router(
                         input_file = process_document(file)
                         if input_file is not None:
                             input_files.append(input_file)
-                    except Exception as e:
-                        log_error(f"Error processing file {file.filename}: {e}")
+                    except Exception:
+                        log_exception(f"Error processing file {file.filename}")
                         continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")

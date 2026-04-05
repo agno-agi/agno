@@ -243,7 +243,11 @@ class Step:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
                     except Exception:
-                        log_warning(f"deep_copy() failed for registry agent '{agent_id}', using shared instance")
+                        log_warning(
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance",
+                            exc_info=True,
+                        )
+
                         agent = registry_agent
 
             # Fall back to database
@@ -269,7 +273,11 @@ class Step:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
                     except Exception:
-                        log_warning(f"deep_copy() failed for registry team '{team_id}', using shared instance")
+                        log_warning(
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance",
+                            exc_info=True,
+                        )
+
                         team = registry_team
 
             # Fall back to database
@@ -723,7 +731,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1046,7 +1054,7 @@ class Step:
                 return
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1298,7 +1306,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1614,7 +1622,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1891,8 +1899,8 @@ class Step:
 
                     images.append(Image(**image_kwargs))
 
-                except Exception as e:
-                    logger.error(f"Failed to process image content: {e}")
+                except Exception:
+                    logger.exception("Failed to process image content")
                     # Skip this image if we can't process it
                     continue
 

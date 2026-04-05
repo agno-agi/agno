@@ -70,7 +70,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
     # Emit a RunErrorEvent if any error occurs
     except Exception as e:
-        logger.error(f"Error running agent: {e}", exc_info=True)
+        logger.error("Error running agent", exc_info=True)
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
@@ -108,7 +108,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             yield event
 
     except Exception as e:
-        logger.error(f"Error running team: {e}", exc_info=True)
+        logger.error("Error running team", exc_info=True)
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 

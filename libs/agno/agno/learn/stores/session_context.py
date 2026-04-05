@@ -874,8 +874,8 @@ class SessionContextStore(LearningStore):
                 func.strict = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
-            except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+            except Exception:
+                log_warning(f"Could not add function {tool}", exc_info=True)
 
         return functions
 
@@ -966,7 +966,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning("Error saving session context", exc_info=True)
                     return f"Error: {e}"
 
         else:
@@ -1015,7 +1015,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning("Error saving session context", exc_info=True)
                     return f"Error: {e}"
 
         return [save_session_context]
@@ -1107,7 +1107,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning("Error saving session context", exc_info=True)
                     return f"Error: {e}"
 
         else:
@@ -1156,7 +1156,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning("Error saving session context", exc_info=True)
                     return f"Error: {e}"
 
         return [save_session_context]

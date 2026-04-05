@@ -111,7 +111,7 @@ class WebSearchReader(Reader):
                 return results
 
             except Exception as e:
-                logger.warning(f"DuckDuckGo search attempt {attempt + 1} failed: {e}")
+                logger.warning(f"DuckDuckGo search attempt {attempt + 1} failed", exc_info=True)
                 if "rate limit" in str(e).lower() or "429" in str(e):
                     # Rate limited - wait longer
                     wait_time = (
@@ -123,7 +123,7 @@ class WebSearchReader(Reader):
                     # Other error - shorter wait
                     time.sleep(self.search_delay)
                 else:
-                    logger.error(f"All DuckDuckGo search attempts failed: {e}")
+                    logger.exception("All DuckDuckGo search attempts failed")
                     return []
         return []
 
@@ -162,8 +162,8 @@ class WebSearchReader(Reader):
 
             return text
 
-        except Exception as e:
-            logger.warning(f"Error extracting text from {url}: {e}")
+        except Exception:
+            logger.warning(f"Error extracting text from {url}", exc_info=True)
             return html_content
 
     def _fetch_url_content(self, url: str) -> Optional[str]:
@@ -183,8 +183,8 @@ class WebSearchReader(Reader):
                     # For non-HTML content, return as-is
                     return response.text
 
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed for {url}: {e}")
+            except Exception:
+                logger.warning(f"Attempt {attempt + 1} failed for {url}", exc_info=True)
                 if attempt < self.max_retries - 1:
                     time.sleep(random.uniform(1, 3))  # Random delay between retries
                 continue
@@ -302,8 +302,8 @@ class WebSearchReader(Reader):
 
                     return self._create_document_from_url(url, content, result)
 
-            except Exception as e:
-                logger.warning(f"Error fetching {url}: {e}")
+            except Exception:
+                logger.warning(f"Error fetching {url}", exc_info=True)
                 return None
 
         documents = []

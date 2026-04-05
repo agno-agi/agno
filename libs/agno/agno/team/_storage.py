@@ -44,7 +44,7 @@ from agno.utils.agent import (
 )
 from agno.utils.log import (
     log_debug,
-    log_error,
+    log_exception,
     log_warning,
 )
 from agno.utils.merge_dict import merge_dictionaries
@@ -168,8 +168,8 @@ def _read_session(
             raise ValueError("Db not initialized")
         session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+    except Exception:
+        log_warning("Error getting session from db", exc_info=True)
         return None
 
 
@@ -188,8 +188,8 @@ async def _aread_session(
         else:
             session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
         return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+    except Exception:
+        log_warning("Error getting session from db", exc_info=True)
         return None
 
 
@@ -200,8 +200,8 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
         if not team.db:
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+    except Exception:
+        log_warning("Error upserting session into db", exc_info=True)
     return None
 
 
@@ -216,8 +216,8 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
             return await team.db.upsert_session(session=session)  # type: ignore
         else:
             return team.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+    except Exception:
+        log_warning("Error upserting session into db", exc_info=True)
     return None
 
 
@@ -549,8 +549,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
-            except Exception as e:
-                log_warning(f"Could not serialize tool {tool}: {e}")
+            except Exception:
+                log_warning(f"Could not serialize tool {tool}", exc_info=True)
         if serialized_tools:
             config["tools"] = serialized_tools
     if team.tool_choice is not None:
@@ -1079,8 +1079,8 @@ def save(
 
         return config["version"]
 
-    except Exception as e:
-        log_error(f"Error saving Team to database: {e}")
+    except Exception:
+        log_exception("Error saving Team to database")
         raise
 
 

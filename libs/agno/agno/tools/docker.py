@@ -23,8 +23,8 @@ if sys.version_info >= (3, 12):
                 # Filter out any kwargs that aren't in the signature
                 valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
                 return original_load_config(*args, **valid_kwargs)
-            except Exception as e:
-                logger.warning(f"Error in patched_load_config: {e}")
+            except Exception:
+                logger.warning("Error in patched_load_config", exc_info=True)
                 return {}
 
         # Replace the original function with our patched version
@@ -45,8 +45,8 @@ if sys.version_info >= (3, 12):
             logger.info("Added missing get_config_header function for Docker auth compatibility")
 
         logger.info("Applied comprehensive compatibility patch for Docker client on Python 3.12")
-    except Exception as e:
-        logger.warning(f"Failed to apply Docker client compatibility patch: {e}")
+    except Exception:
+        logger.warning("Failed to apply Docker client compatibility patch", exc_info=True)
 
 try:
     import docker
@@ -73,8 +73,8 @@ class DockerTools(Toolkit):
 
             self.client.ping()
             logger.info("Successfully connected to Docker daemon")
-        except Exception as e:
-            logger.error(f"Error connecting to Docker: {e}")
+        except Exception:
+            logger.exception("Error connecting to Docker")
 
         tools: List[Any] = [
             # Container management

@@ -327,12 +327,12 @@ class AgentAsJudgeEval(BaseEval):
                         )
                     else:
                         self.on_fail(evaluation)
-                except Exception as e:
-                    logger.warning(f"on_fail callback error: {e}")
+                except Exception:
+                    logger.warning("on_fail callback error", exc_info=True)
 
             return evaluation
-        except Exception as e:
-            logger.exception(f"Evaluation failed: {e}")
+        except Exception:
+            logger.exception("Evaluation failed")
             return None
 
     async def _aevaluate(
@@ -390,12 +390,12 @@ class AgentAsJudgeEval(BaseEval):
                         await self.on_fail(evaluation)
                     else:
                         self.on_fail(evaluation)
-                except Exception as e:
-                    logger.warning(f"on_fail callback error: {e}")
+                except Exception:
+                    logger.warning("on_fail callback error", exc_info=True)
 
             return evaluation
-        except Exception as e:
-            logger.exception(f"Async evaluation failed: {e}")
+        except Exception:
+            logger.exception("Async evaluation failed")
             return None
 
     def _log_eval_to_db(

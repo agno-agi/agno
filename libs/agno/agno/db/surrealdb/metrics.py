@@ -8,7 +8,7 @@ from agno.db.base import SessionType
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
 from agno.db.surrealdb.queries import WhereClause
-from agno.utils.log import log_error
+from agno.utils.log import log_exception
 
 
 def get_all_sessions_for_metrics_calculation(
@@ -153,11 +153,8 @@ def bulk_upsert_metrics(
                 results.append(result)
         return results
 
-    except Exception as e:
-        import traceback
-
-        log_error(traceback.format_exc())
-        log_error(f"Error upserting metrics: {e}")
+    except Exception:
+        log_exception("Error upserting metrics")
 
     return []
 

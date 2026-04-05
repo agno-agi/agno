@@ -488,13 +488,13 @@ def print_response_stream(
                     elif team.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                        except Exception:
+                            log_warning("Failed to convert response to JSON", exc_info=True)
                     elif team.output_schema is not None and isinstance(resp.content, dict):
                         try:
                             _response_content = JSON(json.dumps(resp.content), indent=2)  # type: ignore
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                        except Exception:
+                            log_warning("Failed to convert response to JSON", exc_info=True)
                     if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
@@ -1420,13 +1420,13 @@ async def aprint_response_stream(
                     elif team.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                        except Exception:
+                            log_warning("Failed to convert response to JSON", exc_info=True)
                     elif team.output_schema is not None and isinstance(resp.content, dict):
                         try:
                             _response_content = JSON(json.dumps(resp.content), indent=2)  # type: ignore
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                        except Exception:
+                            log_warning("Failed to convert response to JSON", exc_info=True)
                     if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
@@ -1920,12 +1920,12 @@ def _parse_response_content(
     elif isinstance(run_response.content, BaseModel):
         try:
             return JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
-        except Exception as e:
-            log_warning(f"Failed to convert response to JSON: {e}")
+        except Exception:
+            log_warning("Failed to convert response to JSON", exc_info=True)
     else:
         import json
 
         try:
             return JSON(json.dumps(run_response.content), indent=4)
-        except Exception as e:
-            log_warning(f"Failed to convert response to JSON: {e}")
+        except Exception:
+            log_warning("Failed to convert response to JSON", exc_info=True)

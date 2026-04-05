@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from agno.run import RunContext
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 from agno.workflow.workflow import Workflow, WorkflowRunOutput
 
 
@@ -92,7 +92,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            log_error(f"Error recording workflow thought: {e}")
+            log_exception("Error recording workflow thought")
             return f"Error recording workflow thought: {e}"
 
     async def async_think(self, run_context: RunContext, thought: str) -> str:
@@ -121,7 +121,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            log_error(f"Error recording workflow thought: {e}")
+            log_exception("Error recording workflow thought")
             return f"Error recording workflow thought: {e}"
 
     def run_workflow(
@@ -161,7 +161,7 @@ class WorkflowTools(Toolkit):
             return json.dumps(result.to_dict(), indent=2)
 
         except Exception as e:
-            log_error(f"Error running workflow: {e}")
+            log_exception("Error running workflow")
             return f"Error running workflow: {e}"
 
     async def async_run_workflow(
@@ -201,7 +201,7 @@ class WorkflowTools(Toolkit):
             return json.dumps(result.to_dict(), indent=2)
 
         except Exception as e:
-            log_error(f"Error running workflow: {e}")
+            log_exception("Error running workflow")
             return f"Error running workflow: {e}"
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
@@ -229,7 +229,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            log_error(f"Error recording workflow analysis: {e}")
+            log_exception("Error recording workflow analysis")
             return f"Error recording workflow analysis: {e}"
 
     async def async_analyze(self, run_context: RunContext, analysis: str) -> str:
@@ -257,7 +257,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            log_error(f"Error recording workflow analysis: {e}")
+            log_exception("Error recording workflow analysis")
             return f"Error recording workflow analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\

@@ -50,7 +50,7 @@ class AirflowTools(Toolkit):
             log_info(f"Saved: {file_path}")
             return str(file_path)
         except Exception as e:
-            logger.error(f"Error saving to file: {e}")
+            logger.exception("Error saving to file")
             return f"Error saving to file: {e}"
 
     def read_dag_file(self, dag_file: str) -> str:
@@ -65,5 +65,5 @@ class AirflowTools(Toolkit):
             contents = file_path.read_text()
             return str(contents)
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            logger.exception("Error reading file")
             return f"Error reading file: {e}"

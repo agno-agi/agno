@@ -66,7 +66,7 @@ class DesiVocalTools(Toolkit):
 
             return str(responses)
         except Exception as e:
-            logger.error(f"Failed to get voices: {e}")
+            logger.exception("Failed to get voices")
             return f"Error: {e}"
 
     def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> ToolResult:
@@ -104,5 +104,5 @@ class DesiVocalTools(Toolkit):
                 audios=[audio_artifact],
             )
         except Exception as e:
-            logger.error(f"Failed to generate audio: {e}")
+            logger.exception("Failed to generate audio")
             return ToolResult(content=f"Error: {e}")

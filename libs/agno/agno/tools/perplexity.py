@@ -113,7 +113,7 @@ class PerplexitySearch(Toolkit):
             return parsed
 
         except Exception as e:
-            logger.error(f"Perplexity search failed: {e}")
+            logger.exception("Perplexity search failed")
             return json.dumps({"error": str(e)})
 
     async def asearch(self, query: str, max_results: Optional[int] = None) -> str:
@@ -173,5 +173,5 @@ class PerplexitySearch(Toolkit):
             return parsed
 
         except Exception as e:
-            logger.error(f"Perplexity search failed: {e}")
+            logger.exception("Perplexity search failed")
             return json.dumps({"error": str(e)})

@@ -30,7 +30,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_exception, log_info
 from agno.utils.string import generate_id
 
 try:
@@ -286,8 +286,8 @@ class MongoDb(BaseDb):
 
             return collection
 
-        except Exception as e:
-            log_error(f"Error getting collection {collection_name}: {e}")
+        except Exception:
+            log_exception(f"Error getting collection {collection_name}")
             raise
 
     def get_latest_schema_version(self):
@@ -330,7 +330,7 @@ class MongoDb(BaseDb):
                 return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_exception("Error deleting session")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -352,7 +352,7 @@ class MongoDb(BaseDb):
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_exception("Error deleting sessions")
             raise e
 
     def get_session(
@@ -405,7 +405,7 @@ class MongoDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading session: {e}")
+            log_exception("Exception reading session")
             raise e
 
     def get_sessions(
@@ -517,7 +517,7 @@ class MongoDb(BaseDb):
             return sessions
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_exception("Exception reading sessions")
             raise e
 
     def rename_session(
@@ -584,7 +584,7 @@ class MongoDb(BaseDb):
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_exception("Exception renaming session")
             raise e
 
     def upsert_session(
@@ -725,7 +725,7 @@ class MongoDb(BaseDb):
                 return WorkflowSession.from_dict(session)  # type: ignore
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_exception("Exception upserting session")
             raise e
 
     def upsert_sessions(
@@ -858,8 +858,8 @@ class MongoDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_exception("Exception during bulk session upsert, falling back to individual upserts")
 
             # Fallback to individual upserts
             return [
@@ -903,7 +903,7 @@ class MongoDb(BaseDb):
                 log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_exception("Error deleting memory")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -931,7 +931,7 @@ class MongoDb(BaseDb):
                 log_debug(f"No memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_exception("Error deleting memories")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -952,7 +952,7 @@ class MongoDb(BaseDb):
             return [topic for topic in topics if topic]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_exception("Exception reading from collection")
             raise e
 
     def get_user_memory(
@@ -991,7 +991,7 @@ class MongoDb(BaseDb):
             return UserMemory.from_dict(result_filtered)
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_exception("Exception reading from collection")
             raise e
 
     def get_user_memories(
@@ -1070,7 +1070,7 @@ class MongoDb(BaseDb):
             return [UserMemory.from_dict({k: v for k, v in record.items() if k != "_id"}) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_exception("Exception reading from collection")
             raise e
 
     def get_user_memory_stats(
@@ -1138,7 +1138,7 @@ class MongoDb(BaseDb):
             return formatted_results, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_exception("Exception getting user memory stats")
             raise e
 
     def upsert_user_memory(
@@ -1189,7 +1189,7 @@ class MongoDb(BaseDb):
             return UserMemory.from_dict(update_doc_filtered)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_exception("Exception upserting user memory")
             raise e
 
     def upsert_memories(
@@ -1272,8 +1272,8 @@ class MongoDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_exception("Exception during bulk memory upsert, falling back to individual upserts")
 
             # Fallback to individual upserts
             return [
@@ -1298,7 +1298,7 @@ class MongoDb(BaseDb):
             collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_exception("Exception deleting all memories")
             raise e
 
     # -- Cultural Knowledge methods --
@@ -1316,7 +1316,7 @@ class MongoDb(BaseDb):
             collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_exception("Exception deleting all cultural knowledge")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -1337,7 +1337,7 @@ class MongoDb(BaseDb):
             log_debug(f"Deleted cultural knowledge with ID: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_exception("Error deleting cultural knowledge")
             raise e
 
     def get_cultural_knowledge(
@@ -1373,7 +1373,7 @@ class MongoDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(result_filtered)
 
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_exception("Error getting cultural knowledge")
             raise e
 
     def get_all_cultural_knowledge(
@@ -1449,7 +1449,7 @@ class MongoDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
 
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_exception("Error getting all cultural knowledge")
             raise e
 
     def upsert_cultural_knowledge(
@@ -1503,7 +1503,7 @@ class MongoDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(doc_filtered)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_exception("Error upserting cultural knowledge")
             raise e
 
     # -- Metrics methods --
@@ -1537,8 +1537,8 @@ class MongoDb(BaseDb):
             results = list(collection.find(query, projection))
             return results
 
-        except Exception as e:
-            log_error(f"Exception reading from sessions collection: {e}")
+        except Exception:
+            log_exception("Exception reading from sessions collection")
             return []
 
     def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
@@ -1562,8 +1562,8 @@ class MongoDb(BaseDb):
 
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
-        except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {e}")
+        except Exception:
+            log_exception("Exception getting metrics calculation starting date")
             return None
 
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -1622,7 +1622,7 @@ class MongoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error calculating metrics: {e}")
+            log_exception("Error calculating metrics")
             raise e
 
     def get_metrics(
@@ -1655,7 +1655,7 @@ class MongoDb(BaseDb):
             return records, latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_exception("Error getting metrics")
             raise e
 
     # -- Knowledge methods --
@@ -1679,7 +1679,7 @@ class MongoDb(BaseDb):
             log_debug(f"Deleted knowledge content with id '{id}'")
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_exception("Error deleting knowledge content")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1706,7 +1706,7 @@ class MongoDb(BaseDb):
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_exception("Error getting knowledge content")
             raise e
 
     def get_knowledge_contents(
@@ -1766,7 +1766,7 @@ class MongoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_exception("Error getting knowledge contents")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1792,7 +1792,7 @@ class MongoDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_exception("Error upserting knowledge content")
             raise e
 
     # -- Eval methods --
@@ -1816,7 +1816,7 @@ class MongoDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_exception("Error creating eval run")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1834,7 +1834,7 @@ class MongoDb(BaseDb):
                 log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_exception(f"Error deleting eval run {eval_run_id}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1852,7 +1852,7 @@ class MongoDb(BaseDb):
                 log_debug(f"Deleted {result.deleted_count} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_exception(f"Error deleting eval runs {eval_run_ids}")
             raise e
 
     def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
@@ -1866,7 +1866,7 @@ class MongoDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_exception(f"Exception getting eval run {eval_run_id}")
             raise e
 
     def get_eval_run(self, eval_run_id: str, deserialize: Optional[bool] = True) -> Optional[EvalRunRecord]:
@@ -1900,7 +1900,7 @@ class MongoDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_exception(f"Exception getting eval run {eval_run_id}")
             raise e
 
     def get_eval_runs(
@@ -1995,7 +1995,7 @@ class MongoDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in records]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_exception("Exception getting eval runs")
             raise e
 
     def rename_eval_run(
@@ -2033,7 +2033,7 @@ class MongoDb(BaseDb):
             return EvalRunRecord.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error updating eval run name {eval_run_id}: {e}")
+            log_exception(f"Error updating eval run name {eval_run_id}")
             raise e
 
     def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
@@ -2278,8 +2278,8 @@ class MongoDb(BaseDb):
                 upsert=True,
             )
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_exception("Error creating trace")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2339,8 +2339,8 @@ class MongoDb(BaseDb):
                 return TraceSchema.from_dict(result)
             return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_exception("Error getting trace")
             return None
 
     def get_traces(
@@ -2438,8 +2438,8 @@ class MongoDb(BaseDb):
 
             return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_exception("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -2550,8 +2550,8 @@ class MongoDb(BaseDb):
 
             return stats_list, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_exception("Error getting trace stats")
             return [], 0
 
     # --- Spans ---
@@ -2568,8 +2568,8 @@ class MongoDb(BaseDb):
 
             collection.insert_one(span.to_dict())
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_exception("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2588,8 +2588,8 @@ class MongoDb(BaseDb):
             span_dicts = [span.to_dict() for span in spans]
             collection.insert_many(span_dicts)
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_exception("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2614,8 +2614,8 @@ class MongoDb(BaseDb):
                 return SpanSchema.from_dict(result)
             return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_exception("Error getting span")
             return None
 
     def get_spans(
@@ -2659,8 +2659,8 @@ class MongoDb(BaseDb):
 
             return spans
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_exception("Error getting spans")
             return []
 
     # -- Learning methods (stubs) --

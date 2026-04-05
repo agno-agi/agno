@@ -112,7 +112,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             )
         )
     except Exception as e:
-        logger.error(f"Error executing workflow via WebSocket: {e}")
+        logger.exception("Error executing workflow via WebSocket")
         error_payload = {
             "event": "error",
             "error": str(e),
@@ -276,7 +276,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
     except Exception as e:
-        logger.error(f"Error handling workflow subscription: {e}")
+        logger.exception("Error handling workflow subscription")
         await websocket.send_text(
             json.dumps(
                 {
@@ -474,7 +474,7 @@ def get_websocket_router(
 
         except Exception as e:
             if "1012" not in str(e) and "1001" not in str(e):
-                logger.error(f"WebSocket error: {e}")
+                logger.exception("WebSocket error")
         finally:
             # Clean up the websocket connection
             await websocket_manager.disconnect_websocket(websocket)
@@ -556,9 +556,9 @@ def get_workflow_router(
             for db_workflow in get_workflows(db=os.db, registry=os.registry):
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
-                except Exception as e:
+                except Exception:
                     workflow_id = getattr(db_workflow, "id", "unknown")
-                    logger.error(f"Error converting workflow {workflow_id} to response: {e}")
+                    logger.exception(f"Error converting workflow {workflow_id} to response")
                     continue
 
         return workflows

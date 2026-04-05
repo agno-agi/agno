@@ -62,6 +62,6 @@ class EmailTools(Toolkit):
                 smtp.login(self.sender_email, self.sender_passkey)
                 smtp.send_message(msg)
         except Exception as e:
-            logger.error(f"Error sending email: {e}")
+            logger.exception("Error sending email")
             return f"error: {e}"
         return "email sent successfully"

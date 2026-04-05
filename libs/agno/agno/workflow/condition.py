@@ -315,8 +315,8 @@ class Condition:
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
-            except Exception as e:
-                logger.error(f"CEL expression evaluation failed: {e}")
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
                 return False
 
         if callable(self.evaluator):
@@ -353,8 +353,8 @@ class Condition:
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
-            except Exception as e:
-                logger.error(f"CEL expression evaluation failed: {e}")
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
                 return False
 
         if callable(self.evaluator):
@@ -526,7 +526,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} failed: {e}")
+                logger.exception(f"Condition step {step_name} failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -749,7 +749,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} streaming failed: {e}")
+                logger.exception(f"Condition step {step_name} streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -917,7 +917,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async failed: {e}")
+                logger.exception(f"Condition step {step_name} async failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1141,7 +1141,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async streaming failed: {e}")
+                logger.exception(f"Condition step {step_name} async streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",

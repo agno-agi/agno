@@ -7,7 +7,7 @@ from agno.agent import Agent
 from agno.media import Audio
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 try:
     from groq import Groq as GroqClient
@@ -81,7 +81,7 @@ class GroqTools(Toolkit):
             return str(transcription_text)
 
         except Exception as e:
-            log_error(f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}")
+            log_exception(f"Failed to transcribe audio source '{audio_source}' with Groq")
             return f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}"
 
     def translate_audio(self, audio_source: str) -> str:
@@ -112,7 +112,7 @@ class GroqTools(Toolkit):
             return str(translation)
 
         except Exception as e:
-            log_error(f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}")
+            log_exception(f"Failed to translate audio source '{audio_source}' with Groq")
             return f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}"
 
     def generate_speech(
@@ -154,5 +154,5 @@ class GroqTools(Toolkit):
             return ToolResult(content=f"Speech generated successfully with ID: {media_id}", audios=[audio_artifact])
 
         except Exception as e:
-            log_error(f"Failed to generate speech with Groq: {str(e)}")
+            log_exception("Failed to generate speech with Groq")
             return ToolResult(content=f"Failed to generate speech with Groq: {str(e)}")

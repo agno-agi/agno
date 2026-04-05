@@ -84,7 +84,7 @@ class ReplicateTools(Toolkit):
                 videos=videos if videos else None,
             )
         except Exception as e:
-            logger.error(f"Failed to generate media: {e}")
+            logger.exception("Failed to generate media")
             return ToolResult(content=f"Error: {e}")
 
     def _parse_output(self, output: FileOutput) -> Tuple[str, Union[Image, Video]]:

@@ -4,7 +4,7 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 try:
     from openai import OpenAI
@@ -144,7 +144,7 @@ class MorphTools(Toolkit):
                 return f"Failed to apply edit to {target_file}: No response from Morph API"
 
         except Exception as e:
-            log_error(f"Failed to apply edit using Morph Fast Apply: {e}")
+            log_exception("Failed to apply edit using Morph Fast Apply")
             return f"Failed to apply edit to {target_file}: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\

@@ -8,7 +8,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 try:
     from pptx import Presentation  # type: ignore
@@ -90,14 +90,14 @@ class PPTXReader(Reader):
                 return chunked_documents
             return documents
 
-        except Exception as e:
-            log_error(f"Error reading file: {e}")
+        except Exception:
+            log_exception("Error reading file")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Asynchronously read a pptx file and return a list of documents"""
         try:
             return await asyncio.to_thread(self.read, file, name)
-        except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+        except Exception:
+            log_exception("Error reading file asynchronously")
             return []

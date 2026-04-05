@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 from agno.filters import FilterExpr
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 
 def _get_effective_filters(
@@ -82,8 +82,8 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
 
     try:
         return json.dumps(context, indent=2, default=str)
-    except (TypeError, ValueError, OverflowError) as e:
-        log_warning(f"Failed to convert context to JSON: {e}")
+    except (TypeError, ValueError, OverflowError):
+        log_warning("Failed to convert context to JSON", exc_info=True)
         # Attempt a fallback conversion for non-serializable objects
         sanitized_context = {}
         for key, value in context.items():
@@ -91,15 +91,15 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
                 # Try to serialize each value individually
                 json.dumps({key: value}, default=str)
                 sanitized_context[key] = value
-            except Exception as e:
-                log_error(f"Failed to serialize to JSON: {e}")
+            except Exception:
+                log_exception("Failed to serialize to JSON")
                 # If serialization fails, convert to string representation
                 sanitized_context[key] = str(value)
 
         try:
             return json.dumps(sanitized_context, indent=2)
-        except Exception as e:
-            log_error(f"Failed to convert sanitized context to JSON: {e}")
+        except Exception:
+            log_exception("Failed to convert sanitized context to JSON")
             return str(context)
 
 
@@ -139,8 +139,8 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         if field_value is not None:
             try:
                 fields_for_new_team[f.name] = _deep_copy_field(team, f.name, field_value)
-            except Exception as e:
-                log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+            except Exception:
+                log_warning(f"Failed to deep copy field '{f.name}'. Using original value.", exc_info=True)
                 fields_for_new_team[f.name] = field_value
 
     # Update fields if provided
@@ -152,8 +152,8 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         new_team = team.__class__(**fields_for_new_team)
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
-    except Exception as e:
-        log_error(f"Failed to create deep copy of {team.__class__.__name__}: {e}")
+    except Exception:
+        log_exception(f"Failed to create deep copy of {team.__class__.__name__}")
         raise
 
 
@@ -199,9 +199,9 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
                     # MCP detection failed, share tool by reference to be safe
                     copied_tools.append(tool)
             return copied_tools
-        except Exception as e:
+        except Exception:
             # If entire tools processing fails, log and return original list
-            log_warning(f"Failed to process tools for deep copy: {e}")
+            log_warning("Failed to process tools for deep copy", exc_info=True)
             return field_value
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
@@ -226,8 +226,8 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         except Exception:
             try:
                 return copy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+            except Exception:
+                log_warning(f"Failed to copy field: {field_name}", exc_info=True)
                 return field_value
 
     # For pydantic models, attempt a model_copy
@@ -237,8 +237,8 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         except Exception:
             try:
                 return field_value.model_copy(deep=False)
-            except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+            except Exception:
+                log_warning(f"Failed to copy field: {field_name}", exc_info=True)
                 return field_value
 
     # For other types, attempt a shallow copy first

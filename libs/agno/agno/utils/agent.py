@@ -55,20 +55,20 @@ async def await_for_open_threads(
     if memory_task is not None:
         try:
             await memory_task
-        except Exception as e:
-            log_warning(f"Error in memory creation: {str(e)}")
+        except Exception:
+            log_warning("Error in memory creation", exc_info=True)
 
     if cultural_knowledge_task is not None:
         try:
             await cultural_knowledge_task
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+        except Exception:
+            log_warning("Error in cultural knowledge creation", exc_info=True)
 
     if learning_task is not None:
         try:
             await learning_task
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+        except Exception:
+            log_warning("Error in learning extraction", exc_info=True)
 
 
 def wait_for_open_threads(
@@ -79,21 +79,21 @@ def wait_for_open_threads(
     if memory_future is not None:
         try:
             memory_future.result()
-        except Exception as e:
-            log_warning(f"Error in memory creation: {str(e)}")
+        except Exception:
+            log_warning("Error in memory creation", exc_info=True)
 
     # Wait for cultural knowledge creation
     if cultural_knowledge_future is not None:
         try:
             cultural_knowledge_future.result()
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+        except Exception:
+            log_warning("Error in cultural knowledge creation", exc_info=True)
 
     if learning_future is not None:
         try:
             learning_future.result()
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+        except Exception:
+            log_warning("Error in learning extraction", exc_info=True)
 
 
 async def await_for_thread_tasks_stream(
@@ -124,8 +124,8 @@ async def await_for_thread_tasks_stream(
                 )
         try:
             await memory_task
-        except Exception as e:
-            log_warning(f"Error in memory creation: {str(e)}")
+        except Exception:
+            log_warning("Error in memory creation", exc_info=True)
         if stream_events:
             # Get memories after update if callback provided
             memories = None
@@ -137,8 +137,8 @@ async def await_for_thread_tasks_stream(
                         memories = await result
                     else:
                         memories = result
-                except Exception as e:
-                    log_warning(f"Error getting memories: {str(e)}")
+                except Exception:
+                    log_warning("Error getting memories", exc_info=True)
 
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
@@ -158,14 +158,14 @@ async def await_for_thread_tasks_stream(
     if cultural_knowledge_task is not None:
         try:
             await cultural_knowledge_task
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+        except Exception:
+            log_warning("Error in cultural knowledge creation", exc_info=True)
 
     if learning_task is not None:
         try:
             await learning_task
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+        except Exception:
+            log_warning("Error in learning extraction", exc_info=True)
 
 
 def wait_for_thread_tasks_stream(
@@ -196,16 +196,16 @@ def wait_for_thread_tasks_stream(
                 )
         try:
             memory_future.result()
-        except Exception as e:
-            log_warning(f"Error in memory creation: {str(e)}")
+        except Exception:
+            log_warning("Error in memory creation", exc_info=True)
         if stream_events:
             # Get memories after update if callback provided
             memories = None
             if get_memories_callback is not None:
                 try:
                     memories = get_memories_callback()
-                except Exception as e:
-                    log_warning(f"Error getting memories: {str(e)}")
+                except Exception:
+                    log_warning("Error getting memories", exc_info=True)
 
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
@@ -227,14 +227,14 @@ def wait_for_thread_tasks_stream(
         # TODO: Add events
         try:
             cultural_knowledge_future.result()
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+        except Exception:
+            log_warning("Error in cultural knowledge creation", exc_info=True)
 
     if learning_future is not None:
         try:
             learning_future.result()
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+        except Exception:
+            log_warning("Error in learning extraction", exc_info=True)
 
 
 def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:

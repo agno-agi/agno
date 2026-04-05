@@ -7,7 +7,7 @@ from agno.media import Audio, Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 try:
     from openai import OpenAI as OpenAIClient
@@ -95,7 +95,7 @@ class OpenAITools(Toolkit):
                 response_format="text",
             )
         except Exception as e:  # type: ignore[return]
-            log_error(f"Failed to transcribe audio: {str(e)}")
+            log_exception("Failed to transcribe audio")
             return f"Failed to transcribe audio: {str(e)}"
 
         log_debug(f"Transcript: {transcript}")
@@ -163,7 +163,7 @@ class OpenAITools(Toolkit):
 
             return ToolResult(content="Failed to generate image: No content received from API.")
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            log_exception(f"Failed to generate image using {self.image_model}")
             return ToolResult(content=f"Failed to generate image: {e}")
 
     def generate_speech(

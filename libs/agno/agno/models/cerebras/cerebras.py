@@ -473,8 +473,8 @@ class Cerebras(Model):
                     }
                     for tool_call in message.tool_calls
                 ]
-            except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+            except Exception:
+                log_warning("Error processing tool calls", exc_info=True)
 
         # Add usage metrics
         if response.usage:

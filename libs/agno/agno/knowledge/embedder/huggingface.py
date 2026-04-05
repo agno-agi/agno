@@ -65,8 +65,8 @@ class HuggingfaceCustomEmbedder(Embedder):
                 return response.tolist()
             else:
                 return list(response)
-        except Exception as e:
-            log_warning(f"Failed to process embeddings: {e}")
+        except Exception:
+            log_warning("Failed to process embeddings", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -84,8 +84,8 @@ class HuggingfaceCustomEmbedder(Embedder):
                 return response.tolist()
             else:
                 return list(response)
-        except Exception as e:
-            log_warning(f"Failed to process embeddings: {e}")
+        except Exception:
+            log_warning("Failed to process embeddings", exc_info=True)
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

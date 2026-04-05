@@ -116,5 +116,5 @@ def store_result_in_file(
         if not fn_path.parent.exists():
             fn_path.parent.mkdir(parents=True, exist_ok=True)
         fn_path.write_text(json.dumps(asdict(result), indent=4))
-    except Exception as e:
-        logger.warning(f"Failed to save result to file: {e}")
+    except Exception:
+        logger.warning("Failed to save result to file", exc_info=True)

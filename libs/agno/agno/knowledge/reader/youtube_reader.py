@@ -6,7 +6,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_exception, log_info
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -74,8 +74,8 @@ class YouTubeReader(Reader):
                 return chunked_documents
             return documents
 
-        except Exception as e:
-            log_error(f"Error reading transcript for {url}: {e}")
+        except Exception:
+            log_exception(f"Error reading transcript for {url}")
             return []
 
     async def async_read(self, url: str) -> List[Document]:

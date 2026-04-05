@@ -153,8 +153,8 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
 
     try:
         return output_schema.model_validate(merged_data)
-    except ValidationError as e:
-        logger.warning("Validation failed on merged data: %s", e)
+    except ValidationError:
+        logger.warning("Validation failed on merged data", exc_info=True)
         return None
 
 
@@ -181,8 +181,8 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
             # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
             structured_output = output_schema.model_validate(data)
-        except (ValidationError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to parse cleaned JSON: {e}")
+        except (ValidationError, json.JSONDecodeError):
+            logger.warning("Failed to parse cleaned JSON", exc_info=True)
 
             # Third attempt: Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
@@ -220,8 +220,8 @@ def parse_response_dict_str(content: str) -> Optional[dict]:
     try:
         # First attempt: direct JSON parsing on cleaned content
         return json.loads(cleaned_content)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse cleaned JSON: {e}")
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse cleaned JSON", exc_info=True)
 
         # Second attempt: Extract individual JSON objects
         candidate_jsons = _extract_json_objects(cleaned_content)

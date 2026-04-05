@@ -52,7 +52,7 @@ from agno.tools.function import (
     UserFeedbackQuestion,
     UserInputField,
 )
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -115,8 +115,8 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             elif isinstance(m, dict):
                 try:
                     additional_input.append(Message(**m))
-                except Exception as e:
-                    log_warning(f"Failed to convert dict to Message: {e}")
+                except Exception:
+                    log_warning("Failed to convert dict to Message", exc_info=True)
 
     if a_exc.stop_execution:
         for m in additional_input:
@@ -242,17 +242,19 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_exception("Non-retryable model provider error")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...",
+                        exc_info=True,
                     )
+
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_exception(f"Model provider error after {self.retries + 1} attempts")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -289,17 +291,19 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_exception("Non-retryable model provider error")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...",
+                        exc_info=True,
                     )
+
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_exception(f"Model provider error after {self.retries + 1} attempts")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -338,18 +342,20 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_exception("Non-retryable model provider error")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
-                        f"Retrying in {delay}s..."
+                        f"Retrying in {delay}s...",
+                        exc_info=True,
                     )
+
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_exception(f"Model provider error after {self.retries + 1} attempts")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -390,18 +396,20 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_exception("Non-retryable model provider error")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
-                        f"Retrying in {delay}s..."
+                        f"Retrying in {delay}s...",
+                        exc_info=True,
                     )
+
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_exception(f"Model provider error after {self.retries + 1} attempts")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -854,7 +862,8 @@ class Model(ABC):
                 except AttributeError:
                     log_warning(
                         "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai",
+                        exc_info=True,
                     )
 
         return model_response
@@ -1075,7 +1084,8 @@ class Model(ABC):
                 except AttributeError:
                     log_warning(
                         "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai",
+                        exc_info=True,
                     )
 
         return model_response
@@ -1564,7 +1574,8 @@ class Model(ABC):
                 except AttributeError:
                     log_warning(
                         "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai",
+                        exc_info=True,
                     )
 
     async def aprocess_response_stream(
@@ -1841,7 +1852,8 @@ class Model(ABC):
                 except AttributeError:
                     log_warning(
                         "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai",
+                        exc_info=True,
                     )
 
     def _populate_assistant_message_from_stream_data(
@@ -2127,7 +2139,7 @@ class Model(ABC):
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except Exception as e:
-            log_error(f"Error executing function {function_call.function.name}: {e}")
+            log_exception(f"Error executing function {function_call.function.name}")
             raise e
 
         function_call_success = function_execution_result.status == "success"
@@ -2180,7 +2192,7 @@ class Model(ABC):
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except Exception as e:
-                log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                log_exception(f"Error while iterating function result generator for {function_call.function.name}")
                 function_call.error = str(e)
                 function_call_success = False
 
@@ -2448,7 +2460,7 @@ class Model(ABC):
         except AgentRunException as e:
             success = e
         except Exception as e:
-            log_error(f"Error executing function {function_call.function.name}: {e}")
+            log_exception(f"Error executing function {function_call.function.name}")
             success = False
             raise e
 
@@ -2742,8 +2754,8 @@ class Model(ABC):
                 # Yield the actual event
                 yield event
 
-            except Exception as e:
-                log_error(f"Error processing async generator event: {e}")
+            except Exception:
+                log_exception("Error processing async generator event")
                 break
 
         # Now process all results (non-async generators and completed async generators)
@@ -2832,7 +2844,7 @@ class Model(ABC):
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except Exception as e:
-                    log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                    log_exception(f"Error while iterating function result generator for {function_call.function.name}")
                     function_call.error = str(e)
                     function_call_success = False
 

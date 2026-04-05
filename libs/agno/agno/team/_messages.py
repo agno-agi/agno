@@ -428,7 +428,7 @@ def get_system_message(
 
                 tz = ZoneInfo(team.timezone_identifier)
             except Exception:
-                log_warning("Invalid timezone identifier")
+                log_warning("Invalid timezone identifier", exc_info=True)
 
         time = datetime.now(tz) if tz else datetime.now()
 
@@ -649,7 +649,7 @@ async def aget_system_message(
 
                 tz = ZoneInfo(team.timezone_identifier)
             except Exception:
-                log_warning("Invalid timezone identifier")
+                log_warning("Invalid timezone identifier", exc_info=True)
 
         time = datetime.now(tz) if tz else datetime.now()
 
@@ -846,8 +846,8 @@ def _get_run_messages(
                     messages_to_add_to_run_response.append(_m_parsed)
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                except Exception:
+                    log_warning("Failed to validate message", exc_info=True)
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -981,8 +981,8 @@ async def _aget_run_messages(
                     messages_to_add_to_run_response.append(_m_parsed)
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                except Exception:
+                    log_warning("Failed to validate message", exc_info=True)
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -1120,8 +1120,8 @@ def _get_user_message(
                     return Message(role="user", content=content)
                 else:
                     return Message.model_validate(input_message)
-            except Exception as e:
-                log_warning(f"Failed to validate input: {e}")
+            except Exception:
+                log_warning("Failed to validate input", exc_info=True)
 
         # If message is provided as a BaseModel, convert it to a Message
         elif isinstance(input_message, BaseModel):
@@ -1129,8 +1129,8 @@ def _get_user_message(
                 # Create a user message with the BaseModel content
                 content = input_message.model_dump_json(indent=2, exclude_none=True)
                 return Message(role="user", content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+            except Exception:
+                log_warning("Failed to convert BaseModel to message", exc_info=True)
         else:
             user_msg_content = input_message
             if team.add_knowledge_to_context:
@@ -1162,8 +1162,8 @@ def _get_user_message(
                         run_response.references.append(references)
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-                except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                except Exception:
+                    log_warning("Failed to get references", exc_info=True)
 
             if team.resolve_in_context:
                 user_msg_content = _format_message_with_state_variables(
@@ -1278,8 +1278,8 @@ async def _aget_user_message(
                     return Message(role="user", content=content)
                 else:
                     return Message.model_validate(input_message)
-            except Exception as e:
-                log_warning(f"Failed to validate input: {e}")
+            except Exception:
+                log_warning("Failed to validate input", exc_info=True)
 
         # If message is provided as a BaseModel, convert it to a Message
         elif isinstance(input_message, BaseModel):
@@ -1287,8 +1287,8 @@ async def _aget_user_message(
                 # Create a user message with the BaseModel content
                 content = input_message.model_dump_json(indent=2, exclude_none=True)
                 return Message(role="user", content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+            except Exception:
+                log_warning("Failed to convert BaseModel to message", exc_info=True)
         else:
             user_msg_content = input_message
             if team.add_knowledge_to_context:
@@ -1320,8 +1320,8 @@ async def _aget_user_message(
                         run_response.references.append(references)
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-                except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                except Exception:
+                    log_warning("Failed to get references", exc_info=True)
 
             if team.resolve_in_context:
                 user_msg_content = _format_message_with_state_variables(
@@ -1480,8 +1480,8 @@ def _format_message_with_state_variables(
     try:
         result = template.safe_substitute(format_variables)
         return result
-    except Exception as e:
-        log_warning(f"Template substitution failed: {e}")
+    except Exception:
+        log_warning("Template substitution failed", exc_info=True)
         return message
 
 
