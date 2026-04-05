@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_exception, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
@@ -261,8 +261,8 @@ class MCPTools(Toolkit):
                 else:
                     # Function takes no parameters
                     return header_provider()
-        except Exception as e:
-            log_warning(f"Error calling header_provider: {e}")
+        except Exception:
+            log_warning("Error calling header_provider", exc_info=True)
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:
@@ -467,8 +467,8 @@ class MCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_exception(f"Failed to connect to {str(self)}")
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -635,11 +635,11 @@ class MCPTools(Toolkit):
                     # Register the Function with the toolkit
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
-                except Exception as e:
-                    log_error(f"Failed to register tool {tool.name}: {e}")
+                except Exception:
+                    log_exception(f"Failed to register tool {tool.name}")
 
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to get tools for {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_exception(f"Failed to get tools for {str(self)}")
             raise
 
     async def initialize(self) -> None:
@@ -658,5 +658,5 @@ class MCPTools(Toolkit):
 
             self._initialized = True
 
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to initialize MCP toolkit: {e}")
+        except (RuntimeError, BaseException):
+            log_exception("Failed to initialize MCP toolkit")

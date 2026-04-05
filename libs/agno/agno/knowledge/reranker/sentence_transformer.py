@@ -54,6 +54,6 @@ class SentenceTransformerReranker(Reranker):
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         try:
             return self._rerank(query=query, documents=documents)
-        except Exception as e:
-            logger.error(f"Error reranking documents: {e}. Returning original documents")
+        except Exception:
+            logger.exception("Error reranking documents. Returning original documents")
             return documents

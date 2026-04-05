@@ -125,7 +125,7 @@ class NanoBananaTools(Toolkit):
                                 response_str += f"Image generated successfully (ID: {agno_img.id}).\n"
 
                         except Exception as img_exc:
-                            logger.error(f"Failed to process image data: {img_exc}")
+                            logger.exception("Failed to process image data")
                             response_str += f"Failed to process image: {img_exc}\n"
 
             if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -147,5 +147,5 @@ class NanoBananaTools(Toolkit):
                 )
 
         except Exception as exc:
-            logger.error(f"NanoBanana image generation failed: {exc}")
+            logger.exception("NanoBanana image generation failed")
             return ToolResult(content=f"Error generating image: {str(exc)}")

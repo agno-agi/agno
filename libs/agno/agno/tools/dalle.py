@@ -106,5 +106,5 @@ class DalleTools(Toolkit):
                 images=generated_images if generated_images else None,
             )
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.exception("Failed to generate image")
             return ToolResult(content=f"Error: {e}")

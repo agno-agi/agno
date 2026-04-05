@@ -57,8 +57,8 @@ def make_memories(
             elif isinstance(_im, dict):
                 try:
                     parsed_messages.append(Message(**_im))
-                except Exception as e:
-                    log_warning(f"Failed to validate message during memory update: {e}")
+                except Exception:
+                    log_warning("Failed to validate message during memory update", exc_info=True)
             else:
                 log_warning(f"Unsupported message type: {type(_im)}")
                 continue
@@ -112,8 +112,8 @@ async def amake_memories(
             elif isinstance(_im, dict):
                 try:
                     parsed_messages.append(Message(**_im))
-                except Exception as e:
-                    log_warning(f"Failed to validate message during memory update: {e}")
+                except Exception:
+                    log_warning("Failed to validate message during memory update", exc_info=True)
             else:
                 log_warning(f"Unsupported message type: {type(_im)}")
                 continue
@@ -408,8 +408,8 @@ def process_learnings(
             run_metrics=collector,
         )
         log_debug("Learning extraction completed.")
-    except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
+    except Exception:
+        log_warning("Error processing learnings", exc_info=True)
     return collector
 
 
@@ -438,8 +438,8 @@ async def aprocess_learnings(
             run_metrics=collector,
         )
         log_debug("Learning extraction completed.")
-    except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
+    except Exception:
+        log_warning("Error processing learnings", exc_info=True)
     return collector
 
 

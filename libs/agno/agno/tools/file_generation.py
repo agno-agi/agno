@@ -19,7 +19,10 @@ try:
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
-    logger.warning("reportlab not installed. PDF generation will not be available. Install with: pip install reportlab")
+    logger.warning(
+        "reportlab not installed. PDF generation will not be available. Install with: pip install reportlab",
+        exc_info=True,
+    )
 
 
 class FileGenerationTools(Toolkit):
@@ -131,7 +134,7 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate JSON file: {e}")
+            logger.exception("Failed to generate JSON file")
             return ToolResult(content=f"Error generating JSON file: {e}")
 
     def generate_csv_file(
@@ -220,7 +223,7 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate CSV file: {e}")
+            logger.exception("Failed to generate CSV file")
             return ToolResult(content=f"Error generating CSV file: {e}")
 
     def generate_pdf_file(
@@ -304,7 +307,7 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate PDF file: {e}")
+            logger.exception("Failed to generate PDF file")
             return ToolResult(content=f"Error generating PDF file: {e}")
 
     def generate_text_file(self, content: str, filename: Optional[str] = None) -> ToolResult:
@@ -352,5 +355,5 @@ class FileGenerationTools(Toolkit):
             return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate text file: {e}")
+            logger.exception("Failed to generate text file")
             return ToolResult(content=f"Error generating text file: {e}")

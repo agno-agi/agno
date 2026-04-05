@@ -64,11 +64,11 @@ def add_reasoning_metrics_to_metadata(
         # Add the metrics message to the reasoning_messages
         run_response.reasoning_messages.append(metrics_message)
 
-    except Exception as e:
+    except Exception:
         # Log the error but don't crash
-        from agno.utils.log import log_error
+        from agno.utils.log import log_exception
 
-        log_error(f"Failed to add reasoning metrics to metadata: {str(e)}")
+        log_exception("Failed to add reasoning metrics to metadata")
 
 
 def update_run_output_with_reasoning(

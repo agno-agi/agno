@@ -26,7 +26,7 @@ from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_exception, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
@@ -253,8 +253,8 @@ def attach_routes(
                     else:
                         session_config.db.upsert_session(new_session)
                     await send_whatsapp_message_async(phone_number, _SESSION_RESET_MESSAGE, config)
-                except Exception as e:
-                    log_warning(f"Failed to persist /new session: {e}")
+                except Exception:
+                    log_warning("Failed to persist /new session", exc_info=True)
                     await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
                 return
 
@@ -280,8 +280,8 @@ def attach_routes(
                         sessions = session_config.db.get_sessions(**session_filter)
                     if sessions:
                         session_id = sessions[0].session_id
-                except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {e}")
+                except Exception:
+                    log_warning("Session lookup failed, using default", exc_info=True)
 
             # Download media from Meta servers and wrap as Agno media objects
             media_kwargs, skipped_media = await download_event_media_async(parsed, config)
@@ -352,8 +352,8 @@ def attach_routes(
             if not tools_sent_message and response.content:
                 await send_whatsapp_message_async(phone_number, response.content, config)
 
-        except Exception as e:
-            log_error(f"Error processing message: {e}")
+        except Exception:
+            log_exception("Error processing message")
             try:
                 await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
             except Exception as send_error:

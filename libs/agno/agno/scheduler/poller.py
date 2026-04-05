@@ -66,7 +66,9 @@ class SchedulePoller:
                     timeout=self.stop_timeout,
                 )
             except asyncio.TimeoutError:
-                log_warning(f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown")
+                log_warning(
+                    f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown", exc_info=True
+                )
             self._in_flight.clear()
         # Close the executor's httpx client
         if hasattr(self.executor, "close"):

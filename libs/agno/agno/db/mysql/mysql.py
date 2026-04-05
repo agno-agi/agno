@@ -27,7 +27,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import json_serializer
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -238,8 +238,8 @@ class MySQLDb(BaseDb):
                     idx.create(self.db_engine)
 
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
-                except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                except Exception:
+                    log_exception(f"Error creating index {idx.name}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -251,8 +251,8 @@ class MySQLDb(BaseDb):
 
             return table
 
-        except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+        except Exception:
+            log_exception(f"Could not create table {self.db_schema}.{table_name}")
             raise
 
     def _create_all_tables(self):
@@ -388,8 +388,8 @@ class MySQLDb(BaseDb):
             table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
             return table
 
-        except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+        except Exception:
+            log_exception(f"Error loading existing table {self.db_schema}.{table_name}")
             raise
 
     def get_latest_schema_version(self, table_name: str) -> str:
@@ -457,8 +457,8 @@ class MySQLDb(BaseDb):
                     log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
                     return True
 
-        except Exception as e:
-            log_error(f"Error deleting session: {e}")
+        except Exception:
+            log_exception("Error deleting session")
             return False
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -485,8 +485,8 @@ class MySQLDb(BaseDb):
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
-        except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+        except Exception:
+            log_exception("Error deleting sessions")
 
     def get_session(
         self,
@@ -540,8 +540,8 @@ class MySQLDb(BaseDb):
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
-        except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+        except Exception:
+            log_exception("Exception reading from session table")
             return None
 
     def get_sessions(
@@ -645,7 +645,7 @@ class MySQLDb(BaseDb):
                     raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception getting sessions: {e}")
+            log_exception("Exception getting sessions")
             raise e
 
     def rename_session(
@@ -714,8 +714,8 @@ class MySQLDb(BaseDb):
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
-        except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+        except Exception:
+            log_exception("Exception renaming session")
             return None
 
     def upsert_session(
@@ -887,8 +887,8 @@ class MySQLDb(BaseDb):
                         return session_dict
                     return WorkflowSession.from_dict(session_dict)
 
-        except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+        except Exception:
+            log_exception("Exception upserting into sessions table")
             return None
 
     def upsert_sessions(
@@ -1098,8 +1098,8 @@ class MySQLDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_exception("Exception during bulk session upsert, falling back to individual upserts")
             # Fallback to individual upserts
             return [
                 result
@@ -1140,8 +1140,8 @@ class MySQLDb(BaseDb):
                 else:
                     log_debug(f"No user memory found with id: {memory_id}")
 
-        except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+        except Exception:
+            log_exception("Error deleting user memory")
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
@@ -1166,8 +1166,8 @@ class MySQLDb(BaseDb):
                 if result.rowcount == 0:
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
-        except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+        except Exception:
+            log_exception("Error deleting user memories")
 
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
@@ -1204,7 +1204,7 @@ class MySQLDb(BaseDb):
                 return list(topics_set)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_exception("Exception reading from memory table")
             raise e
 
     def get_user_memory(
@@ -1244,8 +1244,8 @@ class MySQLDb(BaseDb):
                     return memory_raw
             return UserMemory.from_dict(memory_raw)
 
-        except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+        except Exception:
+            log_exception("Exception reading from memory table")
             return None
 
     def get_user_memories(
@@ -1331,7 +1331,7 @@ class MySQLDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_exception("Exception reading from memory table")
             raise e
 
     def clear_memories(self) -> None:
@@ -1343,8 +1343,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 sess.execute(table.delete())
-        except Exception as e:
-            log_error(f"Exception clearing user memories: {e}")
+        except Exception:
+            log_exception("Exception clearing user memories")
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
@@ -1412,8 +1412,8 @@ class MySQLDb(BaseDb):
                     for record in result
                 ], total_count
 
-        except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+        except Exception:
+            log_exception("Exception getting user memory stats")
             return [], 0
 
     def upsert_user_memory(
@@ -1482,8 +1482,8 @@ class MySQLDb(BaseDb):
 
             return UserMemory.from_dict(memory_raw)
 
-        except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+        except Exception:
+            log_exception("Exception upserting user memory")
             return None
 
     def upsert_memories(
@@ -1575,8 +1575,8 @@ class MySQLDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+        except Exception:
+            log_exception("Exception during bulk memory upsert, falling back to individual upserts")
             # Fallback to individual upserts
             return [
                 result
@@ -1626,7 +1626,7 @@ class MySQLDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_exception("Exception reading from sessions table")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1729,8 +1729,8 @@ class MySQLDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+        except Exception:
+            log_exception("Exception refreshing metrics")
             return None
 
     def get_metrics(
@@ -1771,8 +1771,8 @@ class MySQLDb(BaseDb):
 
             return [row._mapping for row in result], latest_updated_at
 
-        except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+        except Exception:
+            log_exception("Exception getting metrics")
             return [], None
 
     # -- Knowledge methods --
@@ -1795,8 +1795,8 @@ class MySQLDb(BaseDb):
                 stmt = table.delete().where(table.c.id == id)
                 sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+        except Exception:
+            log_exception("Exception deleting knowledge content")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1822,8 +1822,8 @@ class MySQLDb(BaseDb):
                     return None
                 return KnowledgeRow.model_validate(result._mapping)
 
-        except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+        except Exception:
+            log_exception("Exception getting knowledge content")
             return None
 
     def get_knowledge_contents(
@@ -1881,8 +1881,8 @@ class MySQLDb(BaseDb):
 
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
-        except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+        except Exception:
+            log_exception("Exception getting knowledge contents")
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1958,8 +1958,8 @@ class MySQLDb(BaseDb):
 
             return knowledge_row
 
-        except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+        except Exception:
+            log_exception("Error upserting knowledge row")
             return None
 
     # -- Eval methods --
@@ -1990,8 +1990,8 @@ class MySQLDb(BaseDb):
 
             return eval_run
 
-        except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+        except Exception:
+            log_exception("Error creating eval run")
             return None
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2013,8 +2013,8 @@ class MySQLDb(BaseDb):
                 else:
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
-        except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+        except Exception:
+            log_exception(f"Error deleting eval run {eval_run_id}")
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -2035,8 +2035,8 @@ class MySQLDb(BaseDb):
                 else:
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
-        except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+        except Exception:
+            log_exception(f"Error deleting eval runs {eval_run_ids}")
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -2072,8 +2072,8 @@ class MySQLDb(BaseDb):
 
                 return EvalRunRecord.model_validate(eval_run_raw)
 
-        except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+        except Exception:
+            log_exception(f"Exception getting eval run {eval_run_id}")
             return None
 
     def get_eval_runs(
@@ -2168,7 +2168,7 @@ class MySQLDb(BaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_exception("Exception getting eval runs")
             raise e
 
     def rename_eval_run(
@@ -2203,8 +2203,8 @@ class MySQLDb(BaseDb):
 
             return EvalRunRecord.model_validate(eval_run_raw)
 
-        except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+        except Exception:
+            log_exception(f"Error upserting eval run name {eval_run_id}")
             return None
 
     # -- Culture methods --
@@ -2224,7 +2224,7 @@ class MySQLDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_warning("Exception deleting all cultural knowledge", exc_info=True)
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2252,7 +2252,7 @@ class MySQLDb(BaseDb):
                     log_debug(f"No cultural knowledge found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_exception("Error deleting cultural knowledge")
             raise e
 
     def get_cultural_knowledge(
@@ -2288,7 +2288,7 @@ class MySQLDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
+            log_exception("Exception reading from cultural knowledge table")
             raise e
 
     def get_all_cultural_knowledge(
@@ -2362,7 +2362,7 @@ class MySQLDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
+            log_exception("Error reading from cultural knowledge table")
             raise e
 
     def upsert_cultural_knowledge(
@@ -2420,7 +2420,7 @@ class MySQLDb(BaseDb):
             return self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_exception("Error upserting cultural knowledge")
             raise e
 
     # -- Migrations --
@@ -2616,8 +2616,8 @@ class MySQLDb(BaseDb):
                 )
                 sess.execute(upsert_stmt)
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_exception("Error creating trace")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2668,8 +2668,8 @@ class MySQLDb(BaseDb):
                     return Trace.from_dict(dict(result._mapping))
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_exception("Error getting trace")
             return None
 
     def get_traces(
@@ -2758,8 +2758,8 @@ class MySQLDb(BaseDb):
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_exception("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -2865,8 +2865,8 @@ class MySQLDb(BaseDb):
 
                 return stats_list, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_exception("Error getting trace stats")
             return [], 0
 
     # --- Spans ---
@@ -2885,8 +2885,8 @@ class MySQLDb(BaseDb):
                 stmt = mysql.insert(table).values(span.to_dict())
                 sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_exception("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2907,8 +2907,8 @@ class MySQLDb(BaseDb):
                     stmt = mysql.insert(table).values(span.to_dict())
                     sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_exception("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2933,8 +2933,8 @@ class MySQLDb(BaseDb):
                     return Span.from_dict(dict(result._mapping))
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_exception("Error getting span")
             return None
 
     def get_spans(
@@ -2975,8 +2975,8 @@ class MySQLDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_exception("Error getting spans")
             return []
 
     # -- Learning methods (stubs) --

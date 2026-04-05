@@ -80,7 +80,7 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                 kwargs["session_state"] = session_state_dict
         except json.JSONDecodeError:
             kwargs.pop("session_state")
-            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}", exc_info=True)
 
     if dependencies := kwargs.get("dependencies"):
         try:
@@ -89,7 +89,7 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                 kwargs["dependencies"] = dependencies_dict
         except json.JSONDecodeError:
             kwargs.pop("dependencies")
-            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}", exc_info=True)
 
     if metadata := kwargs.get("metadata"):
         try:
@@ -98,7 +98,7 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                 kwargs["metadata"] = metadata_dict
         except json.JSONDecodeError:
             kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}", exc_info=True)
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -127,11 +127,11 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                     kwargs["knowledge_filters"] = knowledge_filters_dict
         except json.JSONDecodeError:
             kwargs.pop("knowledge_filters")
-            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
-        except ValueError as e:
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}", exc_info=True)
+        except ValueError:
             # Filter deserialization failed
             kwargs.pop("knowledge_filters")
-            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
+            log_warning("Invalid FilterExpr in knowledge_filters", exc_info=True)
 
     # Handle output_schema - convert JSON schema to Pydantic model or keep as dict
     # use_json_schema is a control flag consumed here (not passed to Agent/Team)
@@ -154,10 +154,10 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                     kwargs["output_schema"] = dynamic_model
         except json.JSONDecodeError:
             kwargs.pop("output_schema")
-            log_warning(f"Invalid output_schema JSON: {output_schema}")
-        except Exception as e:
+            log_warning(f"Invalid output_schema JSON: {output_schema}", exc_info=True)
+        except Exception:
             kwargs.pop("output_schema")
-            log_warning(f"Failed to create output_schema model: {e}")
+            log_warning("Failed to create output_schema model", exc_info=True)
 
     # Parse boolean and null values
     for key, value in kwargs.items():
@@ -485,8 +485,8 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         return FileMedia(
             content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
         )
-    except Exception as e:
-        logger.error(f"Error processing document {file.filename}: {e}")
+    except Exception:
+        logger.exception(f"Error processing document {file.filename}")
         return None
 
 
@@ -547,8 +547,8 @@ def get_agent_by_id(
         try:
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
             return db_agent
-        except Exception as e:
-            logger.error(f"Error getting agent {agent_id} from database: {e}")
+        except Exception:
+            logger.exception(f"Error getting agent {agent_id} from database")
             return None
 
     return None
@@ -591,8 +591,8 @@ def get_team_by_id(
         try:
             db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
             return db_team
-        except Exception as e:
-            logger.error(f"Error getting team {team_id} from database: {e}")
+        except Exception:
+            logger.exception(f"Error getting team {team_id} from database")
             return None
 
     return None
@@ -638,8 +638,8 @@ def get_workflow_by_id(
         try:
             db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
             return db_workflow
-        except Exception as e:
-            logger.error(f"Error getting workflow {workflow_id} from database: {e}")
+        except Exception:
+            logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
 
     return None
@@ -972,16 +972,16 @@ def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
             else:
                 # Optional field: (Optional[type], None)
                 field_definitions[field_name] = (Optional[field_type], None)  # type: ignore[assignment]
-        except Exception as e:
-            logger.warning(f"Failed to process field '{field_name}' in schema '{model_name}': {e}")
+        except Exception:
+            logger.warning(f"Failed to process field '{field_name}' in schema '{model_name}'", exc_info=True)
             # Skip problematic fields rather than failing entirely
             continue
 
     # Create and return the dynamic model
     try:
         return create_model(model_name, **field_definitions)  # type: ignore
-    except Exception as e:
-        logger.error(f"Failed to create dynamic model '{model_name}': {e}")
+    except Exception:
+        logger.exception(f"Failed to create dynamic model '{model_name}'")
         # Return a minimal model as fallback
         return create_model(model_name)
 
@@ -997,8 +997,8 @@ def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
             "tracing=True but OpenTelemetry packages not installed. "
             "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
         )
-    except Exception as e:
-        logger.warning(f"Failed to enable tracing: {e}")
+    except Exception:
+        logger.warning("Failed to enable tracing", exc_info=True)
 
 
 def format_duration_ms(duration_ms: Optional[int]) -> str:

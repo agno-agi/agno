@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from agno.run import RunContext
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 try:
     from mem0.client.main import MemoryClient
@@ -63,7 +63,7 @@ class Mem0Tools(Toolkit):
                 log_debug("Initializing Mem0 with default settings.")
                 self.client = Memory()
         except Exception as e:
-            log_error(f"Failed to initialize Mem0 client: {e}")
+            log_exception("Failed to initialize Mem0 client")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
 
     def _get_user_id(
@@ -117,7 +117,7 @@ class Mem0Tools(Toolkit):
             )
             return json.dumps(result)
         except Exception as e:
-            log_error(f"Error adding memory: {e}")
+            log_exception("Error adding memory")
             return f"Error adding memory: {e}"
 
     def search_memory(
@@ -149,7 +149,7 @@ class Mem0Tools(Toolkit):
             log_error(str(ve))
             return str(ve)
         except Exception as e:
-            log_error(f"Error searching memory: {e}")
+            log_exception("Error searching memory")
             return f"Error searching memory: {e}"
 
     def get_all_memories(self, run_context: RunContext) -> str:
@@ -175,7 +175,7 @@ class Mem0Tools(Toolkit):
             log_error(str(ve))
             return str(ve)
         except Exception as e:
-            log_error(f"Error getting all memories: {e}")
+            log_exception("Error getting all memories")
             return f"Error getting all memories: {e}"
 
     def delete_all_memories(self, run_context: RunContext) -> str:
@@ -190,5 +190,5 @@ class Mem0Tools(Toolkit):
             self.client.delete_all(user_id=resolved_user_id)
             return f"Successfully deleted all memories for user_id: {resolved_user_id}."
         except Exception as e:
-            log_error(f"Error deleting all memories: {e}")
+            log_exception("Error deleting all memories")
             return f"Error deleting all memories: {e}"

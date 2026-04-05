@@ -82,14 +82,14 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {e}")
+                    except (RuntimeError, BaseException):
+                        log_warning("Failed to check if MCP tool is alive", exc_info=True)
                         continue
 
                     try:
                         await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                    except (RuntimeError, BaseException):
+                        log_warning(f"Failed to build tools for {tool}", exc_info=True)
                         continue
 
 
@@ -381,8 +381,8 @@ def _determine_tools_for_model(
                     _func.tool_hooks = team.tool_hooks
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
-            except Exception as e:
-                log_warning(f"Could not add tool {tool}: {e}")
+            except Exception:
+                log_warning(f"Could not add tool {tool}", exc_info=True)
 
     if _functions:
         from inspect import signature

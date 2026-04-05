@@ -158,7 +158,7 @@ class CohereEmbedder(Embedder):
                         await self._async_rate_limit_backoff_sleep(attempt)
                         continue
                     else:
-                        log_warning(f"Async max retries ({max_retries}) reached for rate limiting")
+                        log_warning(f"Async max retries ({max_retries}) reached for rate limiting", exc_info=True)
                         raise e
                 else:
                     log_debug(f"Async non-rate-limit error on attempt {attempt + 1}: {e}")
@@ -178,8 +178,8 @@ class CohereEmbedder(Embedder):
             else:
                 log_warning("No embeddings found")
                 return []
-        except Exception as e:
-            log_warning(e)
+        except Exception:
+            log_warning("Failed to get embedding", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -219,8 +219,8 @@ class CohereEmbedder(Embedder):
             else:
                 log_warning("No embeddings found")
                 return []
-        except Exception as e:
-            log_warning(e)
+        except Exception:
+            log_warning("Failed to get embedding", exc_info=True)
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -276,17 +276,20 @@ class CohereEmbedder(Embedder):
                 all_usage.extend(batch_usage)
 
             except Exception as e:
-                log_warning(f"Async batch embedding failed after retries: {e}")
+                log_warning("Async batch embedding failed after retries", exc_info=True)
 
                 # Check if this is a rate limit error and backoff is disabled
                 if self._is_rate_limit_error(e) and not self.exponential_backoff:
-                    log_warning("Rate limit hit and backoff is disabled. Failing immediately.")
+                    log_warning("Rate limit hit and backoff is disabled. Failing immediately.", exc_info=True)
                     raise e
 
                 # Only fall back to individual calls for non-rate-limit errors
                 # For rate limit errors, we should reduce batch size instead
                 if self._is_rate_limit_error(e):
-                    log_warning("Rate limit hit even after retries. Consider reducing batch_size or upgrading API key.")
+                    log_warning(
+                        "Rate limit hit even after retries. Consider reducing batch_size or upgrading API key.",
+                        exc_info=True,
+                    )
                     # Try with smaller batch size
                     if len(batch_texts) > 1:
                         smaller_batch_size = max(1, len(batch_texts) // 2)
@@ -316,7 +319,7 @@ class CohereEmbedder(Embedder):
                             all_embeddings.append(embedding)
                             all_usage.append(usage)
                         except Exception as e2:
-                            log_warning(f"Error in individual async embedding fallback: {e2}")
+                            log_warning(f"Error in individual async embedding fallback: {e2}", exc_info=True)
                             all_embeddings.append([])
                             all_usage.append(None)
 

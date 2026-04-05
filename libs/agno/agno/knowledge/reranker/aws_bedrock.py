@@ -260,8 +260,8 @@ class AwsBedrockReranker(Reranker):
             error_message = e.response.get("Error", {}).get("Message", str(e))
             logger.error(f"AWS Bedrock Rerank API error ({error_code}): {error_message}. Returning original documents.")
             return documents
-        except Exception as e:
-            logger.error(f"Error reranking documents: {e}. Returning original documents.")
+        except Exception:
+            logger.exception("Error reranking documents. Returning original documents.")
             return documents
 
 

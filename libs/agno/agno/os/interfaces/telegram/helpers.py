@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any, List, Optional
 
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_exception, log_warning
 
 if TYPE_CHECKING:
     from telebot.async_telebot import AsyncTeleBot
@@ -26,8 +26,8 @@ async def _download_file(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
             log_warning(f"File too large to download ({file_size / _BYTES_PER_MB:.1f} MB)")
             return None
         return await bot.download_file(file_info.file_path)
-    except Exception as e:
-        log_error(f"Error downloading file: {e}")
+    except Exception:
+        log_exception("Error downloading file")
         return None
 
 
@@ -180,7 +180,7 @@ async def send_response_media(
             )
             any_media_sent = True
             reply_to_message_id = None
-        except Exception as e:
-            log_error(f"Failed to send media to chat {chat_id}: {e}")
+        except Exception:
+            log_exception(f"Failed to send media to chat {chat_id}")
 
     return any_media_sent

@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 try:
     from docling.datamodel.base_models import InputFormat
@@ -373,7 +373,7 @@ class DoclingTools(Toolkit):
             exported_content = self._export_document(result.document, output_format)
             return self._truncate_content(exported_content, output_format)
         except Exception as e:
-            log_error(f"Error converting string content: {e}")
+            log_exception("Error converting string content")
             return f"Error converting string content: {e}"
 
     def list_supported_parsers(self) -> str:
@@ -422,7 +422,7 @@ class DoclingTools(Toolkit):
 
             return self._truncate_content(content, export_format)
         except Exception as e:
-            log_error(f"Error converting document: {e}")
+            log_exception("Error converting document")
             return f"Error converting document: {e}"
 
     def _export_document(self, document: Any, export_format: str) -> str:

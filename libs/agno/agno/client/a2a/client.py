@@ -482,8 +482,8 @@ class A2AClient:
                         if event.event_type == "started":
                             pass  # Could store task_id/context_id if needed
 
-                    except json.JSONDecodeError as e:
-                        log_warning(f"Failed to decode JSON from stream line: {line[:100]}. Error: {e}")
+                    except json.JSONDecodeError:
+                        log_warning(f"Failed to decode JSON from stream line: {line[:100]}", exc_info=True)
                         continue
 
         except (ConnectError, ConnectTimeout) as e:

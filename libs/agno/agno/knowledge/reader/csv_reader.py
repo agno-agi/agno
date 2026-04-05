@@ -16,7 +16,7 @@ from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.utils import stringify_cell_value
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 
 class CSVReader(Reader):
@@ -115,13 +115,13 @@ class CSVReader(Reader):
             return documents
         except FileNotFoundError:
             raise
-        except UnicodeDecodeError as e:
+        except UnicodeDecodeError:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Encoding error reading {file_desc}: {e}. Try specifying a different encoding.")
+            log_exception(f"Encoding error reading {file_desc}. Try specifying a different encoding.")
             return []
-        except Exception as e:
+        except Exception:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Error reading {file_desc}: {e}")
+            log_exception(f"Error reading {file_desc}")
             return []
 
     async def async_read(
@@ -205,11 +205,11 @@ class CSVReader(Reader):
             return documents
         except FileNotFoundError:
             raise
-        except UnicodeDecodeError as e:
+        except UnicodeDecodeError:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Encoding error reading {file_desc}: {e}. Try specifying a different encoding.")
+            log_exception(f"Encoding error reading {file_desc}. Try specifying a different encoding.")
             return []
-        except Exception as e:
+        except Exception:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Error reading {file_desc}: {e}")
+            log_exception(f"Error reading {file_desc}")
             return []

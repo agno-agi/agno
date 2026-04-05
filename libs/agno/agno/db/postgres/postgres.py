@@ -28,7 +28,7 @@ from agno.db.schemas.memory import UserMemory
 from agno.db.utils import json_serializer
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
 
 try:
@@ -401,8 +401,8 @@ class PostgresDb(BaseDb):
                     idx.create(self.db_engine)
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
-                except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                except Exception:
+                    log_exception(f"Error creating index {idx.name}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -411,8 +411,8 @@ class PostgresDb(BaseDb):
 
             return table
 
-        except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+        except Exception:
+            log_exception(f"Could not create table {self.db_schema}.{table_name}")
             raise
 
     def _resolve_fk_reference(self, fk_ref: str) -> str:
@@ -617,8 +617,8 @@ class PostgresDb(BaseDb):
             table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
             return table
 
-        except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+        except Exception:
+            log_exception(f"Error loading existing table {self.db_schema}.{table_name}")
             raise
 
     def get_latest_schema_version(self, table_name: str):
@@ -692,7 +692,7 @@ class PostgresDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_exception("Error deleting session")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -720,7 +720,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_exception("Error deleting sessions")
             raise e
 
     def get_session(
@@ -777,7 +777,7 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_exception("Exception reading from session table")
             raise e
 
     def get_sessions(
@@ -878,7 +878,7 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_exception("Exception reading from session table")
             raise e
 
     def rename_session(
@@ -955,7 +955,7 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_exception("Exception renaming session")
             raise e
 
     def upsert_session(
@@ -1119,7 +1119,7 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+            log_exception("Exception upserting into sessions table")
             raise e
 
     def upsert_sessions(
@@ -1333,8 +1333,8 @@ class PostgresDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception bulk upserting sessions: {e}")
+        except Exception:
+            log_exception("Exception bulk upserting sessions")
             return []
 
     # -- Memory methods --
@@ -1371,7 +1371,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_exception("Error deleting user memory")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1403,7 +1403,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Successfully deleted {result.rowcount} user memories")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_exception("Error deleting user memories")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -1448,8 +1448,8 @@ class PostgresDb(BaseDb):
                 topics = [record.topic for record in result if record.topic is not None]
                 return list(set(topics))
 
-        except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+        except Exception:
+            log_exception("Exception reading from memory table")
             return []
 
     def get_user_memory(
@@ -1492,7 +1492,7 @@ class PostgresDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_exception("Exception reading from memory table")
             raise e
 
     def get_user_memories(
@@ -1575,7 +1575,7 @@ class PostgresDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_exception("Exception reading from memory table")
             raise e
 
     def clear_memories(self) -> None:
@@ -1593,7 +1593,7 @@ class PostgresDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_exception("Exception deleting all memories")
             raise e
 
     def get_user_memory_stats(
@@ -1662,7 +1662,7 @@ class PostgresDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_exception("Exception getting user memory stats")
             raise e
 
     def upsert_user_memory(
@@ -1737,7 +1737,7 @@ class PostgresDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_exception("Exception upserting user memory")
             raise e
 
     def upsert_memories(
@@ -1822,8 +1822,8 @@ class PostgresDb(BaseDb):
 
             return results
 
-        except Exception as e:
-            log_error(f"Exception bulk upserting memories: {e}")
+        except Exception:
+            log_exception("Exception bulk upserting memories")
             return []
 
     # -- Metrics methods --
@@ -1867,7 +1867,7 @@ class PostgresDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_exception("Exception reading from sessions table")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1974,7 +1974,7 @@ class PostgresDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_exception("Exception refreshing metrics")
             raise e
 
     def get_metrics(
@@ -2016,7 +2016,7 @@ class PostgresDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_exception("Exception getting metrics")
             raise e
 
     # -- Knowledge methods --
@@ -2036,7 +2036,7 @@ class PostgresDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+            log_exception("Exception deleting knowledge content")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -2062,7 +2062,7 @@ class PostgresDb(BaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+            log_exception("Exception getting knowledge content")
             raise e
 
     def get_knowledge_contents(
@@ -2117,7 +2117,7 @@ class PostgresDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+            log_exception("Exception getting knowledge contents")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2204,7 +2204,7 @@ class PostgresDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_exception("Error upserting knowledge row")
             raise e
 
     # -- Eval methods --
@@ -2251,7 +2251,7 @@ class PostgresDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_exception("Error creating eval run")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2275,7 +2275,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_exception(f"Error deleting eval run {eval_run_id}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2299,7 +2299,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_exception(f"Error deleting eval runs {eval_run_ids}")
             raise e
 
     def get_eval_run(
@@ -2337,7 +2337,7 @@ class PostgresDb(BaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_exception(f"Exception getting eval run {eval_run_id}")
             raise e
 
     def get_eval_runs(
@@ -2432,7 +2432,7 @@ class PostgresDb(BaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_exception("Exception getting eval runs")
             raise e
 
     def rename_eval_run(
@@ -2472,7 +2472,7 @@ class PostgresDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            log_exception(f"Error upserting eval run name {eval_run_id}")
             raise e
 
     # -- Culture methods --
@@ -2492,7 +2492,7 @@ class PostgresDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_warning("Exception deleting all cultural knowledge", exc_info=True)
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2520,7 +2520,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"No cultural knowledge found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_exception("Error deleting cultural knowledge")
             raise e
 
     def get_cultural_knowledge(
@@ -2556,7 +2556,7 @@ class PostgresDb(BaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
+            log_exception("Exception reading from cultural knowledge table")
             raise e
 
     def get_all_cultural_knowledge(
@@ -2630,7 +2630,7 @@ class PostgresDb(BaseDb):
             return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
+            log_exception("Error reading from cultural knowledge table")
             raise e
 
     def upsert_cultural_knowledge(
@@ -2711,7 +2711,7 @@ class PostgresDb(BaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_exception("Error upserting cultural knowledge")
             raise e
 
     # -- Migrations --
@@ -2916,8 +2916,8 @@ class PostgresDb(BaseDb):
                 )
                 sess.execute(upsert_stmt)
 
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
+        except Exception:
+            log_exception("Error creating trace")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2968,8 +2968,8 @@ class PostgresDb(BaseDb):
                     return Trace.from_dict(dict(result._mapping))
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
+        except Exception:
+            log_exception("Error getting trace")
             return None
 
     def get_traces(
@@ -3070,8 +3070,8 @@ class PostgresDb(BaseDb):
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
 
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
+        except Exception:
+            log_exception("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -3193,8 +3193,8 @@ class PostgresDb(BaseDb):
 
                 return stats_list, total_count
 
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+        except Exception:
+            log_exception("Error getting trace stats")
             return [], 0
 
     # --- Spans ---
@@ -3221,8 +3221,8 @@ class PostgresDb(BaseDb):
                 stmt = postgresql.insert(table).values(span_dict)
                 sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
+        except Exception:
+            log_exception("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -3251,8 +3251,8 @@ class PostgresDb(BaseDb):
                     stmt = postgresql.insert(table).values(span_dict)
                     sess.execute(stmt)
 
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+        except Exception:
+            log_exception("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -3277,8 +3277,8 @@ class PostgresDb(BaseDb):
                     return Span.from_dict(dict(result._mapping))
                 return None
 
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
+        except Exception:
+            log_exception("Error getting span")
             return None
 
     def get_spans(
@@ -3319,8 +3319,8 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
+        except Exception:
+            log_exception("Error getting spans")
             return []
 
     # --- Components ---
@@ -3346,8 +3346,8 @@ class PostgresDb(BaseDb):
                 row = sess.execute(stmt).mappings().one_or_none()
                 return dict(row) if row else None
 
-        except Exception as e:
-            log_error(f"Error getting component: {e}")
+        except Exception:
+            log_exception("Error getting component")
             raise
 
     def upsert_component(
@@ -3447,8 +3447,8 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Failed to get component {component_id} after upsert")
             return result
 
-        except Exception as e:
-            log_error(f"Error upserting component: {e}")
+        except Exception:
+            log_exception("Error upserting component")
             raise
 
     def delete_component(
@@ -3511,8 +3511,8 @@ class PostgresDb(BaseDb):
 
             return True
 
-        except Exception as e:
-            log_error(f"Error deleting component: {e}")
+        except Exception:
+            log_exception("Error deleting component")
             raise
 
     def list_components(
@@ -3568,8 +3568,8 @@ class PostgresDb(BaseDb):
                 rows = sess.execute(stmt).mappings().all()
                 return [dict(r) for r in rows], total_count
 
-        except Exception as e:
-            log_error(f"Error listing components: {e}")
+        except Exception:
+            log_exception("Error listing components")
             raise
 
     def create_component_with_config(
@@ -3701,8 +3701,8 @@ class PostgresDb(BaseDb):
 
             return component, config_result
 
-        except Exception as e:
-            log_error(f"Error creating component with config: {e}")
+        except Exception:
+            log_exception("Error creating component with config")
             raise
 
     # --- Component Configs ---
@@ -3775,8 +3775,8 @@ class PostgresDb(BaseDb):
                 row = sess.execute(stmt).mappings().one_or_none()
                 return dict(row) if row else None
 
-        except Exception as e:
-            log_error(f"Error getting config: {e}")
+        except Exception:
+            log_exception("Error getting config")
             raise
 
     def upsert_config(
@@ -3960,8 +3960,8 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
             return result
 
-        except Exception as e:
-            log_error(f"Error upserting config: {e}")
+        except Exception:
+            log_exception("Error upserting config")
             raise
 
     def delete_config(
@@ -4031,8 +4031,8 @@ class PostgresDb(BaseDb):
 
             return True
 
-        except Exception as e:
-            log_error(f"Error deleting config: {e}")
+        except Exception:
+            log_exception("Error deleting config")
             raise
 
     def list_configs(
@@ -4088,8 +4088,8 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).mappings().all()
                 return [dict(row) for row in results]
 
-        except Exception as e:
-            log_error(f"Error listing configs: {e}")
+        except Exception:
+            log_exception("Error listing configs")
             raise
 
     def set_current_version(
@@ -4163,8 +4163,8 @@ class PostgresDb(BaseDb):
             log_debug(f"Set {component_id} current version to {version}")
             return True
 
-        except Exception as e:
-            log_error(f"Error setting current version: {e}")
+        except Exception:
+            log_exception("Error setting current version")
             raise
 
     # --- Component Links ---
@@ -4204,8 +4204,8 @@ class PostgresDb(BaseDb):
                 rows = sess.execute(stmt).mappings().all()
                 return [dict(r) for r in rows]
 
-        except Exception as e:
-            log_error(f"Error getting links: {e}")
+        except Exception:
+            log_exception("Error getting links")
             raise
 
     def get_dependents(
@@ -4235,8 +4235,8 @@ class PostgresDb(BaseDb):
                 rows = sess.execute(stmt).mappings().all()
                 return [dict(r) for r in rows]
 
-        except Exception as e:
-            log_error(f"Error getting dependents: {e}")
+        except Exception:
+            log_exception("Error getting dependents")
             raise
 
     def _resolve_version(
@@ -4269,8 +4269,8 @@ class PostgresDb(BaseDb):
                     )
                 ).scalar_one_or_none()
 
-        except Exception as e:
-            log_error(f"Error resolving version: {e}")
+        except Exception:
+            log_exception("Error resolving version")
             raise
 
     def load_component_graph(
@@ -4370,8 +4370,8 @@ class PostgresDb(BaseDb):
                 "resolved_versions": resolved_versions,
             }
 
-        except Exception as e:
-            log_error(f"Error loading component graph: {e}")
+        except Exception:
+            log_exception("Error loading component graph")
             raise
 
     # -- Learning methods --
@@ -4665,8 +4665,8 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 sess.execute(table.insert().values(**schedule_data))
             return schedule_data
-        except Exception as e:
-            log_error(f"Error creating schedule: {e}")
+        except Exception:
+            log_exception("Error creating schedule")
             raise
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4759,8 +4759,8 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 sess.execute(table.insert().values(**run_data))
             return run_data
-        except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
+        except Exception:
+            log_exception("Error creating schedule run")
             raise
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4833,8 +4833,8 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 sess.execute(table.insert().values(**data))
             return data
-        except Exception as e:
-            log_error(f"Error creating approval: {e}")
+        except Exception:
+            log_exception("Error creating approval")
             raise
 
     def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:

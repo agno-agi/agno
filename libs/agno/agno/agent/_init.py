@@ -300,8 +300,8 @@ async def connect_mcp_tools(agent: Agent) -> None:
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
                     agent._mcp_tools_initialized_on_run.append(tool)  # type: ignore
-                except Exception as e:
-                    log_warning(f"Error connecting tool: {str(e)}")
+                except Exception:
+                    log_warning("Error connecting tool", exc_info=True)
 
 
 async def disconnect_mcp_tools(agent: Agent) -> None:
@@ -309,8 +309,8 @@ async def disconnect_mcp_tools(agent: Agent) -> None:
     for tool in agent._mcp_tools_initialized_on_run:
         try:
             await tool.close()
-        except Exception as e:
-            log_warning(f"Error disconnecting tool: {str(e)}")
+        except Exception:
+            log_warning("Error disconnecting tool", exc_info=True)
     agent._mcp_tools_initialized_on_run = []
 
 
@@ -327,8 +327,8 @@ def connect_connectable_tools(agent: Agent) -> None:
                 try:
                     tool.connect()  # type: ignore
                     agent._connectable_tools_initialized_on_run.append(tool)
-                except Exception as e:
-                    log_warning(f"Error connecting tool: {str(e)}")
+                except Exception:
+                    log_warning("Error connecting tool", exc_info=True)
 
 
 def disconnect_connectable_tools(agent: Agent) -> None:
@@ -337,6 +337,6 @@ def disconnect_connectable_tools(agent: Agent) -> None:
         if hasattr(tool, "close"):
             try:
                 tool.close()  # type: ignore
-            except Exception as e:
-                log_warning(f"Error disconnecting tool: {str(e)}")
+            except Exception:
+                log_warning("Error disconnecting tool", exc_info=True)
     agent._connectable_tools_initialized_on_run = []

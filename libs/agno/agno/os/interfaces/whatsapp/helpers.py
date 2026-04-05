@@ -7,7 +7,7 @@ from typing import Any, List, Optional, Tuple, Union
 import httpx
 
 from agno.utils.audio import pcm_to_wav_bytes
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_exception, log_info, log_warning
 from agno.utils.media import get_image_type
 
 _BASE_URL = "https://graph.facebook.com"
@@ -162,7 +162,7 @@ async def _download_media(media_id: str, media_label: str, config: WhatsAppConfi
         mime_type = metadata.get("mime_type")
     except httpx.HTTPError as e:
         reason = f"{media_label} (metadata fetch failed: {e})"
-        log_warning(f"Media download skipped: {reason}")
+        log_warning(f"Media download skipped: {reason}", exc_info=True)
         return _MediaResult(skip_reason=reason)
 
     try:
@@ -172,7 +172,7 @@ async def _download_media(media_id: str, media_label: str, config: WhatsAppConfi
             return _MediaResult(content=resp.content, mime_type=mime_type)
     except httpx.HTTPError as e:
         reason = f"{media_label} (download failed: {e})"
-        log_warning(f"Media download skipped: {reason}")
+        log_warning(f"Media download skipped: {reason}", exc_info=True)
         return _MediaResult(skip_reason=reason)
 
 
@@ -249,11 +249,10 @@ async def _send_text(recipient: str, text: str, config: WhatsAppConfig, preview_
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
-        log_error(f"Failed to send WhatsApp text message: {e}")
-        log_error(f"Error response: {e.response.text}")
+        log_exception(f"Failed to send WhatsApp text message. Error response: {e.response.text}")
         raise
-    except Exception as e:
-        log_error(f"Unexpected error sending WhatsApp text message: {str(e)}")
+    except Exception:
+        log_exception("Unexpected error sending WhatsApp text message")
         raise
 
 
@@ -287,11 +286,10 @@ async def _send_media(
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
-        log_error(f"Failed to send WhatsApp {media_type} message: {e}")
-        log_error(f"Error response: {e.response.text}")
+        log_exception(f"Failed to send WhatsApp {media_type} message. Error response: {e.response.text}")
         raise
-    except Exception as e:
-        log_error(f"Unexpected error sending WhatsApp {media_type} message: {str(e)}")
+    except Exception:
+        log_exception(f"Unexpected error sending WhatsApp {media_type} message")
         raise
 
 

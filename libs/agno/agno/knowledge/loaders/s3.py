@@ -15,7 +15,7 @@ from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import S3Content
 from agno.knowledge.remote_content.s3 import S3Config
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_exception, log_info
 from agno.utils.string import generate_id
 
 
@@ -92,8 +92,8 @@ class S3Loader(BaseLoader):
                     aws_access_key_id=s3_config.aws_access_key_id if s3_config else None,
                     aws_secret_access_key=s3_config.aws_secret_access_key if s3_config else None,
                 )
-        except Exception as e:
-            log_error(f"Error getting bucket: {e}")
+        except Exception:
+            log_exception("Error getting bucket")
 
         # Identify objects to read
         objects_to_read: List[S3Object] = []

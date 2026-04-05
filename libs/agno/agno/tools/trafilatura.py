@@ -20,7 +20,9 @@ try:
         SPIDER_AVAILABLE = True
     except ImportError:
         SPIDER_AVAILABLE = False
-        logger.warning("Trafilatura spider module not available. Web crawling functionality will be disabled.")
+        logger.warning(
+            "Trafilatura spider module not available. Web crawling functionality will be disabled.", exc_info=True
+        )
 
 except ImportError:
     raise ImportError("`trafilatura` not installed. Please install using `pip install trafilatura`")
@@ -177,7 +179,7 @@ class TrafilaturaTools(Toolkit):
             return result
 
         except Exception as e:
-            logger.warning(f"Error extracting text from {url}: {e}")
+            logger.warning(f"Error extracting text from {url}", exc_info=True)
             return f"Error extracting text from {url}: {e}"
 
     def extract_metadata_only(
@@ -225,7 +227,7 @@ class TrafilaturaTools(Toolkit):
                 return "\n".join(f"{key}: {value}" for key, value in metadata_dict.items())
 
         except Exception as e:
-            logger.warning(f"Error extracting metadata from {url}: {e}")
+            logger.warning(f"Error extracting metadata from {url}", exc_info=True)
             return f"Error extracting metadata from {url}: {e}"
 
     def crawl_website(
@@ -300,7 +302,7 @@ class TrafilaturaTools(Toolkit):
             return json.dumps(crawl_results, indent=2, default=str)
 
         except Exception as e:
-            logger.warning(f"Error crawling website {homepage_url}: {e}")
+            logger.warning(f"Error crawling website {homepage_url}", exc_info=True)
             return f"Error crawling website {homepage_url}: {e}"
 
     def html_to_text(
@@ -329,7 +331,7 @@ class TrafilaturaTools(Toolkit):
             return result if result else "Error: Could not extract text from HTML content"
 
         except Exception as e:
-            logger.warning(f"Error converting HTML to text: {e}")
+            logger.warning("Error converting HTML to text", exc_info=True)
             return f"Error converting HTML to text: {e}"
 
     def extract_batch(
@@ -384,5 +386,5 @@ class TrafilaturaTools(Toolkit):
             return json.dumps(batch_results, indent=2, default=str)
 
         except Exception as e:
-            logger.warning(f"Error in batch extraction: {e}")
+            logger.warning("Error in batch extraction", exc_info=True)
             return f"Error in batch extraction: {e}"

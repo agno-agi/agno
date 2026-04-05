@@ -107,6 +107,6 @@ def setup_tracing(
         AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
         logger.info("Agno tracing successfully set up with database storage")
-    except Exception as e:
-        logger.error(f"Failed to set up tracing: {e}", exc_info=True)
+    except Exception:
+        logger.error("Failed to set up tracing", exc_info=True)
         raise

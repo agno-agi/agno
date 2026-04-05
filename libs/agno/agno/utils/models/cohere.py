@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Sequence
 
 from agno.media import Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_exception, log_warning
 
 
 def _format_images_for_message(message: Message, images: Sequence[Image]) -> List[Dict[str, Any]]:
@@ -39,8 +39,8 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
                 image_payload = {"type": "image_url", "image_url": {"url": image_url}}
                 message_content_with_image.append(image_payload)
 
-        except Exception as e:
-            log_error(f"Failed to process image: {str(e)}")
+        except Exception:
+            log_exception("Failed to process image")
 
     # Update the message content with the images
     return message_content_with_image

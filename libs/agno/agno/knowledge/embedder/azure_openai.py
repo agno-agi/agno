@@ -114,8 +114,8 @@ class AzureOpenAIEmbedder(Embedder):
         response: CreateEmbeddingResponse = self._response(text=text)
         try:
             return response.data[0].embedding
-        except Exception as e:
-            logger.warning(e)
+        except Exception:
+            logger.warning("Failed to get embedding", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -146,8 +146,8 @@ class AzureOpenAIEmbedder(Embedder):
         response: CreateEmbeddingResponse = await self._aresponse(text=text)
         try:
             return response.data[0].embedding
-        except Exception as e:
-            logger.warning(e)
+        except Exception:
+            logger.warning("Failed to get embedding", exc_info=True)
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -197,8 +197,8 @@ class AzureOpenAIEmbedder(Embedder):
                 # For each embedding in the batch, add the same usage information
                 usage_dict = response.usage.model_dump() if response.usage else None
                 all_usage.extend([usage_dict] * len(batch_embeddings))
-            except Exception as e:
-                logger.warning(f"Error in async batch embedding: {e}")
+            except Exception:
+                logger.warning("Error in async batch embedding", exc_info=True)
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -206,7 +206,7 @@ class AzureOpenAIEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
                     except Exception as e2:
-                        logger.warning(f"Error in individual async embedding fallback: {e2}")
+                        logger.warning(f"Error in individual async embedding fallback: {e2}", exc_info=True)
                         all_embeddings.append([])
                         all_usage.append(None)
 

@@ -766,8 +766,8 @@ async def _connect_mcp_tools(team: "Team") -> None:
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
                     team._mcp_tools_initialized_on_run.append(tool)  # type: ignore[union-attr]
-                except Exception as e:
-                    log_warning(f"Error connecting tool: {str(e)}")
+                except Exception:
+                    log_warning("Error connecting tool", exc_info=True)
 
 
 async def _disconnect_mcp_tools(team: "Team") -> None:
@@ -775,8 +775,8 @@ async def _disconnect_mcp_tools(team: "Team") -> None:
     for tool in team._mcp_tools_initialized_on_run:  # type: ignore[union-attr]
         try:
             await tool.close()
-        except Exception as e:
-            log_warning(f"Error disconnecting tool: {str(e)}")
+        except Exception:
+            log_warning("Error disconnecting tool", exc_info=True)
     team._mcp_tools_initialized_on_run = []
 
 
@@ -793,8 +793,8 @@ def _connect_connectable_tools(team: "Team") -> None:
                 try:
                     tool.connect()  # type: ignore
                     team._connectable_tools_initialized_on_run.append(tool)  # type: ignore[union-attr]
-                except Exception as e:
-                    log_warning(f"Error connecting tool: {str(e)}")
+                except Exception:
+                    log_warning("Error connecting tool", exc_info=True)
 
 
 def _disconnect_connectable_tools(team: "Team") -> None:
@@ -803,6 +803,6 @@ def _disconnect_connectable_tools(team: "Team") -> None:
         if hasattr(tool, "close"):
             try:
                 tool.close()  # type: ignore
-            except Exception as e:
-                log_warning(f"Error disconnecting tool: {str(e)}")
+            except Exception:
+                log_warning("Error disconnecting tool", exc_info=True)
     team._connectable_tools_initialized_on_run = []

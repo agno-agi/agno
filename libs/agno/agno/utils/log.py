@@ -32,6 +32,13 @@ class ColoredRichHandler(RichHandler):
         super().__init__(*args, **kwargs)
         self.source_type = source_type
 
+    def emit(self, record: logging.LogRecord) -> None:
+        """Strip exc_info when verbose_exceptions is off."""
+        if record.exc_info and not verbose_exceptions:
+            record.exc_info = None
+            record.exc_text = None
+        super().emit(record)
+
     def get_level_text(self, record: logging.LogRecord) -> Text:
         # Return empty Text if message is empty
         if not record.msg:
@@ -111,6 +118,10 @@ logger: AgnoLogger = agent_logger
 
 debug_on: bool = False
 debug_level: Literal[1, 2] = 1
+
+# Controls whether exc_info tracebacks are rendered in log output.
+# Opt-in only: set AGNO_VERBOSE_EXCEPTIONS=true or call set_verbose_exceptions(True).
+verbose_exceptions: bool = getenv("AGNO_VERBOSE_EXCEPTIONS", "false").lower() in ("true", "1", "yes")
 
 
 def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
@@ -223,11 +234,25 @@ def log_exception(msg, *args, **kwargs):
     logger.exception(msg, *args, **kwargs)
 
 
+def set_verbose_exceptions(enabled: bool = True) -> None:
+    """Enable or disable full tracebacks in log output.
+
+    When enabled, ``log_exception`` and ``log_warning`` calls with
+    ``exc_info=True`` will render the complete traceback.  When disabled
+    (the default), the handler strips exc_info so only the message is shown.
+
+    Can also be controlled via the ``AGNO_VERBOSE_EXCEPTIONS`` env var.
+    """
+    global verbose_exceptions
+    verbose_exceptions = enabled
+
+
 def configure_agno_logging(
     custom_default_logger: Optional[Any] = None,
     custom_agent_logger: Optional[Any] = None,
     custom_team_logger: Optional[Any] = None,
     custom_workflow_logger: Optional[Any] = None,
+    enable_verbose_exceptions: Optional[bool] = None,
 ) -> None:
     """
     Util to set custom loggers. These will be used everywhere across the Agno library.
@@ -237,7 +262,11 @@ def configure_agno_logging(
         custom_agent_logger: Custom logger for agent operations
         custom_team_logger: Custom logger for team operations
         custom_workflow_logger: Custom logger for workflow operations
+        enable_verbose_exceptions: If True, log full tracebacks on exceptions/warnings.
+            Also controllable via ``AGNO_VERBOSE_EXCEPTIONS`` env var.
     """
+    if enable_verbose_exceptions is not None:
+        set_verbose_exceptions(enable_verbose_exceptions)
     if custom_default_logger is not None:
         global logger
         logger = custom_default_logger

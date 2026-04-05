@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 from agno.reasoning.step import NextAction, ReasoningStep
 from agno.run import RunContext
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 
 class ReasoningTools(Toolkit):
@@ -111,7 +111,7 @@ Confidence: {step_parsed.confidence}
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
-            log_error(f"Error recording thought: {e}")
+            log_exception("Error recording thought")
             return f"Error recording thought: {e}"
 
     def analyze(
@@ -183,7 +183,7 @@ Confidence: {step_parsed.confidence}
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
-            log_error(f"Error recording analysis: {e}")
+            log_exception("Error recording analysis")
             return f"Error recording analysis: {e}"
 
     # --------------------------------------------------------------------------------

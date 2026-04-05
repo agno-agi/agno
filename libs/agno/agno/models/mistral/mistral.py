@@ -10,7 +10,7 @@ from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_exception
 from agno.utils.models._mistral_compat import (
     AssistantMessage,
     ChatCompletionResponse,
@@ -203,10 +203,10 @@ class MistralChat(Model):
             return model_response
 
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_exception("HTTPValidationError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_exception("SDKError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -237,10 +237,10 @@ class MistralChat(Model):
             assistant_message.metrics.stop_timer()
 
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_exception("HTTPValidationError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_exception("SDKError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -285,10 +285,10 @@ class MistralChat(Model):
 
             return model_response
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_exception("HTTPValidationError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_exception("SDKError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -318,10 +318,10 @@ class MistralChat(Model):
             assistant_message.metrics.stop_timer()
 
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_exception("HTTPValidationError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_exception("SDKError from Mistral")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:

@@ -204,8 +204,8 @@ class SessionSummaryManager:
                 else:
                     log_warning("Failed to parse session summary response")
 
-            except Exception as e:
-                log_warning(f"Failed to parse session summary response: {e}")
+            except Exception:
+                log_warning("Failed to parse session summary response", exc_info=True)
 
         return None
 

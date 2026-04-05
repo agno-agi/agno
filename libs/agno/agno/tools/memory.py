@@ -7,7 +7,7 @@ from agno.db.base import BaseDb
 from agno.db.schemas import UserMemory
 from agno.run import RunContext
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_exception
 
 
 class MemoryTools(Toolkit):
@@ -91,7 +91,7 @@ class MemoryTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            log_error(f"Error recording memory thought: {e}")
+            log_exception("Error recording memory thought")
             return f"Error recording memory thought: {e}"
 
     def get_memories(self, run_context: RunContext) -> str:
@@ -120,7 +120,7 @@ class MemoryTools(Toolkit):
 
             return json.dumps([memory.to_dict() for memory in memories], indent=2)  # type: ignore
         except Exception as e:
-            log_error(f"Error getting memories: {e}")
+            log_exception("Error getting memories")
             return json.dumps({"error": str(e)}, indent=2)
 
     def add_memory(
@@ -179,7 +179,7 @@ class MemoryTools(Toolkit):
                 )
 
         except Exception as e:
-            log_error(f"Error adding memory: {e}")
+            log_exception("Error adding memory")
             return json.dumps({"success": False, "operation": "add_memory", "error": str(e)}, indent=2)
 
     def update_memory(
@@ -245,7 +245,7 @@ class MemoryTools(Toolkit):
                 )
 
         except Exception as e:
-            log_error(f"Error updating memory: {e}")
+            log_exception("Error updating memory")
             return json.dumps({"success": False, "operation": "update_memory", "error": str(e)}, indent=2)
 
     def delete_memory(
@@ -303,7 +303,7 @@ class MemoryTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_exception("Error deleting memory")
             return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
@@ -332,7 +332,7 @@ class MemoryTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            log_error(f"Error recording memory analysis: {e}")
+            log_exception("Error recording memory analysis")
             return f"Error recording memory analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\

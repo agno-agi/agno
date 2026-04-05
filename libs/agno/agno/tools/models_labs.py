@@ -156,8 +156,8 @@ class ModelsLabTools(Toolkit):
 
                 time.sleep(1)
 
-            except RequestException as e:
-                logger.warning(f"Error during fetch attempt {seconds_waited}: {e}")
+            except RequestException:
+                logger.warning(f"Error during fetch attempt {seconds_waited}", exc_info=True)
 
         return False
 

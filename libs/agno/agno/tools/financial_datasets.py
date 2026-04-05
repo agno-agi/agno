@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_exception
 
 
 class FinancialDatasetsTools(Toolkit):
@@ -77,7 +77,7 @@ class FinancialDatasetsTools(Toolkit):
             response.raise_for_status()
             return response.text
         except requests.exceptions.RequestException as e:
-            log_error(f"Error making request to {url}: {str(e)}")
+            log_exception(f"Error making request to {url}")
             return f"Error making request to {url}: {str(e)}"
 
     # Financial Statements

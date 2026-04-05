@@ -12,7 +12,7 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 from agno.utils.models.claude import supports_prefill
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.tokens import count_schema_tokens
@@ -338,8 +338,8 @@ class LiteLLM(Model):
 
             assistant_message.metrics.stop_timer()
 
-        except Exception as e:
-            log_error(f"Error in streaming response: {e}")
+        except Exception:
+            log_exception("Error in streaming response")
             raise
 
     def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:

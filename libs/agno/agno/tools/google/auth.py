@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.utils.log import log_exception
 
 
 def google_authenticate(service_name: str):
@@ -28,13 +28,13 @@ def google_authenticate(service_name: str):
                 try:
                     self._auth()
                 except Exception as e:
-                    log_error(f"{service_name.title()} authentication failed: {e}")
+                    log_exception(f"{service_name.title()} authentication failed")
                     return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
             if not self.service:
                 try:
                     self.service = self._build_service()
                 except Exception as e:
-                    log_error(f"{service_name.title()} service initialization failed: {e}")
+                    log_exception(f"{service_name.title()} service initialization failed")
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 

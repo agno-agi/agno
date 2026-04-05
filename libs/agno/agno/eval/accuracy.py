@@ -303,8 +303,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 score=accuracy_agent_response.accuracy_score,
                 reason=accuracy_agent_response.accuracy_reason,
             )
-        except Exception as e:
-            logger.exception(f"Failed to evaluate accuracy: {e}")
+        except Exception:
+            logger.exception("Failed to evaluate accuracy")
             return None
 
     async def aevaluate_answer(
@@ -336,8 +336,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 score=accuracy_agent_response.accuracy_score,
                 reason=accuracy_agent_response.accuracy_reason,
             )
-        except Exception as e:
-            logger.exception(f"Failed to evaluate accuracy asynchronously: {e}")
+        except Exception:
+            logger.exception("Failed to evaluate accuracy asynchronously")
             return None
 
     def run(

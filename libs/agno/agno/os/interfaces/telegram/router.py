@@ -20,7 +20,7 @@ from agno.os.interfaces.telegram.state import BotState, StreamState, build_sessi
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 try:
@@ -140,8 +140,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except Exception as e:
-            log_error(f"Error processing webhook: {e}")
+        except Exception:
+            log_exception("Error processing webhook")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     async def _handle_command(
@@ -180,8 +180,8 @@ def attach_routes(
                 else:
                     cfg.db.upsert_session(session)
                 await send_message(bot, chat_id, new_message, message_thread_id=message_thread_id)
-            except Exception as e:
-                log_warning(f"Failed to persist new session to DB: {e}")
+            except Exception:
+                log_warning("Failed to persist new session to DB", exc_info=True)
                 await send_message(
                     bot,
                     chat_id,
@@ -364,8 +364,8 @@ def attach_routes(
                     found = await find_latest_session_id(cfg, user_id, bot_state.entity_id, session_scope)
                     if found:
                         session_id = found
-                except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {e}")
+                except Exception:
+                    log_warning("Session lookup failed, using default", exc_info=True)
 
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")
@@ -380,8 +380,8 @@ def attach_routes(
             else:
                 await _sync_response(message_text, run_kwargs, chat_id, reply_to, message_thread_id)
 
-        except Exception as e:
-            log_error(f"Error processing message: {e}", exc_info=True)
+        except Exception:
+            log_error("Error processing message", exc_info=True)
             try:
                 await send_message(bot, chat_id, error_message, message_thread_id=message_thread_id)
             except Exception as send_error:

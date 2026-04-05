@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 try:
     from sqlalchemy import Engine, Table, func
@@ -69,8 +69,8 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_debug(f"Creating database if not exists: {db_schema}")
         # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
         session.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_schema};"))
-    except Exception as e:
-        log_warning(f"Could not create database {db_schema}: {e}")
+    except Exception:
+        log_warning(f"Could not create database {db_schema}", exc_info=True)
 
 
 def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
@@ -90,8 +90,8 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
 
         return exists
 
-    except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+    except Exception:
+        log_exception("Error checking if table exists")
         return False
 
 
@@ -124,8 +124,8 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
             return False
 
         return True
-    except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+    except Exception:
+        log_exception(f"Error validating table schema for {db_schema}.{table_name}")
         return False
 
 
@@ -433,8 +433,8 @@ async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
         log_debug(f"Creating database if not exists: {db_schema}")
         # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
         await session.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_schema}`;"))
-    except Exception as e:
-        log_warning(f"Could not create database {db_schema}: {e}")
+    except Exception:
+        log_warning(f"Could not create database {db_schema}", exc_info=True)
 
 
 async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:
@@ -454,8 +454,8 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
 
         return exists
 
-    except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+    except Exception:
+        log_exception("Error checking if table exists")
         return False
 
 
@@ -486,8 +486,8 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
             return False
 
         return True
-    except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+    except Exception:
+        log_exception(f"Error validating table schema for {db_schema}.{table_name}")
         return False
 
 

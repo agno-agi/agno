@@ -58,5 +58,5 @@ class ResendTools(Toolkit):
             resend.Emails.send(params)
             return f"Email sent to {to_email} successfully."
         except Exception as e:
-            logger.error(f"Failed to send email {e}")
+            logger.exception("Failed to send email")
             return f"Error: {e}"

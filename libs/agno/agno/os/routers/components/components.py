@@ -25,7 +25,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_exception, log_warning
 from agno.utils.string import generate_id_from_name
 
 logger = logging.getLogger(__name__)
@@ -144,8 +144,8 @@ def attach_routes(
                     search_time_ms=round(time.time() * 1000 - start_time_ms, 2),
                 ),
             )
-        except Exception as e:
-            log_error(f"Error listing components: {e}")
+        except Exception:
+            log_exception("Error listing components")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
@@ -195,8 +195,8 @@ def attach_routes(
             return ComponentResponse(**component)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error creating component: {e}")
+        except Exception:
+            log_exception("Error creating component")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -218,8 +218,8 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
-        except Exception as e:
-            log_error(f"Error getting component: {e}")
+        except Exception:
+            log_exception("Error getting component")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.patch(
@@ -258,8 +258,8 @@ def attach_routes(
             raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error updating component: {e}")
+        except Exception:
+            log_exception("Error updating component")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete(
@@ -278,8 +278,8 @@ def attach_routes(
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
             raise
-        except Exception as e:
-            log_error(f"Error deleting component: {e}")
+        except Exception:
+            log_exception("Error deleting component")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -298,8 +298,8 @@ def attach_routes(
         try:
             configs = db.list_configs(component_id, include_config=include_config)
             return [ComponentConfigResponse(**c) for c in configs]
-        except Exception as e:
-            log_error(f"Error listing configs: {e}")
+        except Exception:
+            log_exception("Error listing configs")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
@@ -332,8 +332,8 @@ def attach_routes(
             return ComponentConfigResponse(**config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error creating config: {e}")
+        except Exception:
+            log_exception("Error creating config")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.patch(
@@ -368,8 +368,8 @@ def attach_routes(
             return ComponentConfigResponse(**config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error updating config: {e}")
+        except Exception:
+            log_exception("Error updating config")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -391,8 +391,8 @@ def attach_routes(
             return ComponentConfigResponse(**config)
         except HTTPException:
             raise
-        except Exception as e:
-            log_error(f"Error getting config: {e}")
+        except Exception:
+            log_exception("Error getting config")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -416,8 +416,8 @@ def attach_routes(
             return ComponentConfigResponse(**config)
         except HTTPException:
             raise
-        except Exception as e:
-            log_error(f"Error getting config: {e}")
+        except Exception:
+            log_exception("Error getting config")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete(
@@ -440,8 +440,8 @@ def attach_routes(
             raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error deleting config: {e}")
+        except Exception:
+            log_exception("Error deleting config")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
@@ -474,8 +474,8 @@ def attach_routes(
             raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error setting current config: {e}")
+        except Exception:
+            log_exception("Error setting current config")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     return router

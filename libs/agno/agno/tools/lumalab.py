@@ -124,7 +124,7 @@ class LumaLabTools(Toolkit):
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
 
         except Exception as e:
-            logger.error(f"Failed to generate video: {e}")
+            logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")
 
     def generate_video(
@@ -179,5 +179,5 @@ class LumaLabTools(Toolkit):
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
 
         except Exception as e:
-            logger.error(f"Failed to generate video: {e}")
+            logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")

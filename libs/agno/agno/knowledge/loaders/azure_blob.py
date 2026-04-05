@@ -14,7 +14,7 @@ from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.azure_blob import AzureBlobConfig
 from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import AzureBlobContent
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 from agno.utils.string import generate_id
 
 
@@ -170,8 +170,8 @@ class AzureBlobLoader(BaseLoader):
         except ImportError as e:
             log_error(str(e))
             return
-        except Exception as e:
-            log_error(f"Error creating Azure Blob client: {e}")
+        except Exception:
+            log_exception("Error creating Azure Blob client")
             return
 
         # Use async context manager for proper resource cleanup
@@ -220,8 +220,8 @@ class AzureBlobLoader(BaseLoader):
                             return
                 elif remote_content.prefix:
                     blobs_to_process = await list_blobs_with_prefix(remote_content.prefix)
-            except Exception as e:
-                log_error(f"Error listing Azure blobs: {e}")
+            except Exception:
+                log_exception("Error listing Azure blobs")
                 return
 
             if not blobs_to_process:
@@ -267,7 +267,7 @@ class AzureBlobLoader(BaseLoader):
                     blob_data = await download_stream.readall()
                     file_content = BytesIO(blob_data)
                 except Exception as e:
-                    log_error(f"Error downloading Azure blob {blob_name}: {e}")
+                    log_exception(f"Error downloading Azure blob {blob_name}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     await self._aupdate_content(content_entry)
@@ -314,8 +314,8 @@ class AzureBlobLoader(BaseLoader):
         except ImportError as e:
             log_error(str(e))
             return
-        except Exception as e:
-            log_error(f"Error creating Azure Blob client: {e}")
+        except Exception:
+            log_exception("Error creating Azure Blob client")
             return
 
         # Use context manager for proper resource cleanup
@@ -365,8 +365,8 @@ class AzureBlobLoader(BaseLoader):
                             return
                 elif remote_content.prefix:
                     blobs_to_process = list_blobs_with_prefix(remote_content.prefix)
-            except Exception as e:
-                log_error(f"Error listing Azure blobs: {e}")
+            except Exception:
+                log_exception("Error listing Azure blobs")
                 return
 
             if not blobs_to_process:
@@ -411,7 +411,7 @@ class AzureBlobLoader(BaseLoader):
                     download_stream = blob_client.download_blob()
                     file_content = BytesIO(download_stream.readall())
                 except Exception as e:
-                    log_error(f"Error downloading Azure blob {blob_name}: {e}")
+                    log_exception(f"Error downloading Azure blob {blob_name}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     self._update_content(content_entry)

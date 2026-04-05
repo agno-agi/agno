@@ -32,7 +32,7 @@ def copy_args_for_background(args: Dict[str, Any]) -> Dict[str, Any]:
                 copied_args[key] = deepcopy(value)
             except Exception:
                 # If deepcopy fails (e.g., for non-copyable objects), use the original
-                log_warning(f"Could not deepcopy {key} for background hook, using original reference")
+                log_warning(f"Could not deepcopy {key} for background hook, using original reference", exc_info=True)
                 copied_args[key] = value
         else:
             copied_args[key] = value
@@ -172,7 +172,7 @@ def filter_hook_args(hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict
 
         return filtered_args
 
-    except Exception as e:
-        log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
+    except Exception:
+        log_warning("Could not inspect hook signature, passing all arguments", exc_info=True)
         # If signature inspection fails, pass all arguments as fallback
         return all_args

@@ -14,6 +14,6 @@ def get_location() -> Dict[str, Any]:
         if response.status_code == 200:
             data = response.json()
             return {"city": data.get("city"), "region": data.get("region"), "country": data.get("country")}
-    except Exception as e:
-        log_warning(f"Failed to get location: {e}")
+    except Exception:
+        log_warning("Failed to get location", exc_info=True)
     return {}

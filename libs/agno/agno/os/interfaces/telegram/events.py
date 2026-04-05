@@ -117,8 +117,8 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
         if now - state.last_edit_time >= interval:
             try:
                 await state.send_or_edit(state.build_display_html())
-            except Exception as e:
-                log_warning(f"Stream edit failed (will retry on next chunk): {e}")
+            except Exception:
+                log_warning("Stream edit failed (will retry on next chunk)", exc_info=True)
     return False
 
 

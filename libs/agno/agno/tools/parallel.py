@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_exception
 
 try:
     from parallel import Parallel as ParallelClient
@@ -192,7 +192,7 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error searching Parallel for objective '{objective}': {e}")
+            log_exception(f"Error searching Parallel for objective '{objective}'")
             return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2)
 
     def parallel_extract(
@@ -303,5 +303,5 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error extracting from Parallel: {e}")
+            log_exception("Error extracting from Parallel")
             return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2)

@@ -236,15 +236,15 @@ class Loop:
                 return evaluate_cel_loop_end_condition(
                     self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
-            except Exception as e:
-                logger.warning(f"CEL end condition evaluation failed: {e}")
+            except Exception:
+                logger.warning("CEL end condition evaluation failed", exc_info=True)
                 return False
 
         if callable(self.end_condition):
             try:
                 return self.end_condition(iteration_results)
-            except Exception as e:
-                logger.warning(f"End condition evaluation failed: {e}")
+            except Exception:
+                logger.warning("End condition evaluation failed", exc_info=True)
                 return False
 
         return False
@@ -264,8 +264,8 @@ class Loop:
                 return evaluate_cel_loop_end_condition(
                     self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
-            except Exception as e:
-                logger.warning(f"CEL end condition evaluation failed: {e}")
+            except Exception:
+                logger.warning("CEL end condition evaluation failed", exc_info=True)
                 return False
 
         if callable(self.end_condition):
@@ -274,8 +274,8 @@ class Loop:
                     return await self.end_condition(iteration_results)
                 else:
                     return self.end_condition(iteration_results)
-            except Exception as e:
-                logger.warning(f"End condition evaluation failed: {e}")
+            except Exception:
+                logger.warning("End condition evaluation failed", exc_info=True)
                 return False
 
         return False

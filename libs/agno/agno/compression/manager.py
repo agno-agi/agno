@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_exception, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -135,8 +135,8 @@ class CompressionManager:
                 accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
 
             return response.content
-        except Exception as e:
-            log_error(f"Error compressing tool result: {e}")
+        except Exception:
+            log_exception("Error compressing tool result")
             return tool_content
 
     def compress(
@@ -240,8 +240,8 @@ class CompressionManager:
                 accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
 
             return response.content
-        except Exception as e:
-            log_error(f"Error compressing tool result: {e}")
+        except Exception:
+            log_exception("Error compressing tool result")
             return tool_content
 
     async def acompress(

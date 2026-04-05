@@ -126,8 +126,8 @@ class BotState:
             await self.bot.set_my_commands(bot_commands)
             self.commands_registered = True
             log_info("Bot commands registered successfully")
-        except Exception as e:
-            log_warning(f"Failed to register bot commands: {e}")
+        except Exception:
+            log_warning("Failed to register bot commands", exc_info=True)
 
     def is_duplicate_update(self, update_id: int) -> bool:
         now = time.monotonic()
@@ -225,7 +225,7 @@ class StreamState:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
             if "message is not modified" not in str(e):
-                log_warning(f"Failed to edit message: {e}")
+                log_warning("Failed to edit message", exc_info=True)
 
     async def _send_chunks(self, content: str) -> None:
         await send_message(
@@ -263,8 +263,8 @@ class StreamState:
     async def update_display(self) -> None:
         try:
             await self.send_or_edit(self.build_display_html())
-        except Exception as e:
-            log_warning(f"Stream display update failed: {e}")
+        except Exception:
+            log_warning("Stream display update failed", exc_info=True)
 
     async def finalize(self) -> None:
         self.close_pending_statuses()
@@ -274,8 +274,8 @@ class StreamState:
 
         try:
             await self._finalize_inner(final_html)
-        except Exception as e:
-            log_warning(f"Finalize failed ({e}), falling back to plain text")
+        except Exception:
+            log_warning("Finalize failed (), falling back to plain text", exc_info=True)
             await self._finalize_plaintext()
 
     async def _finalize_inner(self, final_html: str) -> None:
@@ -316,5 +316,5 @@ class StreamState:
                 reply_to_message_id=self.reply_to,
                 message_thread_id=self.message_thread_id,
             )
-        except Exception as e:
-            log_warning(f"Plain text fallback also failed: {e}")
+        except Exception:
+            log_warning("Plain text fallback also failed", exc_info=True)
