@@ -688,7 +688,7 @@ async def test_stream_handles_invalid_json():
             assert len(events) == 2
             assert isinstance(events[0], RunStartedEvent)
             assert isinstance(events[1], RunCompletedEvent)
-            assert mock_logger.error.called
+            assert mock_logger.exception.called
 
 
 @pytest.mark.asyncio
@@ -720,7 +720,7 @@ async def test_stream_handles_unknown_event_type():
             assert len(events) == 2
             assert isinstance(events[0], RunStartedEvent)
             assert isinstance(events[1], RunCompletedEvent)
-            assert mock_logger.error.called
+            assert mock_logger.exception.called
 
 
 @pytest.mark.asyncio
