@@ -174,7 +174,19 @@ class TeamSession:
                     for member_run in run.member_responses:
                         if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
                             filtered_runs.append(member_run)
-            session_runs = filtered_runs
+            # Deduplicate runs by run_id to avoid returning the same messages twice.
+            # A member's run can appear both as a standalone run in session.runs
+            # and inside a team run's member_responses.
+            seen_run_ids: set[str] = set()
+            deduped_runs = []
+            for run in filtered_runs:
+                rid = getattr(run, 'run_id', None)
+                if rid and rid in seen_run_ids:
+                    continue
+                if rid:
+                    seen_run_ids.add(rid)
+                deduped_runs.append(run)
+            session_runs = deduped_runs
 
         if skip_member_messages:
             # Filter for the top-level runs (main team runs or agent runs when sharing session)
