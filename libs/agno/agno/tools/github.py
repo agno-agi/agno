@@ -720,7 +720,7 @@ class GithubTools(Toolkit):
             pulls = repo.get_pulls(state=state, sort=sort, direction=direction)
 
             pr_list = []
-            for pr in pulls[:limit]:
+            for pr in pulls:
                 pr_info = {
                     "number": pr.number,
                     "title": pr.title,
@@ -731,6 +731,9 @@ class GithubTools(Toolkit):
                     "url": pr.html_url,
                 }
                 pr_list.append(pr_info)
+
+                if len(pr_list) >= limit:
+                    break
 
             return json.dumps(pr_list, indent=2)
         except GithubException as e:
