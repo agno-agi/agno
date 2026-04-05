@@ -35,7 +35,7 @@ async def test_session_id_namespaced_with_entity_id():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
@@ -71,7 +71,7 @@ async def test_user_id_is_raw_slack_id_by_default():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
@@ -105,7 +105,7 @@ async def test_user_id_resolved_to_email_when_opted_in():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, resolve_user_identity=True)
@@ -139,7 +139,7 @@ async def test_user_name_passed_as_metadata_when_opted_in():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, resolve_user_identity=True)
@@ -173,7 +173,7 @@ async def test_bot_mention_stripped_from_message():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
@@ -211,7 +211,7 @@ async def test_mixed_files_categorized_correctly():
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
         patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
@@ -248,7 +248,7 @@ async def test_non_whitelisted_mime_type_passes_none():
 
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
         patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
@@ -271,7 +271,7 @@ async def test_non_whitelisted_mime_type_passes_none():
 def test_explicit_token_passed_to_slack_tools():
     agent_mock = make_agent_mock()
     with (
-        patch("agno.os.interfaces.slack.router.SlackTools") as mock_cls,
+        patch("agno.os.interfaces.slack._processing.SlackTools") as mock_cls,
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
     ):
         mock_cls.return_value = make_slack_mock()
@@ -284,7 +284,7 @@ def test_explicit_signing_secret_used():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True) as mock_verify,
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
     ):
         app = build_app(agent_mock, signing_secret="my-secret")
         from fastapi.testclient import TestClient
@@ -311,7 +311,7 @@ def test_operation_id_unique_across_instances():
     agent_b.name = "Analyst Agent"
 
     with (
-        patch("agno.os.interfaces.slack.router.SlackTools"),
+        patch("agno.os.interfaces.slack._processing.SlackTools"),
         patch.dict("os.environ", {"SLACK_TOKEN": "test"}),
     ):
         app = FastAPI()
@@ -332,7 +332,7 @@ def test_bot_subtype_blocked():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
         from fastapi.testclient import TestClient
@@ -361,7 +361,7 @@ async def test_file_share_subtype_not_blocked():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=make_async_client_mock()),
         patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=make_httpx_mock(b"file-data")),
     ):
@@ -402,7 +402,7 @@ async def test_thread_reply_blocked_when_mentions_only():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=True)
         from fastapi.testclient import TestClient
@@ -433,7 +433,7 @@ async def test_non_streaming_clears_status_after_response():
     mock_client = make_async_client_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
         patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
@@ -466,7 +466,7 @@ def test_retry_header_skips_processing():
     mock_slack = make_slack_mock()
     with (
         patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+        patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
     ):
         app = build_app(agent_mock)
         from fastapi.testclient import TestClient
@@ -521,7 +521,7 @@ class TestStreamingHappyPath:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -549,7 +549,7 @@ class TestStreamingHappyPath:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -577,7 +577,7 @@ class TestRecipientUserId:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -612,7 +612,7 @@ class TestStreamingUserIsolation:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False, resolve_user_identity=True)
@@ -651,7 +651,7 @@ class TestStreamingFallbacks:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -689,7 +689,7 @@ class TestStreamingFallbacks:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -721,7 +721,7 @@ class TestStreamingFallbacks:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -765,7 +765,7 @@ class TestErrorResolvesTaskCards:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -795,7 +795,7 @@ class TestStreamingTitle:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -820,7 +820,7 @@ class TestStreamingTitle:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -844,7 +844,7 @@ class TestThreadStarted:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
@@ -876,7 +876,7 @@ class TestThreadStarted:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False, suggested_prompts=custom)
@@ -906,7 +906,7 @@ class TestThreadStarted:
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack._processing.SlackTools", return_value=mock_slack),
             patch("slack_sdk.web.async_client.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
