@@ -1814,13 +1814,12 @@ def run_dispatch(
         # Register run for cancellation tracking (after validation succeeds)
         register_run(run_id)  # type: ignore
 
-        # Normalise hook & guardails
-        if not team._hooks_normalised:
-            if team.pre_hooks:
-                team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
-            if team.post_hooks:
-                team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
-            team._hooks_normalised = True
+        # Normalise hooks & guardrails on every run. Hooks may be reassigned between
+        # runs, so always normalise rather than caching behind a flag.
+        if team.pre_hooks:
+            team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
+        if team.post_hooks:
+            team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
 
         session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
@@ -3811,13 +3810,12 @@ def arun_dispatch(  # type: ignore
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
 
-    # Normalise hook & guardails
-    if not team._hooks_normalised:
-        if team.pre_hooks:
-            team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
-        if team.post_hooks:
-            team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
-        team._hooks_normalised = True
+    # Normalise hooks & guardrails on every run. Hooks may be reassigned between
+    # runs, so always normalise rather than caching behind a flag.
+    if team.pre_hooks:
+        team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
+    if team.post_hooks:
+        team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
 
     session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 

@@ -689,8 +689,6 @@ class Agent:
 
         self._formatter: Optional[SafeFormatter] = None
 
-        self._hooks_normalised = False
-
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
