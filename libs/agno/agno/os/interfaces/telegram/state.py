@@ -27,6 +27,8 @@ import re as _re
 
 # Matches any HTML tag (opening, closing, self-closing)
 _TAG_RE = _re.compile(r"<[^>]+>")
+# Matches "retry after <seconds>" in Telegram 429 error messages
+_RETRY_AFTER_RE = _re.compile(r"retry after (\d+)", _re.IGNORECASE)
 
 TG_STREAM_EDIT_INTERVAL = 1.0
 
@@ -170,6 +172,8 @@ class StreamState:
         self.videos: list[Video] = []
         self.audio: list[Audio] = []
         self.files: list[File] = []
+        # Monotonic timestamp until which we should not attempt to edit messages (Telegram 429)
+        self._rate_limited_until: float = 0.0
 
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
@@ -221,10 +225,20 @@ class StreamState:
         )
 
     async def _edit(self, html: str) -> None:
+        # If we are still in a rate-limit window, skip the edit entirely
+        if self._rate_limited_until and time.monotonic() < self._rate_limited_until:
+            return
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
-            if "message is not modified" not in str(e):
+            if "message is not modified" in str(e):
+                return
+            match = _RETRY_AFTER_RE.search(str(e))
+            if match:
+                retry_seconds = float(match.group(1))
+                self._rate_limited_until = time.monotonic() + retry_seconds
+                log_warning(f"Rate limited by Telegram, pausing edits for {retry_seconds}s")
+            else:
                 log_warning(f"Failed to edit message: {e}")
 
     async def _send_chunks(self, content: str) -> None:
@@ -251,6 +265,9 @@ class StreamState:
 
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
+            return
+        # If rate-limited by Telegram, skip edits until the hold expires
+        if self._rate_limited_until and time.monotonic() < self._rate_limited_until:
             return
         display = self._truncate_html(html)
         if self.sent_message_id is None:
