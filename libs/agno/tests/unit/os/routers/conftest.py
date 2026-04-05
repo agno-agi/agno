@@ -4,6 +4,11 @@ import json
 import time
 from unittest.mock import AsyncMock, Mock
 
+# Pre-load submodule so mock.patch("slack_sdk.web.async_client.AsyncWebClient", ...)
+# can resolve the dotted path on Python 3.12+ (which uses pkgutil.resolve_name and
+# requires the submodule to already be in sys.modules as an attribute of its parent).
+import slack_sdk.web.async_client  # noqa: F401
+
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
