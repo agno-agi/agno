@@ -40,6 +40,14 @@ agent = Agent(
     ],
 )
 
+# DB-backed token storage: pass store_token_in_db=True and db= on the agent.
+# Token is saved to the DB after browser OAuth, loaded from DB on subsequent runs.
+# from agno.db.sqlite.sqlite import SqliteDb
+# db_agent = Agent(
+#     tools=[GoogleSheetsTools(store_token_in_db=True, spreadsheet_id=SAMPLE_SPREADSHEET_ID)],
+#     db=SqliteDb(db_file="tmp/sheets.db"),
+# )
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
