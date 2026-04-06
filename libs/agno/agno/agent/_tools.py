@@ -137,6 +137,7 @@ def get_tools(
             for tool in resolved_tools:
                 if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
                     tool._db = agent.db
+                    tool._user_id = agent.user_id
 
     # Add provided tools
     if resolved_tools is not None:
@@ -250,6 +251,7 @@ async def aget_tools(
             for tool in resolved_tools:
                 if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
                     tool._db = agent.db
+                    tool._user_id = agent.user_id
 
     # Connect MCP tools
     await _init.connect_mcp_tools(agent)

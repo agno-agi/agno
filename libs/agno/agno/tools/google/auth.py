@@ -55,7 +55,15 @@ def get_token_db(toolkit: Any) -> Any:
 
 
 def _resolve_user_id(toolkit: Any) -> str:
-    """Get user_id from GoogleAuth if available, otherwise empty string."""
+    """Get user_id for DB token storage.
+
+    Priority: toolkit._user_id (auto-wired from agent.user_id) > GoogleAuth.user_id > ""
+    """
+    # Set by auto-wiring from agent.user_id during tool resolution
+    uid = getattr(toolkit, "_user_id", None)
+    if uid:
+        return uid
+    # Fallback: GoogleAuth.user_id set at construction
     ga = getattr(toolkit, "google_auth", None)
     if ga and hasattr(ga, "user_id") and ga.user_id:
         return ga.user_id
