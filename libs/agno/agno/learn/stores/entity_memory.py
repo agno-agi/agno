@@ -50,6 +50,7 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -2648,7 +2649,7 @@ class EntityMemoryStore(LearningStore):
         try:
             from agno.models.message import Message
 
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             tools = self._get_extraction_tools(
                 user_id=user_id,
@@ -2696,7 +2697,7 @@ class EntityMemoryStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             tools = self._aget_extraction_tools(
                 user_id=user_id,
@@ -3082,20 +3083,6 @@ class EntityMemoryStore(LearningStore):
                 log_warning(f"Could not add function {tool}: {e}")
 
         return functions
-
-    def _messages_to_text(self, messages: List[Any]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     # =========================================================================
     # Private Helpers

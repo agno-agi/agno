@@ -9,19 +9,15 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
-DEFAULT_CHUNKER_STRATEGY: ChunkingStrategy
+# Check if MarkdownChunking is available
+MARKDOWN_CHUNKER_AVAILABLE = False
 
-# Try to import MarkdownChunking, fallback to FixedSizeChunking if not available
 try:
     from agno.knowledge.chunking.markdown import MarkdownChunking
 
-    DEFAULT_CHUNKER_STRATEGY = MarkdownChunking()
     MARKDOWN_CHUNKER_AVAILABLE = True
 except ImportError:
-    from agno.knowledge.chunking.fixed import FixedSizeChunking
-
-    DEFAULT_CHUNKER_STRATEGY = FixedSizeChunking()
-    MARKDOWN_CHUNKER_AVAILABLE = False
+    pass
 
 
 class MarkdownReader(Reader):
@@ -54,12 +50,19 @@ class MarkdownReader(Reader):
         chunking_strategy: Optional[ChunkingStrategy] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        **kwargs,
     ) -> None:
-        # Use the default chunking strategy if none provided
+        # Create default chunking strategy with the caller's chunk_size
         if chunking_strategy is None:
-            chunking_strategy = DEFAULT_CHUNKER_STRATEGY
+            chunk_size = kwargs.get("chunk_size", 5000)
+            if MARKDOWN_CHUNKER_AVAILABLE:
+                chunking_strategy = MarkdownChunking(chunk_size=chunk_size)
+            else:
+                from agno.knowledge.chunking.fixed import FixedSizeChunking
 
-        super().__init__(chunking_strategy=chunking_strategy, name=name, description=description)
+                chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
+
+        super().__init__(chunking_strategy=chunking_strategy, name=name, description=description, **kwargs)
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:

@@ -2,12 +2,12 @@ import datetime
 import json
 import textwrap
 import uuid
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
+from agno.tools.google.auth import google_authenticate
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -39,22 +39,7 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
     - Event IDs from list_events can be used with get_event, update_event, delete_event""")
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing the method."""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                self.service = build("calendar", "v3", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Calendar authentication failed: {e}")
-            return json.dumps({"error": f"Calendar authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("calendar")
 
 
 class GoogleCalendarTools(Toolkit):
@@ -130,7 +115,6 @@ class GoogleCalendarTools(Toolkit):
         self.login_hint = login_hint
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
-
         tools: List[Any] = []
 
         if list_events:
@@ -200,6 +184,9 @@ class GoogleCalendarTools(Toolkit):
             write_scope = "https://www.googleapis.com/auth/calendar"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
+
+    def _build_service(self):
+        return build("calendar", "v3", credentials=self.creds)
 
     def _auth(self) -> None:
         """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""

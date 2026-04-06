@@ -216,6 +216,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "session_summary_manager",
         "compression_manager",
         "learning",
+        "skills",
     ):
         return field_value
 

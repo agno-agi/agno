@@ -414,3 +414,23 @@ async def test_async_read_invalid_mode():
 
     with pytest.raises(NotImplementedError):
         await reader.async_read("https://example.com")
+
+
+def test_firecrawl_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    reader = FirecrawlReader(chunk_size=100, api_key="test")
+    assert reader.chunk_size == 100
+    assert reader.chunking_strategy.chunk_size == 100
+    assert isinstance(reader.chunking_strategy, SemanticChunking)
+
+
+def test_firecrawl_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    reader = FirecrawlReader(api_key="test")
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, SemanticChunking)
