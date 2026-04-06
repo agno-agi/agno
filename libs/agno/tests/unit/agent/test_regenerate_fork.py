@@ -1,9 +1,8 @@
 """Unit tests for regenerate and branch_session dispatch functions."""
 
 import asyncio
-import copy
-from typing import Any, List, Optional, Union, cast
-from unittest.mock import AsyncMock, MagicMock, call
+from typing import Any, List, Optional, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -237,7 +236,7 @@ class TestRegenerateDispatch:
             input="question",
         )
         session = _make_session(runs=[old_run])
-        mock_continue = _patch_regenerate_deps(agent, monkeypatch, session)
+        _patch_regenerate_deps(agent, monkeypatch, session)
 
         captured_inputs = []
 
