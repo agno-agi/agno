@@ -3799,16 +3799,17 @@ class AsyncSqliteDb(AsyncBaseDb):
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = (
-                    await sess.execute(
-                        select(table).where(
-                            table.c.provider == provider,
-                            table.c.user_id == user_id,
-                            table.c.service == service,
+                async with sess.begin():
+                    result = (
+                        await sess.execute(
+                            select(table).where(
+                                table.c.provider == provider,
+                                table.c.user_id == user_id,
+                                table.c.service == service,
+                            )
                         )
-                    )
-                ).fetchone()
-                return dict(result._mapping) if result else None
+                    ).fetchone()
+                    return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting auth token: {e}")
             return None

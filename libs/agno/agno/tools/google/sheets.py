@@ -51,6 +51,7 @@ from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_auth_or_raise, google_auth_save_to_store, google_authenticate
+from agno.utils.log import log_debug
 
 try:
     from google.auth.transport.requests import Request
@@ -240,8 +241,11 @@ class GoogleSheetsTools(Toolkit):
             self.creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
 
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore
-            google_auth_save_to_store(self, user_id=user_id)
+            if google_auth_save_to_store(self, user_id=user_id):
+                log_debug("Sheets credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore
+                log_debug("Sheets credentials saved to file")
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

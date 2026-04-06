@@ -11,8 +11,9 @@ and pass db= to the agent. Auto-wiring handles the rest.
 Key concepts:
 - store_token_in_db=True: opt-in to DB token persistence
 - agent.db auto-wires to toolkit._db at tool resolution time
-- File-based OAuth flow works normally, token also saved to DB
-- On reload, token loads from DB before checking token.json
+- File-based OAuth flow opens browser as usual for initial consent
+- Token is saved to DB only (not token.json) when store_token_in_db=True
+- On next run, token loads from DB — no file, no browser
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Gmail API)

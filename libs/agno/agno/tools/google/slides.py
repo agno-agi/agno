@@ -259,9 +259,11 @@ class GoogleSlidesTools(Toolkit):
             self.creds = flow.run_local_server(**oauth_kwargs)
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            google_auth_save_to_store(self, user_id=user_id)
-            log_debug("Google Slides credentials saved")
+            if google_auth_save_to_store(self, user_id=user_id):
+                log_debug("Slides credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+                log_debug("Slides credentials saved to file")
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:
         return (

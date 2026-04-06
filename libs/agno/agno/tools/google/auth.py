@@ -172,20 +172,20 @@ def google_auth_or_raise(
 def google_auth_save_to_store(
     toolkit: Any,
     user_id: Optional[str] = None,
-) -> None:
-    """Persist credentials to DB after successful auth."""
+) -> bool:
+    """Persist credentials to DB after successful auth. Returns True if saved."""
     if not toolkit.creds:
-        return
+        return False
     # Via GoogleAuth coordinator
     google_auth: Optional[GoogleAuth] = getattr(toolkit, "google_auth", None)
     if google_auth and google_auth._db:
-        google_auth.store_token("google", toolkit.creds, user_id=user_id)
-        return
+        return google_auth.store_token("google", toolkit.creds, user_id=user_id)
     # Direct _db on toolkit (store_token_in_db=True mode)
     if getattr(toolkit, "store_token_in_db", False):
         db = getattr(toolkit, "_db", None)
         if db:
-            _save_token_to_db(db, toolkit.creds, user_id=user_id)
+            return _save_token_to_db(db, toolkit.creds, user_id=user_id)
+    return False
 
 
 class GoogleAuth(Toolkit):

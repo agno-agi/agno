@@ -265,10 +265,12 @@ class GoogleCalendarTools(Toolkit):
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            google_auth_save_to_store(self, user_id=user_id)
-            log_debug("Successfully authenticated with Google Calendar API.")
-            log_info(f"Token file path: {token_file}")
+            if google_auth_save_to_store(self, user_id=user_id):
+                log_debug("Calendar credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+                log_debug("Calendar credentials saved to file")
+                log_info(f"Token file path: {token_file}")
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:

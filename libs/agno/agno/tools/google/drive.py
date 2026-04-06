@@ -32,7 +32,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_auth_or_raise, google_auth_save_to_store, google_authenticate
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.auth.transport.requests import Request
@@ -305,8 +305,11 @@ class GoogleDriveTools(Toolkit):
             self.creds = flow.run_local_server(**run_kwargs)
 
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())
-            google_auth_save_to_store(self, user_id=user_id)
+            if google_auth_save_to_store(self, user_id=user_id):
+                log_debug("Drive credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())
+                log_debug("Drive credentials saved to file")
 
     def _build_service(self):
         creds_to_use = self.creds
