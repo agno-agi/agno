@@ -338,6 +338,7 @@ def get_agent_router(
                     "application/json",
                     "application/x-javascript",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.ms-outlook",
                     "text/javascript",
                     "application/x-python",
                     "text/x-python",
