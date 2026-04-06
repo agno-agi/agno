@@ -152,11 +152,15 @@ def _determine_tools_for_model(
         team,
     )
 
-    # Bind team.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage)
+    # Bind team.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage).
+    # Only sync DBs that override get_auth_token — skips async and unsupported backends.
     if team.db is not None and resolved_tools:
-        for tool in resolved_tools:
-            if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
-                tool._db = team.db
+        from agno.db.base import BaseDb
+
+        if isinstance(team.db, BaseDb) and type(team.db).get_auth_token is not BaseDb.get_auth_token:
+            for tool in resolved_tools:
+                if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                    tool._db = team.db
 
     # Prepare tools
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []

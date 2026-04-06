@@ -203,7 +203,8 @@ class GoogleSheetsTools(Toolkit):
         # DB-backed store via GoogleAuth (handles refresh + auto-persist)
         if google_auth_from_store(self, self.scopes, user_id=user_id):
             return
-        if getattr(self, "google_auth", None) is not None:
+        ga = getattr(self, "google_auth", None)
+        if ga is not None and ga._db is not None:
             raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
 
         token_file = Path(self.token_path or "token.json")

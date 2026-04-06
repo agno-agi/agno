@@ -199,6 +199,7 @@ class PostgresDb(BaseDb):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
             id=data.get("id"),
         )
 

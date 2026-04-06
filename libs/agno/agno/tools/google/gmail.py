@@ -391,7 +391,8 @@ class GmailTools(Toolkit):
             return
         # DB mode active but no token — let the auth decorator return an error
         # so the agent calls authenticate_google to get the OAuth URL
-        if getattr(self, "google_auth", None) is not None:
+        ga = getattr(self, "google_auth", None)
+        if ga is not None and ga._db is not None:
             raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
 
         # File-based OAuth flow

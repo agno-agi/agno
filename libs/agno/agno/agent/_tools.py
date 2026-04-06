@@ -129,11 +129,16 @@ def get_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage)
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage).
+    # Only sync DBs that actually override get_auth_token — avoids wiring async DBs
+    # (which would fail without await) and backends that raise NotImplementedError.
     if agent.db is not None and resolved_tools:
-        for tool in resolved_tools:
-            if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
-                tool._db = agent.db
+        from agno.db.base import BaseDb
+
+        if isinstance(agent.db, BaseDb) and type(agent.db).get_auth_token is not BaseDb.get_auth_token:
+            for tool in resolved_tools:
+                if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                    tool._db = agent.db
 
     # Add provided tools
     if resolved_tools is not None:
@@ -239,11 +244,16 @@ async def aget_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage)
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage).
+    # Only sync DBs that actually override get_auth_token — async agents with
+    # AsyncBaseDb skip this (GoogleAuth.load_token/store_token are sync-only).
     if agent.db is not None and resolved_tools:
-        for tool in resolved_tools:
-            if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
-                tool._db = agent.db
+        from agno.db.base import BaseDb
+
+        if isinstance(agent.db, BaseDb) and type(agent.db).get_auth_token is not BaseDb.get_auth_token:
+            for tool in resolved_tools:
+                if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                    tool._db = agent.db
 
     # Connect MCP tools
     await _init.connect_mcp_tools(agent)
