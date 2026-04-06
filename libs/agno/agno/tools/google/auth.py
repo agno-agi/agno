@@ -54,7 +54,7 @@ def google_authenticate(service_name: str):
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 
-        wrapper.__signature__ = exposed_sig
+        wrapper.__signature__ = exposed_sig  # type: ignore[attr-defined]
         return wrapper
 
     return decorator
