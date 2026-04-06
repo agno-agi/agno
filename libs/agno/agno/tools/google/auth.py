@@ -76,7 +76,7 @@ def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> boo
     if not db:
         return False
 
-    uid = user_id or ""
+    uid = user_id
     try:
         row = db.get_auth_token("google", uid, "google")
     except (NotImplementedError, Exception):
@@ -111,7 +111,7 @@ def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
     if not db:
         return False
 
-    uid = user_id or ""
+    uid = user_id
     try:
         token_data = json.loads(creds.to_json())
         db.upsert_auth_token(

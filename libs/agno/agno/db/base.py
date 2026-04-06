@@ -1103,13 +1103,13 @@ class BaseDb(ABC):
 
     # --- Auth Tokens (Optional) ---
 
-    def get_auth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
-    def delete_auth_token(self, provider: str, user_id: str, service: str) -> bool:
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         raise NotImplementedError
 
 
@@ -1832,11 +1832,11 @@ class AsyncBaseDb(ABC):
 
     # --- Auth Tokens (Optional) ---
 
-    async def get_auth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
-    async def delete_auth_token(self, provider: str, user_id: str, service: str) -> bool:
+    async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         raise NotImplementedError

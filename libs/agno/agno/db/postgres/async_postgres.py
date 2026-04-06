@@ -3638,21 +3638,20 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     # --- Auth Tokens ---
 
-    async def get_auth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _auth_token_id(provider: str, user_id: Optional[str], service: str) -> str:
+        return f"{provider}:{user_id or ''}:{service}"
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="auth_tokens")
             if table is None:
                 return None
+            token_id = self._auth_token_id(provider, user_id, service)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = (
-                        await sess.execute(
-                            select(table).where(
-                                table.c.provider == provider,
-                                table.c.user_id == user_id,
-                                table.c.service == service,
-                            )
-                        )
+                        await sess.execute(select(table).where(table.c.id == token_id))
                     ).fetchone()
                     return dict(result._mapping) if result else None
         except Exception as e:
@@ -3665,6 +3664,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 raise RuntimeError("Failed to get or create auth_tokens table")
             data = {**token}
+            data["id"] = self._auth_token_id(data["provider"], data.get("user_id"), data["service"])
             now = int(time.time())
             data.setdefault("created_at", now)
             data["updated_at"] = now
@@ -3672,7 +3672,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     stmt = postgresql.insert(table).values(**data)
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["provider", "user_id", "service"],
+                        index_elements=["id"],
                         set_={
                             "token_data": stmt.excluded.token_data,
                             "granted_scopes": stmt.excluded.granted_scopes,
@@ -3685,20 +3685,15 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error upserting auth token: {e}")
             raise
 
-    async def delete_auth_token(self, provider: str, user_id: str, service: str) -> bool:
+    async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         try:
             table = await self._get_table(table_type="auth_tokens")
             if table is None:
                 return False
+            token_id = self._auth_token_id(provider, user_id, service)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    result = await sess.execute(
-                        table.delete().where(
-                            table.c.provider == provider,
-                            table.c.user_id == user_id,
-                            table.c.service == service,
-                        )
-                    )
+                    result = await sess.execute(table.delete().where(table.c.id == token_id))
                     return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting auth token: {e}")
