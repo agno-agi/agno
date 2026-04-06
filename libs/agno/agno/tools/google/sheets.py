@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
+from agno.tools.google.auth import google_auth_or_raise, google_auth_save_to_store, google_authenticate
 
 try:
     from google.auth.transport.requests import Request
@@ -200,12 +200,8 @@ class GoogleSheetsTools(Toolkit):
                 self.creds.refresh(Request())
             return
 
-        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, self.scopes, user_id=user_id):
+        if google_auth_or_raise(self, "Sheets", self.scopes, user_id=user_id):
             return
-        ga = getattr(self, "google_auth", None)
-        if ga is not None and ga._db is not None:
-            raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
 
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")

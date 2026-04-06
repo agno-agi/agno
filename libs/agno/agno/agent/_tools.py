@@ -129,9 +129,7 @@ def get_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage).
-    # Only sync DBs that actually override get_auth_token — avoids wiring async DBs
-    # (which would fail without await) and backends that raise NotImplementedError.
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for token storage)
     if agent.db is not None and resolved_tools:
         from agno.db.base import BaseDb
 
@@ -244,9 +242,7 @@ async def aget_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage).
-    # Only sync DBs that actually override get_auth_token — async agents with
-    # AsyncBaseDb skip this (GoogleAuth.load_token/store_token are sync-only).
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for token storage)
     if agent.db is not None and resolved_tools:
         from agno.db.base import BaseDb
 

@@ -60,7 +60,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
+from agno.tools.google.auth import google_auth_or_raise, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_debug
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
@@ -211,12 +211,8 @@ class GoogleSlidesTools(Toolkit):
             self.creds = sa_creds
             return
 
-        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, self.scopes, user_id=user_id):
+        if google_auth_or_raise(self, "Slides", self.scopes, user_id=user_id):
             return
-        ga = getattr(self, "google_auth", None)
-        if ga is not None and ga._db is not None:
-            raise PermissionError("Slides not authenticated — user must complete OAuth via authenticate_google")
 
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")

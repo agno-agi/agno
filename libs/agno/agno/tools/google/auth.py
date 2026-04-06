@@ -92,6 +92,27 @@ def google_auth_from_store(
     return True
 
 
+def google_auth_or_raise(
+    toolkit: Any,
+    service_name: str,
+    scopes: list,
+    user_id: Optional[str] = None,
+) -> bool:
+    """Try DB-backed auth; raise PermissionError if DB active but no token.
+
+    Returns True if creds were loaded from DB. Returns False if no GoogleAuth/DB
+    is configured — caller should fall through to file-based OAuth.
+    Raises PermissionError when DB mode is active but user hasn't completed OAuth
+    yet, signaling the agent to call authenticate_google for the OAuth URL.
+    """
+    if google_auth_from_store(toolkit, scopes, user_id=user_id):
+        return True
+    ga = getattr(toolkit, "google_auth", None)
+    if ga is not None and ga._db is not None:
+        raise PermissionError(f"{service_name} not authenticated — user must complete OAuth via authenticate_google")
+    return False
+
+
 def google_auth_save_to_store(
     toolkit: Any,
     user_id: Optional[str] = None,
@@ -189,10 +210,10 @@ class GoogleAuth(Toolkit):
 
         return creds if creds.valid else None
 
-    def store_token(self, service: str, creds: Any, user_id: Optional[str] = None) -> None:
-        """Serialize and persist credentials to DB."""
+    def store_token(self, service: str, creds: Any, user_id: Optional[str] = None) -> bool:
+        """Serialize and persist credentials to DB. Returns True on success."""
         if not self._db:
-            return
+            return False
 
         effective_user_id = user_id or self.user_id or ""
         try:
@@ -207,10 +228,13 @@ class GoogleAuth(Toolkit):
                 }
             )
             log_debug(f"Token stored for {effective_user_id}/{service}")
+            return True
         except NotImplementedError:
             log_debug("Backend does not support auth token storage")
+            return False
         except Exception as e:
             log_error(f"Failed to store token for {service}: {e}")
+            return False
 
     def authenticate_google(
         self,
@@ -306,7 +330,10 @@ class GoogleAuth(Toolkit):
             return {"error": f"Token exchange failed: {e}"}
 
         # Store one consolidated token row — all Google services share it
-        self.store_token("google", creds, user_id=user_id)
+        stored = self.store_token("google", creds, user_id=user_id)
+        if not stored:
+            log_error(f"Token obtained but DB persistence failed for user={user_id}")
+            return {"error": "Token obtained but could not be saved to database"}
 
         log_info(f"OAuth complete for user={user_id}, services={services}")
         return {"status": "ok", "user_id": user_id, "services": services}
@@ -332,6 +359,12 @@ class GoogleAuth(Toolkit):
 
         @router.get("/google/oauth/callback")
         async def oauth_callback(request: Request) -> HTMLResponse:
+            # Google sends error/error_description on denial or failure
+            error = request.query_params.get("error")
+            if error:
+                desc = escape(request.query_params.get("error_description", error))
+                return HTMLResponse(f"<h1>Error</h1><p>{desc}</p>", status_code=400)
+
             code = request.query_params.get("code")
             state = request.query_params.get("state", "")
             if not code:
@@ -342,10 +375,13 @@ class GoogleAuth(Toolkit):
                 safe_error = escape(str(result["error"]))
                 return HTMLResponse(f"<h1>Error</h1><p>{safe_error}</p>", status_code=400)
 
-            services = ", ".join(result.get("services", []))
+            # Validate services against the registered allow-list before rendering
+            known = set(google_auth._services)
+            safe_services = [s for s in result.get("services", []) if s in known]
+            services_str = escape(", ".join(safe_services)) if safe_services else "services"
             return HTMLResponse(
                 f"<h1>Connected</h1>"
-                f"<p>Google {services} connected successfully.</p>"
+                f"<p>Google {services_str} connected successfully.</p>"
                 f"<p>You can close this window and return to the chat.</p>"
             )
 

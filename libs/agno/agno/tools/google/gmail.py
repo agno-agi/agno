@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
+from agno.tools.google.auth import google_auth_or_raise, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -386,14 +386,8 @@ class GmailTools(Toolkit):
             self.creds.refresh(Request())
             return
 
-        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
-        if google_auth_from_store(self, self.scopes, user_id=user_id):
+        if google_auth_or_raise(self, "Gmail", self.scopes, user_id=user_id):
             return
-        # DB mode active but no token — let the auth decorator return an error
-        # so the agent calls authenticate_google to get the OAuth URL
-        ga = getattr(self, "google_auth", None)
-        if ga is not None and ga._db is not None:
-            raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
 
         # File-based OAuth flow
         token_file = Path(self.token_path or "token.json")
