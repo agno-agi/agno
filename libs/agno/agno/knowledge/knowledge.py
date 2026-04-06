@@ -709,6 +709,12 @@ class Knowledge(RemoteKnowledge):
     def remove_content_by_id(self, content_id: str):
         from agno.vectordb import VectorDb
 
+        # Block cross-instance deletes when isolation is enabled
+        if self.isolate_vector_search and self.name and self.contents_db is not None:
+            content_row = self.contents_db.get_knowledge_content(content_id)
+            if content_row is not None and getattr(content_row, "linked_to", None) != self.name:
+                return
+
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -725,6 +731,15 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.delete_knowledge_content(content_id)
 
     async def aremove_content_by_id(self, content_id: str):
+        # Block cross-instance deletes when isolation is enabled
+        if self.isolate_vector_search and self.name and self.contents_db is not None:
+            if isinstance(self.contents_db, AsyncBaseDb):
+                content_row = await self.contents_db.get_knowledge_content(content_id)
+            else:
+                content_row = self.contents_db.get_knowledge_content(content_id)
+            if content_row is not None and getattr(content_row, "linked_to", None) != self.name:
+                return
+
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
                 # For LightRAG, get the content first to find the external_id

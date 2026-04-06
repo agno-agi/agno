@@ -388,6 +388,44 @@ class TestContentByIdIsolation:
         assert status is None
         assert msg == "Content not found"
 
+    def test_remove_content_by_id_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        mock_vector_db = MockVectorDb()
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=mock_vector_db,
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        knowledge.remove_content_by_id("some-id")
+        # Should NOT have called delete — ownership check blocked it
+        mock_contents_db.delete_knowledge_content.assert_not_called()
+
+    def test_remove_content_by_id_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        mock_vector_db = MockVectorDb()
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=mock_vector_db,
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        knowledge.remove_content_by_id("some-id")
+        mock_contents_db.delete_knowledge_content.assert_called_once_with("some-id")
+
+    @pytest.mark.asyncio
+    async def test_aremove_content_by_id_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        mock_vector_db = MockVectorDb()
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=mock_vector_db,
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        await knowledge.aremove_content_by_id("some-id")
+        mock_contents_db.delete_knowledge_content.assert_not_called()
+
 
 class TestContentHashIsolation:
     """Tests that content hashes include KB name when isolation is enabled."""
