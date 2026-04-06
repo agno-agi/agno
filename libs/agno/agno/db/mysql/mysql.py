@@ -187,7 +187,7 @@ class MySQLDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema, extend_existing=True)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -385,7 +385,7 @@ class MySQLDb(BaseDb):
             raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
+            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine, extend_existing=True)
             return table
 
         except Exception as e:

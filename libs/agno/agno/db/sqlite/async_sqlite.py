@@ -230,7 +230,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns)
+            table = Table(table_name, self.metadata, *columns, extend_existing=True)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -431,7 +431,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.db_engine.connect() as conn:
 
                 def load_table(connection):
-                    return Table(table_name, self.metadata, autoload_with=connection)
+                    return Table(table_name, self.metadata, autoload_with=connection, extend_existing=True)
 
                 table = await conn.run_sync(load_table)
                 return table
