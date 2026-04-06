@@ -26,6 +26,8 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+    # This allows correlating workflow events to the workflow agent's run
+    workflow_agent_run_id: Optional[str] = None
 
     # Live reference to the current run's message list. Available in tool hooks
     # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
