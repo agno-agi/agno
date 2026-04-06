@@ -1,8 +1,6 @@
 import base64
-import inspect
 import json
 import os
-import threading
 from functools import wraps
 from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
@@ -22,48 +20,24 @@ def google_authenticate(service_name: str):
         - self.service: Built API client (set by _build_service)
         - self._auth(user_id=None): Loads or refreshes credentials
         - self._build_service(): Returns build(api_name, api_version, credentials=self.creds)
-
-    Concurrency: multiple users share one toolkit instance. An RLock serializes
-    all access — also prevents httplib2 transport corruption.
     """
 
     def decorator(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
-            rc = kwargs.pop("run_context", None)
-            user_id = getattr(rc, "user_id", None) if rc else None
-            if not user_id:
-                ga = getattr(self, "google_auth", None)
-                if ga is not None:
-                    user_id = ga.user_id
-
-            if not hasattr(self, "_auth_lock"):
-                self._auth_lock = threading.RLock()
-
-            with self._auth_lock:
-                if not self.creds or not self.creds.valid:
-                    try:
-                        self._auth(user_id=user_id)
-                    except Exception as e:
-                        log_error(f"{service_name.title()} authentication failed: {e}")
-                        return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
-
-                if not self.service:
-                    try:
-                        self.service = self._build_service()
-                    except Exception as e:
-                        log_error(f"{service_name.title()} service initialization failed: {e}")
-                        return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
-
-                return func(self, *args, **kwargs)
-
-        # Auto-inject run_context into the visible signature so the framework
-        # strips it from the LLM schema and injects it at call time
-        sig = inspect.signature(func)
-        if "run_context" not in sig.parameters:
-            params = list(sig.parameters.values())
-            params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
-            wrapper.__signature__ = sig.replace(parameters=params)
+            if not self.creds or not self.creds.valid:
+                try:
+                    self._auth()
+                except Exception as e:
+                    log_error(f"{service_name.title()} authentication failed: {e}")
+                    return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
+            if not self.service:
+                try:
+                    self.service = self._build_service()
+                except Exception as e:
+                    log_error(f"{service_name.title()} service initialization failed: {e}")
+                    return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
+            return func(self, *args, **kwargs)
 
         return wrapper
 
