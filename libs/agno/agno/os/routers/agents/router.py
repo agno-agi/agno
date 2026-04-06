@@ -773,6 +773,8 @@ def get_agent_router(
         user_id: Optional[str] = Query(None, description="User performing the branch (must own the source session)"),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            if user_id and user_id != request.state.user_id:
+                log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
 
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)

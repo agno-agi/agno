@@ -4942,6 +4942,10 @@ def aregenerate_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
     )
 
+    # Resolve dependencies (matches sync regenerate_dispatch)
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(agent, run_context=run_context)
+
     response_format = get_response_format(agent, run_context=run_context)
 
     if trimmed_messages is not None and last_run is not None:
@@ -5249,13 +5253,17 @@ def branch_session_dispatch(
         run.run_id = str(uuid4())
         run.session_id = new_session_id
 
+    # Carry over session_data and record the source session for traceability.
+    new_session_data = copy.deepcopy(source_session.session_data) or {}
+    new_session_data["branched_from"] = source_session_id
+
     new_session = AgentSession(
         session_id=new_session_id,
         agent_id=source_session.agent_id,
         user_id=new_user_id,
         team_id=source_session.team_id,
         workflow_id=source_session.workflow_id,
-        session_data=copy.deepcopy(source_session.session_data),
+        session_data=new_session_data,
         metadata=copy.deepcopy(source_session.metadata),
         agent_data=copy.deepcopy(source_session.agent_data),
         runs=branched_runs,
@@ -5326,13 +5334,17 @@ async def abranch_session_dispatch(
         run.run_id = str(uuid4())
         run.session_id = new_session_id
 
+    # Carry over session_data and record the source session for traceability.
+    new_session_data = copy.deepcopy(source_session.session_data) or {}
+    new_session_data["branched_from"] = source_session_id
+
     new_session = AgentSession(
         session_id=new_session_id,
         agent_id=source_session.agent_id,
         user_id=new_user_id,
         team_id=source_session.team_id,
         workflow_id=source_session.workflow_id,
-        session_data=copy.deepcopy(source_session.session_data),
+        session_data=new_session_data,
         metadata=copy.deepcopy(source_session.metadata),
         agent_data=copy.deepcopy(source_session.agent_data),
         runs=branched_runs,

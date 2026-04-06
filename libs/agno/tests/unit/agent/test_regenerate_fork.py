@@ -593,6 +593,8 @@ class TestBranchSessionDispatch:
         saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
         assert saved_session.session_id == new_id
         assert len(saved_session.runs) == 2
+        # branched_from should be recorded in session_data
+        assert saved_session.session_data["branched_from"] == "original"
 
     def test_branch_deep_copies_runs(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
