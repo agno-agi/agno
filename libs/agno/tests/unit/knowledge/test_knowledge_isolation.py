@@ -4,9 +4,12 @@ Tests that knowledge instances with isolate_vector_search=True filter by linked_
 """
 
 from typing import Any, Dict, List
+from unittest.mock import MagicMock
 
 import pytest
 
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.knowledge.content import Content
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
@@ -289,3 +292,134 @@ class TestLinkedToMetadata:
 
         # The knowledge's name should override since we set it after metadata merge
         assert result[0].meta_data["linked_to"] == "New KB"
+
+
+class TestContentByIdIsolation:
+    """Tests for IDOR protection in content-by-ID methods."""
+
+    def _make_mock_db(self, linked_to: str = "KB-A"):
+        mock_db = MagicMock()
+        mock_db.get_knowledge_content.return_value = KnowledgeRow(
+            name="test-content",
+            description="desc",
+            linked_to=linked_to,
+            status="completed",
+            status_message="ok",
+        )
+        return mock_db
+
+    def test_get_content_by_id_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = knowledge.get_content_by_id("some-id")
+        assert result is None
+
+    def test_get_content_by_id_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = knowledge.get_content_by_id("some-id")
+        assert result is not None
+
+    def test_get_content_by_id_no_isolation_allows_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+        )
+        result = knowledge.get_content_by_id("some-id")
+        assert result is not None
+
+    def test_get_content_status_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        status, msg = knowledge.get_content_status("some-id")
+        assert status is None
+        assert msg == "Content not found"
+
+    def test_get_content_status_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        status, _ = knowledge.get_content_status("some-id")
+        assert status is not None
+
+    @pytest.mark.asyncio
+    async def test_aget_content_by_id_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = await knowledge.aget_content_by_id("some-id")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_aget_content_status_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        status, msg = await knowledge.aget_content_status("some-id")
+        assert status is None
+        assert msg == "Content not found"
+
+
+class TestContentHashIsolation:
+    """Tests that content hashes include KB name when isolation is enabled."""
+
+    def test_hash_includes_kb_name_with_isolation(self):
+        kb_a = Knowledge(name="KB-A", vector_db=MockVectorDb(), isolate_vector_search=True)
+        kb_b = Knowledge(name="KB-B", vector_db=MockVectorDb(), isolate_vector_search=True)
+        content = Content(url="https://example.com/doc.pdf")
+
+        hash_a = kb_a._build_content_hash(content)
+        hash_b = kb_b._build_content_hash(content)
+
+        assert hash_a != hash_b
+
+    def test_hash_same_without_isolation(self):
+        kb_a = Knowledge(name="KB-A", vector_db=MockVectorDb())
+        kb_b = Knowledge(name="KB-B", vector_db=MockVectorDb())
+        content = Content(url="https://example.com/doc.pdf")
+
+        hash_a = kb_a._build_content_hash(content)
+        hash_b = kb_b._build_content_hash(content)
+
+        # Backward compatible — same hash when isolation disabled
+        assert hash_a == hash_b
+
+    def test_document_hash_includes_kb_name_with_isolation(self):
+        kb_a = Knowledge(name="KB-A", vector_db=MockVectorDb(), isolate_vector_search=True)
+        kb_b = Knowledge(name="KB-B", vector_db=MockVectorDb(), isolate_vector_search=True)
+        content = Content(url="https://example.com")
+        doc = Document(name="page1", content="hello", meta_data={"url": "https://example.com/page1"})
+
+        hash_a = kb_a._build_document_content_hash(doc, content)
+        hash_b = kb_b._build_document_content_hash(doc, content)
+
+        assert hash_a != hash_b

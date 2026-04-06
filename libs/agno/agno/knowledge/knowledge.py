@@ -585,7 +585,9 @@ class Knowledge(RemoteKnowledge):
                 return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+                return await asyncio.to_thread(
+                    self.vector_db.search, query=query, limit=_max_results, filters=search_filters
+                )
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -646,6 +648,8 @@ class Knowledge(RemoteKnowledge):
         content_row = self.contents_db.get_knowledge_content(content_id)
         if content_row is None:
             return None
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
+            return None
         return self._content_row_to_content(content_row)
 
     async def aget_content_by_id(self, content_id: str) -> Optional[Content]:
@@ -658,6 +662,8 @@ class Knowledge(RemoteKnowledge):
             content_row = self.contents_db.get_knowledge_content(content_id)
 
         if content_row is None:
+            return None
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
             return None
         return self._content_row_to_content(content_row)
 
@@ -673,6 +679,8 @@ class Knowledge(RemoteKnowledge):
         content_row = self.contents_db.get_knowledge_content(content_id)
         if content_row is None:
             return None, "Content not found"
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
+            return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
 
@@ -686,6 +694,8 @@ class Knowledge(RemoteKnowledge):
             content_row = self.contents_db.get_knowledge_content(content_id)
 
         if content_row is None:
+            return None, "Content not found"
+        if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
             return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
@@ -1573,7 +1583,7 @@ class Knowledge(RemoteKnowledge):
             and ContentType.URL in content.reader.get_supported_content_types()
         )
         if file_extension and not skip_download:
-            async with AsyncClient() as client:
+            async with AsyncClient(follow_redirects=True) as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
 
@@ -2222,6 +2232,9 @@ class Knowledge(RemoteKnowledge):
         - Same logic applies to paths
         """
         hash_parts = []
+        # Scope hash to this KB instance to prevent collisions when multiple KBs share a vector db
+        if self.isolate_vector_search and self.name:
+            hash_parts.append(self.name)
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2288,6 +2301,9 @@ class Knowledge(RemoteKnowledge):
             A unique hash string for this specific document
         """
         hash_parts = []
+        # Scope hash to this KB instance to prevent collisions when multiple KBs share a vector db
+        if self.isolate_vector_search and self.name:
+            hash_parts.append(self.name)
 
         if content.name:
             hash_parts.append(content.name)
