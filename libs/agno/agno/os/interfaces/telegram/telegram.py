@@ -44,6 +44,7 @@ class Telegram(BaseInterface):
         commands: Optional[List[Dict[str, str]]] = None,
         register_commands: bool = True,
         new_message: str = DEFAULT_NEW_MESSAGE,
+        react_emoji: Optional[str] = None,
     ):
         self.agent = agent
         self.team = team
@@ -61,6 +62,7 @@ class Telegram(BaseInterface):
         self.commands = commands if commands is not None else DEFAULT_BOT_COMMANDS
         self.register_commands = register_commands
         self.new_message = new_message
+        self.react_emoji = react_emoji
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Telegram requires an agent, team, or workflow")
@@ -82,4 +84,5 @@ class Telegram(BaseInterface):
             commands=self.commands,
             register_commands=self.register_commands,
             new_message=self.new_message,
+            react_emoji=self.react_emoji,
         )
