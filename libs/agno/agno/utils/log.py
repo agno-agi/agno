@@ -33,8 +33,13 @@ class ColoredRichHandler(RichHandler):
         self.source_type = source_type
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Strip exc_info when verbose_exceptions is off."""
-        if record.exc_info and not verbose_exceptions:
+        """Strip exc_info from warnings when verbose_exceptions is off.
+
+        Error-level logs (from log_exception / logger.exception) always
+        show tracebacks.  Warning-level logs only show tracebacks when
+        verbose_exceptions is enabled via AGNO_VERBOSE_EXCEPTIONS=true.
+        """
+        if record.exc_info and not verbose_exceptions and record.levelno <= logging.WARNING:
             record.exc_info = None
             record.exc_text = None
         super().emit(record)
