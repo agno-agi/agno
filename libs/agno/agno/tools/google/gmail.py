@@ -365,7 +365,7 @@ class GmailTools(Toolkit):
     def _build_service(self):
         return build("gmail", "v1", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id=None) -> None:
         if self.creds and self.creds.valid:
             return
 
@@ -388,7 +388,7 @@ class GmailTools(Toolkit):
             return
 
         # Try loading token from DB
-        if load_token(self, self.scopes):
+        if load_token(self, self.scopes, user_id=user_id):
             return
         if self.google_auth and self.google_auth._db:
             raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
@@ -431,7 +431,7 @@ class GmailTools(Toolkit):
             self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
 
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds):
+            if save_token(self, self.creds, user_id=user_id):
                 log_debug("Gmail credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]

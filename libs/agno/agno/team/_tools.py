@@ -160,7 +160,6 @@ def _determine_tools_for_model(
             for tool in resolved_tools:
                 if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
                     tool._db = team.db
-                    tool._user_id = getattr(team, "user_id", None)
 
     # Prepare tools
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []

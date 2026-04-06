@@ -1,4 +1,5 @@
 import base64
+import inspect
 import json
 import os
 from functools import wraps
@@ -18,16 +19,30 @@ def google_authenticate(service_name: str):
     Expects the toolkit class to define:
         - self.creds: Google OAuth credentials
         - self.service: Built API client (set by _build_service)
-        - self._auth(): Loads or refreshes credentials
+        - self._auth(user_id=None): Loads or refreshes credentials
         - self._build_service(): Returns build(api_name, api_version, credentials=self.creds)
     """
 
     def decorator(func):
+        # Expose original typed params + run_context in the signature so the framework:
+        # (1) builds the correct LLM tool schema from the original params
+        # (2) injects run_context (which carries user_id) at call time
+        # run_context is stripped from the LLM schema at function.py:660-671
+        sig = inspect.signature(func)
+        if "run_context" not in sig.parameters:
+            params = list(sig.parameters.values())
+            params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
+            exposed_sig = sig.replace(parameters=params)
+        else:
+            exposed_sig = sig
+
         @wraps(func)
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self, *args, run_context=None, **kwargs):
+            user_id = getattr(run_context, "user_id", None) if run_context else None
+
             if not self.creds or not self.creds.valid:
                 try:
-                    self._auth()
+                    self._auth(user_id=user_id)
                 except Exception as e:
                     log_error(f"{service_name.title()} authentication failed: {e}")
                     return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
@@ -39,6 +54,7 @@ def google_authenticate(service_name: str):
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 
+        wrapper.__signature__ = exposed_sig
         return wrapper
 
     return decorator
@@ -54,29 +70,14 @@ def get_token_db(toolkit: Any) -> Any:
     return None
 
 
-def _resolve_user_id(toolkit: Any) -> str:
-    """Get user_id for DB token storage.
-
-    Priority: toolkit._user_id (auto-wired from agent.user_id) > GoogleAuth.user_id > ""
-    """
-    # Set by auto-wiring from agent.user_id during tool resolution
-    uid = getattr(toolkit, "_user_id", None)
-    if uid:
-        return uid
-    # Fallback: GoogleAuth.user_id set at construction
-    ga = getattr(toolkit, "google_auth", None)
-    if ga and hasattr(ga, "user_id") and ga.user_id:
-        return ga.user_id
-    return ""
-
-
-def load_token(toolkit: Any, scopes: list) -> bool:
+def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> bool:
     """Try loading credentials from DB. Sets toolkit.creds if found. Returns True on success."""
     db = get_token_db(toolkit)
     if not db:
         return False
 
-    uid = _resolve_user_id(toolkit)
+    ga = getattr(toolkit, "google_auth", None)
+    uid = user_id or (ga.user_id if ga and ga.user_id else "") or ""
     try:
         row = db.get_auth_token("google", uid, "google")
     except (NotImplementedError, Exception):
@@ -105,13 +106,14 @@ def load_token(toolkit: Any, scopes: list) -> bool:
     return False
 
 
-def save_token(toolkit: Any, creds: Any) -> bool:
+def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
     """Persist credentials to DB. Returns True on success."""
     db = get_token_db(toolkit)
     if not db:
         return False
 
-    uid = _resolve_user_id(toolkit)
+    ga = getattr(toolkit, "google_auth", None)
+    uid = user_id or (ga.user_id if ga and ga.user_id else "") or ""
     try:
         token_data = json.loads(creds.to_json())
         db.upsert_auth_token(

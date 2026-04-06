@@ -196,7 +196,7 @@ class GoogleCalendarTools(Toolkit):
     def _build_service(self):
         return build("calendar", "v3", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id=None) -> None:
         """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
         if self.creds and self.creds.valid:
             return
@@ -217,7 +217,7 @@ class GoogleCalendarTools(Toolkit):
             self.creds = sa_creds
             return
 
-        if load_token(self, self.scopes):
+        if load_token(self, self.scopes, user_id=user_id):
             return
         if self.google_auth and self.google_auth._db:
             raise PermissionError("Calendar not authenticated — user must complete OAuth via authenticate_google")
@@ -265,7 +265,7 @@ class GoogleCalendarTools(Toolkit):
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds):
+            if save_token(self, self.creds, user_id=user_id):
                 log_debug("Calendar credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
