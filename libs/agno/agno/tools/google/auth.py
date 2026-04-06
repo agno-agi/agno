@@ -1,4 +1,5 @@
 import base64
+import inspect
 import json
 import os
 from functools import wraps
@@ -25,9 +26,12 @@ def google_authenticate(service_name: str):
     def decorator(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
+            rc = kwargs.pop("run_context", None)
+            user_id = getattr(rc, "user_id", None) if rc else None
+
             if not self.creds or not self.creds.valid:
                 try:
-                    self._auth()
+                    self._auth(user_id=user_id)
                 except Exception as e:
                     log_error(f"{service_name.title()} authentication failed: {e}")
                     return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
@@ -38,6 +42,14 @@ def google_authenticate(service_name: str):
                     log_error(f"{service_name.title()} service initialization failed: {e}")
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
+
+        # Add run_context to the wrapper's visible signature so the framework
+        # injects it at call time (needed for user_id in DB token lookups)
+        sig = inspect.signature(func)
+        if "run_context" not in sig.parameters:
+            params = list(sig.parameters.values())
+            params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
+            wrapper.__signature__ = sig.replace(parameters=params)
 
         return wrapper
 
