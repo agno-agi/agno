@@ -61,6 +61,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -88,6 +89,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            auth_tokens_table (Optional[str]): Name of the table to store OAuth tokens.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -112,6 +114,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -173,6 +176,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
+            (self.auth_tokens_table_name, "auth_tokens"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -395,6 +399,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        elif table_type == "auth_tokens":
+            self.auth_tokens_table = await self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -3778,3 +3790,70 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # -- Auth Token methods --
+
+    async def get_auth_token(self, provider: str, user_id: str, service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = (
+                    await sess.execute(
+                        select(table).where(
+                            table.c.provider == provider,
+                            table.c.user_id == user_id,
+                            table.c.service == service,
+                        )
+                    )
+                ).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(**data)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["provider", "user_id", "service"],
+                        set_={
+                            "token_data": stmt.excluded.token_data,
+                            "granted_scopes": stmt.excluded.granted_scopes,
+                            "updated_at": stmt.excluded.updated_at,
+                        },
+                    )
+                    await sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_error(f"Error upserting auth token: {e}")
+            raise
+
+    async def delete_auth_token(self, provider: str, user_id: str, service: str) -> bool:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.delete().where(
+                            table.c.provider == provider,
+                            table.c.user_id == user_id,
+                            table.c.service == service,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error deleting auth token: {e}")
+            return False

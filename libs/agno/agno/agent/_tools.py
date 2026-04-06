@@ -129,6 +129,12 @@ def get_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage)
+    if agent.db is not None and resolved_tools:
+        for tool in resolved_tools:
+            if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                tool._db = agent.db
+
     # Add provided tools
     if resolved_tools is not None:
         # If not running in async mode, raise if any tool is async
@@ -232,6 +238,12 @@ async def aget_tools(
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
+
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage)
+    if agent.db is not None and resolved_tools:
+        for tool in resolved_tools:
+            if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                tool._db = agent.db
 
     # Connect MCP tools
     await _init.connect_mcp_tools(agent)

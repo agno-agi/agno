@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import google_auth_from_store, google_auth_save_to_store, google_authenticate
 from agno.utils.log import log_error
 
 try:
@@ -88,6 +88,8 @@ authenticate = google_authenticate("drive")
 
 
 class GoogleDriveTools(Toolkit):
+    _clone_reset_attrs = ("creds", "service")
+
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
@@ -129,6 +131,7 @@ class GoogleDriveTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
         # Authentication
         auth_port: Optional[int] = 5050,
         login_hint: Optional[str] = None,
@@ -164,6 +167,7 @@ class GoogleDriveTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
@@ -235,7 +239,10 @@ class GoogleDriveTools(Toolkit):
             **kwargs,
         )
 
-    def _auth(self) -> None:
+        if self.google_auth:
+            self.google_auth.register_service("drive", self.scopes)
+
+    def _auth(self, user_id: Optional[str] = None) -> None:
         """Authenticate with Google Drive API using service account or OAuth."""
         if self.creds and self.creds.valid:
             return
@@ -253,6 +260,12 @@ class GoogleDriveTools(Toolkit):
             self.creds = service_account_creds
             self.creds.refresh(Request())
             return
+
+        # DB-backed store via GoogleAuth (handles refresh + auto-persist)
+        if google_auth_from_store(self, self.scopes, user_id=user_id):
+            return
+        if getattr(self, "google_auth", None) is not None:
+            raise PermissionError("Drive not authenticated — user must complete OAuth via authenticate_google")
 
         # OAuth flow
         token_file = Path(self.token_path or "token.json")
@@ -293,6 +306,7 @@ class GoogleDriveTools(Toolkit):
 
         if self.creds and self.creds.valid:
             token_file.write_text(self.creds.to_json())
+            google_auth_save_to_store(self, user_id=user_id)
 
     def _build_service(self):
         creds_to_use = self.creds
