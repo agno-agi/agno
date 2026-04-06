@@ -213,6 +213,7 @@ class SharePointLoader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from SharePoint (async).
 
@@ -316,6 +317,8 @@ class SharePointLoader(BaseLoader):
                 await self._aupdate_content(content_entry)
                 continue
 
+            await self._abackup_bytes(content_entry, file_content.getvalue(), file_name, backup)
+
             # Read the content
             read_documents = await reader.async_read(file_content, name=file_name)
 
@@ -329,6 +332,7 @@ class SharePointLoader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from SharePoint (sync).
 
@@ -431,6 +435,8 @@ class SharePointLoader(BaseLoader):
                 content_entry.status = ContentStatus.FAILED
                 self._update_content(content_entry)
                 continue
+
+            self._backup_bytes(content_entry, file_content.getvalue(), file_name, backup)
 
             # Read the content
             read_documents = reader.read(file_content, name=file_name)

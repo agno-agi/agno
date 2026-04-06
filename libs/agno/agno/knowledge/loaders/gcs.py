@@ -88,6 +88,7 @@ class GCSLoader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from Google Cloud Storage (async).
 
@@ -167,7 +168,10 @@ class GCSLoader(BaseLoader):
             reader = cast(Reader, reader)
 
             # Fetch and load the content
-            readable_content = BytesIO(gcs_object.download_as_bytes())
+            file_bytes = gcs_object.download_as_bytes()
+            readable_content = BytesIO(file_bytes)
+
+            await self._abackup_bytes(content_entry, file_bytes, file_name, backup)
 
             # Read the content
             read_documents = await reader.async_read(readable_content, name=file_name)
@@ -182,6 +186,7 @@ class GCSLoader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from Google Cloud Storage (sync)."""
         try:
@@ -258,7 +263,10 @@ class GCSLoader(BaseLoader):
             reader = cast(Reader, reader)
 
             # Fetch and load the content
-            readable_content = BytesIO(gcs_object.download_as_bytes())
+            file_bytes = gcs_object.download_as_bytes()
+            readable_content = BytesIO(file_bytes)
+
+            self._backup_bytes(content_entry, file_bytes, file_name, backup)
 
             # Read the content
             read_documents = reader.read(readable_content, name=file_name)

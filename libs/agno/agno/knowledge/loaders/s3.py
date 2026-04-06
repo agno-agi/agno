@@ -71,6 +71,7 @@ class S3Loader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from AWS S3 (async).
 
@@ -152,13 +153,18 @@ class S3Loader(BaseLoader):
 
             # Fetch and load the content
             temporary_file = None
+            file_bytes: Optional[bytes] = None
             readable_content: Optional[Union[BytesIO, Path]] = None
             if s3_object.uri.endswith(".pdf"):
-                readable_content = BytesIO(s3_object.get_resource().get()["Body"].read())
+                file_bytes = s3_object.get_resource().get()["Body"].read()
+                readable_content = BytesIO(file_bytes)
             else:
                 temporary_file = Path("storage").joinpath(file_name)
                 readable_content = temporary_file
                 s3_object.download(readable_content)  # type: ignore
+                file_bytes = temporary_file.read_bytes()
+
+            await self._abackup_bytes(content_entry, file_bytes, file_name, backup)
 
             # Read the content
             read_documents = await reader.async_read(readable_content, name=file_name)
@@ -177,6 +183,7 @@ class S3Loader(BaseLoader):
         upsert: bool,
         skip_if_exists: bool,
         config: Optional[BaseStorageConfig] = None,
+        backup: Optional[bool] = None,
     ):
         """Load content from AWS S3 (sync)."""
         from agno.cloud.aws.s3.bucket import S3Bucket
@@ -252,13 +259,18 @@ class S3Loader(BaseLoader):
 
             # Fetch and load the content
             temporary_file = None
+            file_bytes: Optional[bytes] = None
             readable_content: Optional[Union[BytesIO, Path]] = None
             if s3_object.uri.endswith(".pdf"):
-                readable_content = BytesIO(s3_object.get_resource().get()["Body"].read())
+                file_bytes = s3_object.get_resource().get()["Body"].read()
+                readable_content = BytesIO(file_bytes)
             else:
                 temporary_file = Path("storage").joinpath(file_name)
                 readable_content = temporary_file
                 s3_object.download(readable_content)  # type: ignore
+                file_bytes = temporary_file.read_bytes()
+
+            self._backup_bytes(content_entry, file_bytes, file_name, backup)
 
             # Read the content
             read_documents = reader.read(readable_content, name=file_name)
