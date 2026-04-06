@@ -939,7 +939,7 @@ class Gemini(Model):
                 while audio_file.state and audio_file.state.name == "PROCESSING":
                     if audio_file.name:
                         audio_file = self.get_client().files.get(name=audio_file.name)
-                    time.sleep(2)
+                    asyncio.sleep(2)
 
                 if audio_file.state and audio_file.state.name == "FAILED":
                     log_error(f"Audio file processing failed: {audio_file.state.name}")
@@ -992,7 +992,7 @@ class Gemini(Model):
                 while video_file.state and video_file.state.name == "PROCESSING":
                     if video_file.name:
                         video_file = self.get_client().files.get(name=video_file.name)
-                    time.sleep(2)
+                    asyncio.sleep(2)
 
                 if video_file.state and video_file.state.name == "FAILED":
                     log_error(f"Video file processing failed: {video_file.state.name}")
@@ -1654,7 +1654,7 @@ class Gemini(Model):
         while not operation.done:
             if elapsed >= max_wait:
                 raise TimeoutError(f"Operation timed out after {max_wait} seconds")
-            time.sleep(poll_interval)
+            asyncio.sleep(poll_interval)
             elapsed += poll_interval
             operation = self.get_client().operations.get(operation)
             log_debug(f"Waiting for operation... ({elapsed}s elapsed)")

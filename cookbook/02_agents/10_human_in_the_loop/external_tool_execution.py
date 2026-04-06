@@ -26,7 +26,7 @@ def execute_shell_command(command: str) -> str:
         str: The output of the shell command
     """
     if command.startswith("ls"):
-        return subprocess.check_output(command, shell=True).decode("utf-8")
+        return subprocess.check_output(command, shell=False).decode("utf-8")
     else:
         raise Exception(f"Unsupported command: {command}")
 
