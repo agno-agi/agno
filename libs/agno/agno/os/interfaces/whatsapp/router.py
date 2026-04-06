@@ -313,9 +313,10 @@ def attach_routes(
                 except asyncio.CancelledError:
                     pass
 
+            _entity = entity.deep_copy() if hasattr(entity, "deep_copy") else entity
             typing_task = asyncio.create_task(_keep_typing())
             try:
-                response = await entity.arun(parsed.text, **run_kwargs)  # type: ignore[union-attr]
+                response = await _entity.arun(parsed.text, **run_kwargs)  # type: ignore[union-attr]
             finally:
                 typing_task.cancel()
 

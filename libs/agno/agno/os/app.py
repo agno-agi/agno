@@ -67,6 +67,7 @@ from agno.os.utils import (
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team
+from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow
@@ -527,6 +528,17 @@ class AgentOS:
 
             agent.initialize_agent()
 
+            # Wire agent.db to toolkits that declare _db (e.g. GoogleAuth for OAuth token storage).
+            # Must happen here (init time) so the OAuth callback closure captures a wired instance.
+            # Only sync DBs that override get_auth_token — skips async and unsupported backends.
+            if agent.db is not None and isinstance(agent.tools, list):
+                from agno.db.base import BaseDb
+
+                if isinstance(agent.db, BaseDb) and type(agent.db).get_auth_token is not BaseDb.get_auth_token:
+                    for tool in agent.tools:
+                        if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                            tool._db = agent.db
+
             # Required for the built-in routes to work
             agent.store_events = True
 
@@ -556,6 +568,18 @@ class AgentOS:
                     if isinstance(member, Agent):
                         member.team_id = None
                         member.initialize_agent()
+                        # Wire DB to member agent toolkits — same guard as _initialize_agents
+                        member_db = member.db or team.db
+                        if member_db is not None and isinstance(member.tools, list):
+                            from agno.db.base import BaseDb
+
+                            if (
+                                isinstance(member_db, BaseDb)
+                                and type(member_db).get_auth_token is not BaseDb.get_auth_token
+                            ):
+                                for tool in member.tools:
+                                    if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
+                                        tool._db = member_db
                     elif isinstance(member, Team):
                         member.initialize_team()
 
@@ -823,7 +847,6 @@ class AgentOS:
         # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
-
         # Store internal service token for scheduler auth bypass
         if self._internal_service_token:
             fastapi_app.state.internal_service_token = self._internal_service_token

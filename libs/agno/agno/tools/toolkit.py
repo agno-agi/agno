@@ -12,6 +12,10 @@ class Toolkit:
     # When True, the Agent will automatically call connect() before using tools and close() after
     _requires_connect: bool = False
 
+    # Subclasses override with attr names that hold per-user mutable state (creds, service, etc.).
+    # clone() resets these to None so each request rebuilds them for the current user.
+    _clone_reset_attrs: tuple = ()
+
     def __init__(
         self,
         name: str = "toolkit",
@@ -344,6 +348,30 @@ class Toolkit:
         Called automatically by the Agent when _requires_connect is True.
         """
         pass
+
+    def clone(self) -> "Toolkit":
+        """Shallow-copy this toolkit and reset per-user mutable state.
+
+        Used by deep_copy_field() as a fallback when deepcopy() fails (e.g. Google
+        API clients hold unpicklable httplib2 transports). Config attrs (scopes,
+        credentials_path, etc.) are shared; mutable attrs listed in _clone_reset_attrs
+        are set to None so the auth decorator rebuilds them for the current user.
+        """
+        import copy
+
+        clone = copy.copy(self)
+        for attr in self._clone_reset_attrs:
+            setattr(clone, attr, None)
+
+        # Rebuild function dicts so entrypoints are bound to the clone, not the original
+        clone.functions = OrderedDict()
+        clone.async_functions = OrderedDict()
+        for name, fn in self.functions.items():
+            clone.functions[name] = fn.clone_for(clone)
+        for name, fn in self.async_functions.items():
+            clone.async_functions[name] = fn.clone_for(clone)
+
+        return clone
 
     def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.

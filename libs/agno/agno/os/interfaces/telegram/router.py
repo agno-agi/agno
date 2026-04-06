@@ -204,6 +204,8 @@ def attach_routes(
         message_thread_id: Optional[int],
         is_private: bool = False,
     ) -> None:
+        _entity = entity.deep_copy() if hasattr(entity, "deep_copy") else entity
+
         is_workflow = entity_type == "workflow"
         stream_kwargs: dict = dict(stream=True, stream_events=True, **run_kwargs)
         if not is_workflow:
@@ -219,7 +221,7 @@ def attach_routes(
         )
 
         try:
-            async for event in entity.arun(message_text, **stream_kwargs):  # type: ignore[union-attr]
+            async for event in _entity.arun(message_text, **stream_kwargs):  # type: ignore[union-attr]
                 if isinstance(event, (RunOutput, TeamRunOutput)):
                     state.final_run_output = event
                     continue
@@ -261,7 +263,8 @@ def attach_routes(
         reply_to: Optional[int],
         message_thread_id: Optional[int],
     ) -> None:
-        response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+        _entity = entity.deep_copy() if hasattr(entity, "deep_copy") else entity
+        response = await _entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
         if not response or response.status == "ERROR":
             if response:
                 log_error(response.content)

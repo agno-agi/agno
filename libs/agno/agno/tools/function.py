@@ -234,6 +234,21 @@ class Function(BaseModel):
             approval_type=data.get("approval_type"),
         )
 
+    def clone_for(self, new_owner: Any) -> "Function":
+        """Shallow-copy this Function with its entrypoint rebound to new_owner.
+
+        Used by Toolkit.clone() so tool methods operate on the cloned toolkit's
+        state instead of the original's. Only rebinds bound methods (__self__);
+        closures and standalone functions are left as-is.
+        """
+        import types
+
+        clone = self.model_copy()
+        ep = self.entrypoint
+        if ep is not None and hasattr(ep, "__self__"):
+            clone.entrypoint = types.MethodType(ep.__func__, new_owner)  # type: ignore[attr-defined]
+        return clone
+
     def model_copy(self, *, deep: bool = False) -> "Function":
         """
         Override model_copy to handle callable fields that can't be deep copied (pickled).

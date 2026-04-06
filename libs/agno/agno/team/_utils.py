@@ -183,18 +183,20 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             copied_tools = []
             for tool in field_value:
                 try:
-                    # Share MCP tools (they maintain server connections)
-                    is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                    )
-                    if is_mcp_tool:
+                    # Share tools that maintain connections or act as coordinators
+                    mro_names = {c.__name__ for c in type(tool).__mro__} if hasattr(type(tool), "__mro__") else set()
+                    is_shared_tool = bool(mro_names & {"MCPTools", "MultiMCPTools", "GoogleAuth"})
+                    if is_shared_tool:
                         copied_tools.append(tool)
                     else:
                         try:
                             copied_tools.append(deepcopy(tool))
                         except Exception:
-                            # Tool can't be deep copied, share by reference
-                            copied_tools.append(tool)
+                            # deepcopy failed (e.g. Google httplib2 clients) — try clone()
+                            if hasattr(tool, "clone") and callable(tool.clone):
+                                copied_tools.append(tool.clone())
+                            else:
+                                copied_tools.append(tool)
                 except Exception:
                     # MCP detection failed, share tool by reference to be safe
                     copied_tools.append(tool)
@@ -216,7 +218,6 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "session_summary_manager",
         "compression_manager",
         "learning",
-        "skills",
     ):
         return field_value
 

@@ -191,6 +191,9 @@ def attach_routes(
             if skipped:
                 notice = "[Skipped files: " + ", ".join(skipped) + "]"
                 message_text = f"{notice}\n{message_text}"
+            # Per-request clone isolates mutable toolkit state (creds, service) between users
+            _entity = entity.deep_copy() if hasattr(entity, "deep_copy") else entity
+
             run_kwargs: Dict[str, Any] = {
                 "user_id": resolved_user_id,
                 "session_id": session_id,
@@ -207,7 +210,7 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            response = await _entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
 
             if response:
                 if response.status == "ERROR":
@@ -312,6 +315,8 @@ def attach_routes(
             if skipped:
                 notice = "[Skipped files: " + ", ".join(skipped) + "]"
                 message_text = f"{notice}\n{message_text}"
+            _entity = entity.deep_copy() if hasattr(entity, "deep_copy") else entity
+
             run_kwargs: Dict[str, Any] = {
                 "stream": True,
                 # Enables event-level chunks for task card and tool lifecycle rendering
@@ -331,7 +336,7 @@ def attach_routes(
                 "audio": audio or None,
             }
 
-            response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
+            response_stream = _entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
 
             if response_stream is None:
                 try:
