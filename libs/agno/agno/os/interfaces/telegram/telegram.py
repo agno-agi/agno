@@ -1,3 +1,5 @@
+import os
+
 from typing import Dict, List, Literal, Optional, Union
 
 from fastapi.routing import APIRouter
@@ -79,10 +81,17 @@ class Telegram(BaseInterface):
             entity = self.agent or self.team or self.workflow
             entity_type = "agent" if self.agent else "team" if self.team else "workflow"
 
+            # Resolve token: explicit param → env var
+            token = self.token or os.environ.get("TELEGRAM_TOKEN")
+            if not token:
+                raise ValueError(
+                    "TELEGRAM_TOKEN is not set. Pass token='...' or set the TELEGRAM_TOKEN env var."
+                )
+
             self._processor = TelegramMessageProcessor(
                 entity=entity,
                 entity_type=entity_type,
-                token=self.token,
+                token=token,
                 reply_to_mentions_only=self.reply_to_mentions_only,
                 reply_to_bot_messages=self.reply_to_bot_messages,
                 start_message=self.start_message,
