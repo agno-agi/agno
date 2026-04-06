@@ -436,6 +436,42 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     )
                 )
 
+        # Agents (code-defined agents for workflow rehydration)
+        if resource_type is None or resource_type == RegistryResourceType.AGENT:
+            for agent in getattr(registry, "agents", []) or []:
+                agent_id = getattr(agent, "id", None)
+                agent_name = getattr(agent, "name", None) or agent_id
+                resources.append(
+                    RegistryContentResponse(
+                        name=agent_name,
+                        id=agent_id,
+                        type=RegistryResourceType.AGENT,
+                        description=_safe_str(getattr(agent, "description", None)),
+                        metadata={
+                            "id": agent_id,
+                            "class_path": _class_path(agent),
+                        },
+                    )
+                )
+
+        # Teams (code-defined teams for workflow rehydration)
+        if resource_type is None or resource_type == RegistryResourceType.TEAM:
+            for team in getattr(registry, "teams", []) or []:
+                team_id = getattr(team, "id", None)
+                team_name = getattr(team, "name", None) or team_id
+                resources.append(
+                    RegistryContentResponse(
+                        name=team_name,
+                        id=team_id,
+                        type=RegistryResourceType.TEAM,
+                        description=_safe_str(getattr(team, "description", None)),
+                        metadata={
+                            "id": team_id,
+                            "class_path": _class_path(team),
+                        },
+                    )
+                )
+
         # Stable ordering helps pagination
         resources.sort(key=lambda r: (r.type, r.name))
         return resources

@@ -343,6 +343,23 @@ class LearningMachine:
         """True if any store was updated in the last operation."""
         return any(getattr(store, "was_updated", False) for store in self.stores.values())
 
+    @property
+    def requires_history(self) -> bool:
+        # PROPOSE and HITL modes need chat history for multi-turn confirmation
+        modes_needing_history = {LearningMode.PROPOSE, LearningMode.HITL}
+        for cfg in (
+            self.learned_knowledge,
+            self.user_profile,
+            self.user_memory,
+            self.session_context,
+            self.entity_memory,
+            self.decision_log,
+        ):
+            mode = getattr(cfg, "mode", None) or getattr(getattr(cfg, "config", None), "mode", None)
+            if mode in modes_needing_history:
+                return True
+        return False
+
     # =========================================================================
     # Main API
     # =========================================================================

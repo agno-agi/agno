@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import mimetypes
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.base import Model, RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -56,6 +57,11 @@ except ImportError:
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
     )
 
+try:
+    from google.genai.types import ToolParallelAiSearch
+except ImportError:
+    ToolParallelAiSearch = None
+
 
 @dataclass
 class Gemini(Model):
@@ -90,6 +96,15 @@ class Gemini(Model):
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
 
+    # Parallel web search grounding (Vertex AI only)
+    # Uses Parallel Web Systems' search API for grounding with public web data
+    parallel_search: bool = False
+    parallel_api_key: Optional[str] = None
+    # Optional custom configuration for Parallel search (e.g., domain filtering)
+    # Passed as `custom_configs` in the ToolParallelAiSearch payload.
+    # Example: {"source_policy": {"exclude_domains": ["example.com"]}}
+    parallel_config: Optional[Dict[str, Any]] = None
+
     # Gemini File Search capabilities
     file_search_store_names: Optional[List[str]] = None
     file_search_metadata_filter: Optional[str] = None
@@ -110,6 +125,12 @@ class Gemini(Model):
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
     thinking_level: Optional[str] = None  # "low", "high"
     request_params: Optional[Dict[str, Any]] = None
+
+    # Timeout in seconds
+    timeout: Optional[float] = None
+
+    # Gemini returns cumulative token counts in each streaming chunk, so only collect on final chunk
+    collect_metrics_on_completion: bool = True
 
     # Client parameters
     credentials: Optional[Credentials] = None
@@ -165,6 +186,12 @@ class Gemini(Model):
                 client_params["credentials"] = self.credentials
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
+
+        if self.timeout is not None:
+            http_options = client_params.get("http_options", {})
+            if isinstance(http_options, dict):
+                http_options["timeout"] = int(self.timeout * 1000)
+                client_params["http_options"] = http_options
 
         if self.client_params:
             client_params.update(self.client_params)
@@ -322,6 +349,29 @@ class Gemini(Model):
             )
 
         self._append_file_search_tool(builtin_tools)
+
+        # Build Parallel web search grounding tool
+        if self.parallel_search:
+            log_debug("Gemini Parallel web search grounding enabled.")
+            if not self.vertexai:
+                raise ValueError("Parallel search grounding requires vertexai=True.")
+            if self.search or self.grounding:
+                raise ValueError(
+                    "Parallel search grounding cannot be combined with google_search or grounding tools. "
+                    "Disable `search` and `grounding` when using `parallel_search`."
+                )
+            if ToolParallelAiSearch is None:
+                raise ImportError(
+                    "ToolParallelAiSearch is not available in your version of `google-genai`. "
+                    "Please upgrade using `pip install -U google-genai`."
+                )
+            parallel_tool_config: Dict[str, Any] = {}
+            parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
+            if parallel_key:
+                parallel_tool_config["api_key"] = parallel_key
+            if self.parallel_config:
+                parallel_tool_config["custom_configs"] = self.parallel_config
+            builtin_tools.append(Tool(parallel_ai_search=ToolParallelAiSearch(**parallel_tool_config)))
 
         # Set tools in config
         if builtin_tools:
@@ -482,9 +532,6 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().models.generate_content(
                 model=self.id,
@@ -543,9 +590,6 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             for response in self.get_client().models.generate_content_stream(
                 model=self.id,
@@ -601,9 +645,6 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_client().aio.models.generate_content(
                 model=self.id,
@@ -663,9 +704,6 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_client().aio.models.generate_content_stream(
@@ -710,6 +748,11 @@ class Gemini(Model):
             messages (List[Message]): The list of messages to convert.
             compress_tool_results: Whether to compress tool results.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages: List = []
         system_message = None
 
@@ -737,35 +780,27 @@ class Gemini(Model):
                         part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts.append(part)
                 for tool_call in message.tool_calls:
+                    try:
+                        args = (
+                            json.loads(tool_call["function"]["arguments"])
+                            if "arguments" in tool_call.get("function", {})
+                            else {}
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
                     part = Part.from_function_call(
                         name=tool_call["function"]["name"],
-                        args=json.loads(tool_call["function"]["arguments"]),
+                        args=args,
                     )
                     if "thought_signature" in tool_call:
                         part.thought_signature = base64.b64decode(tool_call["thought_signature"])
                     message_parts.append(part)
-            # Function call results
-            elif message.tool_calls is not None and len(message.tool_calls) > 0:
-                for idx, tool_call in enumerate(message.tool_calls):
-                    if isinstance(content, list) and idx < len(content):
-                        original_from_list = content[idx]
-
-                        if compress_tool_results:
-                            compressed_from_tool_call = tool_call.get("content")
-                            tc_content = compressed_from_tool_call if compressed_from_tool_call else original_from_list
-                        else:
-                            tc_content = original_from_list
-                    else:
-                        tc_content = message.get_content(use_compressed_content=compress_tool_results)
-
-                        if tc_content is None:
-                            tc_content = tool_call.get("content")
-                            if tc_content is None:
-                                tc_content = content
-
-                    message_parts.append(
-                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tc_content})
-                    )
+            # Individual tool result message (canonical format)
+            elif message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None:
+                tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                message_parts.append(
+                    Part.from_function_response(name=message.tool_name, response={"result": tc_content})
+                )
             # Regular text content
             else:
                 if isinstance(content, str):
@@ -835,10 +870,24 @@ class Gemini(Model):
                         if isinstance(file_content, Part):
                             message_parts.append(file_content)
 
+            # Skip messages with empty parts to avoid Gemini API error:
+            # "must include at least one parts field"
+            if not message_parts:
+                log_debug(f"Skipping message with role '{role}' that has no parts")
+                continue
+
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
 
-        return formatted_messages, system_message
+        # Merge consecutive messages with the same role (Gemini API rejects consecutive same-role messages)
+        merged: List[Content] = []
+        for msg in formatted_messages:
+            if merged and merged[-1].role == msg.role:
+                merged[-1].parts.extend(msg.parts)
+            else:
+                merged.append(msg)
+
+        return merged, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
         # Case 1: Audio is a bytes object
@@ -966,26 +1015,30 @@ class Gemini(Model):
 
     def _format_file_for_message(self, file: File) -> Optional[Part]:
         # Case 1: File is a bytes object
-        if file.content and isinstance(file.content, bytes) and file.mime_type:
-            return Part.from_bytes(mime_type=file.mime_type, data=file.content)
+        if file.content and isinstance(file.content, bytes):
+            _mime = file.mime_type or mimetypes.guess_type(file.filename or "")[0] or "application/pdf"
+            return Part.from_bytes(mime_type=_mime, data=file.content)
 
         # Case 2: File is a URL
         elif file.url is not None:
             # Case 2a: GCS URI (gs://) - pass directly to Gemini (supports up to 2GB)
-            if file.url.startswith("gs://") and file.mime_type:
-                return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
+            if file.url.startswith("gs://"):
+                _mime = file.mime_type or mimetypes.guess_type(file.url)[0] or "application/pdf"
+                return Part.from_uri(file_uri=file.url, mime_type=_mime)
 
-            # Case 2b: HTTPS URL with mime_type - pass directly to Gemini (supports up to 100MB)
-            # This enables pre-signed URLs from S3/Azure and public URLs without downloading
+            # Case 2b: HTTPS URL with known mime_type - pass directly to Gemini (supports up to 100MB)
+            # URLs without mime_type fall through to Case 2c (download + detect) because
+            # Gemini servers may not be able to access private/auth URLs directly.
             if file.url.startswith("https://") and file.mime_type:
                 return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
 
-            # Case 2c: URL without mime_type - download and detect (existing behavior)
+            # Case 2c: Other URL schemes - download and detect
             url_content = file.file_url_content
             if url_content is not None:
                 content, mime_type = url_content
-                if mime_type and content:
-                    return Part.from_bytes(mime_type=mime_type, data=content)
+                if content:
+                    _mime = mime_type or mimetypes.guess_type(file.url)[0] or "application/pdf"
+                    return Part.from_bytes(mime_type=_mime, data=content)
             log_warning(f"Failed to download file from {file.url}")
             return None
 
@@ -994,19 +1047,10 @@ class Gemini(Model):
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
                 if file_path.stat().st_size < 20 * 1024 * 1024:  # 20MB in bytes
-                    if file.mime_type:
-                        file_content = file_path.read_bytes()
-                        if file_content:
-                            return Part.from_bytes(mime_type=file.mime_type, data=file_content)
-                    else:
-                        import mimetypes
-
-                        mime_type_guess = mimetypes.guess_type(file_path)[0]
-                        if mime_type_guess is not None:
-                            file_content = file_path.read_bytes()
-                            if file_content:
-                                mime_type_str: str = str(mime_type_guess)
-                                return Part.from_bytes(mime_type=mime_type_str, data=file_content)
+                    file_content = file_path.read_bytes()
+                    if file_content:
+                        _mime = file.mime_type or mimetypes.guess_type(str(file_path))[0] or "application/pdf"
+                        return Part.from_bytes(mime_type=_mime, data=file_content)
                     return None
                 else:
                     clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
@@ -1048,41 +1092,11 @@ class Gemini(Model):
         """
         Format function call results for Gemini.
 
-        For combined messages:
-        - content: list of ORIGINAL content (for preservation)
-        - tool_calls[i]["content"]: compressed content if available (for API sending)
-
-        This allows the message to be saved with both original and compressed versions.
+        Stores individual Message per tool result in the canonical format, matching
+        OpenAI/Claude behavior for cross-model compatibility.
         """
-        combined_original_content: List = []
-        combined_function_result: List = []
-        tool_names: List[str] = []
-
-        message_metrics = Metrics()
-
         if len(function_call_results) > 0:
-            for idx, result in enumerate(function_call_results):
-                combined_original_content.append(result.content)
-                compressed_content = result.get_content(use_compressed_content=compress_tool_results)
-                combined_function_result.append(
-                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
-                )
-                if result.tool_name:
-                    tool_names.append(result.tool_name)
-                message_metrics += result.metrics
-
-        tool_name = ", ".join(tool_names) if tool_names else None
-
-        if combined_original_content:
-            messages.append(
-                Message(
-                    role="tool",
-                    content=combined_original_content,
-                    tool_name=tool_name,
-                    tool_calls=combined_function_result,
-                    metrics=message_metrics,
-                )
-            )
+            messages.extend(function_call_results)
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
@@ -1395,7 +1409,7 @@ class Gemini(Model):
                 model_response.citations = citations
 
             # Extract usage metadata if present
-            if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
+            if self._should_collect_metrics(response_delta, candidate) and response_delta.usage_metadata is not None:
                 model_response.response_usage = self._get_metrics(response_delta.usage_metadata)
 
         return model_response
@@ -1438,22 +1452,34 @@ class Gemini(Model):
 
         return new_instance
 
-    def _get_metrics(self, response_usage: GenerateContentResponseUsageMetadata) -> Metrics:
+    def _should_collect_metrics(self, response: GenerateContentResponse, candidate: Any) -> bool:
         """
-        Parse the given Google Gemini usage into an Agno Metrics object.
+        Determine if metrics should be collected from the streaming response.
+        """
+        if not hasattr(response, "usage_metadata") or response.usage_metadata is None:
+            return False
+
+        if not self.collect_metrics_on_completion:
+            return True
+
+        return hasattr(candidate, "finish_reason") and candidate.finish_reason is not None
+
+    def _get_metrics(self, response_usage: GenerateContentResponseUsageMetadata) -> MessageMetrics:
+        """
+        Parse the given Google Gemini usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from Google Gemini
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
         metrics.output_tokens = response_usage.candidates_token_count or 0
         if response_usage.thoughts_token_count is not None:
-            metrics.output_tokens += response_usage.thoughts_token_count or 0
+            metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -24,7 +24,9 @@ def get_json_type_for_py_type(arg: str) -> str:
     :return: The JSON schema type.
     """
     # log_info(f"Getting JSON type for: {arg}")
-    if arg in ("int", "float", "complex", "Decimal"):
+    if arg == "int":
+        return "integer"
+    elif arg in ("float", "complex", "Decimal"):
         return "number"
     elif arg in ("str", "string"):
         return "string"
@@ -122,7 +124,24 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     type_origin = get_origin(type_hint)
     # log_info(f"Type origin: {type_origin}")
     if type_origin is not None:
-        if type_origin in (list, tuple, set, frozenset):
+        if type_origin is Literal:
+            # Handle Literal types - check all values to determine the appropriate JSON type
+            # Order matters: check bool before int since bool is a subclass of int in Python
+            if type_args:
+                if all(isinstance(arg, str) for arg in type_args):
+                    return {"type": "string", "enum": list(type_args)}
+                elif all(isinstance(arg, bool) for arg in type_args):
+                    return {"type": "boolean", "enum": list(type_args)}
+                elif all(isinstance(arg, int) and not isinstance(arg, bool) for arg in type_args):
+                    return {"type": "integer", "enum": list(type_args)}
+                elif all(isinstance(arg, (int, float)) and not isinstance(arg, bool) for arg in type_args):
+                    # Mixed int/float or pure float - use "number" which covers both
+                    return {"type": "number", "enum": list(type_args)}
+                else:
+                    # Fallback for mixed or other types - just provide enum without type
+                    return {"enum": list(type_args)}
+            return {"type": "string"}
+        elif type_origin in (list, tuple, set, frozenset):
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:

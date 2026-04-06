@@ -187,89 +187,65 @@ def _update_session_state_tool(team: "Team", run_context: RunContext, session_st
     return f"Updated session state: {session_state}"
 
 
-def _get_previous_sessions_messages_function(
-    team: "Team", num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, async_mode: bool = False
-):
-    """Factory function to create a get_previous_session_messages function.
+def _search_past_sessions_function(
+    team: "Team",
+    num_past_sessions_to_search: Optional[int] = None,
+    num_past_session_runs_in_search: Optional[int] = None,
+    user_id: Optional[str] = None,
+    current_session_id: Optional[str] = None,
+    async_mode: bool = False,
+) -> Function:
+    """Factory for search_past_sessions tool for Team."""
 
-    Args:
-        num_history_sessions: The last n sessions to be taken from db
-        user_id: The user ID to filter sessions by
-
-    Returns:
-        Callable: A function that retrieves messages from previous sessions
-    """
-
+    from agno.agent._default_tools import _extract_session_preview
     from agno.team._init import _has_async_db
 
-    def get_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
+    _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
+
+    def search_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        import json
-
         if team.db is None:
-            return "Previous session messages not available"
+            return json.dumps([])
 
         team.db = cast(BaseDb, team.db)
         selected_sessions = team.db.get_sessions(
             session_type=SessionType.TEAM,
-            limit=num_history_sessions,
+            limit=_limit,
             user_id=user_id,
             sort_by="created_at",
             sort_order="desc",
         )
 
-        all_messages = []
-        seen_message_pairs = set()
-
+        results: list = []
         for session in selected_sessions:
-            if isinstance(session, TeamSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        for i in range(0, len(messages) - 1, 2):
-                            if i + 1 < len(messages):
-                                try:
-                                    user_msg = messages[i]
-                                    assistant_msg = messages[i + 1]
-                                    user_content = user_msg.content
-                                    assistant_content = assistant_msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue  # Skip this pair if either message has no content
+            if not isinstance(session, TeamSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(user_msg))
-                                        all_messages.append(Message.model_validate(assistant_msg))
-                                except Exception as e:
-                                    log_warning(f"Error processing message pair: {e}")
-                                    continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
-
-    async def aget_previous_session_messages() -> str:
-        """Use this function to retrieve messages from previous chat sessions.
-        USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+    async def asearch_past_sessions() -> str:
+        """List previous chat sessions with short previews.
+        Use read_past_session to read the full conversation for a specific session.
 
         Returns:
-            str: JSON formatted list of message pairs from previous sessions
+            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
-        import json
-
-        from agno.team._init import _has_async_db
-
         if team.db is None:
-            return "Previous session messages not available"
+            return json.dumps([])
 
         if _has_async_db(team):
             selected_sessions = await cast(AsyncBaseDb, team.db).get_sessions(  # type: ignore
                 session_type=SessionType.TEAM,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
@@ -277,45 +253,132 @@ def _get_previous_sessions_messages_function(
         else:
             selected_sessions = team.db.get_sessions(  # type: ignore
                 session_type=SessionType.TEAM,
-                limit=num_history_sessions,
+                limit=_limit,
                 user_id=user_id,
                 sort_by="created_at",
                 sort_order="desc",
             )
 
-        all_messages = []
-        seen_message_pairs = set()
-
+        results: list = []
         for session in selected_sessions:
-            if isinstance(session, TeamSession) and session.runs:
-                for run in session.runs:
-                    messages = run.messages
-                    if messages is not None:
-                        for i in range(0, len(messages) - 1, 2):
-                            if i + 1 < len(messages):
-                                try:
-                                    user_msg = messages[i]
-                                    assistant_msg = messages[i + 1]
-                                    user_content = user_msg.content
-                                    assistant_content = assistant_msg.content
-                                    if user_content is None or assistant_content is None:
-                                        continue  # Skip this pair if either message has no content
+            if not isinstance(session, TeamSession) or not session.runs:
+                continue
+            if current_session_id and session.session_id == current_session_id:
+                continue
+            results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-                                    msg_pair_id = f"{user_content}:{assistant_content}"
-                                    if msg_pair_id not in seen_message_pairs:
-                                        seen_message_pairs.add(msg_pair_id)
-                                        all_messages.append(Message.model_validate(user_msg))
-                                        all_messages.append(Message.model_validate(assistant_msg))
-                                except Exception as e:
-                                    log_warning(f"Error processing message pair: {e}")
-                                    continue
+        return json.dumps(results)
 
-        return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+    if async_mode and _has_async_db(team):
+        return Function.from_callable(asearch_past_sessions, name="search_past_sessions")
+    return Function.from_callable(search_past_sessions, name="search_past_sessions")
 
-    if _has_async_db(team):
-        return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
-    else:
-        return Function.from_callable(get_previous_session_messages, name="get_previous_session_messages")
+
+def _read_past_session_function(
+    team: "Team",
+    user_id: Optional[str] = None,
+    async_mode: bool = False,
+) -> Function:
+    """Factory for read_past_session tool for Team."""
+
+    from agno.agent._default_tools import _get_message_text
+    from agno.team._init import _has_async_db
+
+    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if team.db is None:
+            return "No database configured."
+
+        team.db = cast(BaseDb, team.db)
+        session = team.db.get_session(
+            session_id=session_id,
+            session_type=SessionType.TEAM,
+            user_id=user_id,
+        )
+
+        if session is None or not isinstance(session, TeamSession) or not session.runs:
+            return "Session not found."
+
+        lines: list = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    async def aread_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
+        """Read the full conversation from a previous session.
+        Use search_past_sessions first to find relevant sessions.
+
+        Args:
+            session_id: The session ID to read (from search results).
+            num_runs: Maximum number of runs to include. Default: all runs.
+
+        Returns:
+            str: The conversation formatted as User/Assistant message pairs.
+        """
+        if team.db is None:
+            return "No database configured."
+
+        if _has_async_db(team):
+            session = await cast(AsyncBaseDb, team.db).get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.TEAM,
+                user_id=user_id,
+            )
+        else:
+            session = team.db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=SessionType.TEAM,
+                user_id=user_id,
+            )
+
+        if session is None or not isinstance(session, TeamSession) or not session.runs:
+            return "Session not found."
+
+        lines: list = []
+        lines.append(f"Session: {session.session_id}")
+        if session.created_at:
+            lines.append(f"Created: {session.created_at}")
+        lines.append("")
+
+        runs = session.runs if num_runs is None else session.runs[:num_runs]
+        for run in runs:
+            for msg in run.messages or []:
+                if msg.role not in ("user", "assistant"):
+                    continue
+                text = _get_message_text(msg)
+                if text:
+                    role_label = "User" if msg.role == "user" else "Assistant"
+                    lines.append(f"{role_label}: {text}")
+                    lines.append("")
+
+        return "\n".join(lines) if lines else "No messages found in session."
+
+    if async_mode and _has_async_db(team):
+        return Function.from_callable(aread_past_session, name="read_past_session")
+    return Function.from_callable(read_past_session, name="read_past_session")
 
 
 def _get_delegate_task_function(
@@ -626,7 +689,7 @@ def _get_delegate_task_function(
         # Find the member agent using the helper function
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
+            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context, async_mode=True)}"
             return
 
         _, member_agent = result
@@ -1140,11 +1203,183 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
+def create_knowledge_search_tool(
+    team: "Team",
+    run_response: Optional[TeamRunOutput] = None,
+    run_context: Optional[RunContext] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    enable_agentic_filters: Optional[bool] = False,
+    async_mode: bool = False,
+) -> Function:
+    """Create a unified search_knowledge_base tool for Team.
+
+    Routes all knowledge searches through get_relevant_docs_from_knowledge(),
+    which checks knowledge_retriever first and falls back to knowledge.search().
+    """
+
+    def _format_results(docs: Optional[List[Union[Dict[str, Any], str]]]) -> str:
+        if not docs:
+            return "No documents found"
+        if team.references_format == "json":
+            return json.dumps(docs, indent=2, default=str)
+        else:
+            import yaml
+
+            return yaml.dump(docs, default_flow_style=False)
+
+    def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
+        if run_response is not None and docs:
+            references = MessageReferences(
+                query=query,
+                references=docs,
+                time=round(elapsed, 4),
+            )
+            if run_response.references is None:
+                run_response.references = []
+            run_response.references.append(references)
+
+    def _resolve_filters(
+        agentic_filters: Optional[List[Any]] = None,
+    ) -> Optional[Union[Dict[str, Any], List[FilterExpr]]]:
+        if agentic_filters:
+            filters_dict: Dict[str, Any] = {}
+            for filt in agentic_filters:
+                if isinstance(filt, dict):
+                    filters_dict.update(filt)
+                elif hasattr(filt, "key") and hasattr(filt, "value"):
+                    filters_dict[filt.key] = filt.value
+            return get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
+        return knowledge_filters
+
+    if enable_agentic_filters:
+
+        def search_knowledge_base_with_filters(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                docs = get_relevant_docs_from_knowledge(
+                    team,
+                    query=query,
+                    filters=_resolve_filters(filters),
+                    validate_filters=True,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        async def asearch_knowledge_base_with_filters(
+            query: str, filters: Optional[List[KnowledgeFilter]] = None
+        ) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                docs = await aget_relevant_docs_from_knowledge(
+                    team,
+                    query=query,
+                    filters=_resolve_filters(filters),
+                    validate_filters=True,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base_with_filters, name="search_knowledge_base")
+
+    else:
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                docs = get_relevant_docs_from_knowledge(
+                    team,
+                    query=query,
+                    filters=knowledge_filters,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            try:
+                docs = await aget_relevant_docs_from_knowledge(
+                    team,
+                    query=query,
+                    filters=knowledge_filters,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge search failed: {e}")
+                return f"Error searching knowledge base: {type(e).__name__}"
+            _track_references(docs, query, retrieval_timer.elapsed)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            return _format_results(docs)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+
+
 def get_relevant_docs_from_knowledge(
     team: "Team",
     query: str,
     num_documents: Optional[int] = None,
     filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    validate_filters: bool = False,
     run_context: Optional[RunContext] = None,
     **kwargs,
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
@@ -1161,7 +1396,7 @@ def get_relevant_docs_from_knowledge(
         num_documents = getattr(knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if knowledge is not None and filters is not None:
+    if knowledge is not None and filters is not None and validate_filters:
         validate_filters_method = getattr(knowledge, "validate_filters", None)
         if callable(validate_filters_method):
             valid_filters, invalid_keys = validate_filters_method(filters)
@@ -1231,6 +1466,7 @@ async def aget_relevant_docs_from_knowledge(
     query: str,
     num_documents: Optional[int] = None,
     filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    validate_filters: bool = False,
     run_context: Optional[RunContext] = None,
     **kwargs,
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
@@ -1247,7 +1483,7 @@ async def aget_relevant_docs_from_knowledge(
         num_documents = getattr(knowledge, "max_results", None)
 
     # Validate the filters against known valid filter keys
-    if knowledge is not None and filters is not None:
+    if knowledge is not None and filters is not None and validate_filters:
         avalidate_filters_method = getattr(knowledge, "avalidate_filters", None)
         if callable(avalidate_filters_method):
             valid_filters, invalid_keys = await avalidate_filters_method(filters)
@@ -1325,167 +1561,3 @@ async def aget_relevant_docs_from_knowledge(
     except Exception as e:
         log_warning(f"Error retrieving from knowledge base: {e}")
         raise e
-
-
-def _get_search_knowledge_base_function(
-    team: "Team",
-    run_response: TeamRunOutput,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    async_mode: bool = False,
-    run_context: Optional[RunContext] = None,
-) -> Function:
-    """Factory function to create a search_knowledge_base function with filters."""
-
-    from agno.team._utils import _convert_documents_to_string
-
-    def search_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        # Get the relevant documents from the knowledge base, passing filters
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = team.get_relevant_docs_from_knowledge(
-            query=query, filters=knowledge_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            # Add the references to the run_response
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _convert_documents_to_string(team, docs_from_knowledge)
-
-    async def asearch_knowledge_base(query: str) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await team.aget_relevant_docs_from_knowledge(
-            query=query, filters=knowledge_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _convert_documents_to_string(team, docs_from_knowledge)
-
-    if async_mode:
-        search_knowledge_base_function = asearch_knowledge_base
-    else:
-        search_knowledge_base_function = search_knowledge_base  # type: ignore
-
-    return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
-
-
-def _get_search_knowledge_base_with_agentic_filters_function(
-    team: "Team",
-    run_response: TeamRunOutput,
-    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-    async_mode: bool = False,
-    run_context: Optional[RunContext] = None,
-) -> Function:
-    """Factory function to create a search_knowledge_base function with filters."""
-
-    from agno.team._utils import _convert_documents_to_string
-
-    def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-            filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-
-        filters_dict = {filt.key: filt.value for filt in filters} if filters else None
-        search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
-
-        # Get the relevant documents from the knowledge base, passing filters
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = team.get_relevant_docs_from_knowledge(
-            query=query, filters=search_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            # Add the references to the run_response
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _convert_documents_to_string(team, docs_from_knowledge)
-
-    async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-            filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-
-        filters_dict = {filt.key: filt.value for filt in filters} if filters else None
-        search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
-
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await team.aget_relevant_docs_from_knowledge(
-            query=query, filters=search_filters, run_context=run_context
-        )
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            if run_response.references is None:
-                run_response.references = []
-            run_response.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return _convert_documents_to_string(team, docs_from_knowledge)
-
-    if async_mode:
-        search_knowledge_base_function = asearch_knowledge_base
-    else:
-        search_knowledge_base_function = search_knowledge_base  # type: ignore
-
-    return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")

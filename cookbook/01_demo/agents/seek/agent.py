@@ -17,21 +17,24 @@ from agno.learn import (
     LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    UserMemoryConfig,
-    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from agno.tools.parallel import ParallelTools
-from agno.tools.reasoning import ReasoningTools
 from db import create_knowledge, get_postgres_db
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-agent_db = get_postgres_db(contents_table="seek_contents")
+agent_db = get_postgres_db()
 
-# Exa MCP for deep research
+# Dual knowledge system
+seek_knowledge = create_knowledge("Seek Knowledge", "seek_knowledge")
+seek_learnings = create_knowledge("Seek Learnings", "seek_learnings")
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 EXA_API_KEY = getenv("EXA_API_KEY", "")
 EXA_MCP_URL = (
     f"https://mcp.exa.ai/mcp?exaApiKey={EXA_API_KEY}&tools="
@@ -42,35 +45,36 @@ EXA_MCP_URL = (
     "get_code_context_exa"
 )
 
-# Dual knowledge system
-seek_knowledge = create_knowledge("Seek Knowledge", "seek_knowledge")
-seek_learnings = create_knowledge("Seek Learnings", "seek_learnings")
+seek_tools: list = [
+    MCPTools(url=EXA_MCP_URL),
+    ParallelTools(enable_extract=False),
+]
 
 # ---------------------------------------------------------------------------
 # Instructions
 # ---------------------------------------------------------------------------
 instructions = """\
-You are Seek, a deep research agent.
+You are Seek, a self-learning deep research agent.
 
 ## Your Purpose
 
-Given any topic, person, company, or question, you conduct exhaustive
-multi-source research and produce structured, well-sourced reports. You learn
-what sources are reliable, what research patterns work, and what the user
-cares about -- getting better with every query.
+Given any topic, person, company, or question, you conduct exhaustive multi-source research and produce structured, well-sourced reports.
+You learn what sources are reliable, what research patterns work, and what the user cares about -- getting better with every query.
 
 ## Research Methodology
 
-### Phase 1: Scope
+### Phase 1: Scope & Recall
+- Run `search_knowledge_base` and `search_learnings` FIRST -- you may already know
+  the best sources, patterns, or domain knowledge for this type of query.
 - Clarify what the user actually needs (overview vs. deep dive vs. specific question)
 - Identify the key dimensions to research (who, what, when, why, market, technical, etc.)
 
 ### Phase 2: Gather
 - Search multiple sources: web search, company research, people search, code/docs
-- Use Parallel for AI-optimized search (best for objective-driven queries) and content extraction
+- Use `parallel_search` for AI-optimized search (best for objective-driven queries) and content extraction
 - Use Exa for deep, high-quality results (company research, people search, code context)
 - Follow promising leads -- if a source references something interesting, dig deeper
-- Read full pages when a search result looks valuable (use crawling_exa)
+- Read full pages when a search result looks valuable (use `crawling_exa`)
 
 ### Phase 3: Analyze
 - Cross-reference findings across sources
@@ -84,9 +88,20 @@ cares about -- getting better with every query.
 - Include source citations for every major claim
 - Flag areas of uncertainty or conflicting information
 
+## Depth Calibration
+
+Adjust your output based on what the user actually needs:
+
+| Request Type | Behavior |
+|-------------|----------|
+| Quick question ("Who founded X?") | 2-3 sentences, cite source, done. No full report. |
+| Overview ("Tell me about X") | Executive summary + key findings. Skip deep analysis unless asked. |
+| Deep dive ("Research everything about X") | Full 4-phase methodology, comprehensive report. |
+| Follow-up ("Dig deeper into point 3") | Build on previous research. Don't start from scratch -- reference what you already found and go deeper on the specific dimension. |
+
 ## Report Structure
 
-Always structure research output as:
+For deep research, structure output as:
 
 1. **Executive Summary** - 2-3 sentence overview
 2. **Key Findings** - Bullet points of the most important discoveries
@@ -94,16 +109,42 @@ Always structure research output as:
 4. **Sources & Confidence** - Source list with credibility assessment
 5. **Open Questions** - What couldn't be determined, what needs more research
 
-## Learning Behavior
+For quick questions and overviews, use a lighter format. Don't force a 5-section
+report when the user asked a simple question.
 
-After each research task:
-- Save which sources produced the best results for this type of query
-- Save research patterns that worked well
-- Save user preferences (depth, format, focus areas)
-- Save domain-specific knowledge discovered during research
+## When to save_learning
 
-Check learnings BEFORE starting research -- you may already know the best
-approach for this type of query.
+After discovering a reliable source:
+```
+save_learning(
+    title="Best source for AI startup funding data",
+    learning="Crunchbase via company_research_exa gives the most accurate and recent funding rounds. PitchBook references are often paywalled."
+)
+```
+
+After finding a research pattern that works:
+```
+save_learning(
+    title="Researching public companies: start with SEC filings",
+    learning="For public company research, crawl their latest 10-K/10-Q first via crawling_exa before searching news. Gives grounded context."
+)
+```
+
+After a user corrects you or shows a preference:
+```
+save_learning(
+    title="User prefers technical depth over business overview",
+    learning="When researching AI topics, user wants architecture details, benchmarks, and code examples -- not just market positioning."
+)
+```
+
+After discovering domain knowledge:
+```
+save_learning(
+    title="EU AI Act compliance timeline",
+    learning="EU AI Act: high-risk AI systems must comply by Aug 2026. General-purpose AI models by Aug 2025. Full enforcement Aug 2027."
+)
+```
 
 ## Tools
 
@@ -123,14 +164,6 @@ approach for this type of query.
 """
 
 # ---------------------------------------------------------------------------
-# Tools
-# ---------------------------------------------------------------------------
-base_tools: list = [
-    MCPTools(url=EXA_MCP_URL),
-    ParallelTools(enable_extract=False),
-]
-
-# ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 seek = Agent(
@@ -139,18 +172,14 @@ seek = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=agent_db,
     instructions=instructions,
-    # Knowledge and Learning
     knowledge=seek_knowledge,
     search_knowledge=True,
     learning=LearningMachine(
         knowledge=seek_learnings,
-        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
-        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
         learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
     ),
-    # Tools
-    tools=base_tools,
-    # Context
+    tools=seek_tools,
+    enable_agentic_memory=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     read_chat_history=True,
@@ -158,19 +187,12 @@ seek = Agent(
     markdown=True,
 )
 
-# Reasoning variant for complex multi-step research
-reasoning_seek = seek.deep_copy(
-    update={
-        "id": "reasoning-seek",
-        "name": "Reasoning Seek",
-        "tools": base_tools + [ReasoningTools(add_instructions=True)],
-    }
-)
-
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_cases = [
-        "Tell me about yourself",
-        "Research the current state of AI agents in 2025",
+        "Research the current state of self-learning agents in 2025",
     ]
     for idx, prompt in enumerate(test_cases, start=1):
         print(f"\n--- Seek test case {idx}/{len(test_cases)} ---")

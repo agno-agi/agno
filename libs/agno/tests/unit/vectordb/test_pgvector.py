@@ -6,6 +6,7 @@ from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import Session
 
 from agno.knowledge.document import Document
+from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.search import SearchType
 
@@ -791,3 +792,153 @@ def test_insert_merges_filters_into_metadata(mock_pgvector, mock_embedder):
         assert batch_records[0]["meta_data"]["doc_key"] == "doc_value"
         assert batch_records[0]["meta_data"]["knowledge_base_id"] == "kb-123"
         assert batch_records[0]["meta_data"]["source"] == "test"
+
+
+def test_similarity_threshold_valid_accepted(mock_engine, mock_embedder):
+    """Valid threshold values (0.0-1.0) should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.5,
+                )
+                assert db.similarity_threshold == 0.5
+
+
+def test_similarity_threshold_zero_accepted(mock_engine, mock_embedder):
+    """Threshold of 0.0 should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.0,
+                )
+                assert db.similarity_threshold == 0.0
+
+
+def test_similarity_threshold_one_accepted(mock_engine, mock_embedder):
+    """Threshold of 1.0 should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=1.0,
+                )
+                assert db.similarity_threshold == 1.0
+
+
+def test_similarity_threshold_none_accepted(mock_engine, mock_embedder):
+    """None threshold (disabled) should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=None,
+                )
+                assert db.similarity_threshold is None
+
+
+def test_similarity_threshold_above_one_rejected(mock_engine, mock_embedder):
+    """Threshold above 1.0 should raise ValueError."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                with pytest.raises(ValueError, match="similarity_threshold must be between 0.0 and 1.0"):
+                    PgVector(
+                        table_name="test_threshold",
+                        db_engine=mock_engine,
+                        embedder=mock_embedder,
+                        similarity_threshold=1.5,
+                    )
+
+
+def test_similarity_threshold_negative_rejected(mock_engine, mock_embedder):
+    """Negative threshold should raise ValueError."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                with pytest.raises(ValueError, match="similarity_threshold must be between 0.0 and 1.0"):
+                    PgVector(
+                        table_name="test_threshold",
+                        db_engine=mock_engine,
+                        embedder=mock_embedder,
+                        similarity_threshold=-0.1,
+                    )
+
+
+@pytest.mark.parametrize("distance", [Distance.cosine, Distance.l2, Distance.max_inner_product])
+def test_similarity_threshold_with_distance_types(mock_engine, mock_embedder, distance):
+    """Threshold should work with all distance types."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name=f"test_{distance.value}",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.7,
+                    distance=distance,
+                )
+                assert db.similarity_threshold == 0.7
+                assert db.distance == distance
+
+
+@pytest.mark.parametrize("search_type", [SearchType.vector, SearchType.hybrid, SearchType.keyword])
+def test_similarity_threshold_with_search_types(mock_engine, mock_embedder, search_type):
+    """Threshold should work with all search types."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name=f"test_{search_type.value}",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.5,
+                    search_type=search_type,
+                )
+                assert db.similarity_threshold == 0.5
+                assert db.search_type == search_type

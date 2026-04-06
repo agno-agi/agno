@@ -1,3 +1,3 @@
-"""Pal - Personal agent that learns."""
+"""Pal - Personal agent with PostgreSQL."""
 
 from .agent import pal as pal

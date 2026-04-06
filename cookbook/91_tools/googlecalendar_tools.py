@@ -41,7 +41,7 @@ Steps to get the Google OAuth Credentials (Reference : https://developers.google
 """
 
 from agno.agent import Agent
-from agno.tools.googlecalendar import GoogleCalendarTools
+from agno.tools.google.calendar import GoogleCalendarTools
 
 # ---------------------------------------------------------------------------
 # Create Agent

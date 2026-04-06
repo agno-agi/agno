@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
@@ -45,6 +45,10 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -151,6 +155,7 @@ class UserProfileStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -173,6 +178,7 @@ class UserProfileStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -834,6 +840,7 @@ class UserProfileStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Extract user profile information from messages and save.
 
@@ -858,6 +865,10 @@ class UserProfileStore(LearningStore):
 
         self.profile_updated = False
 
+        conversation_text = get_conversation_text(messages)
+        if not conversation_text.strip():
+            return "No updates needed"
+
         existing_profile = self.get(user_id=user_id)
 
         tools = self._get_extraction_tools(
@@ -871,7 +882,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            *messages,
+            Message(role="user", content=conversation_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -879,6 +890,11 @@ class UserProfileStore(LearningStore):
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_metrics is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.profile_updated = True
@@ -893,6 +909,7 @@ class UserProfileStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
@@ -907,6 +924,10 @@ class UserProfileStore(LearningStore):
 
         self.profile_updated = False
 
+        conversation_text = get_conversation_text(messages)
+        if not conversation_text.strip():
+            return "No updates needed"
+
         existing_profile = await self.aget(user_id=user_id)
 
         tools = await self._aget_extraction_tools(
@@ -920,7 +941,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            *messages,
+            Message(role="user", content=conversation_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -928,6 +949,11 @@ class UserProfileStore(LearningStore):
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_metrics is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.profile_updated = True
@@ -993,13 +1019,6 @@ class UserProfileStore(LearningStore):
     def _build_profile_id(self, user_id: str) -> str:
         """Build a unique profile ID."""
         return f"user_profile_{user_id}"
-
-    def _messages_to_input_string(self, messages: List["Message"]) -> str:
-        """Convert messages to input string."""
-        if len(messages) == 1:
-            return messages[0].get_content_string()
-        else:
-            return "\n".join([f"{m.role}: {m.get_content_string()}" for m in messages if m.content])
 
     def _build_functions_for_model(self, tools: List[Callable]) -> List["Function"]:
         """Convert callables to Functions for model."""

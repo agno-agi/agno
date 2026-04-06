@@ -112,11 +112,13 @@ class TeamSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the team")
     description: Optional[str] = Field(None, description="Description of the team")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
         db_id = team.db.id if team.db else None
-        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
+        mode = team.mode.value if hasattr(team, "mode") and team.mode else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -124,16 +126,34 @@ class WorkflowSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    is_component: bool = Field(False, description="Whether this workflow was created via Builder")
+    current_version: Optional[int] = Field(None, description="Current published version number")
+    stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod
-    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+    def from_workflow(
+        cls,
+        workflow: Union[Workflow, RemoteWorkflow],
+        is_component: bool = False,
+    ) -> "WorkflowSummaryResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             db_id=db_id,
+            is_component=is_component,
+            current_version=getattr(workflow, "_version", None),
+            stage=getattr(workflow, "_stage", None),
         )
+
+
+class InfoResponse(BaseModel):
+    """Response schema for the /info endpoint returning lightweight OS metadata."""
+
+    agent_count: int = Field(0, description="Number of agents registered in the OS")
+    team_count: int = Field(0, description="Number of teams registered in the OS")
+    workflow_count: int = Field(0, description="Number of workflows registered in the OS")
 
 
 class ConfigResponse(BaseModel):
@@ -183,6 +203,15 @@ class SessionSchema(BaseModel):
     session_state: Optional[dict] = Field(None, description="Current state data of the session")
     created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
+    # Enhanced fields for richer list responses
+    user_id: Optional[str] = Field(None, description="User ID associated with the session")
+    agent_id: Optional[str] = Field(None, description="Agent ID if this is an agent session")
+    team_id: Optional[str] = Field(None, description="Team ID if this is a team session")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID if this is a workflow session")
+    session_summary: Optional[dict] = Field(None, description="Summary of session interactions")
+    metrics: Optional[dict] = Field(None, description="Session metrics")
+    total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")
+    metadata: Optional[dict] = Field(None, description="Additional metadata")
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
@@ -191,34 +220,32 @@ class SessionSchema(BaseModel):
             session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
 
-        created_at = session.get("created_at", 0)
-        updated_at = session.get("updated_at", created_at)
-
-        # Handle created_at and updated_at as either ISO 8601 string or timestamp
-        def parse_datetime(val):
-            if isinstance(val, str):
-                try:
-                    # Accept both with and without Z
-                    if val.endswith("Z"):
-                        val = val[:-1] + "+00:00"
-                    return datetime.fromisoformat(val)
-                except Exception:
-                    return None
-            elif isinstance(val, (int, float)):
-                try:
-                    return datetime.fromtimestamp(val, tz=timezone.utc)
-                except Exception:
-                    return None
-            return None
-
         created_at = to_utc_datetime(session.get("created_at", 0))
         updated_at = to_utc_datetime(session.get("updated_at", created_at))
+
+        # Extract metrics from session_data
+        metrics = session_data.get("session_metrics", None)
+        total_tokens = metrics.get("total_tokens") if metrics else None
+
+        # Extract summary
+        summary = session.get("summary")
+        if summary and hasattr(summary, "to_dict"):
+            summary = summary.to_dict()
+
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
             created_at=created_at,
             updated_at=updated_at,
+            user_id=session.get("user_id"),
+            agent_id=session.get("agent_id"),
+            team_id=session.get("team_id"),
+            workflow_id=session.get("workflow_id"),
+            session_summary=summary,
+            metrics=metrics,
+            total_tokens=total_tokens,
+            metadata=session.get("metadata"),
         )
 
 
@@ -390,6 +417,7 @@ class RunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -421,6 +449,7 @@ class RunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
         )
 
@@ -452,6 +481,7 @@ class TeamRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -482,6 +512,7 @@ class TeamRunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            followups=run_dict.get("followups", None),
         )
 
 
@@ -642,6 +673,8 @@ class RegistryResourceType(str, Enum):
     VECTOR_DB = "vector_db"
     SCHEMA = "schema"
     FUNCTION = "function"
+    AGENT = "agent"
+    TEAM = "team"
 
 
 class CallableMetadata(BaseModel):
@@ -732,5 +765,6 @@ RegistryMetadata = Union[
 class RegistryContentResponse(BaseModel):
     name: str
     type: RegistryResourceType
+    id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None

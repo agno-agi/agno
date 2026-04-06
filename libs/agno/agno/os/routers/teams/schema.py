@@ -22,6 +22,7 @@ class TeamResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
+    mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -36,9 +37,16 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_component: bool = False
+    current_version: Optional[int] = None
+    stage: Optional[str] = None
 
     @classmethod
-    async def from_team(cls, team: Team) -> "TeamResponse":
+    async def from_team(
+        cls,
+        team: Team,
+        is_component: bool = False,
+    ) -> "TeamResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -142,7 +150,11 @@ class TeamResponse(BaseModel):
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
-            "knowledge_filters": team.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in team.knowledge_filters]
+                if isinstance(team.knowledge_filters, list)
+                else team.knowledge_filters
+            ),
             "references_format": team.references_format,
         }
 
@@ -263,6 +275,7 @@ class TeamResponse(BaseModel):
             db_id=team.db.id if team.db else None,
             description=team.description,
             role=team.role,
+            mode=team.mode.value if team.mode else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
@@ -277,4 +290,7 @@ class TeamResponse(BaseModel):
             members=members if members else None,
             metadata=team.metadata,
             input_schema=input_schema_dict,
+            is_component=is_component,
+            current_version=getattr(team, "_version", None),
+            stage=getattr(team, "_stage", None),
         )

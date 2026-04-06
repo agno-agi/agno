@@ -9,7 +9,7 @@ import asyncio
 import time
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
@@ -20,7 +20,7 @@ from agno.tools.websearch import WebSearchTools
 hackernews_agent = Agent(
     name="Hackernews Agent",
     role="Handle hackernews requests",
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="Always include sources",
     stream=True,
@@ -30,7 +30,7 @@ hackernews_agent = Agent(
 news_agent = Agent(
     name="News Agent",
     role="Handle news requests and current events analysis",
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[WebSearchTools()],
     instructions=[
         "Use tables to display news information and findings.",
@@ -46,7 +46,7 @@ news_agent = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Reasoning Research Team",
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[hackernews_agent, news_agent],
     instructions=[
         "Collaborate to provide comprehensive research and news insights",

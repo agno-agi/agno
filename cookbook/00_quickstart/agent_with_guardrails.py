@@ -91,7 +91,7 @@ agent_with_guardrails = Agent(
     name="Agent with Guardrails",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     pre_hooks=[
         PIIDetectionGuardrail(),  # Block PII (SSN, credit cards, emails, phones)
         PromptInjectionGuardrail(),  # Block jailbreak attempts

@@ -14,8 +14,9 @@ from httpx import AsyncClient
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import RemoteContentConfig, SharePointConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
+from agno.knowledge.remote_content.sharepoint import SharePointConfig
 from agno.utils.log import log_error, log_info, log_warning
 
 
@@ -29,7 +30,7 @@ class SharePointLoader(BaseLoader):
     def _validate_sharepoint_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[SharePointConfig]:
         """Validate and extract SharePoint config.
 
@@ -211,7 +212,7 @@ class SharePointLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from SharePoint (async).
 
@@ -327,7 +328,7 @@ class SharePointLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from SharePoint (sync).
 

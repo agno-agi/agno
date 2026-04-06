@@ -89,7 +89,7 @@ agent_with_memory = Agent(
     name="Agent with Memory",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     db=agent_db,
     memory_manager=memory_manager,
     enable_agentic_memory=True,

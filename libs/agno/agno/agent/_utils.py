@@ -109,11 +109,6 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
 # ---------------------------------------------------------------------------
 
 
-# Fields set by the parent Team/Workflow during initialization — not part of
-# __init__ and should not be carried over during deep copy.
-_DEEP_COPY_EXCLUDE = {"team_id", "workflow_id"}
-
-
 def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent:
     """Create and return a deep copy of this Agent, optionally updating fields.
 
@@ -125,16 +120,17 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         Agent: A new Agent instance.
     """
     from dataclasses import fields
+    from inspect import signature
+
+    # Get the set of valid __init__ parameter names
+    init_params = set(signature(agent.__class__.__init__).parameters.keys()) - {"self"}
 
     # Extract the fields to set for the new Agent
     fields_for_new_agent: Dict = {}
 
     for f in fields(agent):
-        # Skip private fields (not part of __init__ signature)
-        if f.name.startswith("_"):
-            continue
-        # Skip fields that are not __init__ parameters
-        if f.name in _DEEP_COPY_EXCLUDE:
+        # Skip private fields and fields not accepted by __init__
+        if f.name.startswith("_") or f.name not in init_params:
             continue
 
         field_value = getattr(agent, f.name)

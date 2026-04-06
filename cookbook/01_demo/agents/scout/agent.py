@@ -13,12 +13,9 @@ from agno.learn import (
     LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    UserMemoryConfig,
-    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
-from agno.tools.reasoning import ReasoningTools
 from db import create_knowledge, get_postgres_db
 
 from .context.intent_routing import INTENT_ROUTING_CONTEXT
@@ -145,6 +142,32 @@ Be explicit, not evasive. List what you searched and suggest next steps.
 | "I couldn't find that" | "I searched company-docs/policies/ and engineering-docs/ but found no pet policy. This likely isn't documented yet." |
 | "Try asking someone" | "No docs for Project XYZ123. It may be under a different name -- do you know the team that owns it?" |
 
+## Support Knowledge Agent Pattern
+
+When acting as a support desk for internal FAQs:
+
+### FAQ-Building Behavior
+After answering a question successfully, use `save_intent_discovery` to record the
+intent-to-location mapping. Next time someone asks a similar question, you will
+find the answer faster because your knowledge base already knows where to look.
+
+### Confidence Signaling
+Include a confidence indicator in your answers:
+- **High confidence**: Direct quote from an authoritative source with full path
+- **Medium confidence**: Information found but in an unexpected location or outdated doc
+- **Low confidence**: Inferred from related documents, not explicitly stated
+
+### Citation Pattern
+Every answer MUST include:
+1. The source path (e.g., `s3://company-docs/policies/employee-handbook.md`)
+2. The specific section or heading (e.g., "Section 4: Time Off")
+3. Key details from the source: numbers, dates, names
+
+### Follow-Up Handling
+Use session history for multi-turn support queries. When the user asks a
+follow-up ("What about for contractors?" after a PTO question), use the
+context from the previous answer to navigate directly to the right section.
+
 ## Navigation Rules
 
 - Read full documents, never answer from snippets alone
@@ -176,11 +199,10 @@ scout = Agent(
     search_knowledge=True,
     learning=LearningMachine(
         knowledge=scout_learnings,
-        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
-        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
         learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
     ),
     tools=base_tools,
+    enable_agentic_memory=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     read_chat_history=True,
@@ -188,19 +210,12 @@ scout = Agent(
     markdown=True,
 )
 
-# Reasoning variant - adds think/analyze tools
-reasoning_scout = scout.deep_copy(
-    update={
-        "id": "reasoning-scout",
-        "name": "Reasoning Scout",
-        "tools": base_tools + [ReasoningTools(add_instructions=True)],
-    }
-)
-
 if __name__ == "__main__":
     test_cases = [
         "What is our PTO policy?",
         "Find the deployment runbook",
+        "What is the incident response process?",
+        "How do I request access to production systems?",
     ]
     for idx, prompt in enumerate(test_cases, start=1):
         print(f"\n--- Scout test case {idx}/{len(test_cases)} ---")

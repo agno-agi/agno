@@ -21,6 +21,8 @@ MODELS_LAB_URLS = {
     "MP3": "https://modelslab.com/api/v6/voice/music_gen",
     "GIF": "https://modelslab.com/api/v6/video/text2video",
     "WAV": "https://modelslab.com/api/v6/voice/sfx",
+    "PNG": "https://modelslab.com/api/v6/images/text2img",
+    "JPG": "https://modelslab.com/api/v6/images/text2img",
 }
 
 MODELS_LAB_FETCH_URLS = {
@@ -28,6 +30,8 @@ MODELS_LAB_FETCH_URLS = {
     "MP3": "https://modelslab.com/api/v6/voice/fetch",
     "GIF": "https://modelslab.com/api/v6/video/fetch",
     "WAV": "https://modelslab.com/api/v6/voice/fetch",
+    "PNG": "https://modelslab.com/api/v6/images/fetch",
+    "JPG": "https://modelslab.com/api/v6/images/fetch",
 }
 
 
@@ -39,6 +43,9 @@ class ModelsLabTools(Toolkit):
         add_to_eta: int = 15,
         max_wait_time: int = 60,
         file_type: FileType = FileType.MP4,
+        model_id: Optional[str] = None,
+        width: int = 512,
+        height: int = 512,
         **kwargs,
     ):
         file_type_str = file_type.value.upper()
@@ -48,6 +55,9 @@ class ModelsLabTools(Toolkit):
         self.add_to_eta = add_to_eta
         self.max_wait_time = max_wait_time
         self.file_type = file_type
+        self.model_id = model_id
+        self.width = width
+        self.height = height
         self.api_key = api_key or getenv("MODELS_LAB_API_KEY")
 
         if not self.api_key:
@@ -67,13 +77,23 @@ class ModelsLabTools(Toolkit):
             "track_id": None,
         }
 
-        if self.file_type in [FileType.MP4, FileType.GIF]:
+        if self.file_type in [FileType.PNG, FileType.JPG]:
+            image_template: Dict[str, Any] = {
+                "model_id": self.model_id or "flux",
+                "width": self.width,
+                "height": self.height,
+                "samples": 1,
+                "num_inference_steps": 30,
+                "safety_checker": "no",
+            }
+            base_payload |= image_template
+        elif self.file_type in [FileType.MP4, FileType.GIF]:
             video_template = {
-                "height": 512,
-                "width": 512,
+                "height": self.height,
+                "width": self.width,
                 "num_frames": 25,
                 "negative_prompt": "low quality",
-                "model_id": "cogvideox",
+                "model_id": self.model_id or "cogvideox",
                 "instant_response": False,
                 "output_type": self.file_type.value,
             }
@@ -102,7 +122,10 @@ class ModelsLabTools(Toolkit):
             "audios": [],
         }
 
-        if self.file_type == FileType.MP4:
+        if self.file_type in [FileType.PNG, FileType.JPG]:
+            image_artifact = Image(id=str(media_id), url=media_url)
+            artifacts["images"].append(image_artifact)
+        elif self.file_type == FileType.MP4:
             video_artifact = Video(id=str(media_id), url=media_url, eta=str(eta))
             artifacts["videos"].append(video_artifact)
         elif self.file_type == FileType.GIF:
@@ -171,10 +194,11 @@ class ModelsLabTools(Toolkit):
             all_videos = []
             all_audios = []
 
-            if self.file_type == FileType.WAV:
-                url_links = result.get("output", [])
+            if self.file_type in [FileType.PNG, FileType.JPG, FileType.WAV]:
+                # Images and WAV: ModelsLab returns "output" (sync success) or "future_links" (processing)
+                url_links = result.get("output") or result.get("future_links", [])
             else:
-                url_links = result.get("future_links")
+                url_links = result.get("future_links") or result.get("output", [])
             for media_url in url_links:
                 artifacts = self._create_media_artifacts(media_id, media_url, str(eta))
                 all_images.extend(artifacts["images"])
@@ -188,8 +212,15 @@ class ModelsLabTools(Toolkit):
                         logger.warning("Media generation timed out")
 
             # Return ToolResult with appropriate media artifacts
+            if self.file_type in [FileType.PNG, FileType.JPG] and eta is None:
+                content_msg = f"Image generated successfully ({self.file_type.value.upper()})"
+            elif eta is not None:
+                content_msg = f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds"
+            else:
+                content_msg = f"{self.file_type.value.capitalize()} generated successfully"
+
             return ToolResult(
-                content=f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds",
+                content=content_msg,
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audios=all_audios if all_audios else None,

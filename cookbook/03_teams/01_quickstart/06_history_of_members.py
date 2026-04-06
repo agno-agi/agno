@@ -9,8 +9,8 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
-from agno.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.team import Team, TeamMode
 
 # ---------------------------------------------------------------------------
 # Create Members
@@ -18,14 +18,14 @@ from agno.team import Team
 german_agent = Agent(
     name="German Agent",
     role="You answer German questions.",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     add_history_to_context=True,  # The member will have access to it's own history.
 )
 
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You answer Spanish questions.",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     add_history_to_context=True,  # The member will have access to it's own history.
 )
 
@@ -34,7 +34,7 @@ spanish_agent = Agent(
 # ---------------------------------------------------------------------------
 multi_lingual_q_and_a_team = Team(
     name="Multi Lingual Q and A Team",
-    model=OpenAIChat("gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[german_agent, spanish_agent],
     instructions=[
         "You are a multi lingual Q and A team that can answer questions in English and Spanish. You MUST delegate the task to the appropriate member based on the language of the question.",
@@ -44,7 +44,7 @@ multi_lingual_q_and_a_team = Team(
         db_file="tmp/multi_lingual_q_and_a_team.db"
     ),  # Add a database to store the conversation history. This is a requirement for history to work correctly.
     determine_input_for_members=False,  # Send input directly to member agents.
-    respond_directly=True,  # Return member responses directly to the user.
+    mode=TeamMode.route,  # Return member responses directly to the user.
 )
 
 # ---------------------------------------------------------------------------

@@ -91,8 +91,8 @@ class AgentSession:
         """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run.messages
         for m in messages or []:
-            if m.metrics is not None:
-                m.metrics.duration = None
+            if m.metrics is not None and hasattr(m.metrics, "timer"):
+                m.metrics.timer = None
 
         if not self.runs:
             self.runs = []

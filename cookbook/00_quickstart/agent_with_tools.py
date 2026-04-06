@@ -61,7 +61,7 @@ agent_with_tools = Agent(
     name="Agent with Tools",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     add_datetime_to_context=True,
     markdown=True,
 )

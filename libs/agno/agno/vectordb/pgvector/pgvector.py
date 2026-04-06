@@ -32,6 +32,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
+from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
 
 
@@ -63,6 +64,7 @@ class PgVector(VectorDb):
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
+        similarity_threshold: Optional[float] = None,
     ):
         """
         Initialize the PgVector instance.
@@ -83,8 +85,10 @@ class PgVector(VectorDb):
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
             auto_upgrade_schema (bool): Automatically upgrade schema if True.
+            reranker (Optional[Reranker]): Reranker instance for reranking search results.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -98,8 +102,8 @@ class PgVector(VectorDb):
             seed = f"{base_seed}#{schema_suffix}"
             id = generate_id(seed)
 
-        # Initialize base class with name and description
-        super().__init__(id=id, name=name, description=description)
+        # Initialize base class
+        super().__init__(id=id, name=name, description=description, similarity_threshold=similarity_threshold)
 
         if db_engine is None:
             if db_url is None:
@@ -810,7 +814,16 @@ class PgVector(VectorDb):
                 log_error(f"Error getting embedding for Query: {query}")
                 return []
 
-            # Define the columns to select
+            if self.distance == Distance.l2:
+                distance_expr = self.table.c.embedding.l2_distance(query_embedding)
+            elif self.distance == Distance.cosine:
+                distance_expr = self.table.c.embedding.cosine_distance(query_embedding)
+            elif self.distance == Distance.max_inner_product:
+                distance_expr = self.table.c.embedding.max_inner_product(query_embedding)
+            else:
+                log_error(f"Unknown distance metric: {self.distance}")
+                return []
+
             columns = [
                 self.table.c.id,
                 self.table.c.name,
@@ -818,6 +831,7 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
+                distance_expr.label("distance"),
             ]
 
             # Build the base statement
@@ -837,16 +851,17 @@ class PgVector(VectorDb):
                     ]
                     stmt = stmt.where(and_(*sqlalchemy_conditions))
 
-            # Order the results based on the distance metric
-            if self.distance == Distance.l2:
-                stmt = stmt.order_by(self.table.c.embedding.l2_distance(query_embedding))
-            elif self.distance == Distance.cosine:
-                stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
-            elif self.distance == Distance.max_inner_product:
-                stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
-            else:
-                log_error(f"Unknown distance metric: {self.distance}")
-                return []
+            # Apply similarity threshold filter
+            if self.similarity_threshold is not None:
+                distance_threshold = score_to_distance_threshold(self.similarity_threshold, self.distance)
+                if self.distance == Distance.max_inner_product:
+                    # For inner product, negate threshold since pgvector returns negative values
+                    stmt = stmt.where(distance_expr <= -distance_threshold)
+                else:
+                    # For cosine and L2, smaller distances mean higher similarity
+                    stmt = stmt.where(distance_expr <= distance_threshold)
+
+            stmt = stmt.order_by(distance_expr)
 
             # Limit the number of results
             stmt = stmt.limit(limit)
@@ -869,14 +884,19 @@ class PgVector(VectorDb):
                 self.create()
                 return []
 
-            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
+                # For inner product, negate since pgvector returns negative values
+                raw_distance = -result.distance if self.distance == Distance.max_inner_product else result.distance
+                similarity_score = normalize_score(raw_distance, self.distance)
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = similarity_score
+
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
@@ -1037,8 +1057,10 @@ class PgVector(VectorDb):
             # Create the ts_query using websearch_to_tsquery with parameter binding
             processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
             ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank
-            text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            # Compute the text rank, normalized to [0, 1] range
+            # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
+            raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            text_rank = raw_text_rank / (raw_text_rank + 0.1)
 
             # Compute the vector similarity score
             if self.distance == Distance.l2:
@@ -1049,13 +1071,15 @@ class PgVector(VectorDb):
             elif self.distance == Distance.cosine:
                 # For cosine distance, smaller distances are better
                 vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
-                vector_score = 1 / (1 + vector_distance)
+                # Convert distance to similarity (cosine_distance = 1 - cosine_similarity)
+                vector_score = func.greatest(0.0, 1 - vector_distance)
             elif self.distance == Distance.max_inner_product:
                 # For inner product, higher values are better
-                # Assume embeddings are normalized, so inner product ranges from -1 to 1
-                raw_vector_score = self.table.c.embedding.max_inner_product(query_embedding)
+                # pgvector returns negative inner product, so negate to get actual value
+                negative_ip = self.table.c.embedding.max_inner_product(query_embedding)
+                inner_product = -negative_ip
                 # Normalize to range [0, 1]
-                vector_score = (raw_vector_score + 1) / 2
+                vector_score = func.greatest(0.0, func.least(1.0, (inner_product + 1) / 2))
             else:
                 log_error(f"Unknown distance metric: {self.distance}")
                 return []
@@ -1089,6 +1113,9 @@ class PgVector(VectorDb):
                     ]
                     stmt = stmt.where(and_(*sqlalchemy_conditions))
 
+            if self.similarity_threshold is not None:
+                stmt = stmt.where(hybrid_score >= self.similarity_threshold)
+
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
 
@@ -1111,14 +1138,16 @@ class PgVector(VectorDb):
                 log_error(f"Error performing hybrid search: {e}")
                 return []
 
-            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = float(result.hybrid_score)
+
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,

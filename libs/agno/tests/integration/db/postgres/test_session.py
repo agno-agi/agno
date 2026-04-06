@@ -545,6 +545,79 @@ def test_delete_multiple_sessions(postgres_db_real: PostgresDb):
     assert remaining_sessions[0].session_id == "session_2"
 
 
+def test_delete_session_scoped_by_user_id(postgres_db_real: PostgresDb):
+    """Verify delete_session with user_id only deletes sessions owned by that user (IDOR protection)."""
+    alice_session = AgentSession(
+        session_id="shared_sess_1", agent_id="agent_1", user_id="alice", created_at=int(time.time())
+    )
+    bob_session = AgentSession(
+        session_id="shared_sess_2", agent_id="agent_1", user_id="bob", created_at=int(time.time())
+    )
+    postgres_db_real.upsert_session(alice_session)
+    postgres_db_real.upsert_session(bob_session)
+
+    # Bob tries to delete Alice's session
+    result = postgres_db_real.delete_session(session_id="shared_sess_1", user_id="bob")
+    assert result is False
+
+    # Alice's session still exists
+    assert postgres_db_real.get_session(session_id="shared_sess_1", session_type=SessionType.AGENT) is not None
+
+    # Alice can delete her own session
+    result = postgres_db_real.delete_session(session_id="shared_sess_1", user_id="alice")
+    assert result is True
+    assert postgres_db_real.get_session(session_id="shared_sess_1", session_type=SessionType.AGENT) is None
+
+
+def test_delete_sessions_scoped_by_user_id(postgres_db_real: PostgresDb):
+    """Verify bulk delete_sessions with user_id only deletes sessions owned by that user."""
+    alice_s1 = AgentSession(session_id="alice_s1", agent_id="agent_1", user_id="alice", created_at=int(time.time()))
+    alice_s2 = AgentSession(session_id="alice_s2", agent_id="agent_1", user_id="alice", created_at=int(time.time()))
+    bob_s1 = AgentSession(session_id="bob_s1", agent_id="agent_1", user_id="bob", created_at=int(time.time()))
+    postgres_db_real.upsert_session(alice_s1)
+    postgres_db_real.upsert_session(alice_s2)
+    postgres_db_real.upsert_session(bob_s1)
+
+    # Bob tries to bulk-delete all three session IDs, but scoped to his user_id
+    postgres_db_real.delete_sessions(session_ids=["alice_s1", "alice_s2", "bob_s1"], user_id="bob")
+
+    # Alice's sessions survive — Bob could only delete his own
+    assert postgres_db_real.get_session(session_id="alice_s1", session_type=SessionType.AGENT) is not None
+    assert postgres_db_real.get_session(session_id="alice_s2", session_type=SessionType.AGENT) is not None
+    # Bob's session is gone
+    assert postgres_db_real.get_session(session_id="bob_s1", session_type=SessionType.AGENT) is None
+
+
+def test_rename_session_scoped_by_user_id(postgres_db_real: PostgresDb):
+    """Verify rename_session with user_id only renames sessions owned by that user."""
+    alice_session = AgentSession(
+        session_id="rename_sess_1",
+        agent_id="agent_1",
+        user_id="alice",
+        session_data={"session_name": "Original Name"},
+        created_at=int(time.time()),
+    )
+    postgres_db_real.upsert_session(alice_session)
+
+    # Bob tries to rename Alice's session
+    result = postgres_db_real.rename_session(
+        session_id="rename_sess_1", session_type=SessionType.AGENT, session_name="Hacked", user_id="bob"
+    )
+    assert result is None
+
+    # Alice's session name is unchanged
+    session = postgres_db_real.get_session(session_id="rename_sess_1", session_type=SessionType.AGENT)
+    assert session is not None
+    assert session.session_data["session_name"] == "Original Name"
+
+    # Alice can rename her own session
+    result = postgres_db_real.rename_session(
+        session_id="rename_sess_1", session_type=SessionType.AGENT, session_name="New Name", user_id="alice"
+    )
+    assert result is not None
+    assert result.session_data["session_name"] == "New Name"
+
+
 def test_session_type_polymorphism(
     postgres_db_real: PostgresDb, sample_agent_session: AgentSession, sample_team_session: TeamSession
 ):

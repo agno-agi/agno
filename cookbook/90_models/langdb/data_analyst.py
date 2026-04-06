@@ -10,9 +10,7 @@ from agno.tools.duckdb import DuckDbTools
 # Create Agent
 # ---------------------------------------------------------------------------
 
-duckdb_tools = DuckDbTools(
-    create_tables=False, export_tables=False, summarize_tables=False
-)
+duckdb_tools = DuckDbTools()
 duckdb_tools.create_table_from_path(
     path="https://phidata-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
     table="movies",

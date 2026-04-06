@@ -16,7 +16,7 @@ from agno.tools.openai import OpenAITools
 
 
 video_tools = MoviePyVideoTools(
-    process_video=True, generate_captions=True, embed_captions=True
+    enable_process_video=True, enable_generate_captions=True, enable_embed_captions=True
 )
 
 openai_tools = OpenAITools()

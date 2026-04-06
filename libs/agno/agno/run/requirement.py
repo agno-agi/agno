@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from agno.models.response import ToolExecution, UserInputField
+from agno.models.response import ToolExecution, UserFeedbackQuestion, UserInputField
 
 
 @dataclass
@@ -19,6 +19,9 @@ class RunRequirement:
 
     # User input
     user_input_schema: Optional[List[UserInputField]] = None
+
+    # User feedback (structured questions with options)
+    user_feedback_schema: Optional[List[UserFeedbackQuestion]] = None
 
     # External execution
     external_execution_result: Optional[str] = None
@@ -37,6 +40,7 @@ class RunRequirement:
         self.id = id or str(uuid4())
         self.tool_execution = tool_execution
         self.user_input_schema = tool_execution.user_input_schema if tool_execution else None
+        self.user_feedback_schema = tool_execution.user_feedback_schema if tool_execution else None
         self.created_at = created_at or datetime.now(timezone.utc)
         self.confirmation = None
         self.confirmation_note = None
@@ -70,6 +74,16 @@ class RunRequirement:
         if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
             return True
 
+        return False
+
+    @property
+    def needs_user_feedback(self) -> bool:
+        if not self.tool_execution:
+            return False
+        if self.tool_execution.answered is True:
+            return False
+        if self.user_feedback_schema and not all(q.selected_options is not None for q in self.user_feedback_schema):
+            return True
         return False
 
     @property
@@ -118,6 +132,33 @@ class RunRequirement:
             if all(f.value is not None for f in self.user_input_schema) and self.tool_execution:
                 self.tool_execution.answered = True
 
+    def provide_user_feedback(self, selections: Dict[str, List[str]]) -> None:
+        """Provide user feedback selections for a user-feedback requirement.
+
+        Args:
+            selections: A dictionary mapping question text to lists of selected option labels.
+        """
+        if not self.needs_user_feedback:
+            raise ValueError("This requirement does not require user feedback")
+        if self.user_feedback_schema:
+            for question in self.user_feedback_schema:
+                if question.question in selections:
+                    question.selected_options = selections[question.question]
+                    if question.options:
+                        for opt in question.options:
+                            opt.selected = opt.label in question.selected_options
+            # Also update tool_execution's user_feedback_schema
+            if self.tool_execution and self.tool_execution.user_feedback_schema:
+                for tool_question in self.tool_execution.user_feedback_schema:
+                    if tool_question.question in selections:
+                        tool_question.selected_options = selections[tool_question.question]
+                        if tool_question.options:
+                            for opt in tool_question.options:
+                                opt.selected = opt.label in tool_question.selected_options
+            # Mark as answered when all questions have selections
+            if all(q.selected_options is not None for q in self.user_feedback_schema) and self.tool_execution:
+                self.tool_execution.answered = True
+
     def set_external_execution_result(self, result: str):
         if not self.needs_external_execution:
             raise ValueError("This requirement does not require external execution")
@@ -127,7 +168,12 @@ class RunRequirement:
 
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
-        return not self.needs_confirmation and not self.needs_user_input and not self.needs_external_execution
+        return (
+            not self.needs_confirmation
+            and not self.needs_user_input
+            and not self.needs_user_feedback
+            and not self.needs_external_execution
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to JSON-serializable dictionary for storage."""
@@ -149,6 +195,11 @@ class RunRequirement:
 
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [f.to_dict() if hasattr(f, "to_dict") else f for f in self.user_input_schema]
+
+        if self.user_feedback_schema is not None:
+            _dict["user_feedback_schema"] = [
+                q.to_dict() if hasattr(q, "to_dict") else q for q in self.user_feedback_schema
+            ]
 
         return {k: v for k, v in _dict.items() if v is not None}
 
@@ -206,5 +257,16 @@ class RunRequirement:
                 elif isinstance(item, dict):
                     rebuilt_schema.append(UserInputField.from_dict(item))
             requirement.user_input_schema = rebuilt_schema if rebuilt_schema else None
+
+        # Handle user_feedback_schema
+        feedback_raw = data.get("user_feedback_schema")
+        if feedback_raw is not None:
+            rebuilt_feedback: List[UserFeedbackQuestion] = []
+            for item in feedback_raw:
+                if isinstance(item, UserFeedbackQuestion):
+                    rebuilt_feedback.append(item)
+                elif isinstance(item, dict):
+                    rebuilt_feedback.append(UserFeedbackQuestion.from_dict(item))
+            requirement.user_feedback_schema = rebuilt_feedback if rebuilt_feedback else None
 
         return requirement

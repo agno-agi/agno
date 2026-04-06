@@ -143,7 +143,7 @@ human_in_the_loop_agent = Agent(
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[
-        YFinanceTools(),
+        YFinanceTools(all=True),
         save_learning,
     ],
     knowledge=learnings_kb,

@@ -12,9 +12,10 @@ from typing import Any, Dict, List, Optional, Union, cast
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import RemoteContentConfig, S3Config
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import S3Content
-from agno.utils.log import log_error, log_info, log_warning
+from agno.knowledge.remote_content.s3 import S3Config
+from agno.utils.log import log_error, log_info
 from agno.utils.string import generate_id
 
 
@@ -28,7 +29,7 @@ class S3Loader(BaseLoader):
     def _validate_s3_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[S3Config]:
         """Validate and extract S3 config.
 
@@ -69,7 +70,7 @@ class S3Loader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from AWS S3 (async).
 
@@ -77,11 +78,6 @@ class S3Loader(BaseLoader):
         """
         from agno.cloud.aws.s3.bucket import S3Bucket
         from agno.cloud.aws.s3.object import S3Object
-
-        log_warning(
-            "S3 content loading has limited features. "
-            "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
-        )
 
         remote_content: S3Content = cast(S3Content, content.remote_content)
         s3_config = self._validate_s3_config(content, config)
@@ -180,16 +176,11 @@ class S3Loader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from AWS S3 (sync)."""
         from agno.cloud.aws.s3.bucket import S3Bucket
         from agno.cloud.aws.s3.object import S3Object
-
-        log_warning(
-            "S3 content loading has limited features. "
-            "Recursive folder traversal, rich metadata, and improved naming are coming in a future release."
-        )
 
         remote_content: S3Content = cast(S3Content, content.remote_content)
         s3_config = self._validate_s3_config(content, config)

@@ -7,6 +7,8 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     CompressionCompletedEvent,
     CompressionStartedEvent,
+    FollowupsCompletedEvent,
+    FollowupsStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ModelRequestCompletedEvent,
@@ -44,6 +46,8 @@ from agno.run.agent import (
 from agno.run.requirement import RunRequirement
 from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
 from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
+from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
+from agno.run.team import FollowupsStartedEvent as TeamFollowupsStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
@@ -70,6 +74,12 @@ from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryCompletedEvent
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
+from agno.run.team import TaskCreatedEvent as TeamTaskCreatedEvent
+from agno.run.team import TaskData as TeamTaskData
+from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationCompletedEvent
+from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
+from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
+from agno.run.team import TaskUpdatedEvent as TeamTaskUpdatedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
@@ -738,6 +748,30 @@ def create_parser_model_response_completed_event(
     )
 
 
+def create_followups_started_event(
+    from_run_response: RunOutput,
+) -> FollowupsStartedEvent:
+    return FollowupsStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_followups_completed_event(
+    from_run_response: RunOutput,
+    followups: Optional[List[str]] = None,
+) -> FollowupsCompletedEvent:
+    return FollowupsCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        followups=followups,
+    )
+
+
 def create_team_parser_model_response_started_event(
     from_run_response: TeamRunOutput,
 ) -> TeamParserModelResponseStartedEvent:
@@ -941,6 +975,132 @@ def create_team_compression_completed_event(
         tool_results_compressed=tool_results_compressed,
         original_size=original_size,
         compressed_size=compressed_size,
+    )
+
+
+def create_team_followups_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamFollowupsStartedEvent:
+    return TeamFollowupsStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_followups_completed_event(
+    from_run_response: TeamRunOutput,
+    followups: Optional[List[str]] = None,
+) -> TeamFollowupsCompletedEvent:
+    return TeamFollowupsCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        followups=followups,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task Mode Events
+# ---------------------------------------------------------------------------
+
+
+def create_team_task_iteration_started_event(
+    from_run_response: TeamRunOutput,
+    iteration: int,
+    max_iterations: int,
+) -> TeamTaskIterationStartedEvent:
+    return TeamTaskIterationStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        iteration=iteration,
+        max_iterations=max_iterations,
+    )
+
+
+def create_team_task_iteration_completed_event(
+    from_run_response: TeamRunOutput,
+    iteration: int,
+    max_iterations: int,
+    task_summary: Optional[str] = None,
+) -> TeamTaskIterationCompletedEvent:
+    return TeamTaskIterationCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        iteration=iteration,
+        max_iterations=max_iterations,
+        task_summary=task_summary,
+    )
+
+
+def create_team_task_state_updated_event(
+    from_run_response: TeamRunOutput,
+    task_summary: Optional[str] = None,
+    goal_complete: bool = False,
+    tasks: Optional[List[TeamTaskData]] = None,
+    completion_summary: Optional[str] = None,
+) -> TeamTaskStateUpdatedEvent:
+    return TeamTaskStateUpdatedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        task_summary=task_summary,
+        goal_complete=goal_complete,
+        tasks=tasks or [],
+        completion_summary=completion_summary,
+    )
+
+
+def create_team_task_created_event(
+    from_run_response: TeamRunOutput,
+    task_id: str,
+    title: str,
+    description: str = "",
+    assignee: Optional[str] = None,
+    status: str = "pending",
+    dependencies: Optional[List[str]] = None,
+) -> TeamTaskCreatedEvent:
+    return TeamTaskCreatedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        task_id=task_id,
+        title=title,
+        description=description,
+        assignee=assignee,
+        status=status,
+        dependencies=dependencies or [],
+    )
+
+
+def create_team_task_updated_event(
+    from_run_response: TeamRunOutput,
+    task_id: str,
+    title: str,
+    status: str,
+    previous_status: Optional[str] = None,
+    result: Optional[str] = None,
+    assignee: Optional[str] = None,
+) -> TeamTaskUpdatedEvent:
+    return TeamTaskUpdatedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        task_id=task_id,
+        title=title,
+        status=status,
+        previous_status=previous_status,
+        result=result,
+        assignee=assignee,
     )
 
 

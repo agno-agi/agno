@@ -3,23 +3,23 @@
 import pytest
 from pydantic import ValidationError
 
-from agno.knowledge.remote_content.config import (
+from agno.knowledge.remote_content import (
     AzureBlobConfig,
+    BaseStorageConfig,
     GcsConfig,
     GitHubConfig,
-    RemoteContentConfig,
     S3Config,
     SharePointConfig,
 )
 
 # =============================================================================
-# Base RemoteContentConfig Tests
+# Base BaseStorageConfig Tests
 # =============================================================================
 
 
 def test_base_config_creation():
     """Test creating a base config with required fields."""
-    config = RemoteContentConfig(id="test-id", name="Test Config")
+    config = BaseStorageConfig(id="test-id", name="Test Config")
     assert config.id == "test-id"
     assert config.name == "Test Config"
     assert config.metadata is None
@@ -28,22 +28,22 @@ def test_base_config_creation():
 def test_base_config_with_metadata():
     """Test creating a base config with metadata."""
     metadata = {"key": "value", "nested": {"foo": "bar"}}
-    config = RemoteContentConfig(id="test-id", name="Test Config", metadata=metadata)
+    config = BaseStorageConfig(id="test-id", name="Test Config", metadata=metadata)
     assert config.metadata == metadata
 
 
 def test_base_config_missing_required_fields():
     """Test that missing required fields raise ValidationError."""
     with pytest.raises(ValidationError):
-        RemoteContentConfig(id="test-id")  # missing name
+        BaseStorageConfig(id="test-id")  # missing name
 
     with pytest.raises(ValidationError):
-        RemoteContentConfig(name="Test")  # missing id
+        BaseStorageConfig(name="Test")  # missing id
 
 
 def test_base_config_allows_extra_fields():
     """Test that extra fields are allowed (Config.extra = 'allow')."""
-    config = RemoteContentConfig(id="test-id", name="Test", custom_field="custom_value")
+    config = BaseStorageConfig(id="test-id", name="Test", custom_field="custom_value")
     assert config.custom_field == "custom_value"
 
 
@@ -367,13 +367,79 @@ def test_github_config_with_metadata():
     assert config.metadata == metadata
 
 
+def test_github_config_with_app_auth():
+    """Test creating a GitHub config with GitHub App authentication."""
+    config = GitHubConfig(
+        id="gh-app",
+        name="App Repo",
+        repo="org/repo",
+        app_id=12345,
+        installation_id=67890,
+        private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+    )
+    assert config.app_id == 12345
+    assert config.installation_id == 67890
+    assert config.private_key is not None
+
+
+def test_github_config_partial_app_auth_raises():
+    """Test that providing only some GitHub App fields raises ValueError."""
+    with pytest.raises(ValidationError, match="Missing"):
+        GitHubConfig(id="gh", name="GH", repo="owner/repo", app_id=123)
+
+    with pytest.raises(ValidationError, match="Missing"):
+        GitHubConfig(id="gh", name="GH", repo="owner/repo", app_id=123, installation_id=456)
+
+
+def test_github_config_app_auth_with_token():
+    """Test that both token and app auth fields can coexist."""
+    config = GitHubConfig(
+        id="gh",
+        name="GH",
+        repo="owner/repo",
+        token="ghp_xxx",
+        app_id=123,
+        installation_id=456,
+        private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+    )
+    assert config.token == "ghp_xxx"
+    assert config.app_id == 123
+
+
+def test_github_config_app_auth_string_ids():
+    """Test GitHub App auth with string-typed IDs."""
+    config = GitHubConfig(
+        id="gh",
+        name="GH",
+        repo="owner/repo",
+        app_id="12345",
+        installation_id="67890",
+        private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+    )
+    assert config.app_id == "12345"
+    assert config.installation_id == "67890"
+
+
+def test_github_config_invalid_private_key_format():
+    """Test that a non-PEM private_key raises ValueError."""
+    with pytest.raises(ValidationError, match="PEM-formatted"):
+        GitHubConfig(
+            id="gh",
+            name="GH",
+            repo="owner/repo",
+            app_id=123,
+            installation_id=456,
+            private_key="not-a-pem-key",
+        )
+
+
 # =============================================================================
 # AzureBlobConfig Tests
 # =============================================================================
 
 
 def test_azure_blob_config_creation():
-    """Test creating an Azure Blob config with required fields."""
+    """Test creating an Azure Blob config with Service Principal fields."""
     config = AzureBlobConfig(
         id="azure-source",
         name="My Azure Storage",
@@ -390,7 +456,105 @@ def test_azure_blob_config_creation():
     assert config.client_secret == "secret-789"
     assert config.storage_account == "mystorageaccount"
     assert config.container == "mycontainer"
+    assert config.sas_token is None
     assert config.prefix is None
+
+
+def test_azure_blob_config_with_sas_token():
+    """Test creating an Azure Blob config with SAS token authentication."""
+    config = AzureBlobConfig(
+        id="azure-sas",
+        name="Azure SAS Storage",
+        sas_token="sp=racwdli&st=2026-03-28T14:53:44Z&se=2027-03-28T23:08:44Z&spr=https&sv=2024-11-04&sr=c&sig=abc123",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    assert config.sas_token is not None
+    assert config.tenant_id is None
+    assert config.client_id is None
+    assert config.client_secret is None
+    assert config.storage_account == "mystorageaccount"
+    assert config.container == "mycontainer"
+
+
+def test_azure_blob_config_sas_token_file_method():
+    """Test the file() method works with SAS token config."""
+    config = AzureBlobConfig(
+        id="azure-sas",
+        name="Azure SAS",
+        sas_token="sv=2024-11-04&sr=c&sig=abc",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    content = config.file("path/to/document.pdf")
+    assert content.config_id == "azure-sas"
+    assert content.blob_name == "path/to/document.pdf"
+
+
+def test_azure_blob_config_sas_token_folder_method():
+    """Test the folder() method works with SAS token config."""
+    config = AzureBlobConfig(
+        id="azure-sas",
+        name="Azure SAS",
+        sas_token="sv=2024-11-04&sr=c&sig=abc",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    content = config.folder("documents/")
+    assert content.config_id == "azure-sas"
+    assert content.prefix == "documents/"
+
+
+def test_azure_blob_config_both_auth_methods_raises():
+    """Test that providing both SP credentials and SAS token raises ValidationError."""
+    with pytest.raises(ValidationError, match="not both"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            tenant_id="tenant-123",
+            client_id="client-456",
+            client_secret="secret-789",
+            sas_token="sv=2024-11-04&sr=c&sig=abc",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
+def test_azure_blob_config_sas_with_partial_sp_raises():
+    """Test that providing SAS token with partial SP credentials raises ValidationError."""
+    with pytest.raises(ValidationError, match="not a mix"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            sas_token="sv=2024-11-04&sr=c&sig=abc",
+            tenant_id="tenant-123",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
+def test_azure_blob_config_partial_sp_raises():
+    """Test that providing incomplete SP credentials raises ValidationError."""
+    with pytest.raises(ValidationError, match="Incomplete Service Principal"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            tenant_id="tenant-123",
+            # Missing client_id and client_secret
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
+def test_azure_blob_config_no_auth_raises():
+    """Test that providing no authentication raises ValidationError."""
+    with pytest.raises(ValidationError, match="Authentication required"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
 
 
 def test_azure_blob_config_with_prefix():
@@ -445,12 +609,12 @@ def test_azure_blob_config_folder_method():
 
 
 def test_azure_blob_config_missing_required_fields():
-    """Test that missing required fields raise ValidationError."""
+    """Test that missing storage fields raise ValidationError."""
     with pytest.raises(ValidationError):
         AzureBlobConfig(
             id="azure-source",
             name="My Azure Storage",
-            # Missing tenant_id, client_id, client_secret, storage_account, container
+            # Missing storage_account, container, and auth
         )
 
 
