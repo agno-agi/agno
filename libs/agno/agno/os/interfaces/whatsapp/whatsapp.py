@@ -28,6 +28,7 @@ class Whatsapp(BaseInterface):
         access_token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         verify_token: Optional[str] = None,
+        app_secret: Optional[str] = None,
         # Timeout in seconds for media downloads/uploads (images, video, docs)
         media_timeout: int = 30,
         enable_encryption: bool = False,
@@ -44,6 +45,7 @@ class Whatsapp(BaseInterface):
         self.access_token = access_token
         self.phone_number_id = phone_number_id
         self.verify_token = verify_token
+        self.app_secret = app_secret
         self.media_timeout = media_timeout
         self.enable_encryption = enable_encryption
 
@@ -74,6 +76,7 @@ class Whatsapp(BaseInterface):
             access_token=self.access_token,
             phone_number_id=self.phone_number_id,
             verify_token=self.verify_token,
+            app_secret=self.app_secret,
             media_timeout=self.media_timeout,
             enable_encryption=self.enable_encryption,
             encryption_key=self._encryption_key,

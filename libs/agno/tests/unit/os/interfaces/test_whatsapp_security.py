@@ -106,3 +106,40 @@ def test_app_env_development_does_not_bypass():
     with patch.dict("os.environ", {"WHATSAPP_APP_SECRET": APP_SECRET, "APP_ENV": "development"}):
         assert validate_webhook_signature(payload, None) is False
         assert validate_webhook_signature(payload, "sha256=invalid") is False
+
+
+# === Per-instance app_secret override ===
+
+
+def test_per_instance_secret_validates_correctly():
+    """Per-instance app_secret should validate against its own secret."""
+    instance_secret = "per-instance-secret-xyz"
+    payload = b'{"event": "message"}'
+    signature = _make_signature(payload, secret=instance_secret)
+    with patch.dict("os.environ", {}, clear=True):
+        assert validate_webhook_signature(payload, signature, app_secret=instance_secret) is True
+
+
+def test_per_instance_secret_rejects_wrong_signature():
+    """Per-instance app_secret should reject signatures made with a different secret."""
+    payload = b'{"event": "message"}'
+    wrong_signature = _make_signature(payload, secret="wrong-secret")
+    with patch.dict("os.environ", {}, clear=True):
+        assert validate_webhook_signature(payload, wrong_signature, app_secret="correct-secret") is False
+
+
+def test_per_instance_secret_overrides_env_var():
+    """Per-instance app_secret takes priority over WHATSAPP_APP_SECRET env var."""
+    instance_secret = "instance-level-secret"
+    payload = b'{"event": "message"}'
+    signature = _make_signature(payload, secret=instance_secret)
+    # Env var is set to a DIFFERENT secret, but instance secret should win
+    with patch.dict("os.environ", {"WHATSAPP_APP_SECRET": "env-level-secret"}):
+        assert validate_webhook_signature(payload, signature, app_secret=instance_secret) is True
+
+
+def test_per_instance_none_falls_back_to_env():
+    """app_secret=None should fall back to WHATSAPP_APP_SECRET env var."""
+    payload = b'{"test": "data"}'
+    signature = _make_signature(payload, secret=APP_SECRET)
+    assert validate_webhook_signature(payload, signature, app_secret=None) is True
