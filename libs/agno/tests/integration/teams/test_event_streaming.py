@@ -1002,7 +1002,9 @@ def test_intermediate_steps_with_member_agents_nested_team():
     # Check that all required events are present
     assert required_events.issubset(actual_events), f"Missing required events: {required_events - actual_events}"
     # Check that actual events are within the expected set (required + optional)
-    all_expected = required_events | optional_reasoning_events | optional_member_tool_events | optional_intermediate_events
+    all_expected = (
+        required_events | optional_reasoning_events | optional_member_tool_events | optional_intermediate_events
+    )
     unexpected_events = actual_events - all_expected
     assert not unexpected_events, f"Unexpected events: {unexpected_events}"
 
