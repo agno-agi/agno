@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, List, Literal, NamedTuple, Optional, Type, Union
@@ -23,12 +24,10 @@ if TYPE_CHECKING:
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
-import re as _re
-
 # Matches any HTML tag (opening, closing, self-closing)
-_TAG_RE = _re.compile(r"<[^>]+>")
+_TAG_RE = re.compile(r"<[^>]+>")
 # Matches "retry after <seconds>" in Telegram 429 error messages
-_RETRY_AFTER_RE = _re.compile(r"retry after (\d+)", _re.IGNORECASE)
+_RETRY_AFTER_RE = re.compile(r"retry after (\d+)", re.IGNORECASE)
 
 TG_STREAM_EDIT_INTERVAL = 1.0
 
@@ -176,6 +175,7 @@ class StreamState:
         self._rate_limited_until: float = 0.0
 
     def _is_rate_limited(self) -> bool:
+        # Short-circuit on 0.0 (initial state) to avoid the monotonic() syscall
         return self._rate_limited_until > 0.0 and time.monotonic() < self._rate_limited_until
 
     def _set_rate_limit(self, exc: Exception) -> bool:
@@ -183,18 +183,24 @@ class StreamState:
         match = _RETRY_AFTER_RE.search(str(exc))
         if match:
             retry_seconds = int(match.group(1))
-            self._rate_limited_until = time.monotonic() + retry_seconds
+            new_deadline = time.monotonic() + retry_seconds
+            # Never shorten an active hold — a previous 429 may enforce a longer window
+            self._rate_limited_until = max(self._rate_limited_until, new_deadline)
             log_warning(f"Rate limited by Telegram, pausing edits for {retry_seconds}s")
             return True
         return False
 
     async def _wait_for_rate_limit(self) -> None:
         """Sleep until the rate-limit hold expires. Used by finalize to guarantee delivery."""
-        if self._is_rate_limited():
-            remaining = self._rate_limited_until - time.monotonic()
-            if remaining > 0:
-                log_info(f"Waiting {remaining:.0f}s for Telegram rate limit to expire before finalizing")
-                await asyncio.sleep(remaining)
+        deadline = self._rate_limited_until
+        if deadline <= 0.0:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            log_info(f"Waiting {remaining:.0f}s for Telegram rate limit to expire before finalizing")
+            await asyncio.sleep(remaining)
+        # Only clear if no new hold was set while we slept (compare-and-swap)
+        if self._rate_limited_until == deadline:
             self._rate_limited_until = 0.0
 
     def add_status(self, line: str) -> None:
@@ -247,8 +253,8 @@ class StreamState:
                 message_thread_id=self.message_thread_id,
             )
         except Exception as e:
-            if not self._set_rate_limit(e):
-                raise
+            self._set_rate_limit(e)
+            raise
 
     async def _edit(self, html: str) -> None:
         try:
@@ -288,9 +294,13 @@ class StreamState:
             return
         display = self._truncate_html(html)
         if self.sent_message_id is None:
-            msg = await self._send_new(display)
-            if msg is not None:
+            try:
+                msg = await self._send_new(display)
                 self.sent_message_id = msg.message_id
+            except Exception:
+                # _send_new already called _set_rate_limit if applicable;
+                # during streaming, failing to send the first message is not fatal
+                return
         else:
             await self._edit(display)
         self.last_edit_time = time.monotonic()

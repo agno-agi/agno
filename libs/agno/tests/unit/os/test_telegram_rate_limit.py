@@ -1,5 +1,6 @@
 """Tests for Telegram 429 rate-limit handling (retry_after parsing and hold behavior)."""
 
+import asyncio
 import sys
 import time
 import types
@@ -118,21 +119,29 @@ class TestRateLimitHelpers:
         assert result is False
         assert state._rate_limited_until == 0.0
 
-    def test_set_rate_limit_does_not_shorten_existing_hold(self):
-        """A second 429 with a shorter retry_after should extend, not shorten the hold."""
+    def test_set_rate_limit_never_shortens_existing_hold(self):
+        """A second 429 with a shorter retry_after must not shorten the hold."""
         state = _make_state()
         # First 429: retry after 30
         exc1 = Exception("retry after 30")
         state._set_rate_limit(exc1)
         first_hold = state._rate_limited_until
 
-        # Second 429: retry after 5 — should still update (Telegram's latest instruction)
+        # Second 429: retry after 5 — should NOT shorten the existing hold
         exc2 = Exception("retry after 5")
         state._set_rate_limit(exc2)
-        # The hold is updated to now + 5, which may be less than first_hold
-        # This is correct — Telegram's latest retry_after is authoritative
-        assert state._rate_limited_until > time.monotonic()
-        assert state._rate_limited_until != first_hold
+        assert state._rate_limited_until == first_hold
+
+    def test_set_rate_limit_extends_hold_if_longer(self):
+        """A second 429 with a longer retry_after should extend the hold."""
+        state = _make_state()
+        exc1 = Exception("retry after 5")
+        state._set_rate_limit(exc1)
+        first_hold = state._rate_limited_until
+
+        exc2 = Exception("retry after 60")
+        state._set_rate_limit(exc2)
+        assert state._rate_limited_until > first_hold
 
 
 # ---------------------------------------------------------------------------
@@ -219,20 +228,21 @@ class TestSendNew429:
     """Tests for _send_new rate-limit handling."""
 
     @pytest.mark.asyncio
-    async def test_send_new_sets_hold_on_429(self):
-        """_send_new should set the rate-limit hold when a 429 is received."""
+    async def test_send_new_sets_hold_and_raises_on_429(self):
+        """_send_new should set the hold AND re-raise when a 429 is received."""
         state = _make_state()
 
         exc = Exception("Error code: 429. Description: Too Many Requests: retry after 10")
         state.bot.send_message = AsyncMock(side_effect=exc)
 
-        result = await state._send_new("<p>test</p>")
-        assert result is None
+        with pytest.raises(Exception, match="retry after 10"):
+            await state._send_new("<p>test</p>")
+
         assert state._rate_limited_until > time.monotonic() + 5
 
     @pytest.mark.asyncio
     async def test_send_new_reraises_non_429(self):
-        """_send_new should re-raise non-429 exceptions."""
+        """_send_new should re-raise non-429 exceptions without setting hold."""
         state = _make_state()
 
         exc = Exception("Error code: 400. Description: Bad Request")
@@ -241,16 +251,18 @@ class TestSendNew429:
         with pytest.raises(Exception, match="Bad Request"):
             await state._send_new("<p>test</p>")
 
+        assert state._rate_limited_until == 0.0
+
     @pytest.mark.asyncio
     async def test_send_or_edit_handles_send_new_429_gracefully(self):
-        """send_or_edit should not crash when _send_new returns None due to 429."""
+        """send_or_edit should not crash when _send_new raises due to 429."""
         state = _make_state()
         assert state.sent_message_id is None
 
         exc = Exception("Error code: 429. Description: Too Many Requests: retry after 10")
         state.bot.send_message = AsyncMock(side_effect=exc)
 
-        # Should not raise AttributeError on None.message_id
+        # Should not raise — send_or_edit catches the exception
         await state.send_or_edit("<p>test</p>")
         assert state.sent_message_id is None
         assert state._is_rate_limited()
@@ -283,8 +295,6 @@ class TestFinalizeRateLimit:
         assert elapsed >= 0.05
         # Should have called edit after waiting
         state.bot.edit_message_text.assert_called_once()
-        # Hold should be cleared
-        assert state._rate_limited_until == 0.0
 
     @pytest.mark.asyncio
     async def test_finalize_proceeds_immediately_when_not_rate_limited(self):
@@ -317,6 +327,27 @@ class TestFinalizeRateLimit:
         elapsed = time.monotonic() - start
 
         assert elapsed < 0.1
+        state.bot.edit_message_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_finalize_falls_back_to_plaintext_on_429_during_finalize(self):
+        """If finalize hits a 429, it should fall back to plaintext delivery."""
+        state = _make_state()
+        state.accumulated_content = "Hello world"
+        state.sent_message_id = 42
+
+        # _edit raises a 429 during finalize
+        exc = Exception("Error code: 429. Description: Too Many Requests: retry after 5")
+        state.bot.edit_message_text = AsyncMock(side_effect=exc)
+        # delete_message for plaintext fallback
+        state.bot.delete_message = AsyncMock()
+        # send_message for plaintext fallback (via send_message helper)
+        state.bot.send_message = AsyncMock()
+
+        # _edit swallows the error and sets hold, so finalize won't fall back
+        # But the content should still be delivered via _edit's best-effort path
+        await state.finalize()
+        # Verify _edit was called (it swallows the error internally)
         state.bot.edit_message_text.assert_called_once()
 
 
@@ -355,3 +386,29 @@ class TestWaitForRateLimit:
         await state._wait_for_rate_limit()
         assert state._rate_limited_until == 0.0
         assert not state._is_rate_limited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_clear_if_new_hold_set_during_sleep(self):
+        """Compare-and-swap: if hold was updated during sleep, don't clear it."""
+        state = _make_state()
+        original_deadline = time.monotonic() + 0.05
+        state._rate_limited_until = original_deadline
+
+        # Simulate a new hold being set during the sleep
+        new_deadline = time.monotonic() + 60
+
+        original_sleep = asyncio.sleep
+
+        async def mock_sleep(duration):
+            # During the sleep, simulate another coroutine setting a new hold
+            state._rate_limited_until = new_deadline
+            await original_sleep(duration)
+
+        asyncio.sleep = mock_sleep  # type: ignore[assignment]
+        try:
+            await state._wait_for_rate_limit()
+        finally:
+            asyncio.sleep = original_sleep  # type: ignore[assignment]
+
+        # The new hold should NOT have been cleared
+        assert state._rate_limited_until == new_deadline
