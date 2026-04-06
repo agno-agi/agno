@@ -685,6 +685,12 @@ class AgentOS:
             if self.enable_mcp_server and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
 
+            # Interface lifespans (e.g. Slack Socket Mode)
+            for interface in self.interfaces:
+                iface_lifespan = interface.get_lifespan()
+                if iface_lifespan is not None:
+                    lifespans.append(iface_lifespan)
+
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
@@ -716,6 +722,12 @@ class AgentOS:
 
                 self._mcp_app = get_mcp_server(self)
                 lifespans.append(self._mcp_app.lifespan)
+
+            # Interface lifespans (e.g. Slack Socket Mode)
+            for interface in self.interfaces:
+                iface_lifespan = interface.get_lifespan()
+                if iface_lifespan is not None:
+                    lifespans.append(iface_lifespan)
 
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
