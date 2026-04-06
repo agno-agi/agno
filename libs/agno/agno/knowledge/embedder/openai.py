@@ -211,7 +211,7 @@ class OpenAIEmbedder(Embedder):
                 )
 
                 for result in results:
-                    if isinstance(result, Exception):
+                    if isinstance(result, BaseException):
                         all_embeddings.append([])
                         all_usage.append(None)
                     else:
