@@ -45,9 +45,7 @@ class Claude(AnthropicClaude):
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
-        # Validate thinking support immediately at model creation
-        if self.thinking:
-            self._validate_thinking_support()
+        super().__post_init__()
         # Overwrite output schema support for AWS Bedrock Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False

@@ -30,6 +30,7 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse
@@ -316,7 +317,9 @@ def _run_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
-            model_response = team.model.response(
+            model_response = call_model_with_fallback(
+                team.model,
+                team.fallback_config,
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -1125,7 +1128,9 @@ def _run(
 
                 # 6. Get the model response for the team leader
                 team.model = cast(Model, team.model)
-                model_response: ModelResponse = team.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -2112,7 +2117,9 @@ async def _arun_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
-            model_response = await team.model.aresponse(
+            model_response = await acall_model_with_fallback(
+                team.model,
+                team.fallback_config,
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -2977,7 +2984,9 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 6. Get the model response for the team leader
-                model_response = await team.model.aresponse(
+                model_response = await acall_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=team.tool_choice,
@@ -5033,7 +5042,9 @@ def _continue_run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Generate model response
-                model_response: ModelResponse = team.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -5695,7 +5706,9 @@ async def _acontinue_run(
                     run_response.content = None
 
                     # Get model response
-                    model_response: ModelResponse = await team.model.aresponse(
+                    model_response: ModelResponse = await acall_model_with_fallback(
+                        team.model,
+                        team.fallback_config,
                         messages=run_messages.messages,
                         response_format=response_format,
                         tools=_tools,
