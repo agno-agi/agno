@@ -42,8 +42,7 @@ agent = Agent(
     markdown=True,
 )
 
-# DB-backed token storage: pass store_token_in_db=True and db= on the agent.
-# Token is saved to the DB after browser OAuth, loaded from DB on subsequent runs.
+# Save OAuth token to DB instead of token.json
 # db_agent = Agent(
 #     name="Slides Agent (DB)",
 #     model=OpenAIChat(id="gpt-4o"),

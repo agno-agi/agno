@@ -106,10 +106,7 @@ agent = Agent(
     output_schema=FindEmailOutput,
 )
 
-# Example 5: DB-backed token storage
-# Pass store_token_in_db=True and db= on the agent. OAuth opens a browser as
-# usual, but the token is also saved to the DB. On subsequent runs, the token
-# loads from DB first — no token.json needed after the initial auth.
+# Example 5: Save OAuth token to DB instead of token.json
 # db_agent = Agent(
 #     name="Gmail Agent (DB)",
 #     model=OpenAIChat(id="gpt-4o"),
