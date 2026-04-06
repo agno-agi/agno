@@ -82,7 +82,6 @@ authenticate = google_authenticate("slides")
 
 
 class GoogleSlidesTools(Toolkit):
-    _clone_reset_attrs = ("creds", "service", "slides_service", "drive_service")
     DEFAULT_SCOPES = [
         "https://www.googleapis.com/auth/presentations",
         "https://www.googleapis.com/auth/drive.file",

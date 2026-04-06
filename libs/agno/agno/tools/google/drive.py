@@ -88,8 +88,6 @@ authenticate = google_authenticate("drive")
 
 
 class GoogleDriveTools(Toolkit):
-    _clone_reset_attrs = ("creds", "service")
-
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",

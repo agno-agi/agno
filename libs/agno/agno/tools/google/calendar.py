@@ -43,8 +43,6 @@ authenticate = google_authenticate("calendar")
 
 
 class GoogleCalendarTools(Toolkit):
-    _clone_reset_attrs = ("creds", "service", "_user_email")
-
     DEFAULT_SCOPES = [
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar",

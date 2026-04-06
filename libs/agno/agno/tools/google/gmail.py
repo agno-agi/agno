@@ -120,8 +120,6 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
 
 
 class GmailTools(Toolkit):
-    _clone_reset_attrs = ("creds", "service", "_label_cache")
-
     # Default scopes for Gmail API access
     DEFAULT_SCOPES = [
         "https://www.googleapis.com/auth/gmail.readonly",

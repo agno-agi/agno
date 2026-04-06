@@ -69,8 +69,6 @@ authenticate = google_authenticate("sheets")
 
 
 class GoogleSheetsTools(Toolkit):
-    _clone_reset_attrs = ("creds", "service")
-
     # Default scopes for Google Sheets API access
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
