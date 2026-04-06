@@ -439,7 +439,7 @@ def test_github_config_invalid_private_key_format():
 
 
 def test_azure_blob_config_creation():
-    """Test creating an Azure Blob config with required fields."""
+    """Test creating an Azure Blob config with Service Principal fields."""
     config = AzureBlobConfig(
         id="azure-source",
         name="My Azure Storage",
@@ -456,7 +456,105 @@ def test_azure_blob_config_creation():
     assert config.client_secret == "secret-789"
     assert config.storage_account == "mystorageaccount"
     assert config.container == "mycontainer"
+    assert config.sas_token is None
     assert config.prefix is None
+
+
+def test_azure_blob_config_with_sas_token():
+    """Test creating an Azure Blob config with SAS token authentication."""
+    config = AzureBlobConfig(
+        id="azure-sas",
+        name="Azure SAS Storage",
+        sas_token="sp=racwdli&st=2026-03-28T14:53:44Z&se=2027-03-28T23:08:44Z&spr=https&sv=2024-11-04&sr=c&sig=abc123",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    assert config.sas_token is not None
+    assert config.tenant_id is None
+    assert config.client_id is None
+    assert config.client_secret is None
+    assert config.storage_account == "mystorageaccount"
+    assert config.container == "mycontainer"
+
+
+def test_azure_blob_config_sas_token_file_method():
+    """Test the file() method works with SAS token config."""
+    config = AzureBlobConfig(
+        id="azure-sas",
+        name="Azure SAS",
+        sas_token="sv=2024-11-04&sr=c&sig=abc",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    content = config.file("path/to/document.pdf")
+    assert content.config_id == "azure-sas"
+    assert content.blob_name == "path/to/document.pdf"
+
+
+def test_azure_blob_config_sas_token_folder_method():
+    """Test the folder() method works with SAS token config."""
+    config = AzureBlobConfig(
+        id="azure-sas",
+        name="Azure SAS",
+        sas_token="sv=2024-11-04&sr=c&sig=abc",
+        storage_account="mystorageaccount",
+        container="mycontainer",
+    )
+    content = config.folder("documents/")
+    assert content.config_id == "azure-sas"
+    assert content.prefix == "documents/"
+
+
+def test_azure_blob_config_both_auth_methods_raises():
+    """Test that providing both SP credentials and SAS token raises ValidationError."""
+    with pytest.raises(ValidationError, match="not both"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            tenant_id="tenant-123",
+            client_id="client-456",
+            client_secret="secret-789",
+            sas_token="sv=2024-11-04&sr=c&sig=abc",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
+def test_azure_blob_config_sas_with_partial_sp_raises():
+    """Test that providing SAS token with partial SP credentials raises ValidationError."""
+    with pytest.raises(ValidationError, match="not a mix"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            sas_token="sv=2024-11-04&sr=c&sig=abc",
+            tenant_id="tenant-123",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
+def test_azure_blob_config_partial_sp_raises():
+    """Test that providing incomplete SP credentials raises ValidationError."""
+    with pytest.raises(ValidationError, match="Incomplete Service Principal"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            tenant_id="tenant-123",
+            # Missing client_id and client_secret
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
+
+
+def test_azure_blob_config_no_auth_raises():
+    """Test that providing no authentication raises ValidationError."""
+    with pytest.raises(ValidationError, match="Authentication required"):
+        AzureBlobConfig(
+            id="azure-source",
+            name="Azure",
+            storage_account="mystorageaccount",
+            container="mycontainer",
+        )
 
 
 def test_azure_blob_config_with_prefix():
@@ -511,12 +609,12 @@ def test_azure_blob_config_folder_method():
 
 
 def test_azure_blob_config_missing_required_fields():
-    """Test that missing required fields raise ValidationError."""
+    """Test that missing storage fields raise ValidationError."""
     with pytest.raises(ValidationError):
         AzureBlobConfig(
             id="azure-source",
             name="My Azure Storage",
-            # Missing tenant_id, client_id, client_secret, storage_account, container
+            # Missing storage_account, container, and auth
         )
 
 

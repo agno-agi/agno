@@ -48,7 +48,7 @@ class DoclingReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         output_format: str = "markdown",
         converter: Optional[DocumentConverter] = None,
         format_options: Optional[Dict[Any, Any]] = None,
@@ -71,6 +71,9 @@ class DoclingReader(Reader):
             format_options: Optional format options dictionary for DocumentConverter.
             **kwargs: Additional arguments passed to the Reader class
         """
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
         self.output_format = OUTPUT_FORMAT_MAP.get(output_format.lower())

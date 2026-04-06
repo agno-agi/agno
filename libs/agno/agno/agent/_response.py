@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from agno.media import Audio
 from agno.models.base import Model
+from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -1062,7 +1063,9 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    for model_response_event in agent.model.response_stream(
+    for model_response_event in call_model_stream_with_fallback(
+        agent.model,
+        agent.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1211,7 +1214,9 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    model_response_stream = agent.model.aresponse_stream(
+    model_response_stream = acall_model_stream_with_fallback(
+        agent.model,
+        agent.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1368,6 +1373,13 @@ def handle_model_response_chunk(
         )
     else:
         model_response_event = cast(ModelResponse, model_response_event)
+        # If a fallback model was activated, reset accumulated content
+        if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+            model_response.content = None
+            model_response.reasoning_content = None
+            run_response.content = None
+            run_response.reasoning_content = None
+            return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"

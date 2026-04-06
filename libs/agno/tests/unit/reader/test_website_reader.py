@@ -273,3 +273,23 @@ async def test_async_crawl_max_depth(mock_html_content, mock_html_content_with_a
         assert len(result) == 2
         assert "https://example.com" in result
         assert "https://example.com/page1" in result
+
+
+def test_website_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = WebsiteReader(chunk_size=700)
+    assert reader.chunk_size == 700
+    assert reader.chunking_strategy.chunk_size == 700
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_website_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = WebsiteReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)

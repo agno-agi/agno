@@ -77,6 +77,10 @@ class Qdrant(VectorDb):
             sparse_vector_name (str): Sparse vector name.
             hybrid_fusion_strategy (models.Fusion): Strategy for hybrid fusion.
             fastembed_kwargs (Optional[dict]): Keyword args for `fastembed.SparseTextEmbedding.__init__()`.
+                For offline/air-gapped environments, use:
+                - `local_files_only=True`: Prevents downloading models from the internet
+                - `cache_dir="/path/to/models"`: Specifies custom model cache location
+                Example for offline mode: `{"local_files_only": True, "cache_dir": "/app/models"}`
             **kwargs: Keyword args for `qdrant_client.QdrantClient.__init__()`.
         """
         # Validate required parameters
