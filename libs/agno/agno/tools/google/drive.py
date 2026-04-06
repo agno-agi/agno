@@ -132,6 +132,7 @@ class GoogleDriveTools(Toolkit):
     def __init__(
         self,
         google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         # Authentication
         auth_port: Optional[int] = 5050,
         login_hint: Optional[str] = None,
@@ -168,6 +169,8 @@ class GoogleDriveTools(Toolkit):
             self.instructions = instructions
 
         self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()

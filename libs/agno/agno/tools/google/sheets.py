@@ -81,6 +81,7 @@ class GoogleSheetsTools(Toolkit):
     def __init__(
         self,
         google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         scopes: Optional[List[str]] = None,
         spreadsheet_id: Optional[str] = None,
         spreadsheet_range: Optional[str] = None,
@@ -131,6 +132,8 @@ class GoogleSheetsTools(Toolkit):
         )
 
         self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         self.creds = creds

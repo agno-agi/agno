@@ -53,6 +53,7 @@ class GoogleCalendarTools(Toolkit):
     def __init__(
         self,
         google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = "token.json",
@@ -107,6 +108,8 @@ class GoogleCalendarTools(Toolkit):
             self.instructions = instructions
 
         self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.creds = creds
         self.service: Optional[Resource] = None
         self.calendar_id = calendar_id
