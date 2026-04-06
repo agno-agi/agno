@@ -331,7 +331,7 @@ async def workflow_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except Exception as e:
+    except BaseException as e:
         import traceback
 
         traceback.print_exc()
