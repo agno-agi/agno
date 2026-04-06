@@ -175,6 +175,28 @@ class StreamState:
         # Monotonic timestamp until which we should not attempt to edit messages (Telegram 429)
         self._rate_limited_until: float = 0.0
 
+    def _is_rate_limited(self) -> bool:
+        return self._rate_limited_until > 0.0 and time.monotonic() < self._rate_limited_until
+
+    def _set_rate_limit(self, exc: Exception) -> bool:
+        """Parse a Telegram 429 error and set the rate-limit hold. Returns True if 429 was detected."""
+        match = _RETRY_AFTER_RE.search(str(exc))
+        if match:
+            retry_seconds = int(match.group(1))
+            self._rate_limited_until = time.monotonic() + retry_seconds
+            log_warning(f"Rate limited by Telegram, pausing edits for {retry_seconds}s")
+            return True
+        return False
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Sleep until the rate-limit hold expires. Used by finalize to guarantee delivery."""
+        if self._is_rate_limited():
+            remaining = self._rate_limited_until - time.monotonic()
+            if remaining > 0:
+                log_info(f"Waiting {remaining:.0f}s for Telegram rate limit to expire before finalizing")
+                await asyncio.sleep(remaining)
+            self._rate_limited_until = 0.0
+
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
 
@@ -216,29 +238,25 @@ class StreamState:
         return "\n".join(parts)
 
     async def _send_new(self, html: str) -> Any:
-        return await self.bot.send_message(
-            self.chat_id,
-            html,
-            parse_mode="HTML",
-            reply_to_message_id=self.reply_to,
-            message_thread_id=self.message_thread_id,
-        )
+        try:
+            return await self.bot.send_message(
+                self.chat_id,
+                html,
+                parse_mode="HTML",
+                reply_to_message_id=self.reply_to,
+                message_thread_id=self.message_thread_id,
+            )
+        except Exception as e:
+            if not self._set_rate_limit(e):
+                raise
 
     async def _edit(self, html: str) -> None:
-        # If we are still in a rate-limit window, skip the edit entirely
-        if self._rate_limited_until and time.monotonic() < self._rate_limited_until:
-            return
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
             if "message is not modified" in str(e):
                 return
-            match = _RETRY_AFTER_RE.search(str(e))
-            if match:
-                retry_seconds = float(match.group(1))
-                self._rate_limited_until = time.monotonic() + retry_seconds
-                log_warning(f"Rate limited by Telegram, pausing edits for {retry_seconds}s")
-            else:
+            if not self._set_rate_limit(e):
                 log_warning(f"Failed to edit message: {e}")
 
     async def _send_chunks(self, content: str) -> None:
@@ -266,13 +284,13 @@ class StreamState:
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
             return
-        # If rate-limited by Telegram, skip edits until the hold expires
-        if self._rate_limited_until and time.monotonic() < self._rate_limited_until:
+        if self._is_rate_limited():
             return
         display = self._truncate_html(html)
         if self.sent_message_id is None:
             msg = await self._send_new(display)
-            self.sent_message_id = msg.message_id
+            if msg is not None:
+                self.sent_message_id = msg.message_id
         else:
             await self._edit(display)
         self.last_edit_time = time.monotonic()
@@ -288,6 +306,10 @@ class StreamState:
         final_html = self.build_display_html()
         if not final_html:
             return
+
+        # Wait out any active rate-limit hold — finalize is the last chance
+        # to deliver the response, so we must not skip it
+        await self._wait_for_rate_limit()
 
         try:
             await self._finalize_inner(final_html)
