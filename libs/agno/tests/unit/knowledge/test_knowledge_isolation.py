@@ -426,6 +426,86 @@ class TestContentByIdIsolation:
         await knowledge.aremove_content_by_id("some-id")
         mock_contents_db.delete_knowledge_content.assert_not_called()
 
+    def test_patch_content_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        content = Content(id="some-id", name="updated-name")
+        result = knowledge.patch_content(content)
+        assert result is None
+        mock_contents_db.upsert_knowledge_content.assert_not_called()
+
+    def test_patch_content_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        content = Content(id="some-id", name="updated-name")
+        result = knowledge.patch_content(content)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_apatch_content_blocks_cross_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-B",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        content = Content(id="some-id", name="updated-name")
+        result = await knowledge.apatch_content(content)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_aget_content_by_id_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        result = await knowledge.aget_content_by_id("some-id")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_aremove_content_by_id_allows_same_instance(self):
+        mock_contents_db = self._make_mock_db(linked_to="KB-A")
+        mock_vector_db = MockVectorDb()
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=mock_vector_db,
+            contents_db=mock_contents_db,
+            isolate_vector_search=True,
+        )
+        await knowledge.aremove_content_by_id("some-id")
+        mock_contents_db.delete_knowledge_content.assert_called_once_with("some-id")
+
+    def test_linked_to_none_fails_closed(self):
+        mock_db = MagicMock()
+        row = KnowledgeRow(name="test", description="desc", status="completed", status_message="ok")
+        # Simulate legacy row without linked_to attribute
+        if hasattr(row, "linked_to"):
+            row.linked_to = None
+        mock_db.get_knowledge_content.return_value = row
+        knowledge = Knowledge(
+            name="KB-A",
+            vector_db=MockVectorDb(),
+            contents_db=mock_db,
+            isolate_vector_search=True,
+        )
+        # linked_to=None != "KB-A" → blocked (fail-closed)
+        result = knowledge.get_content_by_id("some-id")
+        assert result is None
+
 
 class TestContentHashIsolation:
     """Tests that content hashes include KB name when isolation is enabled."""

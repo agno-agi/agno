@@ -2561,6 +2561,8 @@ class Knowledge(RemoteKnowledge):
             if content_row is None:
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
                 return None
+            if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
+                return None
 
             # Apply safe string handling for updates as well
             if content.name is not None:
@@ -2607,6 +2609,8 @@ class Knowledge(RemoteKnowledge):
                 content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
+                return None
+            if self.isolate_vector_search and self.name and getattr(content_row, "linked_to", None) != self.name:
                 return None
 
             # Apply safe string handling for updates
