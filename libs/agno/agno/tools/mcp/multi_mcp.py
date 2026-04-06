@@ -167,6 +167,10 @@ class MultiMCPTools(Toolkit):
         self._session_ttl_seconds: float = 300.0  # 5 minutes default TTL
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
+        # Reference counting for shared session across parallel runs
+        self._ref_count: int = 0
+        self._ref_count_lock: Optional[asyncio.Lock] = None  # Lazily created lock for ref counting
+
         self.allow_partial_failure = allow_partial_failure
 
         def cleanup():
@@ -187,6 +191,13 @@ class MultiMCPTools(Toolkit):
         if self._session_lock is None:
             self._session_lock = asyncio.Lock()
         return self._session_lock
+
+    @property
+    def _connection_ref_lock(self) -> asyncio.Lock:
+        """Lazily create an asyncio lock for reference counting."""
+        if self._ref_count_lock is None:
+            self._ref_count_lock = asyncio.Lock()
+        return self._ref_count_lock
 
     async def is_alive(self) -> bool:
         try:
@@ -423,7 +434,11 @@ class MultiMCPTools(Toolkit):
             self._run_session_contexts.pop(cache_key, None)
 
     async def connect(self, force: bool = False):
-        """Initialize a MultiMCPTools instance and connect to the MCP servers"""
+        """Initialize a MultiMCPTools instance and connect to the MCP servers.
+
+        Uses reference counting so that parallel agent runs sharing the same
+        MultiMCPTools instance keep connections alive until the last run calls close().
+        """
 
         if force:
             # Clean up the session and context so we force a new connection
@@ -431,6 +446,10 @@ class MultiMCPTools(Toolkit):
             self._successful_connections = 0
             self._initialized = False
             self._connection_task = None
+            self._ref_count = 0
+
+        async with self._connection_ref_lock:
+            self._ref_count += 1
 
         if self._initialized:
             return
@@ -438,6 +457,9 @@ class MultiMCPTools(Toolkit):
         try:
             await self._connect()
         except (RuntimeError, BaseException) as e:
+            # Roll back the ref count on failure
+            async with self._connection_ref_lock:
+                self._ref_count = max(0, self._ref_count - 1)
             log_error(f"Failed to connect to {str(self)}: {e}")
 
     @classmethod
@@ -533,9 +555,20 @@ class MultiMCPTools(Toolkit):
             self._initialized = True
 
     async def close(self) -> None:
-        """Close the MCP connections and clean up resources"""
+        """Close the MCP connections and clean up resources.
+
+        Uses reference counting so that when multiple parallel agent runs share
+        this MultiMCPTools instance, connections are only closed when the last
+        run finishes.
+        """
         if not self._initialized:
             return
+
+        async with self._connection_ref_lock:
+            self._ref_count = max(0, self._ref_count - 1)
+            if self._ref_count > 0:
+                # Other runs still using these connections — skip teardown
+                return
 
         import warnings
 
