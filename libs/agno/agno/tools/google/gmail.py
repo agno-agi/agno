@@ -137,7 +137,7 @@ class GmailTools(Toolkit):
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
-        port: int = 0,
+        port: Optional[int] = None,
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
