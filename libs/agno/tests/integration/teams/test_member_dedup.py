@@ -1,4 +1,4 @@
-"""Integration tests for GitHub issue #7341:
+"""Integration tests
 TeamSession.get_messages(member_ids=...) returns duplicate messages
 when a member run is stored both as a standalone run and inside member_responses.
 
