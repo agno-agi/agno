@@ -1,6 +1,8 @@
 import base64
+import inspect
 import json
 import os
+from functools import wraps
 from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
 
@@ -22,6 +24,22 @@ def google_authenticate(service_name: str):
     """
 
     def decorator(func):
+        # Build the exposed signature: original params + run_context if not already present.
+        # @wraps preserves metadata (__name__, __doc__, __annotations__) but sets __wrapped__
+        # which makes inspect.signature follow to the original. We override __signature__ so
+        # the framework sees run_context for injection AND the original typed params for schema.
+        sig = inspect.signature(func)
+        if "run_context" not in sig.parameters:
+            exposed_sig = sig.replace(
+                parameters=[
+                    *sig.parameters.values(),
+                    inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None),
+                ]
+            )
+        else:
+            exposed_sig = sig
+
+        @wraps(func)
         def wrapper(self, *args, run_context=None, **kwargs):
             user_id = getattr(run_context, "user_id", None) if run_context else None
 
@@ -39,8 +57,7 @@ def google_authenticate(service_name: str):
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 
-        wrapper.__name__ = func.__name__
-        wrapper.__doc__ = func.__doc__
+        wrapper.__signature__ = exposed_sig
         return wrapper
 
     return decorator
