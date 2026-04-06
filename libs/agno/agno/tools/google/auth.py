@@ -1,8 +1,6 @@
 import base64
-import inspect
 import json
 import os
-from functools import wraps
 from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
 
@@ -24,10 +22,8 @@ def google_authenticate(service_name: str):
     """
 
     def decorator(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            rc = kwargs.pop("run_context", None)
-            user_id = getattr(rc, "user_id", None) if rc else None
+        def wrapper(self, *args, run_context=None, **kwargs):
+            user_id = getattr(run_context, "user_id", None) if run_context else None
 
             if not self.creds or not self.creds.valid:
                 try:
@@ -43,14 +39,8 @@ def google_authenticate(service_name: str):
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 
-        # Add run_context to the wrapper's visible signature so the framework
-        # injects it at call time (needed for user_id in DB token lookups)
-        sig = inspect.signature(func)
-        if "run_context" not in sig.parameters:
-            params = list(sig.parameters.values())
-            params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
-            wrapper.__signature__ = sig.replace(parameters=params)
-
+        wrapper.__name__ = func.__name__
+        wrapper.__doc__ = func.__doc__
         return wrapper
 
     return decorator
