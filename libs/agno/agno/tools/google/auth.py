@@ -76,8 +76,7 @@ def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> boo
     if not db:
         return False
 
-    ga = getattr(toolkit, "google_auth", None)
-    uid = user_id or (ga.user_id if ga and ga.user_id else "") or ""
+    uid = user_id or ""
     try:
         row = db.get_auth_token("google", uid, "google")
     except (NotImplementedError, Exception):
@@ -112,8 +111,7 @@ def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
     if not db:
         return False
 
-    ga = getattr(toolkit, "google_auth", None)
-    uid = user_id or (ga.user_id if ga and ga.user_id else "") or ""
+    uid = user_id or ""
     try:
         token_data = json.loads(creds.to_json())
         db.upsert_auth_token(
@@ -154,7 +152,6 @@ class GoogleAuth(Toolkit):
         client_secret: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         db: Optional[Any] = None,
-        user_id: Optional[str] = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -165,8 +162,6 @@ class GoogleAuth(Toolkit):
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
         self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
-        # Default user_id for single-user/cookbook mode; multi-user gets it from RunContext
-        self.user_id: Optional[str] = user_id
         # Set by auto-wiring from agent.db, or explicitly via db= param
         self._db: Optional[Any] = db
         self._services: Dict[str, List[str]] = {}
@@ -183,9 +178,7 @@ class GoogleAuth(Toolkit):
         if not self._db:
             return None
 
-        effective_user_id = user_id or self.user_id or ""
-        if not effective_user_id:
-            log_debug("No user_id for token lookup — all anonymous users share one token row")
+        effective_user_id = user_id or ""
         try:
             row = self._db.get_auth_token("google", effective_user_id, service)
         except NotImplementedError:
@@ -221,7 +214,7 @@ class GoogleAuth(Toolkit):
         if not self._db:
             return False
 
-        effective_user_id = user_id or self.user_id or ""
+        effective_user_id = user_id or ""
         try:
             token_data = json.loads(creds.to_json())
             self._db.upsert_auth_token(
@@ -265,7 +258,7 @@ class GoogleAuth(Toolkit):
 
         # Encode user_id + services in state so the callback knows who authenticated
         user_id = getattr(run_context, "user_id", None) if run_context else None
-        state_data = {"services": list(services), "user_id": user_id or self.user_id or ""}
+        state_data = {"services": list(services), "user_id": user_id or ""}
         state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
 
         params = {
