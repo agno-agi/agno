@@ -184,7 +184,7 @@ class GoogleSheetsTools(Toolkit):
     def _build_service(self):
         return build("sheets", "v4", credentials=self.creds)
 
-    def _auth(self, user_id: Optional[str] = None) -> None:
+    def _auth(self) -> None:
         """
         Authenticate with Google Sheets API
         """
@@ -202,7 +202,7 @@ class GoogleSheetsTools(Toolkit):
                 self.creds.refresh(Request())
             return
 
-        if load_token(self, self.scopes, user_id=user_id):
+        if load_token(self, self.scopes):
             return
         if self.google_auth and self.google_auth._db:
             raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
@@ -241,7 +241,7 @@ class GoogleSheetsTools(Toolkit):
             self.creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
 
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id):
+            if save_token(self, self.creds):
                 log_debug("Sheets credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore

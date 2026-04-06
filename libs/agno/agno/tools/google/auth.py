@@ -1,5 +1,4 @@
 import base64
-import inspect
 import json
 import os
 from functools import wraps
@@ -19,33 +18,16 @@ def google_authenticate(service_name: str):
     Expects the toolkit class to define:
         - self.creds: Google OAuth credentials
         - self.service: Built API client (set by _build_service)
-        - self._auth(user_id=None): Loads or refreshes credentials
+        - self._auth(): Loads or refreshes credentials
         - self._build_service(): Returns build(api_name, api_version, credentials=self.creds)
     """
 
     def decorator(func):
-        # Build the exposed signature: original params + run_context if not already present.
-        # @wraps preserves metadata (__name__, __doc__, __annotations__) but sets __wrapped__
-        # which makes inspect.signature follow to the original. We override __signature__ so
-        # the framework sees run_context for injection AND the original typed params for schema.
-        sig = inspect.signature(func)
-        if "run_context" not in sig.parameters:
-            exposed_sig = sig.replace(
-                parameters=[
-                    *sig.parameters.values(),
-                    inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None),
-                ]
-            )
-        else:
-            exposed_sig = sig
-
         @wraps(func)
-        def wrapper(self, *args, run_context=None, **kwargs):
-            user_id = getattr(run_context, "user_id", None) if run_context else None
-
+        def wrapper(self, *args, **kwargs):
             if not self.creds or not self.creds.valid:
                 try:
-                    self._auth(user_id=user_id)
+                    self._auth()
                 except Exception as e:
                     log_error(f"{service_name.title()} authentication failed: {e}")
                     return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
@@ -57,7 +39,6 @@ def google_authenticate(service_name: str):
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 
-        wrapper.__signature__ = exposed_sig
         return wrapper
 
     return decorator
@@ -73,15 +54,23 @@ def get_token_db(toolkit: Any) -> Any:
     return None
 
 
-def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> bool:
+def _resolve_user_id(toolkit: Any) -> str:
+    """Get user_id from GoogleAuth if available, otherwise empty string."""
+    ga = getattr(toolkit, "google_auth", None)
+    if ga and hasattr(ga, "user_id") and ga.user_id:
+        return ga.user_id
+    return ""
+
+
+def load_token(toolkit: Any, scopes: list) -> bool:
     """Try loading credentials from DB. Sets toolkit.creds if found. Returns True on success."""
     db = get_token_db(toolkit)
     if not db:
         return False
 
-    effective_uid = user_id or ""
+    uid = _resolve_user_id(toolkit)
     try:
-        row = db.get_auth_token("google", effective_uid, "google")
+        row = db.get_auth_token("google", uid, "google")
     except (NotImplementedError, Exception):
         return False
     if not row:
@@ -98,7 +87,7 @@ def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> boo
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            save_token(toolkit, creds, user_id=user_id)
+            save_token(toolkit, creds)
         except Exception:
             return False
 
@@ -108,19 +97,19 @@ def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> boo
     return False
 
 
-def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
+def save_token(toolkit: Any, creds: Any) -> bool:
     """Persist credentials to DB. Returns True on success."""
     db = get_token_db(toolkit)
     if not db:
         return False
 
-    effective_uid = user_id or ""
+    uid = _resolve_user_id(toolkit)
     try:
         token_data = json.loads(creds.to_json())
         db.upsert_auth_token(
             {
                 "provider": "google",
-                "user_id": effective_uid,
+                "user_id": uid,
                 "service": "google",
                 "token_data": token_data,
                 "granted_scopes": token_data.get("scopes", []),

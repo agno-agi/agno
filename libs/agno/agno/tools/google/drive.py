@@ -243,7 +243,7 @@ class GoogleDriveTools(Toolkit):
         if self.google_auth:
             self.google_auth.register_service("drive", self.scopes)
 
-    def _auth(self, user_id: Optional[str] = None) -> None:
+    def _auth(self) -> None:
         """Authenticate with Google Drive API using service account or OAuth."""
         if self.creds and self.creds.valid:
             return
@@ -262,7 +262,7 @@ class GoogleDriveTools(Toolkit):
             self.creds.refresh(Request())
             return
 
-        if load_token(self, self.scopes, user_id=user_id):
+        if load_token(self, self.scopes):
             return
         if self.google_auth and self.google_auth._db:
             raise PermissionError("Drive not authenticated — user must complete OAuth via authenticate_google")
@@ -305,7 +305,7 @@ class GoogleDriveTools(Toolkit):
             self.creds = flow.run_local_server(**run_kwargs)
 
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id):
+            if save_token(self, self.creds):
                 log_debug("Drive credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())
