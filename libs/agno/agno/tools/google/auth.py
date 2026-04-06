@@ -46,33 +46,57 @@ def google_authenticate(service_name: str):
     return decorator
 
 
-def _load_token_from_db(db: Any, scopes: list, user_id: Optional[str] = None) -> Any:
-    """Load credentials from DB, refresh if expired. Returns Credentials or None."""
+def get_token_db(toolkit: Any) -> Any:
+    """Resolve the DB to use for token storage. Returns None if no DB available."""
+    ga = getattr(toolkit, "google_auth", None)
+    if ga and ga._db:
+        return ga._db
+    if getattr(toolkit, "store_token_in_db", False):
+        return getattr(toolkit, "_db", None)
+    return None
+
+
+def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> bool:
+    """Try loading credentials from DB. Sets toolkit.creds if found. Returns True on success."""
+    db = get_token_db(toolkit)
+    if not db:
+        return False
+
     effective_uid = user_id or ""
     try:
         row = db.get_auth_token("google", effective_uid, "google")
     except (NotImplementedError, Exception):
-        return None
+        return False
     if not row:
-        return None
+        return False
+
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
         creds = Credentials.from_authorized_user_info(row["token_data"], scopes)
     except (ValueError, KeyError, ImportError):
-        return None
+        return False
+
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            _save_token_to_db(db, creds, user_id=user_id)
+            save_token(toolkit, creds, user_id=user_id)
         except Exception:
-            return None
-    return creds if creds.valid else None
+            return False
+
+    if creds.valid:
+        toolkit.creds = creds
+        return True
+    return False
 
 
-def _save_token_to_db(db: Any, creds: Any, user_id: Optional[str] = None) -> bool:
+def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
     """Persist credentials to DB. Returns True on success."""
+    db = get_token_db(toolkit)
+    if not db:
+        return False
+
     effective_uid = user_id or ""
     try:
         token_data = json.loads(creds.to_json())
@@ -88,80 +112,6 @@ def _save_token_to_db(db: Any, creds: Any, user_id: Optional[str] = None) -> boo
         return True
     except (NotImplementedError, Exception):
         return False
-
-
-def google_auth_from_store(
-    toolkit: Any,
-    scopes: list,
-    user_id: Optional[str] = None,
-) -> bool:
-    """Try loading credentials from DB.
-
-    Works via GoogleAuth coordinator (interface mode) or direct toolkit._db
-    (simple mode). All Google services share one consolidated token row.
-    """
-    # Via GoogleAuth coordinator
-    google_auth: Optional[GoogleAuth] = getattr(toolkit, "google_auth", None)
-    if google_auth and google_auth._db:
-        creds = google_auth.load_token("google", scopes, user_id=user_id)
-        if creds:
-            toolkit.creds = creds
-            return True
-        return False
-
-    # Direct _db on toolkit (simple mode — store_token_in_db=True + agent.db auto-wired)
-    if getattr(toolkit, "store_token_in_db", False):
-        db = getattr(toolkit, "_db", None)
-        if db:
-            creds = _load_token_from_db(db, scopes, user_id=user_id)
-            if creds:
-                toolkit.creds = creds
-                return True
-    return False
-
-
-def google_auth_or_raise(
-    toolkit: Any,
-    service_name: str,
-    scopes: list,
-    user_id: Optional[str] = None,
-) -> bool:
-    """Try DB-backed auth; raise PermissionError only in GoogleAuth mode.
-
-    Returns True if creds were loaded from DB. Returns False if no DB is
-    configured — caller should fall through to file-based OAuth.
-
-    In GoogleAuth mode (interface): raises PermissionError when no token exists,
-    signaling the agent to call authenticate_google for the OAuth URL.
-    In simple _db mode: returns False so file-based OAuth runs normally,
-    and the obtained creds are then saved to DB for next time.
-    """
-    if google_auth_from_store(toolkit, scopes, user_id=user_id):
-        return True
-    # Only raise in GoogleAuth mode — simple _db mode falls through to file-based auth
-    ga = getattr(toolkit, "google_auth", None)
-    if ga is not None and ga._db is not None:
-        raise PermissionError(f"{service_name} not authenticated — user must complete OAuth via authenticate_google")
-    return False
-
-
-def google_auth_save_to_store(
-    toolkit: Any,
-    user_id: Optional[str] = None,
-) -> bool:
-    """Persist credentials to DB after successful auth. Returns True if saved."""
-    if not toolkit.creds:
-        return False
-    # Via GoogleAuth coordinator
-    google_auth: Optional[GoogleAuth] = getattr(toolkit, "google_auth", None)
-    if google_auth and google_auth._db:
-        return google_auth.store_token("google", toolkit.creds, user_id=user_id)
-    # Direct _db on toolkit (store_token_in_db=True mode)
-    if getattr(toolkit, "store_token_in_db", False):
-        db = getattr(toolkit, "_db", None)
-        if db:
-            return _save_token_to_db(db, toolkit.creds, user_id=user_id)
-    return False
 
 
 class GoogleAuth(Toolkit):

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_auth_or_raise, google_auth_save_to_store, google_authenticate
+from agno.tools.google.auth import load_token, save_token, google_authenticate
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -217,8 +217,10 @@ class GoogleCalendarTools(Toolkit):
             self.creds = sa_creds
             return
 
-        if google_auth_or_raise(self, "Calendar", self.scopes, user_id=user_id):
+        if load_token(self, self.scopes, user_id=user_id):
             return
+        if self.google_auth and self.google_auth._db:
+            raise PermissionError("Calendar not authenticated — user must complete OAuth via authenticate_google")
 
         # OAuth flow
         token_file = Path(self.token_path or "token.json")
@@ -263,7 +265,7 @@ class GoogleCalendarTools(Toolkit):
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            if google_auth_save_to_store(self, user_id=user_id):
+            if save_token(self, self.creds, user_id=user_id):
                 log_debug("Calendar credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
