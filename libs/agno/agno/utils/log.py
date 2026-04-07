@@ -33,13 +33,13 @@ class ColoredRichHandler(RichHandler):
         self.source_type = source_type
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Strip exc_info from warnings when verbose_exceptions is off.
+        """Strip exc_info from warnings when log_tracebacks is off.
 
         Error-level logs (from log_exception / logger.exception) always
         show tracebacks.  Warning-level logs only show tracebacks when
-        verbose_exceptions is enabled via AGNO_VERBOSE_EXCEPTIONS=true.
+        AGNO_LOG_TRACEBACKS=true.
         """
-        if record.exc_info and not verbose_exceptions and record.levelno <= logging.WARNING:
+        if record.exc_info and not log_tracebacks and record.levelno <= logging.WARNING:
             record.exc_info = None
             record.exc_text = None
         super().emit(record)
@@ -124,9 +124,9 @@ logger: AgnoLogger = agent_logger
 debug_on: bool = False
 debug_level: Literal[1, 2] = 1
 
-# Controls whether exc_info tracebacks are rendered in log output.
-# Opt-in only: set AGNO_VERBOSE_EXCEPTIONS=true or call set_verbose_exceptions(True).
-verbose_exceptions: bool = getenv("AGNO_VERBOSE_EXCEPTIONS", "false").lower() in ("true", "1", "yes")
+# Controls whether exc_info tracebacks are rendered in warning log output.
+# Opt-in only: set AGNO_LOG_TRACEBACKS=true or call set_log_tracebacks(True).
+log_tracebacks: bool = getenv("AGNO_LOG_TRACEBACKS", "false").lower() in ("true", "1", "yes")
 
 
 def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
@@ -239,17 +239,19 @@ def log_exception(msg, *args, **kwargs):
     logger.exception(msg, *args, **kwargs)
 
 
-def set_verbose_exceptions(enabled: bool = True) -> None:
-    """Enable or disable full tracebacks in log output.
+def set_log_tracebacks(enabled: bool = True) -> None:
+    """Enable or disable full tracebacks in warning log output.
 
-    When enabled, ``log_exception`` and ``log_warning`` calls with
-    ``exc_info=True`` will render the complete traceback.  When disabled
-    (the default), the handler strips exc_info so only the message is shown.
+    When enabled, ``log_warning`` calls with ``exc_info=True`` will
+    render the complete traceback.  When disabled (the default), the
+    handler strips exc_info so only the message is shown.
 
-    Can also be controlled via the ``AGNO_VERBOSE_EXCEPTIONS`` env var.
+    Error-level logs (``log_exception``) always show tracebacks.
+
+    Can also be controlled via the ``AGNO_LOG_TRACEBACKS`` env var.
     """
-    global verbose_exceptions
-    verbose_exceptions = enabled
+    global log_tracebacks
+    log_tracebacks = enabled
 
 
 def configure_agno_logging(
@@ -257,7 +259,7 @@ def configure_agno_logging(
     custom_agent_logger: Optional[Any] = None,
     custom_team_logger: Optional[Any] = None,
     custom_workflow_logger: Optional[Any] = None,
-    enable_verbose_exceptions: Optional[bool] = None,
+    enable_log_tracebacks: Optional[bool] = None,
 ) -> None:
     """
     Util to set custom loggers. These will be used everywhere across the Agno library.
@@ -267,11 +269,11 @@ def configure_agno_logging(
         custom_agent_logger: Custom logger for agent operations
         custom_team_logger: Custom logger for team operations
         custom_workflow_logger: Custom logger for workflow operations
-        enable_verbose_exceptions: If True, log full tracebacks on exceptions/warnings.
-            Also controllable via ``AGNO_VERBOSE_EXCEPTIONS`` env var.
+        enable_log_tracebacks: If True, show full tracebacks on warning logs.
+            Also controllable via ``AGNO_LOG_TRACEBACKS`` env var.
     """
-    if enable_verbose_exceptions is not None:
-        set_verbose_exceptions(enable_verbose_exceptions)
+    if enable_log_tracebacks is not None:
+        set_log_tracebacks(enable_log_tracebacks)
     if custom_default_logger is not None:
         global logger
         logger = custom_default_logger

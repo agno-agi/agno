@@ -407,8 +407,8 @@ def _run_tasks(
             session.upsert_run(run_response=run_response)
             try:
                 team.session_summary_manager.create_session_summary(session=session, run_metrics=run_response.metrics)
-            except Exception:
-                log_warning("Error in session summary creation", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {e}", exc_info=True)
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -849,8 +849,8 @@ def _run_tasks_stream(
                 )
             try:
                 team.session_summary_manager.create_session_summary(session=session)
-            except Exception:
-                log_warning("Error in session summary creation", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {e}", exc_info=True)
             if stream_events:
                 yield handle_event(  # type: ignore
                     create_team_session_summary_completed_event(
@@ -1206,8 +1206,8 @@ def _run(
                         team.session_summary_manager.create_session_summary(
                             session=session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1623,8 +1623,8 @@ def _run_stream(
                         team.session_summary_manager.create_session_summary(
                             session=session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_team_session_summary_completed_event(
@@ -2207,8 +2207,8 @@ async def _arun_tasks(
                 await team.session_summary_manager.acreate_session_summary(
                     session=team_session, run_metrics=run_response.metrics
                 )
-            except Exception:
-                log_warning("Error in session summary creation", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {e}", exc_info=True)
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2668,8 +2668,8 @@ async def _arun_tasks_stream(
                 )
             try:
                 await team.session_summary_manager.acreate_session_summary(session=team_session)
-            except Exception:
-                log_warning("Error in session summary creation", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {e}", exc_info=True)
             if stream_events:
                 yield handle_event(  # type: ignore
                     create_team_session_summary_completed_event(
@@ -3064,8 +3064,8 @@ async def _arun(
                         await team.session_summary_manager.acreate_session_summary(
                             session=team_session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3594,8 +3594,8 @@ async def _arun_stream(
                         await team.session_summary_manager.acreate_session_summary(
                             session=team_session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_team_session_summary_completed_event(
@@ -4155,8 +4155,8 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
             resolved_value = value(**kwargs) if kwargs else value()
 
             run_context.dependencies[key] = resolved_value
-        except Exception:
-            log_warning(f"Failed to resolve dependencies for {key}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to resolve dependencies for {key}: {e}", exc_info=True)
 
 
 async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
@@ -4190,8 +4190,8 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
                 resolved_value = await resolved_value
 
             run_context.dependencies[key] = resolved_value
-        except Exception:
-            log_warning(f"Failed to resolve context for '{key}'", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to resolve context for '{key}': {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -5107,8 +5107,8 @@ def _continue_run(
                         team.session_summary_manager.create_session_summary(
                             session=session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
 
                 # Complete
                 run_response.status = RunStatus.completed
@@ -5335,8 +5335,8 @@ def _continue_run_stream(
                         team.session_summary_manager.create_session_summary(
                             session=session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
                     if stream_events:
                         yield handle_event(
                             create_team_session_summary_completed_event(
@@ -5789,8 +5789,8 @@ async def _acontinue_run(
                         await team.session_summary_manager.acreate_session_summary(
                             session=team_session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
 
                 run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -6161,8 +6161,8 @@ async def _acontinue_run_stream(
                         await team.session_summary_manager.acreate_session_summary(
                             session=team_session, run_metrics=run_response.metrics
                         )
-                    except Exception:
-                        log_warning("Error in session summary creation", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {e}", exc_info=True)
                     if stream_events:
                         yield handle_event(
                             create_team_session_summary_completed_event(

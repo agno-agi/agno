@@ -167,8 +167,8 @@ class JWTValidator:
                 else:
                     # If no kid, use a default key (for single-key JWKS)
                     self.jwks_keys["_default"] = jwk
-            except Exception:
-                log_warning("Failed to parse JWKS key", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to parse JWKS key: {e}", exc_info=True)
 
     def validate_token(
         self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
@@ -826,14 +826,14 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
 
-        except jwt.InvalidAudienceError:
-            log_warning(f"Invalid token audience - expected: {expected_audience}", exc_info=True)
+        except jwt.InvalidAudienceError as e:
+            log_warning(f"Invalid token audience - expected: {expected_audience}: {e}", exc_info=True)
             return self._create_error_response(
                 401, "Invalid token audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )
-        except jwt.ExpiredSignatureError:
+        except jwt.ExpiredSignatureError as e:
             if self.validate:
-                log_warning("Token has expired", exc_info=True)
+                log_warning(f"Token has expired: {e}", exc_info=True)
                 return self._create_error_response(401, "Token has expired", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token

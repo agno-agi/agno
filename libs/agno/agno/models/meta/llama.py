@@ -430,8 +430,8 @@ class Llama(Model):
                         }
                     )
 
-            except Exception:
-                log_warning("Error processing tool calls", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error processing tool calls: {e}", exc_info=True)
 
         # Add metrics from the metrics list
         if hasattr(response, "metrics") and response.metrics is not None:

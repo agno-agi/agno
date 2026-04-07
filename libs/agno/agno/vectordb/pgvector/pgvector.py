@@ -234,8 +234,8 @@ class PgVector(VectorDb):
                     try:
                         log_debug(f"Creating schema: {self.schema}")
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
-                    except Exception:
-                        log_warning(f"Could not create schema {self.schema}", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.schema}: {e}", exc_info=True)
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 

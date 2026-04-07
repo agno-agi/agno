@@ -180,8 +180,8 @@ def attach_routes(
                 else:
                     cfg.db.upsert_session(session)
                 await send_message(bot, chat_id, new_message, message_thread_id=message_thread_id)
-            except Exception:
-                log_warning("Failed to persist new session to DB", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to persist new session to DB: {e}", exc_info=True)
                 await send_message(
                     bot,
                     chat_id,
@@ -364,8 +364,8 @@ def attach_routes(
                     found = await find_latest_session_id(cfg, user_id, bot_state.entity_id, session_scope)
                     if found:
                         session_id = found
-                except Exception:
-                    log_warning("Session lookup failed, using default", exc_info=True)
+                except Exception as e:
+                    log_warning(f"Session lookup failed, using default: {e}", exc_info=True)
 
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")

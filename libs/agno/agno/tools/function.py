@@ -381,8 +381,8 @@ class Function(BaseModel):
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
-        except Exception:
-            log_warning(f"Could not parse args for {function_name}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
 
         entrypoint = cls._wrap_callable(c)
 
@@ -535,8 +535,8 @@ class Function(BaseModel):
             self.description = self.description or get_entrypoint_docstring(self.entrypoint)
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
-        except Exception:
-            log_warning(f"Could not parse args for {self.name}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
 
         if not params_set_by_user:
             self.parameters = parameters
@@ -546,8 +546,8 @@ class Function(BaseModel):
 
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
-        except Exception:
-            log_warning("Failed to add validate decorator to entrypoint", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to add validate decorator to entrypoint: {e}", exc_info=True)
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:

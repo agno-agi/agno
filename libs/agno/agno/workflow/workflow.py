@@ -1328,8 +1328,8 @@ class Workflow:
             else:
                 session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception:
-            log_warning("Error getting session from db", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error getting session from db: {e}", exc_info=True)
             return None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
@@ -1339,8 +1339,8 @@ class Workflow:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception:
-            log_warning("Error getting session from db", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error getting session from db: {e}", exc_info=True)
             return None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1350,8 +1350,8 @@ class Workflow:
                 raise ValueError("Db not initialized")
             result = await self.db.upsert_session(session=session)  # type: ignore
             return result if isinstance(result, (WorkflowSession, type(None))) else None
-        except Exception:
-            log_warning("Error upserting session into db", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error upserting session into db: {e}", exc_info=True)
             return None
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1361,8 +1361,8 @@ class Workflow:
                 raise ValueError("Db not initialized")
             result = self.db.upsert_session(session=session)
             return result if isinstance(result, (WorkflowSession, type(None))) else None
-        except Exception:
-            log_warning("Error upserting session into db", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error upserting session into db: {e}", exc_info=True)
             return None
 
     def _update_metadata(self, session: WorkflowSession):
@@ -7297,8 +7297,8 @@ class Workflow:
                     except Exception:
                         try:
                             fields_for_new_workflow[f.name] = copy(field_value)
-                        except Exception:
-                            log_warning(f"Failed to copy field: {f.name}", exc_info=True)
+                        except Exception as e:
+                            log_warning(f"Failed to copy field: {f.name}: {e}", exc_info=True)
                             fields_for_new_workflow[f.name] = field_value
                 # For pydantic models, attempt a model_copy
                 elif isinstance(field_value, BaseModel):

@@ -103,8 +103,8 @@ class MarkdownReader(Reader):
 
                     async with aiofiles.open(file, "r", encoding=self.encoding or "utf-8") as f:
                         file_contents = await f.read()
-                except ImportError:
-                    log_warning("aiofiles not installed, using synchronous file I/O", exc_info=True)
+                except ImportError as e:
+                    log_warning(f"aiofiles not installed, using synchronous file I/O: {e}", exc_info=True)
                     file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
                 log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")

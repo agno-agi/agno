@@ -1230,8 +1230,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
 
-        except Exception:
-            log_warning("Exception deleting all memories", exc_info=True)
+        except Exception as e:
+            log_warning(f"Exception deleting all memories: {e}", exc_info=True)
 
     # -- Cultural Knowledge methods --
     async def clear_cultural_knowledge(self) -> None:
@@ -1818,8 +1818,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             return [dict(row._mapping) for row in records], latest_updated_at
 
-        except Exception:
-            log_warning("Exception getting metrics", exc_info=True)
+        except Exception as e:
+            log_warning(f"Exception getting metrics: {e}", exc_info=True)
             return [], None
 
     # -- Knowledge methods --

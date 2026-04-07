@@ -85,8 +85,8 @@ class WebSocketHandler:
                 log_debug("WebSocket closed, event not sent (expected during disconnection)")
             else:
                 log_warning("Failed to handle WebSocket event", exc_info=True)
-        except Exception:
-            log_warning("Failed to handle WebSocket event", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to handle WebSocket event: {e}", exc_info=True)
 
 
 class WebSocketManager:
@@ -159,8 +159,8 @@ class WebSocketManager:
             websocket = self.active_connections[run_id]
             try:
                 await websocket.send_text(message)
-            except Exception:
-                log_warning(f"Failed to broadcast to run {run_id}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to broadcast to run {run_id}: {e}", exc_info=True)
                 # Remove dead connection
                 await self.disconnect_by_run_id(run_id)
 

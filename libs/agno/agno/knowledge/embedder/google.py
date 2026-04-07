@@ -240,8 +240,8 @@ class GeminiEmbedder(Embedder):
                 # Add same usage info for each embedding in the batch
                 all_usage.extend([usage_dict] * len(batch_texts))
 
-            except Exception:
-                log_warning("Error in async batch embedding", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error in async batch embedding: {e}", exc_info=True)
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -251,7 +251,7 @@ class GeminiEmbedder(Embedder):
                         all_embeddings.append(text_embedding)
                         all_usage.append(text_usage)
                     except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}", exc_info=True)
+                        log_warning(f"Error in individual async embedding fallback: {e2}: {e2}", exc_info=True)
                         all_embeddings.append([])
                         all_usage.append(None)
 

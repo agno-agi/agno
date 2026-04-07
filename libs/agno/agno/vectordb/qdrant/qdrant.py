@@ -856,8 +856,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for name {name}. Status: {result.status}")
                 return False
 
-        except Exception:
-            log_warning(f"Error deleting points with name {name}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error deleting points with name {name}: {e}", exc_info=True)
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -900,8 +900,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for metadata {metadata}. Status: {result.status}")
                 return False
 
-        except Exception:
-            log_warning(f"Error deleting points with metadata {metadata}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error deleting points with metadata {metadata}: {e}", exc_info=True)
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -938,8 +938,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for content_id {content_id}. Status: {result.status}")
                 return False
 
-        except Exception:
-            log_warning(f"Error deleting points with content_id {content_id}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error deleting points with content_id {content_id}: {e}", exc_info=True)
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -1023,8 +1023,8 @@ class Qdrant(VectorDb):
                 log_warning(f"Deletion failed for content_hash {content_hash}. Status: {result.status}")
                 return False
 
-        except Exception:
-            log_warning(f"Error deleting points with content_hash {content_hash}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error deleting points with content_hash {content_hash}: {e}", exc_info=True)
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:

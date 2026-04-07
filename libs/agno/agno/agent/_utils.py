@@ -84,8 +84,8 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
 
     try:
         return json.dumps(context, indent=2, default=str)
-    except (TypeError, ValueError, OverflowError):
-        log_warning("Failed to convert context to JSON", exc_info=True)
+    except (TypeError, ValueError, OverflowError) as e:
+        log_warning(f"Failed to convert context to JSON: {e}", exc_info=True)
         # Attempt a fallback conversion for non-serializable objects
         sanitized_context = {}
         for key, value in context.items():
@@ -137,8 +137,8 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         if field_value is not None:
             try:
                 fields_for_new_agent[f.name] = deep_copy_field(agent, f.name, field_value)
-            except Exception:
-                log_warning(f"Failed to deep copy field '{f.name}'. Using original value.", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to deep copy field '{f.name}'. Using original value.: {e}", exc_info=True)
                 fields_for_new_agent[f.name] = field_value
 
     # Update fields if provided
@@ -187,9 +187,9 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
                     # MCP detection failed, share tool by reference to be safe
                     copied_tools.append(tool)
             return copied_tools
-        except Exception:
+        except Exception as e:
             # If entire tools processing fails, log and return original list
-            log_warning("Failed to process tools for deep copy", exc_info=True)
+            log_warning(f"Failed to process tools for deep copy: {e}", exc_info=True)
             return field_value
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
@@ -216,8 +216,8 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
         except Exception:
             try:
                 return copy(field_value)
-            except Exception:
-                log_warning(f"Failed to copy field: {field_name}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to copy field: {field_name}: {e}", exc_info=True)
                 return field_value
 
     # For pydantic models, attempt a model_copy
@@ -227,8 +227,8 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
         except Exception:
             try:
                 return field_value.model_copy(deep=False)
-            except Exception:
-                log_warning(f"Failed to copy field: {field_name}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to copy field: {field_name}: {e}", exc_info=True)
                 return field_value
 
     # For other types, attempt a shallow copy first

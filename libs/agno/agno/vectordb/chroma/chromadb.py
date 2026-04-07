@@ -223,9 +223,9 @@ class ChromaDb(VectorDb):
                 max_size = self.client.get_max_batch_size()
                 self._batch_size = max_size
                 log_debug(f"ChromaDB max batch size: {max_size}")
-            except Exception:
+            except Exception as e:
                 # Fallback to conservative value if query fails
-                log_warning("Could not query ChromaDB max batch size. Using fallback: 100", exc_info=True)
+                log_warning(f"Could not query ChromaDB max batch size. Using fallback: 100: {e}", exc_info=True)
                 self._batch_size = 100
         return self._batch_size
 
@@ -715,8 +715,8 @@ class ChromaDb(VectorDb):
         if self.reranker and search_results:
             try:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
-            except Exception:
-                log_warning("Reranker failed, returning unranked results", exc_info=True)
+            except Exception as e:
+                log_warning(f"Reranker failed, returning unranked results: {e}", exc_info=True)
 
         log_info(f"Found {len(search_results)} documents")
         return search_results

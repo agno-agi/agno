@@ -142,8 +142,8 @@ class DaytonaTools(Toolkit):
             log_debug(
                 "SSL certificate verification is disabled",
             )
-        except ImportError:
-            log_warning("Could not import daytona_api_client.Configuration for SSL patching", exc_info=True)
+        except ImportError as e:
+            log_warning(f"Could not import daytona_api_client.Configuration for SSL patching: {e}", exc_info=True)
 
     def _get_working_directory(self, agent: Union[Agent, Team]) -> str:
         """Get the current working directory from agent session state."""

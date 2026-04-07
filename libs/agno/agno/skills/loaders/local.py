@@ -120,8 +120,8 @@ class LocalSkills(SkillLoader):
 
         except SkillValidationError:
             raise  # Re-raise validation errors
-        except Exception:
-            log_warning(f"Error loading skill from {folder}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error loading skill from {folder}: {e}", exc_info=True)
             return None
 
     def _parse_skill_md(self, content: str) -> Tuple[Dict[str, Any], str]:
@@ -151,8 +151,8 @@ class LocalSkills(SkillLoader):
             except ImportError:
                 # Fallback: simple key-value parsing if yaml not available
                 frontmatter = self._parse_simple_frontmatter(frontmatter_text)
-            except Exception:
-                log_warning("Error parsing YAML frontmatter", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error parsing YAML frontmatter: {e}", exc_info=True)
                 frontmatter = self._parse_simple_frontmatter(frontmatter_text)
 
         return frontmatter, instructions

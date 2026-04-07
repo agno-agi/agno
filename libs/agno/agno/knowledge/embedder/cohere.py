@@ -180,8 +180,8 @@ class CohereEmbedder(Embedder):
             else:
                 log_warning("No embeddings found")
                 return []
-        except Exception:
-            log_warning("Failed to get embedding", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to get embedding: {e}", exc_info=True)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -221,8 +221,8 @@ class CohereEmbedder(Embedder):
             else:
                 log_warning("No embeddings found")
                 return []
-        except Exception:
-            log_warning("Failed to get embedding", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to get embedding: {e}", exc_info=True)
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -322,7 +322,7 @@ class CohereEmbedder(Embedder):
                             all_embeddings.append(embedding)
                             all_usage.append(usage)
                         except Exception as e2:
-                            log_warning(f"Error in individual async embedding fallback: {e2}", exc_info=True)
+                            log_warning(f"Error in individual async embedding fallback: {e2}: {e2}", exc_info=True)
                             all_embeddings.append([])
                             all_usage.append(None)
 

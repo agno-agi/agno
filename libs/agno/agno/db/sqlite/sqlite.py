@@ -379,8 +379,8 @@ class SqliteDb(BaseDb):
                     idx.create(self.db_engine)
                     log_debug(f"Created index: {idx.name} for table {table_name}")
 
-                except Exception:
-                    log_warning(f"Error creating index {idx.name}", exc_info=True)
+                except Exception as e:
+                    log_warning(f"Error creating index {idx.name}: {e}", exc_info=True)
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:

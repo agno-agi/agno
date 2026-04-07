@@ -321,8 +321,8 @@ class AwsBedrockEmbedder(Embedder):
 
             log_warning("No embeddings found in response")
             return []
-        except Exception:
-            log_warning("Error extracting embeddings", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error extracting embeddings: {e}", exc_info=True)
             return []
 
     def response(self, text: str) -> Dict[str, Any]:

@@ -241,9 +241,9 @@ class WebsiteReader(Reader):
                 # For the initial URL, we should raise the error only if it's not a redirect
                 if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
-            except httpx.RequestError:
+            except httpx.RequestError as e:
                 # Log request errors but continue crawling other pages
-                log_warning(f"Request error while crawling {current_url}", exc_info=True)
+                log_warning(f"Request error while crawling {current_url}: {e}", exc_info=True)
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     raise
@@ -336,15 +336,15 @@ class WebsiteReader(Reader):
                             ):
                                 self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
-                except httpx.HTTPStatusError:
+                except httpx.HTTPStatusError as e:
                     # Log HTTP status errors but continue crawling other pages
-                    log_warning(f"HTTP status error while crawling asynchronously {current_url}", exc_info=True)
+                    log_warning(f"HTTP status error while crawling asynchronously {current_url}: {e}", exc_info=True)
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
-                except httpx.RequestError:
+                except httpx.RequestError as e:
                     # Log request errors but continue crawling other pages
-                    log_warning(f"Request error while crawling asynchronously {current_url}", exc_info=True)
+                    log_warning(f"Request error while crawling asynchronously {current_url}: {e}", exc_info=True)
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise

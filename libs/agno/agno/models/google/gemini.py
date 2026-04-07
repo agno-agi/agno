@@ -443,8 +443,8 @@ class Gemini(Model):
                     contents=contents,
                 )
                 total = response.total_tokens or 0
-            except Exception:
-                log_warning("Gemini count_tokens API failed. Falling back to tiktoken-based estimation.", exc_info=True)
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {e}", exc_info=True)
                 return super().count_tokens(messages, tools, output_schema)
 
             # Add estimated tokens for system instruction (not supported by Google AI Studio API)
@@ -495,8 +495,8 @@ class Gemini(Model):
                     contents=contents,
                 )
                 total = response.total_tokens or 0
-            except Exception:
-                log_warning("Gemini count_tokens API failed. Falling back to tiktoken-based estimation.", exc_info=True)
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {e}", exc_info=True)
                 return await super().acount_tokens(messages, tools, output_schema)
 
             # Add estimated tokens for system instruction
@@ -837,8 +837,8 @@ class Gemini(Model):
                                 video_file = self._format_video_for_message(video)
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)
-                    except Exception:
-                        log_warning(f"Failed to load video from {message.videos}", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Failed to load video from {message.videos}: {e}", exc_info=True)
                         continue
 
                 # Add audio to the message for the model
@@ -859,8 +859,8 @@ class Gemini(Model):
                                 audio_content = self._format_audio_for_message(audio_snippet)
                                 if audio_content:
                                     message_parts.append(audio_content)
-                    except Exception:
-                        log_warning(f"Failed to load audio from {message.audio}", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Failed to load audio from {message.audio}: {e}", exc_info=True)
                         continue
 
                 # Add files to the message for the model
@@ -915,8 +915,8 @@ class Gemini(Model):
             try:
                 if remote_file_name:
                     existing_audio_upload = self.get_client().files.get(name=remote_file_name)
-            except Exception:
-                log_warning(f"Error getting file {remote_file_name}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error getting file {remote_file_name}: {e}", exc_info=True)
 
             if existing_audio_upload and existing_audio_upload.state and existing_audio_upload.state.name == "SUCCESS":
                 audio_file = existing_audio_upload
@@ -968,8 +968,8 @@ class Gemini(Model):
             try:
                 if remote_file_name:
                     existing_video_upload = self.get_client().files.get(name=remote_file_name)
-            except Exception:
-                log_warning(f"Error getting file {remote_file_name}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error getting file {remote_file_name}: {e}", exc_info=True)
 
             if existing_video_upload and existing_video_upload.state and existing_video_upload.state.name == "SUCCESS":
                 video_file = existing_video_upload
@@ -1058,8 +1058,8 @@ class Gemini(Model):
                     try:
                         if clean_file_name:
                             remote_file = self.get_client().files.get(name=clean_file_name)
-                    except Exception:
-                        log_warning(f"Error getting file {clean_file_name}", exc_info=True)
+                    except Exception as e:
+                        log_warning(f"Error getting file {clean_file_name}: {e}", exc_info=True)
 
                     if (
                         remote_file

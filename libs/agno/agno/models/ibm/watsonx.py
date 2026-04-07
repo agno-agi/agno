@@ -370,8 +370,8 @@ class WatsonX(Model):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
-        except Exception:
-            log_warning("Error retrieving structured outputs", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error retrieving structured outputs: {e}", exc_info=True)
 
         # Add role
         if response_message.get("role") is not None:
@@ -385,8 +385,8 @@ class WatsonX(Model):
         if response_message.get("tool_calls") is not None and len(response_message["tool_calls"]) > 0:
             try:
                 model_response.tool_calls = response_message["tool_calls"]
-            except Exception:
-                log_warning("Error processing tool calls", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error processing tool calls: {e}", exc_info=True)
 
         if response.get("usage") is not None:
             model_response.response_usage = self._get_metrics(response["usage"])

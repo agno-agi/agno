@@ -78,27 +78,27 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             if isinstance(session_state, str):
                 session_state_dict = json.loads(session_state)  # type: ignore
                 kwargs["session_state"] = session_state_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("session_state")
-            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}", exc_info=True)
+            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}: {e}", exc_info=True)
 
     if dependencies := kwargs.get("dependencies"):
         try:
             if isinstance(dependencies, str):
                 dependencies_dict = json.loads(dependencies)  # type: ignore
                 kwargs["dependencies"] = dependencies_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("dependencies")
-            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}", exc_info=True)
+            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}: {e}", exc_info=True)
 
     if metadata := kwargs.get("metadata"):
         try:
             if isinstance(metadata, str):
                 metadata_dict = json.loads(metadata)  # type: ignore
                 kwargs["metadata"] = metadata_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}", exc_info=True)
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {e}", exc_info=True)
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -125,13 +125,13 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                 else:
                     # Regular dict filter
                     kwargs["knowledge_filters"] = knowledge_filters_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("knowledge_filters")
-            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}", exc_info=True)
-        except ValueError:
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}: {e}", exc_info=True)
+        except ValueError as e:
             # Filter deserialization failed
             kwargs.pop("knowledge_filters")
-            log_warning("Invalid FilterExpr in knowledge_filters", exc_info=True)
+            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}", exc_info=True)
 
     # Handle output_schema - convert JSON schema to Pydantic model or keep as dict
     # use_json_schema is a control flag consumed here (not passed to Agent/Team)
@@ -152,12 +152,12 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                     # Convert to Pydantic model (default behavior)
                     dynamic_model = json_schema_to_pydantic_model(schema_dict)
                     kwargs["output_schema"] = dynamic_model
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("output_schema")
-            log_warning(f"Invalid output_schema JSON: {output_schema}", exc_info=True)
-        except Exception:
+            log_warning(f"Invalid output_schema JSON: {output_schema}: {e}", exc_info=True)
+        except Exception as e:
             kwargs.pop("output_schema")
-            log_warning("Failed to create output_schema model", exc_info=True)
+            log_warning(f"Failed to create output_schema model: {e}", exc_info=True)
 
     # Parse boolean and null values
     for key, value in kwargs.items():

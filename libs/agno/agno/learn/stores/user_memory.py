@@ -971,8 +971,8 @@ class UserMemoryStore(LearningStore):
                 func.strict = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
-            except Exception:
-                log_warning(f"Could not add function {tool}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Could not add function {tool}: {e}", exc_info=True)
 
         return functions
 

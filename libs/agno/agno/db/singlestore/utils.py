@@ -71,8 +71,8 @@ def create_schema(session: Session, db_schema: str) -> None:
     try:
         log_debug(f"Creating schema if not exists: {db_schema}")
         session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
-    except Exception:
-        log_warning(f"Could not create schema {db_schema}", exc_info=True)
+    except Exception as e:
+        log_warning(f"Could not create schema {db_schema}: {e}", exc_info=True)
 
 
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:

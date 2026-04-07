@@ -947,8 +947,8 @@ class Knowledge(RemoteKnowledge):
                 else:
                     return None
 
-            except Exception:
-                log_warning(f"Cannot create {reader_type} reader", exc_info=True)
+            except Exception as e:
+                log_warning(f"Cannot create {reader_type} reader: {e}", exc_info=True)
                 return None
 
         return self.readers.get(reader_type)
@@ -1382,8 +1382,8 @@ class Knowledge(RemoteKnowledge):
                 if not content.size:
                     try:
                         content.size = path.stat().st_size
-                    except (OSError, IOError):
-                        log_warning(f"Could not get file size for {path}", exc_info=True)
+                    except (OSError, IOError) as e:
+                        log_warning(f"Could not get file size for {path}: {e}", exc_info=True)
                         content.size = 0
 
                 if not content.id:
@@ -1467,8 +1467,8 @@ class Knowledge(RemoteKnowledge):
                 if not content.size:
                     try:
                         content.size = path.stat().st_size
-                    except (OSError, IOError):
-                        log_warning(f"Could not get file size for {path}", exc_info=True)
+                    except (OSError, IOError) as e:
+                        log_warning(f"Could not get file size for {path}: {e}", exc_info=True)
                         content.size = 0
 
                 if not content.id:
@@ -2271,8 +2271,8 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Non-string type {type(value)} found for {field_name}, converting: '{value}'")
             try:
                 return str(value)
-            except Exception:
-                log_warning(f"Failed to convert {field_name} to string, using default", exc_info=True)
+            except Exception as e:
+                log_warning(f"Failed to convert {field_name} to string, using default: {e}", exc_info=True)
                 return default
 
         # Already a string, return as-is

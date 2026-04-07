@@ -115,8 +115,8 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             elif isinstance(m, dict):
                 try:
                     additional_input.append(Message(**m))
-                except Exception:
-                    log_warning("Failed to convert dict to Message", exc_info=True)
+                except Exception as e:
+                    log_warning(f"Failed to convert dict to Message: {e}", exc_info=True)
 
     if a_exc.stop_execution:
         for m in additional_input:

@@ -198,8 +198,8 @@ class ScheduleExecutor:
 
             return final_run
 
-        except asyncio.CancelledError:
-            log_warning(f"Schedule {schedule_id} execution cancelled", exc_info=True)
+        except asyncio.CancelledError as e:
+            log_warning(f"Schedule {schedule_id} execution cancelled: {e}", exc_info=True)
             if run_record_id is not None:
                 cancel_updates: Dict[str, Any] = {
                     "completed_at": int(time.time()),
@@ -417,7 +417,7 @@ class ScheduleExecutor:
                     params={"session_id": session_id},
                 )
             except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}", exc_info=True)
+                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}", exc_info=True)
                 continue
 
             if resp.status_code == 404:
@@ -437,8 +437,8 @@ class ScheduleExecutor:
 
             try:
                 data = resp.json()
-            except (json.JSONDecodeError, ValueError):
-                log_warning(f"Invalid JSON in poll response for run {run_id}", exc_info=True)
+            except (json.JSONDecodeError, ValueError) as e:
+                log_warning(f"Invalid JSON in poll response for run {run_id}: {e}", exc_info=True)
                 continue
 
             run_status = data.get("status")
