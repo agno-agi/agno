@@ -171,6 +171,10 @@ class AgentSession:
         # Filter by status
         runs = [run for run in runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
 
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            runs = runs[-last_n_runs:]
+
         messages_from_history = []
         system_message = None
 
@@ -204,8 +208,7 @@ class AgentSession:
 
         # If limit is not set, return all messages
         else:
-            runs_to_process = runs[-last_n_runs:] if last_n_runs is not None else runs
-            for run_response in runs_to_process:
+            for run_response in runs:
                 if not run_response or not run_response.messages:
                     continue
 

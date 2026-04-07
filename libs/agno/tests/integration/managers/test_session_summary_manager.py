@@ -629,6 +629,40 @@ def test_create_session_summary_with_last_n_runs(model, multi_run_agent_session)
         assert "run 1" not in system_msg
 
 
+def test_prepare_summary_messages_with_both_last_n_runs_and_conversation_limit(model, multi_run_agent_session):
+    """Test that last_n_runs and conversation_limit compose correctly when both are set."""
+    # last_n_runs=3 limits to runs 3, 4, 5 (6 messages)
+    # conversation_limit=2 then takes only the last 2 of those messages
+    manager = SessionSummaryManager(model=model, last_n_runs=3, conversation_limit=2)
+
+    messages = manager._prepare_summary_messages(multi_run_agent_session)
+
+    assert messages is not None
+    system_message = messages[0]
+    # Should contain only the last 2 messages from the last 3 runs
+    # The last 2 messages are from run 5
+    assert "run 5" in system_message.content
+    # Earlier runs should be excluded by the combination of both filters
+    assert "run 1" not in system_message.content
+    assert "run 2" not in system_message.content
+
+
+def test_get_messages_composes_last_n_runs_and_limit(multi_run_agent_session):
+    """Test that get_messages applies last_n_runs before limit at the session level."""
+    # last_n_runs=2 limits to runs 4 and 5 (4 messages)
+    # limit=3 then takes the last 3 of those 4 messages
+    messages = multi_run_agent_session.get_messages(last_n_runs=2, limit=3)
+
+    # Should have 3 messages from runs 4 and 5
+    assert len(messages) == 3
+    contents = [m.content for m in messages]
+    # All messages should be from runs 4 and 5
+    for content in contents:
+        assert "run 1" not in content
+        assert "run 2" not in content
+        assert "run 3" not in content
+
+
 @pytest.mark.asyncio
 async def test_acreate_session_summary_with_last_n_runs(model, multi_run_agent_session):
     """Test that acreate_session_summary respects last_n_runs."""

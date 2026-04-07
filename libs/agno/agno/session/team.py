@@ -193,6 +193,10 @@ class TeamSession:
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
 
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            session_runs = session_runs[-last_n_runs:]
+
         messages_from_history = []
         system_message = None
 
@@ -224,10 +228,7 @@ class TeamSession:
             while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
                 messages_from_history.pop(0)
         else:
-            # Filter by last_n runs
-            runs_to_process = session_runs[-last_n_runs:] if last_n_runs is not None else session_runs
-
-            for run_response in runs_to_process:
+            for run_response in session_runs:
                 if not (run_response and run_response.messages):
                     continue
 
