@@ -240,6 +240,11 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
 
+    # Post-execution review fields
+    requires_review: bool = False
+    review_message: Optional[str] = None
+    step_output_content: Optional[str] = None
+
 
 @dataclass
 class StepErrorEvent(BaseWorkflowRunOutputEvent):
@@ -628,6 +633,13 @@ class WorkflowRunOutput:
         if not self.step_requirements:
             return []
         return [req for req in self.step_requirements if req.needs_route_selection]
+
+    @property
+    def steps_requiring_review(self) -> List["StepRequirement"]:
+        """Get step requirements that need post-execution review (approve/reject/cancel)"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_review]
 
     @property
     def active_error_requirements(self) -> List["ErrorRequirement"]:

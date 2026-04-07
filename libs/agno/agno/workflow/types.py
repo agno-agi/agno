@@ -23,11 +23,13 @@ class OnReject(str, Enum):
         skip: Skip the rejected step and continue with the next step in the workflow.
         cancel: Cancel the entire workflow when the step is rejected.
         else_branch: For Condition only - execute the else_steps branch when rejected.
+        retry: Re-execute the same step (used with requires_review for post-execution review).
     """
 
     skip = "skip"
     cancel = "cancel"
     else_branch = "else"
+    retry = "retry"
 
 
 class OnError(str, Enum):
@@ -578,10 +580,11 @@ class UserInputField:
 class StepRequirement:
     """Unified requirement for all HITL (Human-in-the-Loop) workflow pauses.
 
-    This class handles three types of HITL scenarios:
+    This class handles four types of HITL scenarios:
     1. **Confirmation**: User confirms or rejects execution (Step, Loop, Condition, Steps, Router)
     2. **User Input**: User provides custom input values (Step with user_input_schema)
     3. **Route Selection**: User selects which route(s) to take (Router with requires_user_input)
+    4. **Post-execution Review**: User reviews step output and approves, retries, or cancels (Step with requires_review)
 
     The `step_type` field indicates what kind of component created this requirement.
     It accepts both StepType enum values and strings for flexibility.
@@ -620,16 +623,32 @@ class StepRequirement:
     allow_multiple_selections: bool = False  # If True, user can select multiple routes
     selected_choices: Optional[List[str]] = None  # User's selected route(s)
 
+    # Post-execution review fields (for Step with requires_review)
+    # When True, the step has already executed and the user is reviewing its output
+    requires_review: bool = False
+    review_message: Optional[str] = None
+    # The content produced by the step that the user should review
+    step_output_content: Optional[Union[str, Dict[str, Any], List[Any], Any]] = None
+    # How many times this step has been retried via review rejection
+    review_retry_count: int = 0
+    # Maximum number of review retries allowed
+    review_max_retries: int = 3
+
     # The step input that was prepared before pausing
     step_input: Optional["StepInput"] = None
 
     def confirm(self) -> None:
-        """Confirm the step execution"""
+        """Confirm the step execution (or approve a post-execution review)"""
         self.confirmed = True
 
     def reject(self) -> None:
-        """Reject the step execution"""
+        """Reject the step execution (or reject a post-execution review for retry)"""
         self.confirmed = False
+
+    def cancel(self) -> None:
+        """Cancel the workflow. For post-execution review, this overrides on_reject to cancel."""
+        self.confirmed = False
+        self.on_reject = OnReject.cancel
 
     def set_user_input(self, validate: bool = True, **kwargs) -> None:
         """Set user input values.
@@ -754,6 +773,13 @@ class StepRequirement:
         return self.selected_choices is None or len(self.selected_choices) == 0
 
     @property
+    def needs_review(self) -> bool:
+        """Check if this requirement still needs post-execution review"""
+        if not self.requires_review:
+            return False
+        return self.confirmed is None
+
+    @property
     def is_resolved(self) -> bool:
         """Check if this requirement has been resolved"""
         if self.requires_confirmation and self.confirmed is None:
@@ -761,6 +787,8 @@ class StepRequirement:
         if self.requires_user_input and self.needs_user_input:
             return False
         if self.requires_route_selection and self.needs_route_selection:
+            return False
+        if self.requires_review and self.confirmed is None:
             return False
         return True
 
@@ -786,6 +814,11 @@ class StepRequirement:
             "available_choices": self.available_choices,
             "allow_multiple_selections": self.allow_multiple_selections,
             "selected_choices": self.selected_choices,
+            "requires_review": self.requires_review,
+            "review_message": self.review_message,
+            "step_output_content": str(self.step_output_content) if self.step_output_content is not None else None,
+            "review_retry_count": self.review_retry_count,
+            "review_max_retries": self.review_max_retries,
         }
         if self.user_input_schema is not None:
             result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
@@ -821,6 +854,11 @@ class StepRequirement:
             available_choices=data.get("available_choices"),
             allow_multiple_selections=data.get("allow_multiple_selections", False),
             selected_choices=data.get("selected_choices"),
+            requires_review=data.get("requires_review", False),
+            review_message=data.get("review_message"),
+            step_output_content=data.get("step_output_content"),
+            review_retry_count=data.get("review_retry_count", 0),
+            review_max_retries=data.get("review_max_retries", 3),
             step_input=step_input,
         )
 

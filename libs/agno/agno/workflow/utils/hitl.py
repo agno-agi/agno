@@ -123,6 +123,42 @@ def create_step_paused_event(
     )
 
 
+def create_review_paused_event(
+    workflow_run_response: "WorkflowRunOutput",
+    step: Any,
+    step_name: str,
+    step_index: int,
+    pause_result: StepPauseResult,
+) -> Any:
+    """Create a StepPausedEvent for post-execution review streaming.
+
+    Args:
+        workflow_run_response: The workflow run output.
+        step: The step that needs review.
+        step_name: Name of the step.
+        step_index: Index of the step.
+        pause_result: The step pause result.
+
+    Returns:
+        StepPausedEvent instance.
+    """
+    from agno.run.workflow import StepPausedEvent
+
+    req = pause_result.step_requirement
+    return StepPausedEvent(
+        run_id=workflow_run_response.run_id or "",
+        workflow_name=workflow_run_response.workflow_name,
+        workflow_id=workflow_run_response.workflow_id,
+        session_id=workflow_run_response.session_id,
+        step_name=step_name,
+        step_index=step_index,
+        step_id=getattr(step, "step_id", None),
+        requires_review=True,
+        review_message=req.review_message if req else None,
+        step_output_content=str(req.step_output_content) if req and req.step_output_content else None,
+    )
+
+
 def create_router_paused_event(
     workflow_run_response: "WorkflowRunOutput",
     step_name: str,
@@ -154,6 +190,79 @@ def create_router_paused_event(
         user_input_message=req.user_input_message if req else None,
         allow_multiple_selections=req.allow_multiple_selections if req else False,
     )
+
+
+def check_post_execution_review(
+    step: Any,
+    step_index: int,
+    step_input: "StepInput",
+    step_output: "StepOutput",
+    retry_count: int = 0,
+) -> StepPauseResult:
+    """Check if a step requires post-execution review and create a pause result.
+
+    Unlike step_pause_status (which checks before execution), this is called
+    after the step has already executed. The user reviews the output and decides
+    to approve, retry, or cancel.
+
+    Args:
+        step: The Step that just executed.
+        step_index: Index of the step in the workflow.
+        step_input: The input that was used for execution.
+        step_output: The output produced by the step.
+        retry_count: Current retry attempt number (managed by continue_run,
+            passed here so the StepRequirement shown to the user is accurate).
+
+    Returns:
+        StepPauseResult indicating whether to pause for review.
+    """
+    requires_review = getattr(step, "requires_review", False)
+    if not requires_review:
+        return StepPauseResult(should_pause=False)
+
+    step_name = getattr(step, "name", None) or f"step_{step_index + 1}"
+    log_debug(f"Step '{step_name}' requires post-execution review - pausing workflow")
+
+    step_requirement = step.create_review_requirement(
+        step_index=step_index,
+        step_input=step_input,
+        step_output=step_output,
+        retry_count=retry_count,
+    )
+    return StepPauseResult(should_pause=True, step_requirement=step_requirement)
+
+
+def apply_review_pause_state(
+    workflow_run_response: "WorkflowRunOutput",
+    step_index: int,
+    step_name: str,
+    collected_step_outputs: List[Union["StepOutput", List["StepOutput"]]],
+    step_output: "StepOutput",
+    pause_result: StepPauseResult,
+) -> None:
+    """Apply paused state for a post-execution review.
+
+    Similar to apply_pause_state but includes the step's output in step_results
+    since the step has already executed.
+
+    Args:
+        workflow_run_response: The workflow run output to update.
+        step_index: Index of the step that needs review.
+        step_name: Name of the step.
+        collected_step_outputs: The step outputs collected so far (not including this step).
+        step_output: The output from the step that just executed.
+        pause_result: The pause result containing the review requirement.
+    """
+    from agno.run.base import RunStatus
+
+    workflow_run_response.status = RunStatus.paused
+    workflow_run_response.paused_step_index = step_index
+    workflow_run_response.paused_step_name = step_name
+    # Include this step's output since it already ran
+    workflow_run_response.step_results = collected_step_outputs + [step_output]
+
+    if pause_result.step_requirement:
+        workflow_run_response.step_requirements = [pause_result.step_requirement]
 
 
 def apply_pause_state(

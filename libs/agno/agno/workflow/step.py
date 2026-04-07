@@ -98,6 +98,15 @@ class Step:
     # OnError.pause triggers HITL allowing user to retry or skip the failed step
     on_error: Union[OnError, str] = OnError.skip
 
+    # Post-execution review HITL configuration
+    # If True, the step will execute first, then pause for the user to review its output
+    # The user can then approve (continue), reject/retry (re-run this step), or cancel the workflow
+    requires_review: bool = False
+    # Message to display to the user when requesting review
+    review_message: Optional[str] = None
+    # Maximum number of times the step can be retried via review rejection
+    review_max_retries: int = 3
+
     _retry_count: int = 0
 
     def __init__(
@@ -120,6 +129,9 @@ class Step:
         user_input_message: Optional[str] = None,
         user_input_schema: Optional[List[Dict[str, Any]]] = None,
         on_error: Union[OnError, str] = OnError.skip,
+        requires_review: bool = False,
+        review_message: Optional[str] = None,
+        review_max_retries: int = 3,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -167,6 +179,9 @@ class Step:
         self.user_input_message = user_input_message
         self.user_input_schema = user_input_schema
         self.on_error = on_error
+        self.requires_review = requires_review
+        self.review_message = review_message
+        self.review_max_retries = review_max_retries
         self.step_id = step_id
 
         if step_id is None:
@@ -194,6 +209,9 @@ class Step:
             "user_input_schema": self.user_input_schema,
             "on_reject": self.on_reject,
             "on_error": self.on_error,
+            "requires_review": self.requires_review,
+            "review_message": self.review_message,
+            "review_max_retries": self.review_max_retries,
         }
 
         if self.agent is not None:
@@ -309,6 +327,9 @@ class Step:
             user_input_message=config.get("user_input_message"),
             user_input_schema=config.get("user_input_schema"),
             on_error=config.get("on_error", "fail"),
+            requires_review=config.get("requires_review", False),
+            review_message=config.get("review_message"),
+            review_max_retries=config.get("review_max_retries", 3),
             agent=agent,
             team=team,
             executor=executor,
@@ -378,6 +399,40 @@ class Step:
             user_input_message=self.user_input_message,
             user_input_schema=user_input_schema,
             step_input=step_input,
+        )
+
+    def create_review_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+        step_output: StepOutput,
+        retry_count: int = 0,
+    ) -> StepRequirement:
+        """Create a StepRequirement for post-execution review HITL.
+
+        The step has already executed. The user reviews the output and decides
+        to approve (continue), reject/retry (re-run), or cancel.
+
+        Args:
+            step_index: Index of the step in the workflow.
+            step_input: The prepared input for the step.
+            step_output: The output produced by the step execution.
+            retry_count: How many times this step has already been retried.
+
+        Returns:
+            StepRequirement configured for post-execution review.
+        """
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            step_type="Step",
+            requires_review=True,
+            review_message=self.review_message,
+            step_output_content=step_output.content,
+            review_retry_count=retry_count,
+            review_max_retries=self.review_max_retries,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
         )
 
     def create_error_requirement(

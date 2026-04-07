@@ -101,7 +101,10 @@ from agno.workflow.types import (
 from agno.workflow.utils import (
     ContinueExecutionState,
     apply_pause_state,
+    apply_review_pause_state,
     asave_paused_session,
+    check_post_execution_review,
+    create_review_paused_event,
     create_router_paused_event,
     create_step_paused_event,
     finalize_workflow_completion,
@@ -1913,6 +1916,23 @@ class Workflow:
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # Check for post-execution review HITL
+                    if isinstance(step, Step):
+                        review_result = check_post_execution_review(
+                            step, i, step_input, step_output
+                        )
+                        if review_result.should_pause:
+                            apply_review_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                step_output,
+                                review_result,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -2253,6 +2273,33 @@ class Workflow:
                         else:
                             # Default behavior: re-raise the exception
                             raise step_error_exception
+
+                    # Check for post-execution review HITL (streaming)
+                    if isinstance(step, Step) and not (step_error_occurred and step_error_exception is not None):
+                        # Get the step_output from collected outputs (it was added during streaming)
+                        _review_step_output = previous_step_outputs.get(step_name)
+                        if _review_step_output is not None:
+                            review_result = check_post_execution_review(
+                                step, i, step_input, _review_step_output
+                            )
+                            if review_result.should_pause:
+                                # Remove this step's output from collected (apply_review_pause_state re-adds it)
+                                if collected_step_outputs and collected_step_outputs[-1] is _review_step_output:
+                                    collected_step_outputs.pop()
+                                apply_review_pause_state(
+                                    workflow_run_response,
+                                    i,
+                                    step_name,
+                                    collected_step_outputs,
+                                    _review_step_output,
+                                    review_result,
+                                )
+                                paused_event = create_review_paused_event(
+                                    workflow_run_response, step, step_name, i, review_result
+                                )
+                                yield self._handle_event(paused_event, workflow_run_response)
+                                save_paused_session(self, session, workflow_run_response)
+                                return
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -2637,6 +2684,23 @@ class Workflow:
                     # Check for cancellation after step execution
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # Check for post-execution review HITL
+                    if isinstance(step, Step):
+                        review_result = check_post_execution_review(
+                            step, i, step_input, step_output
+                        )
+                        if review_result.should_pause:
+                            apply_review_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                step_output,
+                                review_result,
+                            )
+                            await asave_paused_session(self, workflow_session, workflow_run_response)
+                            return workflow_run_response
+
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -3004,6 +3068,33 @@ class Workflow:
                         else:
                             # Default behavior: re-raise the exception
                             raise step_error_exception
+
+                    # Check for post-execution review HITL (async streaming)
+                    if isinstance(step, Step) and not (step_error_occurred and step_error_exception is not None):
+                        _review_step_output = previous_step_outputs.get(step_name)
+                        if _review_step_output is not None:
+                            review_result = check_post_execution_review(
+                                step, i, step_input, _review_step_output
+                            )
+                            if review_result.should_pause:
+                                if collected_step_outputs and collected_step_outputs[-1] is _review_step_output:
+                                    collected_step_outputs.pop()
+                                apply_review_pause_state(
+                                    workflow_run_response,
+                                    i,
+                                    step_name,
+                                    collected_step_outputs,
+                                    _review_step_output,
+                                    review_result,
+                                )
+                                paused_event = create_review_paused_event(
+                                    workflow_run_response, step, step_name, i, review_result
+                                )
+                                yield self._handle_event(
+                                    paused_event, workflow_run_response, websocket_handler=websocket_handler
+                                )
+                                await asave_paused_session(self, workflow_session, workflow_run_response)
+                                return
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -4415,19 +4506,54 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
-        # Check if any step was rejected
+        # Check if any step was rejected (confirmation or review)
         rejected_steps = [
             req
             for req in (run_response.step_requirements or [])
-            if req.requires_confirmation and req.confirmed is False
+            if (req.requires_confirmation or req.requires_review) and req.confirmed is False
         ]
+
+        # Check if a review was approved (step already executed, skip to next on resume)
+        review_approved = any(
+            req.requires_review and req.confirmed is True for req in (run_response.step_requirements or [])
+        )
 
         # Handle rejected steps based on on_reject policy
         skip_rejected_step = False
         execute_else_branch = False  # For Condition with on_reject="else"
+        review_retry_step = False  # For post-execution review with on_reject="retry"
+        review_retry_count = 0
         if rejected_steps:
             rejected_step = rejected_steps[0]
-            if rejected_step.on_reject == "skip":
+            if rejected_step.on_reject == "retry":
+                # Re-execute the same step (post-execution review retry)
+                review_retry_step = True
+                review_retry_count = rejected_step.review_retry_count + 1
+                log_debug(
+                    f"Step '{rejected_step.step_name}' review rejected with on_reject='retry' "
+                    f"- retrying (attempt {review_retry_count}/{rejected_step.review_max_retries})"
+                )
+                # Check max retries
+                if review_retry_count > rejected_step.review_max_retries:
+                    logger.warning(
+                        f"Step '{rejected_step.step_name}' exceeded max review retries "
+                        f"({rejected_step.review_max_retries}) - cancelling workflow"
+                    )
+                    review_retry_step = False
+                    run_response.status = RunStatus.cancelled
+                    run_response.content = (
+                        f"Workflow cancelled: Step '{rejected_step.step_name}' exceeded "
+                        f"max review retries ({rejected_step.review_max_retries})"
+                    )
+
+                    session_id = run_response.session_id or self.session_id
+                    if session_id:
+                        session = self.get_session(session_id=session_id)
+                        if session:
+                            session.upsert_run(run=run_response)
+                            self.save_session(session=session)
+                    return run_response
+            elif rejected_step.on_reject == "skip":
                 # Skip the rejected step, continue with next step
                 skip_rejected_step = True
                 log_debug(f"Step '{rejected_step.step_name}' was rejected with on_reject='skip' - skipping step")
@@ -4512,6 +4638,13 @@ class Workflow:
         # mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
 
+        # For review retry: remove the step output from step_results (it will be re-executed)
+        if review_retry_step:
+            if run_response.step_results:
+                run_response.step_results = list(run_response.step_results[:-1])
+            # Pass retry count so the next review requirement shows the correct attempt number
+            kwargs["_review_retry_count"] = review_retry_count
+
         # Resume execution
         session_id = run_response.session_id or self.session_id
         if session_id is None:
@@ -4561,9 +4694,16 @@ class Workflow:
         if execute_else_branch:
             kwargs["execute_else_branch"] = True
 
-        # If step was rejected with on_reject="skip" or error with skip, start from next step
+        # Determine start index for resume
         start_index = paused_step_index
         if skip_rejected_step or error_should_skip:
+            # Skip rejected/errored step, continue with next step
+            start_index = paused_step_index + 1
+        elif review_retry_step:
+            # Re-execute the same step (review retry)
+            start_index = paused_step_index
+        elif review_approved:
+            # Review approved: step already executed, skip to next step
             start_index = paused_step_index + 1
 
         if stream:
@@ -4810,6 +4950,24 @@ class Workflow:
                         raise
 
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                # Check for post-execution review HITL
+                if isinstance(step, Step):
+                    review_result = check_post_execution_review(
+                        step, i, step_input, step_output,
+                        retry_count=kwargs.get("_review_retry_count", 0),
+                    )
+                    if review_result.should_pause:
+                        apply_review_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            step_output,
+                            review_result,
+                        )
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
@@ -5370,19 +5528,54 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
-        # Check if any step was rejected
+        # Check if any step was rejected (confirmation or review)
         rejected_steps = [
             req
             for req in (run_response.step_requirements or [])
-            if req.requires_confirmation and req.confirmed is False
+            if (req.requires_confirmation or req.requires_review) and req.confirmed is False
         ]
+
+        # Check if a review was approved (step already executed, skip to next on resume)
+        review_approved = any(
+            req.requires_review and req.confirmed is True for req in (run_response.step_requirements or [])
+        )
 
         # Handle rejected steps based on on_reject policy
         skip_rejected_step = False
         execute_else_branch = False  # For Condition with on_reject="else"
+        review_retry_step = False  # For post-execution review with on_reject="retry"
+        review_retry_count = 0
         if rejected_steps:
             rejected_step = rejected_steps[0]
-            if rejected_step.on_reject == "skip":
+            if rejected_step.on_reject == "retry":
+                # Re-execute the same step (post-execution review retry)
+                review_retry_step = True
+                review_retry_count = rejected_step.review_retry_count + 1
+                log_debug(
+                    f"Step '{rejected_step.step_name}' review rejected with on_reject='retry' "
+                    f"- retrying (attempt {review_retry_count}/{rejected_step.review_max_retries})"
+                )
+                # Check max retries
+                if review_retry_count > rejected_step.review_max_retries:
+                    logger.warning(
+                        f"Step '{rejected_step.step_name}' exceeded max review retries "
+                        f"({rejected_step.review_max_retries}) - cancelling workflow"
+                    )
+                    review_retry_step = False
+                    run_response.status = RunStatus.cancelled
+                    run_response.content = (
+                        f"Workflow cancelled: Step '{rejected_step.step_name}' exceeded "
+                        f"max review retries ({rejected_step.review_max_retries})"
+                    )
+
+                    session_id = run_response.session_id or self.session_id
+                    if session_id:
+                        session = await self.aget_session(session_id=session_id)
+                        if session:
+                            session.upsert_run(run=run_response)
+                            await self.asave_session(session=session)
+                    return run_response
+            elif rejected_step.on_reject == "skip":
                 # Skip the rejected step, continue with next step
                 skip_rejected_step = True
                 log_debug(f"Step '{rejected_step.step_name}' was rejected with on_reject='skip' - skipping step")
@@ -5467,6 +5660,13 @@ class Workflow:
         # mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
 
+        # For review retry: remove the step output from step_results (it will be re-executed)
+        # and pass the retry count so the review check uses it
+        if review_retry_step:
+            if run_response.step_results:
+                run_response.step_results = list(run_response.step_results[:-1])
+            kwargs["_review_retry_counts"] = {paused_step_index: review_retry_count}
+
         # Resume execution
         session_id = run_response.session_id or self.session_id
         if session_id is None:
@@ -5516,9 +5716,15 @@ class Workflow:
         if execute_else_branch:
             kwargs["execute_else_branch"] = True
 
-        # Determine start index based on skip decisions
-        # If error skip or reject skip, start from next step
-        start_index = paused_step_index + 1 if (skip_rejected_step or error_should_skip) else paused_step_index
+        # Determine start index for resume
+        if skip_rejected_step or error_should_skip:
+            start_index = paused_step_index + 1
+        elif review_retry_step:
+            start_index = paused_step_index
+        elif review_approved:
+            start_index = paused_step_index + 1
+        else:
+            start_index = paused_step_index
 
         if stream:
             return self._acontinue_execute_stream(
@@ -5752,6 +5958,24 @@ class Workflow:
                         raise
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                # Check for post-execution review HITL
+                if isinstance(step, Step):
+                    review_result = check_post_execution_review(
+                        step, i, step_input, step_output,
+                        retry_count=kwargs.get("_review_retry_count", 0),
+                    )
+                    if review_result.should_pause:
+                        apply_review_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            step_output,
+                            review_result,
+                        )
+                        await asave_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
