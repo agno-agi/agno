@@ -411,6 +411,9 @@ class RunSchema(BaseModel):
     )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
+    branched_from: Optional[str] = Field(
+        None, description="Source session ID if this run was branched from another session"
+    )
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
@@ -443,6 +446,7 @@ class RunSchema(BaseModel):
             citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
             session_state=run_dict.get("session_state"),
+            branched_from=run_dict.get("branched_from", ""),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
@@ -475,6 +479,7 @@ class TeamRunSchema(BaseModel):
     )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
+    branched_from: Optional[str] = Field(None, description="Source session ID if this run was branched from another session")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
@@ -506,6 +511,7 @@ class TeamRunSchema(BaseModel):
             citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
             session_state=run_dict.get("session_state"),
+            branched_from=run_dict.get("branched_from", ""),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),

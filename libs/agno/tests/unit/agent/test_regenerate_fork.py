@@ -592,8 +592,72 @@ class TestBranchSessionDispatch:
         saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
         assert saved_session.session_id == new_id
         assert len(saved_session.runs) == 2
-        # branched_from should be recorded in session_data
-        assert saved_session.session_data["branched_from"] == "original"
+
+    def test_branch_records_branched_from_on_each_run(self, monkeypatch: pytest.MonkeyPatch):
+        """branched_from must be stored on each run (not session_data) so the
+        GET runs API can return it without a separate session lookup."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        run2 = _make_run(run_id="r2", messages=[Message(role="user", content="hello")])
+        session = _make_session(runs=[run1, run2], session_id="original")
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
+
+        _run.branch_session_dispatch(agent, source_session_id="original")
+
+        saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
+        for run in saved_session.runs:
+            assert run.branched_from == "original", f"Run {run.run_id} missing branched_from; lineage must be per-run"
+        # branched_from should NOT be in session_data
+        assert "branched_from" not in (saved_session.session_data or {})
+
+    def test_branch_branched_from_survives_to_dict_roundtrip(self, monkeypatch: pytest.MonkeyPatch):
+        """branched_from must appear in RunOutput.to_dict() so RunSchema.from_dict()
+        can pick it up and return it in the API response."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        session = _make_session(runs=[run1], session_id="original")
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
+
+        _run.branch_session_dispatch(agent, source_session_id="original")
+
+        saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
+        run_dict = saved_session.runs[0].to_dict()
+        assert run_dict.get("branched_from") == "original", (
+            "branched_from must be present in to_dict() output for the runs API"
+        )
+
+    def test_branch_source_runs_not_mutated(self, monkeypatch: pytest.MonkeyPatch):
+        """Branching must not set branched_from on the source session's runs."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        session = _make_session(runs=[run1], session_id="original")
+        _patch_branch_deps(agent, monkeypatch, session)
+
+        _run.branch_session_dispatch(agent, source_session_id="original")
+
+        assert run1.branched_from is None, "Source run must not be mutated"
+
+    def test_nested_branch_preserves_original_branched_from(self, monkeypatch: pytest.MonkeyPatch):
+        """When branching a session that was itself branched, runs that already
+        have branched_from set must keep their original value — only runs
+        without branched_from get the new source_session_id."""
+        agent = Agent(name="test")
+        # Simulate a run that was already branched from session "A"
+        run_from_a = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        run_from_a.branched_from = "session-A"
+        # A new run created natively in session "B" (no branched_from)
+        run_native = _make_run(run_id="r2", messages=[Message(role="user", content="hello")])
+
+        session_b = _make_session(runs=[run_from_a, run_native], session_id="session-B")
+        mock_save = _patch_branch_deps(agent, monkeypatch, session_b)
+
+        _run.branch_session_dispatch(agent, source_session_id="session-B")
+
+        saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
+        # run copied from A should still point to A, not overwritten to B
+        assert saved_session.runs[0].branched_from == "session-A"
+        # run native to B should now point to B
+        assert saved_session.runs[1].branched_from == "session-B"
 
     def test_branch_deep_copies_runs(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")

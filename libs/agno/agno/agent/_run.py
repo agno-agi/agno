@@ -5249,13 +5249,18 @@ def branch_session_dispatch(
     # Rewrite session_id on each copied run so the new session's run metadata
     # is internally consistent (runs should reference their owning session).
     # Also assign new run_ids so they are globally unique.
+    # Record branched_from on each run so the lineage is visible per-run
+    # (e.g. via the GET runs API) without needing a separate session lookup.
+    # Only set branched_from if the run doesn't already have one — this
+    # preserves the original lineage through nested branches.
     for run in branched_runs or []:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
+        if not run.branched_from:
+            run.branched_from = source_session_id
 
-    # Carry over session_data and record the source session for traceability.
+    # Carry over session_data.
     new_session_data = copy.deepcopy(source_session.session_data) or {}
-    new_session_data["branched_from"] = source_session_id
 
     new_session = AgentSession(
         session_id=new_session_id,
@@ -5330,13 +5335,17 @@ async def abranch_session_dispatch(
     branched_runs = copy.deepcopy(source_session.runs)
 
     # Rewrite session_id and run_id on each copied run so run metadata is consistent.
+    # Record branched_from on each run so the lineage is visible per-run.
+    # Only set branched_from if the run doesn't already have one — this
+    # preserves the original lineage through nested branches.
     for run in branched_runs or []:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
+        if not run.branched_from:
+            run.branched_from = source_session_id
 
-    # Carry over session_data and record the source session for traceability.
+    # Carry over session_data.
     new_session_data = copy.deepcopy(source_session.session_data) or {}
-    new_session_data["branched_from"] = source_session_id
 
     new_session = AgentSession(
         session_id=new_session_id,
