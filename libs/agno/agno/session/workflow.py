@@ -51,7 +51,10 @@ class WorkflowSession:
             runs_data = []
             for run in self.runs:
                 try:
-                    runs_data.append(run.to_dict())
+                    if isinstance(run, dict):
+                        runs_data.append(run)
+                    else:
+                        runs_data.append(run.to_dict())
                 except Exception as e:
                     raise ValueError(f"Serialization failed: {str(e)}")
 

@@ -86,6 +86,14 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     parent_step_id: Optional[str] = None
 
+    # Source workflow tracking - set once at creation, NOT overwritten during enrichment.
+    # For nested workflows, these identify the originating workflow even after
+    # the outer workflow's enrichment overwrites workflow_id/workflow_name.
+    source_workflow_id: Optional[str] = None
+    source_workflow_name: Optional[str] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
+
     def to_dict(self) -> Dict[str, Any]:
         # Exclude run_output from serialization - it's only used at runtime for nested workflows
         _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
@@ -691,7 +699,7 @@ class WorkflowRunOutput:
             _dict["audio"] = [aud.to_dict() if hasattr(aud, "to_dict") else aud for aud in self.audio]
 
         if self.files is not None:
-            _dict["files"] = [f.to_dict() for f in self.files]
+            _dict["files"] = [f.to_dict() if hasattr(f, "to_dict") else f for f in self.files]
 
         if self.response_audio is not None:
             _dict["response_audio"] = (
@@ -703,9 +711,7 @@ class WorkflowRunOutput:
             for step_response in self.step_results:
                 if isinstance(step_response, list):
                     # Handle List[StepOutput] from workflow components like Steps
-                    flattened_responses.extend([
-                        s.to_dict() if hasattr(s, "to_dict") else s for s in step_response
-                    ])
+                    flattened_responses.extend([s.to_dict() if hasattr(s, "to_dict") else s for s in step_response])
                 elif hasattr(step_response, "to_dict"):
                     # Handle single StepOutput
                     flattened_responses.append(step_response.to_dict())
@@ -721,7 +727,9 @@ class WorkflowRunOutput:
 
         if self.workflow_agent_run is not None:
             _dict["workflow_agent_run"] = (
-                self.workflow_agent_run.to_dict() if hasattr(self.workflow_agent_run, "to_dict") else self.workflow_agent_run
+                self.workflow_agent_run.to_dict()
+                if hasattr(self.workflow_agent_run, "to_dict")
+                else self.workflow_agent_run
             )
 
         if self.metrics is not None:
@@ -740,10 +748,14 @@ class WorkflowRunOutput:
             _dict["events"] = [e.to_dict() if hasattr(e, "to_dict") else e for e in self.events]
 
         if self.step_requirements is not None:
-            _dict["step_requirements"] = [req.to_dict() for req in self.step_requirements]
+            _dict["step_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.step_requirements
+            ]
 
         if self.error_requirements is not None:
-            _dict["error_requirements"] = [req.to_dict() for req in self.error_requirements]
+            _dict["error_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.error_requirements
+            ]
 
         return _dict
 
@@ -770,14 +782,19 @@ class WorkflowRunOutput:
         step_executor_runs_data = data.pop("step_executor_runs", [])
         step_executor_runs: List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]] = []
         if step_executor_runs_data:
-            step_executor_runs = []
             for run_data in step_executor_runs_data:
-                if "workflow_id" in run_data or "workflow_name" in run_data:
-                    # Nested workflow run
-                    step_executor_runs.append(cls.from_dict(run_data))
-                elif "team_id" in run_data or "team_name" in run_data:
+                # Check for team first (team_id is unique to TeamRunOutput)
+                if "team_id" in run_data or "team_name" in run_data:
                     step_executor_runs.append(TeamRunOutput.from_dict(run_data))
+                # Check for agent (agent_id is unique to RunOutput; RunOutput also has workflow_id
+                # when used as a workflow agent, so we must check agent_id before workflow_name)
+                elif "agent_id" in run_data or "agent_name" in run_data:
+                    step_executor_runs.append(RunOutput.from_dict(run_data))
+                # Nested workflow run (workflow_name is unique to WorkflowRunOutput)
+                elif "workflow_name" in run_data and "parent_run_id" in run_data:
+                    step_executor_runs.append(cls.from_dict(run_data))
                 else:
+                    # Default to RunOutput for backwards compatibility
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
         workflow_agent_run_data = data.pop("workflow_agent_run", None)

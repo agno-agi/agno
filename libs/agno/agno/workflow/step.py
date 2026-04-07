@@ -17,7 +17,7 @@ from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
-from agno.run.base import BaseRunOutputEvent
+from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
@@ -301,9 +301,16 @@ class Step:
                 )
 
         # --- Handle Workflow reconstruction ---
-        # if "workflow_id" in config and config["workflow_id"] and db:
-        #     from agno.workflow.workflow import Workflow
-        #     workflow = Workflow.load(db=db, id=config["workflow_id"])
+        # TODO: Add workflow support to Registry (get_workflow method) for full reconstruction.
+        # Currently, nested workflow steps cannot be fully reconstructed from serialized form
+        # because the Registry does not track workflows. This only affects resumption of
+        # paused workflows that contain nested workflow steps.
+        if "workflow_id" in config and config["workflow_id"]:
+            workflow_id = config.get("workflow_id")
+            log_warning(
+                f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
+                f"(workflow registry support not yet implemented)"
+            )
 
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"] and registry:
@@ -821,6 +828,7 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
+
         if hasattr(event, "workflow_id"):
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
@@ -837,6 +845,11 @@ class Step:
         if hasattr(event, "step_index") and step_index is not None:
             if event.step_index is None:
                 event.step_index = step_index
+
+        if hasattr(event, "source_workflow_id") and event.source_workflow_id is None:
+            event.source_workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, "source_workflow_name") and event.source_workflow_name is None:
+            event.source_workflow_name = workflow_run_response.workflow_name
 
         return event
 
@@ -1833,6 +1846,8 @@ class Step:
         self, workflow_run_response: "WorkflowRunOutput", executor_run_response: Union[RunOutput, TeamRunOutput]
     ) -> None:
         """Store agent/team responses in step_executor_runs if enabled"""
+        if executor_run_response is None:
+            return
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
@@ -1976,9 +1991,7 @@ class Step:
 
     # --- Nested Workflow Execution Methods ---
 
-    def _convert_workflow_step_results_to_step_outputs(
-        self, step_results: List[Any]
-    ) -> List[StepOutput]:
+    def _convert_workflow_step_results_to_step_outputs(self, step_results: List[Any]) -> List[StepOutput]:
         """Convert nested workflow step results to StepOutput objects for nesting"""
         nested_steps = []
         for step_result in step_results:
@@ -1990,6 +2003,31 @@ class Step:
                     if isinstance(s, StepOutput):
                         nested_steps.append(s)
         return nested_steps
+
+    @staticmethod
+    def _aggregate_workflow_metrics(workflow_metrics: Any) -> Optional[RunMetrics]:
+        """Aggregate a WorkflowMetrics into a single RunMetrics by summing all step metrics.
+
+        WorkflowMetrics contains per-step StepMetrics (each wrapping a RunMetrics).
+        This aggregates them into one RunMetrics so it fits into StepOutput.metrics.
+        """
+        from agno.workflow.types import WorkflowMetrics as WFMetrics
+
+        if workflow_metrics is None or not isinstance(workflow_metrics, WFMetrics):
+            return None
+
+        aggregated = RunMetrics()
+        if workflow_metrics.duration is not None:
+            aggregated.duration = workflow_metrics.duration
+
+        for step_metric in workflow_metrics.steps.values():
+            if step_metric.metrics is not None:
+                aggregated = aggregated + step_metric.metrics
+
+        # Only return if there are actual token counts
+        if aggregated.total_tokens > 0 or aggregated.duration is not None:
+            return aggregated
+        return None
 
     def _execute_nested_workflow(
         self,
@@ -2047,8 +2085,8 @@ class Step:
             executor_name=self.workflow.name,
             content=nested_run_output.content,
             step_run_id=nested_run_output.run_id,
-            metrics=nested_run_output.metrics.to_dict() if nested_run_output.metrics else None,  # type: ignore
-            success=nested_run_output.status != "Error",
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
+            success=nested_run_output.status != RunStatus.error,
             error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
         )
@@ -2130,10 +2168,13 @@ class Step:
             step_type=StepType.WORKFLOW,
             executor_type="workflow",
             executor_name=self.workflow.name,
-            content=nested_run_output.content if nested_run_output else (completed_event.content if completed_event else None),
+            content=nested_run_output.content
+            if nested_run_output
+            else (completed_event.content if completed_event else None),
             step_run_id=nested_run_output.run_id if nested_run_output else None,
-            metrics=nested_run_output.metrics.to_dict() if nested_run_output and nested_run_output.metrics else None,  # type: ignore
-            success=nested_run_output.status != "Error" if nested_run_output else True,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics) if nested_run_output else None,
+            success=nested_run_output.status != RunStatus.error if nested_run_output else True,
+            error=nested_run_output.error if nested_run_output and hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,
         )
 
@@ -2193,8 +2234,8 @@ class Step:
             executor_name=self.workflow.name,
             content=nested_run_output.content,
             step_run_id=nested_run_output.run_id,
-            metrics=nested_run_output.metrics.to_dict() if nested_run_output.metrics else None,  # type: ignore
-            success=nested_run_output.status != "Error",
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
+            success=nested_run_output.status != RunStatus.error,
             error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
         )
@@ -2276,10 +2317,13 @@ class Step:
             step_type=StepType.WORKFLOW,
             executor_type="workflow",
             executor_name=self.workflow.name,
-            content=nested_run_output.content if nested_run_output else (completed_event.content if completed_event else None),
+            content=nested_run_output.content
+            if nested_run_output
+            else (completed_event.content if completed_event else None),
             step_run_id=nested_run_output.run_id if nested_run_output else None,
-            metrics=nested_run_output.metrics.to_dict() if nested_run_output and nested_run_output.metrics else None,  # type: ignore
-            success=nested_run_output.status != "Error" if nested_run_output else True,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics) if nested_run_output else None,
+            success=nested_run_output.status != RunStatus.error if nested_run_output else True,
+            error=nested_run_output.error if nested_run_output and hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,
         )
 

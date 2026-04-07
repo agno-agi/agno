@@ -11,17 +11,21 @@ In this example:
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.workflow.step import Step
-from agno.workflow.workflow import Workflow
 from agno.workflow.types import StepInput, StepOutput
-from agno.db.postgres import PostgresDb
+from agno.workflow.workflow import Workflow
 
 
 def create_summary(step_input: StepInput) -> StepOutput:
     """A simple function step that summarizes the previous step's output"""
     previous_content = step_input.get_last_step_content()
-    summary = f"Summary of research:\n{previous_content[:500]}..." if previous_content else "No content to summarize"
+    summary = (
+        f"Summary of research:\n{previous_content[:500]}..."
+        if previous_content
+        else "No content to summarize"
+    )
     return StepOutput(content=summary)
 
 
@@ -66,4 +70,8 @@ if __name__ == "__main__":
     print("Running nested workflow example...")
     print("=" * 50)
 
-    result = outer_workflow.print_response(input="Tell me about the history of artificial intelligence", stream=True, stream_events=True)
+    result = outer_workflow.print_response(
+        input="Tell me about the history of artificial intelligence",
+        stream=True,
+        stream_events=True,
+    )
