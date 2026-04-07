@@ -649,7 +649,7 @@ class OpenAIResponses(Model):
             )
             return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
-            log_warning(f"Failed to count tokens via API: {e}")
+            log_warning(f"Failed to count tokens via API: {str(e)}")
             return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
@@ -671,7 +671,7 @@ class OpenAIResponses(Model):
             )
             return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
-            log_warning(f"Failed to count tokens via API: {e}")
+            log_warning(f"Failed to count tokens via API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(

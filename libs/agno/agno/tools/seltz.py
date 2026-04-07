@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from seltz import Includes, Seltz
@@ -53,7 +53,7 @@ class SeltzTools(Toolkit):
 
         self.api_key = api_key or getenv("SELTZ_API_KEY")
         if not self.api_key:
-            logger.error("SELTZ_API_KEY not set. Please set the SELTZ_API_KEY environment variable.")
+            log_error("SELTZ_API_KEY not set. Please set the SELTZ_API_KEY environment variable.")
 
         self.endpoint = endpoint
         self.insecure = insecure
@@ -146,8 +146,8 @@ class SeltzTools(Toolkit):
             SeltzAPIError,
             SeltzError,
         ) as exc:
-            logger.error(f"Seltz error: {exc}")
+            log_error(f"Seltz error: {exc}")
             return f"Error: {exc}"
         except Exception as exc:
-            logger.error(f"Failed to search Seltz: {exc}")
+            logger.exception("Failed to search Seltz")
             return f"Error: {exc}"

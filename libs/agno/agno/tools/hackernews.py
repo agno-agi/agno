@@ -38,19 +38,25 @@ class HackerNewsTools(Toolkit):
             str: JSON string of top stories.
         """
 
-        log_debug(f"Getting top {num_stories} stories from Hacker News")
-        # Fetch top story IDs
-        response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
-        story_ids = response.json()
+        try:
+            log_debug(f"Getting top {num_stories} stories from Hacker News")
+            # Fetch top story IDs
+            response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+            story_ids = response.json()
 
-        # Fetch story details
-        stories = []
-        for story_id in story_ids[:num_stories]:
-            story_response = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json")
-            story = story_response.json()
-            story["username"] = story["by"]
-            stories.append(story)
-        return json.dumps(stories)
+            # Fetch story details
+            stories = []
+            for story_id in story_ids[:num_stories]:
+                story_response = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json")
+                story = story_response.json()
+                if story is None:
+                    continue
+                story["username"] = story.get("by", "unknown")
+                stories.append(story)
+            return json.dumps(stories)
+        except Exception as e:
+            logger.exception(e)
+            return f"Error fetching stories: {e}"
 
     def get_user_details(self, username: str) -> str:
         """Use this function to get the details of a Hacker News user using their username.

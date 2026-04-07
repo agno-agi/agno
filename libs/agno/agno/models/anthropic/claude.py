@@ -618,13 +618,13 @@ class Claude(Model):
         Always raises — never returns normally.
         """
         if isinstance(e, APIConnectionError):
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, RateLimitError):
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})")
             if e.status_code == 529 or "overloaded_error" in str(e):
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
@@ -632,7 +632,7 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_error(f"Unexpected error calling Claude API: {str(e)}")
+        log_error("Unexpected error calling Claude API")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
@@ -901,11 +901,11 @@ class Claude(Model):
                                 model_response.parsed = response_format.model_validate(parsed_data)
                                 log_debug(f"Successfully parsed structured output: {model_response.parsed}")
                             except json.JSONDecodeError as e:
-                                log_warning(f"Failed to parse JSON from structured output: {e}")
+                                log_warning(f"Failed to parse JSON from structured output: {str(e)}")
                             except ValidationError as e:
-                                log_warning(f"Failed to validate structured output against schema: {e}")
+                                log_warning(f"Failed to validate structured output against schema: {str(e)}")
                             except Exception as e:
-                                log_warning(f"Unexpected error parsing structured output: {e}")
+                                log_warning(f"Unexpected error parsing structured output: {str(e)}")
 
                     # Capture citations from the response
                     if block.citations is not None:
@@ -1122,11 +1122,11 @@ class Claude(Model):
                         model_response.parsed = response_format.model_validate(parsed_data)
                         log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
                     except json.JSONDecodeError as e:
-                        log_warning(f"Failed to parse JSON from structured output in stream: {e}")
+                        log_warning(f"Failed to parse JSON from structured output in stream: {str(e)}")
                     except ValidationError as e:
-                        log_warning(f"Failed to validate structured output against schema in stream: {e}")
+                        log_warning(f"Failed to validate structured output against schema in stream: {str(e)}")
                     except Exception as e:
-                        log_warning(f"Unexpected error parsing structured output in stream: {e}")
+                        log_warning(f"Unexpected error parsing structured output in stream: {str(e)}")
 
             # Capture context management information if present
             if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
@@ -1177,7 +1177,7 @@ class Claude(Model):
             ):
                 model_response.content = response.delta.text
         except Exception as e:
-            log_error(f"Error parsing Beta response: {e}")
+            log_error(f"Error parsing Beta response: {str(e)}")
 
         return model_response
 
