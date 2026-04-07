@@ -27,7 +27,12 @@ from agno.db.sqlite.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
-from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.db.utils import (
+    deserialize_session,
+    deserialize_session_json_fields,
+    deserialize_sessions,
+    serialize_session_json_fields,
+)
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -544,7 +549,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -586,14 +591,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if not session_raw or not deserialize:
                     return session_raw
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session_raw)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session_raw)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session_raw)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session_raw)
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
@@ -694,33 +692,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if not sessions_raw:
                     return []
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif session_type is None:
-                sessions: List[Session] = []
-                for record in sessions_raw:
-                    st = record.get("session_type") or (
-                        "agent"
-                        if record.get("agent_id")
-                        else "team"
-                        if record.get("team_id")
-                        else "workflow"
-                        if record.get("workflow_id")
-                        else None
-                    )
-                    if st == SessionType.AGENT.value:
-                        sessions.append(AgentSession.from_dict(record))  # type: ignore
-                    elif st == SessionType.TEAM.value:
-                        sessions.append(TeamSession.from_dict(record))  # type: ignore
-                    elif st == SessionType.WORKFLOW.value:
-                        sessions.append(WorkflowSession.from_dict(record))  # type: ignore
-                return sessions
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, sessions_raw)
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
@@ -729,7 +701,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,

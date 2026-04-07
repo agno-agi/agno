@@ -25,7 +25,11 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields
+from agno.db.utils import (
+    deserialize_session,
+    deserialize_session_json_fields,
+    deserialize_sessions,
+)
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -307,7 +311,7 @@ class FirestoreDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -315,7 +319,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get. If None, the type is inferred.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
@@ -348,14 +352,7 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")
@@ -462,29 +459,7 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
-            for session in sessions_raw:
-                st = session.get("session_type") or (
-                    "agent"
-                    if session.get("agent_id")
-                    else "team"
-                    if session.get("team_id")
-                    else "workflow"
-                    if session.get("workflow_id")
-                    else None
-                )
-                if st == SessionType.AGENT.value:
-                    agent_session = AgentSession.from_dict(session)
-                    if agent_session is not None:
-                        sessions.append(agent_session)
-                elif st == SessionType.TEAM.value:
-                    team_session = TeamSession.from_dict(session)
-                    if team_session is not None:
-                        sessions.append(team_session)
-                elif st == SessionType.WORKFLOW.value:
-                    workflow_session = WorkflowSession.from_dict(session)
-                    if workflow_session is not None:
-                        sessions.append(workflow_session)
+            sessions = deserialize_sessions(session_type, sessions_raw)
 
             if not sessions:
                 return [] if deserialize else ([], 0)
@@ -498,7 +473,7 @@ class FirestoreDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -526,6 +501,8 @@ class FirestoreDb(BaseDb):
             query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            if session_type is not None:
+                query = query.where(filter=FieldFilter("session_type", "==", session_type.value))
             docs = query.stream()
             doc_ref = next((doc.reference for doc in docs), None)
 
@@ -571,12 +548,7 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return deserialized_session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(deserialized_session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(deserialized_session)
-            else:
-                return WorkflowSession.from_dict(deserialized_session)
+            return deserialize_session(session_type, deserialized_session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")

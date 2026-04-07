@@ -11,6 +11,7 @@ from fastmcp.server.http import (
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas import UserMemory
+from agno.db.utils import detect_session_type
 from agno.os.routers.memory.schemas import (
     UserMemorySchema,
 )
@@ -44,20 +45,6 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 logger = logging.getLogger(__name__)
-
-
-def _detect_session_type(raw: dict) -> str:
-    """Detect session type from raw session data, inferring from component IDs if session_type is missing."""
-    st = raw.get("session_type")
-    if st:
-        return st.value if hasattr(st, "value") else st
-    if raw.get("agent_id"):
-        return "agent"
-    if raw.get("team_id"):
-        return "team"
-    if raw.get("workflow_id"):
-        return "workflow"
-    return "agent"
 
 
 def get_mcp_server(
@@ -128,7 +115,7 @@ def get_mcp_server(
     )  # type: ignore
     async def get_sessions(
         db_id: str,
-        session_type: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
         component_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -138,10 +125,10 @@ def get_mcp_server(
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type) if session_type else None
+
         if isinstance(db, RemoteDb):
             result = await db.get_sessions(
-                session_type=session_type_enum,
+                session_type=session_type,
                 component_id=component_id,
                 user_id=user_id,
                 session_name=session_name,
@@ -156,7 +143,7 @@ def get_mcp_server(
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions, total_count = await db.get_sessions(
-                session_type=session_type_enum,
+                session_type=session_type,
                 component_id=component_id,
                 user_id=user_id,
                 session_name=session_name,
@@ -168,7 +155,7 @@ def get_mcp_server(
             )
         else:
             sessions, total_count = db.get_sessions(
-                session_type=session_type_enum,
+                session_type=session_type,
                 component_id=component_id,
                 user_id=user_id,
                 session_name=session_name,
@@ -197,44 +184,43 @@ def get_mcp_server(
     async def get_session(
         session_id: str,
         db_id: str,
-        session_type: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
             result = await db.get_session(
                 session_id=session_id,
-                session_type=session_type_enum,
+                session_type=session_type,
                 user_id=user_id,
                 db_id=db_id,
             )
             return result.model_dump()
 
-        # Fetch raw to auto-detect type if not provided
-        fetch_type = session_type_enum or SessionType.AGENT
+        # Fetch the session raw
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             raw = await db.get_session(
-                session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
             )
         else:
-            db = cast(BaseDb, db)
-            raw = db.get_session(session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False)
+            raw = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
 
         if not raw:
             raise Exception(f"Session {session_id} not found")
 
-        if session_type_enum is None:
-            detected = _detect_session_type(raw if isinstance(raw, dict) else {})
-            session_type_enum = SessionType(detected) if detected else SessionType.AGENT
+        # Resolve type: use provided type or auto-detect from record
+        resolved_type = session_type
+        if resolved_type is None:
+            detected = detect_session_type(raw if isinstance(raw, dict) else {})
+            resolved_type = SessionType(detected)
 
         # Deserialize from raw
-        if session_type_enum == SessionType.AGENT:
+        if resolved_type == SessionType.AGENT:
             session = AgentSession.from_dict(raw)  # type: ignore
             return AgentSessionDetailSchema.from_session(session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
+        elif resolved_type == SessionType.TEAM:
             session = TeamSession.from_dict(raw)  # type: ignore
             return TeamSessionDetailSchema.from_session(session).model_dump()  # type: ignore
         else:
@@ -248,7 +234,7 @@ def get_mcp_server(
     )  # type: ignore
     async def create_session(
         db_id: str,
-        session_type: str = "agent",
+        session_type: SessionType = SessionType.AGENT,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -261,14 +247,13 @@ def get_mcp_server(
         import time
 
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type)
 
         # Generate session_id if not provided
         session_id = session_id or str(uuid4())
 
         if isinstance(db, RemoteDb):
             result = await db.create_session(
-                session_type=session_type_enum,
+                session_type=session_type,
                 session_id=session_id,
                 session_name=session_name,
                 session_state=session_state,
@@ -292,7 +277,7 @@ def get_mcp_server(
 
         # Create the appropriate session type
         session: Union[AgentSession, TeamSession, WorkflowSession]
-        if session_type_enum == SessionType.AGENT:
+        if session_type == SessionType.AGENT:
             session = AgentSession(
                 session_id=session_id,
                 agent_id=agent_id,
@@ -302,7 +287,7 @@ def get_mcp_server(
                 created_at=current_time,
                 updated_at=current_time,
             )
-        elif session_type_enum == SessionType.TEAM:
+        elif session_type == SessionType.TEAM:
             session = TeamSession(
                 session_id=session_id,
                 team_id=team_id,
@@ -332,9 +317,9 @@ def get_mcp_server(
         if not created_session:
             raise Exception("Failed to create session")
 
-        if session_type_enum == SessionType.AGENT:
+        if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
+        elif session_type == SessionType.TEAM:
             return TeamSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
         else:
             return WorkflowSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
@@ -347,46 +332,49 @@ def get_mcp_server(
     async def get_session_runs(
         session_id: str,
         db_id: str,
-        session_type: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
             result = await db.get_session_runs(
                 session_id=session_id,
-                session_type=session_type_enum,
+                session_type=session_type,
                 user_id=user_id,
                 db_id=db_id,
             )
             return [r.model_dump() for r in result]
 
-        fetch_type = session_type_enum or SessionType.AGENT
+        # Fetch the session raw
         if isinstance(db, AsyncBaseDb):
-            db = cast(AsyncBaseDb, db)
-            session = await db.get_session(
-                session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
+            db_typed = cast(AsyncBaseDb, db)
+            session_raw = await db_typed.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
             )
         else:
-            session = db.get_session(session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False)
+            session_raw = db.get_session(  # type: ignore[union-attr]
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+            )
 
-        if not session:
+        if not session_raw:
             raise Exception(f"Session {session_id} not found")
 
-        if session_type_enum is None:
-            detected = _detect_session_type(session if isinstance(session, dict) else {})
-            session_type_enum = SessionType(detected) if detected else SessionType.AGENT
+        # Resolve type: use provided type or auto-detect from record
+        resolved_type = session_type
+        if resolved_type is None:
+            detected = detect_session_type(session_raw if isinstance(session_raw, dict) else {})
+            resolved_type = SessionType(detected)
 
-        runs = session.get("runs")  # type: ignore
+        runs = session_raw.get("runs")  # type: ignore
         if not runs:
             return []
 
         run_responses: List[Dict[str, Any]] = []
         for run in runs:
-            if session_type_enum == SessionType.AGENT:
+            if resolved_type == SessionType.AGENT:
                 run_responses.append(RunSchema.from_dict(run).model_dump())
-            elif session_type_enum == SessionType.TEAM:
+            elif resolved_type == SessionType.TEAM:
                 if run.get("agent_id") is not None:
                     run_responses.append(RunSchema.from_dict(run).model_dump())
                 else:
@@ -410,30 +398,30 @@ def get_mcp_server(
         session_id: str,
         run_id: str,
         db_id: str,
-        session_type: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
             result = await db.get_session_run(
                 session_id=session_id,
                 run_id=run_id,
-                session_type=session_type_enum,
+                session_type=session_type,
                 user_id=user_id,
                 db_id=db_id,
             )
             return result.model_dump()
 
-        fetch_type = session_type_enum or SessionType.AGENT
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.get_session(
-                session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
             )
         else:
-            session = db.get_session(session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False)
+            session = db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+            )
 
         if not session:
             raise Exception(f"Session {session_id} not found")
@@ -467,55 +455,38 @@ def get_mcp_server(
         session_id: str,
         session_name: str,
         db_id: str,
-        session_type: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
             result = await db.rename_session(
                 session_id=session_id,
                 session_name=session_name,
-                session_type=session_type_enum or SessionType.AGENT,
+                session_type=session_type,
                 db_id=db_id,
             )
             return result.model_dump()
 
-        # Auto-detect type if not provided
-        if session_type_enum is None:
-            fetch_type = SessionType.AGENT
-            if isinstance(db, AsyncBaseDb):
-                raw = await cast(AsyncBaseDb, db).get_session(
-                    session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
-                )
-            else:
-                raw = cast(BaseDb, db).get_session(
-                    session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
-                )
-            if not raw:
-                raise Exception(f"Session {session_id} not found")
-            detected = _detect_session_type(raw if isinstance(raw, dict) else {})
-            session_type_enum = SessionType(detected) if detected else SessionType.AGENT
-
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.rename_session(
-                session_id=session_id, session_type=session_type_enum, session_name=session_name, user_id=user_id
+                session_id=session_id, session_type=session_type, session_name=session_name, user_id=user_id
             )
         else:
             db = cast(BaseDb, db)
             session = db.rename_session(
-                session_id=session_id, session_type=session_type_enum, session_name=session_name, user_id=user_id
+                session_id=session_id, session_type=session_type, session_name=session_name, user_id=user_id
             )
 
         if not session:
             raise Exception(f"Session {session_id} not found")
 
-        if session_type_enum == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+        if isinstance(session, AgentSession):
+            return AgentSessionDetailSchema.from_session(session).model_dump()
+        elif isinstance(session, TeamSession):
+            return TeamSessionDetailSchema.from_session(session).model_dump()
         else:
             return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
 
@@ -527,7 +498,7 @@ def get_mcp_server(
     async def update_session(
         session_id: str,
         db_id: str,
-        session_type: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -535,12 +506,11 @@ def get_mcp_server(
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         db = await get_db(os.dbs, db_id)
-        session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
             result = await db.update_session(
                 session_id=session_id,
-                session_type=session_type_enum or SessionType.AGENT,
+                session_type=session_type,  # type: ignore[arg-type]
                 session_name=session_name,
                 session_state=session_state,
                 metadata=metadata,
@@ -550,31 +520,15 @@ def get_mcp_server(
             )
             return result.model_dump()
 
-        # Auto-detect type if not provided
-        if session_type_enum is None:
-            fetch_type = SessionType.AGENT
-            if isinstance(db, AsyncBaseDb):
-                raw = await cast(AsyncBaseDb, db).get_session(
-                    session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
-                )
-            else:
-                raw = cast(BaseDb, db).get_session(
-                    session_id=session_id, session_type=fetch_type, user_id=user_id, deserialize=False
-                )
-            if not raw:
-                raise Exception(f"Session {session_id} not found")
-            detected = _detect_session_type(raw if isinstance(raw, dict) else {})
-            session_type_enum = SessionType(detected) if detected else SessionType.AGENT
-
-        # Get the existing session
+        # Get the existing session (session_type=None is handled by the DB adapter)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             existing_session = await db.get_session(
-                session_id=session_id, session_type=session_type_enum, user_id=user_id, deserialize=True
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=True
             )
         else:
             existing_session = db.get_session(
-                session_id=session_id, session_type=session_type_enum, user_id=user_id, deserialize=True
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=True
             )
 
         if not existing_session:
@@ -608,10 +562,10 @@ def get_mcp_server(
         if not updated_session:
             raise Exception("Failed to update session")
 
-        if session_type_enum == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
+        if isinstance(updated_session, AgentSession):
+            return AgentSessionDetailSchema.from_session(updated_session).model_dump()
+        elif isinstance(updated_session, TeamSession):
+            return TeamSessionDetailSchema.from_session(updated_session).model_dump()
         else:
             return WorkflowSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
 
@@ -655,7 +609,7 @@ def get_mcp_server(
 
         if isinstance(db, RemoteDb):
             # Convert session_types strings to SessionType enums
-            session_type_enums = [SessionType(st) for st in session_types] if session_types else []
+            session_type_enums: List[SessionType] = [SessionType(st) for st in session_types] if session_types else []
             await db.delete_sessions(session_ids=session_ids, session_types=session_type_enums, db_id=db_id)
             return "Sessions deleted successfully"
 

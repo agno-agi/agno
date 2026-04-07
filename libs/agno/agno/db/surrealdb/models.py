@@ -117,23 +117,6 @@ def desurrealize_session(session_raw: dict) -> dict:
     return session_raw
 
 
-def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    session_raw = desurrealize_session(session_raw)
-
-    if session_type == SessionType.AGENT:
-        return AgentSession.from_dict(session_raw)
-    elif session_type == SessionType.TEAM:
-        return TeamSession.from_dict(session_raw)
-    elif session_type == SessionType.WORKFLOW:
-        return WorkflowSession.from_dict(session_raw)
-    else:
-        raise ValueError(f"Invalid session type: {session_type}")
-
-
-def deserialize_sessions(session_type: SessionType, sessions_raw: List[dict]) -> List[Session]:
-    return [x for x in [deserialize_session(session_type, x) for x in sessions_raw] if x is not None]
-
-
 def get_session_type(session: Session) -> SessionType:
     if isinstance(session, AgentSession):
         return SessionType.AGENT

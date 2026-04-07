@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.agent import Agent
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
+from agno.db.utils import detect_session_type
 from agno.os.config import (
     ChatConfig,
     EvalsConfig,
@@ -233,18 +234,8 @@ class SessionSchema(BaseModel):
         if summary and hasattr(summary, "to_dict"):
             summary = summary.to_dict()
 
-        # Determine session_type — prefer inference from component IDs over stored value
-        session_type: Optional[str] = None
-        if session.get("agent_id"):
-            session_type = "agent"
-        elif session.get("team_id"):
-            session_type = "team"
-        elif session.get("workflow_id"):
-            session_type = "workflow"
-        else:
-            raw_type = session.get("session_type")
-            if raw_type is not None:
-                session_type = raw_type.value if hasattr(raw_type, "value") else str(raw_type)
+        # Determine session_type using shared util
+        session_type_str: Optional[str] = detect_session_type(session)
 
         return cls(
             session_id=session.get("session_id", ""),
@@ -252,7 +243,7 @@ class SessionSchema(BaseModel):
             session_state=session_data.get("session_state", None),
             created_at=created_at,
             updated_at=updated_at,
-            session_type=session_type,
+            session_type=session_type_str,
             user_id=session.get("user_id"),
             agent_id=session.get("agent_id"),
             team_id=session.get("team_id"),

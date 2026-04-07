@@ -26,6 +26,7 @@ from agno.db.base import SessionType
 from agno.db.surrealdb import SurrealDb
 from agno.debug import enable_debug_mode
 from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
 
 enable_debug_mode()
 
@@ -74,9 +75,9 @@ def test_crud_sessions(db: SurrealDb):
     session_got = db.get_session("1", SessionType.AGENT)
     assert isinstance(session_got, AgentSession) and session_got.session_id == "1"
 
-    # find one, wrong type
-    wrong = db.get_session("1", SessionType.TEAM)
-    assert wrong is None
+    # get_session uses session_type for deserialization only, not filtering
+    cross = db.get_session("1", SessionType.TEAM)
+    assert isinstance(cross, TeamSession) and cross.session_id == "1"
 
     # rename
     renamed = db.rename_session("1", SessionType.AGENT, "new name", deserialize=False)
