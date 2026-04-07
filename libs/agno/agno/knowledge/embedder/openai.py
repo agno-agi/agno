@@ -27,10 +27,25 @@ class OpenAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[OpenAIClient] = None
     async_client: Optional[AsyncOpenAI] = None
+    # Whether to send the 'dimensions' parameter in API requests.
+    # - None (default): auto-detect based on model id
+    # - True: always send dimensions (e.g., OpenAI text-embedding-3 models)
+    # - False: never send dimensions (e.g., Together AI, other providers that reject it)
+    send_dimensions: Optional[bool] = None
 
     def __post_init__(self):
         if self.dimensions is None:
             self.dimensions = 3072 if self.id == "text-embedding-3-large" else 1536
+
+        # Auto-detect send_dimensions if not explicitly set by the caller.
+        # Only text-embedding-3 models (native OpenAI) are known to accept 
+        # the 'dimensions' parameter. Providers like Together AI reject it 
+        # with HTTP 400, so we default to False for custom base_urls.
+        if self.send_dimensions is None:
+            self.send_dimensions = bool(
+                self.id.startswith("text-embedding-3")
+            )
+
 
     @property
     def client(self) -> OpenAIClient:
@@ -71,8 +86,7 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-        if self.id.startswith("text-embedding-3") or self.base_url is not None:
+        if self.send_dimensions and self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -107,8 +121,7 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-        if self.id.startswith("text-embedding-3") or self.base_url is not None:
+        if self.send_dimensions and self.dimensions is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -128,8 +141,7 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-        if self.id.startswith("text-embedding-3") or self.base_url is not None:
+        if self.send_dimensions and self.dimensions is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -169,8 +181,7 @@ class OpenAIEmbedder(Embedder):
             }
             if self.user is not None:
                 req["user"] = self.user
-            # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-            if self.id.startswith("text-embedding-3") or self.base_url is not None:
+            if self.send_dimensions and self.dimensions is not None:
                 req["dimensions"] = self.dimensions
             if self.request_params:
                 req.update(self.request_params)

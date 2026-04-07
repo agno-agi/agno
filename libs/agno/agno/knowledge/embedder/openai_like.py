@@ -17,13 +17,18 @@ class OpenAILikeEmbedder(OpenAIEmbedder):
         api_key (Optional[str]): The API key to use. Defaults to "not-provided".
         base_url (Optional[str]): The base URL for the API endpoint.
         dimensions (Optional[int]): The dimensions of the embeddings. Defaults to 1536.
+        send_dimensions (Optional[bool]): Whether to send dimensions in API requests.
+            Defaults to False for OpenAI-like providers since most do not support it.
     """
 
     id: str = "not-provided"
     dimensions: Optional[int] = 1536
     api_key: Optional[str] = "not-provided"
+    send_dimensions: Optional[bool] = False
 
     def __post_init__(self):
         # Skip the OpenAIEmbedder __post_init__ which sets dimensions based on known OpenAI model IDs.
         # For custom providers, the user should set dimensions explicitly.
+        # send_dimensions is already set to False by default — callers can override to True
+        # if their provider supports the dimensions parameter.
         pass
