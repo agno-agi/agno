@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.utils.log import log_exception, log_warning
+from agno.utils.log import log_error, log_warning
 
 try:
     from pymongo.collection import Collection
@@ -212,7 +212,7 @@ def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, 
             results.append(record)
 
         except Exception:
-            log_exception("Error upserting metrics record")
+            log_error("Error upserting metrics record")
             continue
 
     return results

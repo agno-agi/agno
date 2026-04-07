@@ -26,7 +26,7 @@ from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
@@ -353,7 +353,7 @@ def attach_routes(
                 await send_whatsapp_message_async(phone_number, response.content, config)
 
         except Exception:
-            log_exception("Error processing message")
+            log_error("Error processing message")
             try:
                 await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
             except Exception as send_error:

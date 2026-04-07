@@ -13,7 +13,7 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.llama import format_message
 
 try:
@@ -297,7 +297,7 @@ class Llama(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_exception("Error from Llama API")
+            log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -330,7 +330,7 @@ class Llama(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_exception("Error from Llama API")
+            log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_tool_calls(self, tool_calls_data: List[EventDeltaToolCallDeltaFunction]) -> List[Dict[str, Any]]:

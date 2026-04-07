@@ -10,7 +10,7 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.knowledge.reader.text_reader import TextReader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_error
 
 try:
     from agno.aws.resource.s3.object import S3Object  # type: ignore
@@ -75,7 +75,7 @@ class S3Reader(Reader):
                 return documents
 
         except Exception:
-            log_exception(f"Error reading: {s3_object.uri}")
+            log_error(f"Error reading: {s3_object.uri}")
 
         return []
 

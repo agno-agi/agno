@@ -9,7 +9,7 @@ from uuid import uuid4
 from agno.db.firestore.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.utils import get_sort_value
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from google.cloud.firestore import Client  # type: ignore[import-untyped]
@@ -92,7 +92,7 @@ def _create_composite_indexes(client: Client, collection_name: str, composite_in
                 if "already exists" in str(e).lower():
                     continue
                 else:
-                    log_exception("Error creating composite index")
+                    log_error(f"Error creating composite index: {e}")
 
     except Exception as e:
         log_warning(f"Error initializing Firestore Admin client for composite indexes: {e}")
@@ -319,7 +319,7 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
                 batch = collection_ref._client.batch()
 
         except Exception:
-            log_exception("Error preparing metrics record for batch")
+            log_error("Error preparing metrics record for batch")
             continue
 
     # Commit remaining operations
@@ -327,7 +327,7 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
         try:
             batch.commit()
         except Exception:
-            log_exception("Error committing metrics batch")
+            log_error("Error committing metrics batch")
 
     return results
 

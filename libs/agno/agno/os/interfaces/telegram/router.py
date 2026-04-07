@@ -20,7 +20,7 @@ from agno.os.interfaces.telegram.state import BotState, StreamState, build_sessi
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 try:
@@ -141,7 +141,7 @@ def attach_routes(
         except HTTPException:
             raise
         except Exception:
-            log_exception("Error processing webhook")
+            log_error("Error processing webhook")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     async def _handle_command(
@@ -381,7 +381,7 @@ def attach_routes(
                 await _sync_response(message_text, run_kwargs, chat_id, reply_to, message_thread_id)
 
         except Exception:
-            log_exception("Error processing message")
+            log_error("Error processing message")
             try:
                 await send_message(bot, chat_id, error_message, message_thread_id=message_thread_id)
             except Exception as send_error:

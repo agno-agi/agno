@@ -10,7 +10,7 @@ from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.watsonx import format_images_for_message
 
 try:
@@ -193,7 +193,7 @@ class WatsonX(Model):
             return model_response
 
         except Exception as e:
-            log_exception("Error calling WatsonX API")
+            log_error(f"Error calling WatsonX API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -230,7 +230,7 @@ class WatsonX(Model):
             return model_response
 
         except Exception as e:
-            log_exception("Error calling WatsonX API")
+            log_error(f"Error calling WatsonX API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -266,7 +266,7 @@ class WatsonX(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_exception("Error calling WatsonX API")
+            log_error(f"Error calling WatsonX API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -304,7 +304,7 @@ class WatsonX(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_exception("Error in async streaming from WatsonX API")
+            log_error(f"Error in async streaming from WatsonX API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method

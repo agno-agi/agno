@@ -1671,7 +1671,7 @@ def get_agent_by_id(
     Returns:
         Agent instance or None.
     """
-    from agno.utils.log import log_exception
+    from agno.utils.log import log_error
 
     try:
         row = db.get_config(component_id=id, label=label, version=version)
@@ -1688,7 +1688,7 @@ def get_agent_by_id(
         return agent
 
     except Exception:
-        log_exception(f"Error loading Agent {id} from database")
+        log_error(f"Error loading Agent {id} from database")
         return None
 
 
@@ -1702,7 +1702,7 @@ def get_agents(
 
     Sets _version and _stage on each agent from the component metadata.
     """
-    from agno.utils.log import log_exception
+    from agno.utils.log import log_error
 
     agents: List[Agent] = []
     try:
@@ -1725,5 +1725,5 @@ def get_agents(
         return agents
 
     except Exception:
-        log_exception("Error loading Agents from database")
+        log_error("Error loading Agents from database")
         return []

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_debug, log_exception, log_info
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     from google.auth.transport.requests import Request
@@ -297,7 +297,7 @@ class GoogleCalendarTools(Toolkit):
                 return json.dumps({"message": "No upcoming events found."})
             return json.dumps(events)
         except HttpError as error:
-            log_exception("An error occurred")
+            log_error(f"An error occurred: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -372,7 +372,7 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Event created successfully in calendar {self.calendar_id}. Event ID: {event_result['id']}")
             return json.dumps(event_result)
         except HttpError as error:
-            log_exception("An error occurred")
+            log_error(f"An error occurred: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -447,7 +447,7 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Event {event_id} updated successfully.")
             return json.dumps(updated_event)
         except HttpError as error:
-            log_exception("An error occurred while updating event")
+            log_error(f"An error occurred while updating event: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -469,7 +469,7 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Event {event_id} deleted successfully.")
             return json.dumps({"success": True, "message": f"Event {event_id} deleted successfully."})
         except HttpError as error:
-            log_exception("An error occurred while deleting event")
+            log_error(f"An error occurred while deleting event: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -545,7 +545,7 @@ class GoogleCalendarTools(Toolkit):
                 return json.dumps({"message": "No events found."})
             return json.dumps(all_events)
         except HttpError as error:
-            log_exception("An error occurred while fetching events")
+            log_error(f"An error occurred while fetching events: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -656,7 +656,7 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps(result)
 
         except Exception as e:
-            log_exception("An error occurred while finding available slots")
+            log_error(f"An error occurred while finding available slots: {e}")
             return json.dumps({"error": f"An error occurred: {str(e)}"})
 
     @authenticate
@@ -702,7 +702,7 @@ class GoogleCalendarTools(Toolkit):
             )
 
         except HttpError as error:
-            log_exception("An error occurred while getting working hours")
+            log_error(f"An error occurred while getting working hours: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -738,7 +738,7 @@ class GoogleCalendarTools(Toolkit):
             )
 
         except HttpError as error:
-            log_exception("An error occurred while listing calendars")
+            log_error(f"An error occurred while listing calendars: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -757,7 +757,7 @@ class GoogleCalendarTools(Toolkit):
             event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
             return json.dumps(event)
         except HttpError as error:
-            log_exception("An error occurred while getting event")
+            log_error(f"An error occurred while getting event: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -778,7 +778,7 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Quick add event created: {event.get('id')}")
             return json.dumps(event)
         except HttpError as error:
-            log_exception("An error occurred while quick-adding event")
+            log_error(f"An error occurred while quick-adding event: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -851,7 +851,7 @@ class GoogleCalendarTools(Toolkit):
                 }
             )
         except HttpError as error:
-            log_exception("An error occurred while checking availability")
+            log_error(f"An error occurred while checking availability: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -913,7 +913,7 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Found {len(events)} events matching '{query}'")
             return json.dumps(events)
         except HttpError as error:
-            log_exception("An error occurred while searching events")
+            log_error(f"An error occurred while searching events: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -950,7 +950,7 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Event {event_id} moved to calendar {destination_calendar_id}")
             return json.dumps(moved_event)
         except HttpError as error:
-            log_exception("An error occurred while moving event")
+            log_error(f"An error occurred while moving event: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -991,7 +991,7 @@ class GoogleCalendarTools(Toolkit):
                 }
             )
         except HttpError as error:
-            log_exception("An error occurred while getting attendees")
+            log_error(f"An error occurred while getting attendees: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
@@ -1047,5 +1047,5 @@ class GoogleCalendarTools(Toolkit):
             log_debug(f"Responded '{response}' to event {event_id}")
             return json.dumps(updated_event)
         except HttpError as error:
-            log_exception("An error occurred while responding to event")
+            log_error(f"An error occurred while responding to event: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})

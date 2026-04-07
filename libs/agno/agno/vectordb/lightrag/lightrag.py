@@ -5,7 +5,7 @@ import httpx
 
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 
 DEFAULT_SERVER_URL = "http://localhost:9621"
@@ -119,13 +119,13 @@ class LightRag(VectorDb):
                 return self._format_lightrag_response(result, query, mode)
 
         except httpx.RequestError:
-            log_exception("HTTP Request Error")
+            log_error("HTTP Request Error")
             return []
         except httpx.HTTPStatusError:
-            log_exception("HTTP Status Error")
+            log_error("HTTP Status Error")
             return []
         except Exception:
-            log_exception("Unexpected error during LightRAG server search")
+            log_error("Unexpected error during LightRAG server search")
             return None
 
     def drop(self) -> None:
@@ -175,7 +175,7 @@ class LightRag(VectorDb):
         try:
             return asyncio.run(self.async_delete_by_external_id(external_id))
         except Exception:
-            log_exception("Error in sync delete_by_external_id")
+            log_error("Error in sync delete_by_external_id")
             return False
 
     async def async_delete_by_external_id(self, external_id: str) -> bool:
@@ -193,7 +193,7 @@ class LightRag(VectorDb):
                 response.raise_for_status()
                 return True
         except Exception:
-            log_exception(f"Error deleting document {external_id}")
+            log_error(f"Error deleting document {external_id}")
             return False
 
     # We use this method when content is coming from unsupported file types that LightRAG can't process
@@ -329,13 +329,13 @@ class LightRag(VectorDb):
                 return self._format_lightrag_response(result, query, mode)
 
         except httpx.RequestError:
-            log_exception("HTTP Request Error")
+            log_error("HTTP Request Error")
             return None
         except httpx.HTTPStatusError:
-            log_exception("HTTP Status Error")
+            log_error("HTTP Status Error")
             return None
         except Exception:
-            log_exception("Unexpected error during LightRAG server search")
+            log_error("Unexpected error during LightRAG server search")
             return None
 
     def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:

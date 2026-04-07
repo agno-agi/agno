@@ -150,7 +150,7 @@ class TestUploadResponseMediaAsync:
             videos=None,
             audio=None,
         )
-        with patch("agno.os.interfaces.slack.helpers.log_exception"):
+        with patch("agno.os.interfaces.slack.helpers.log_error"):
             await upload_response_media_async(client, response, "C1", "ts1")
 
 

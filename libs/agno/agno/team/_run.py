@@ -87,7 +87,6 @@ from agno.utils.hooks import (
 from agno.utils.log import (
     log_debug,
     log_error,
-    log_exception,
     log_info,
     log_warning,
 )
@@ -464,7 +463,7 @@ def _run_tasks(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_exception("Error in Team task run")
+        log_error(f"Error in Team task run: {e}")
         _cleanup_and_store(team, run_response=run_response, session=session)
         return run_response
 
@@ -942,7 +941,7 @@ def _run_tasks_stream(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_exception("Error in Team task run (stream)")
+        log_error(f"Error in Team task run (stream): {e}")
         _cleanup_and_store(team, run_response=run_response, session=session)
         yield run_error
 
@@ -1288,7 +1287,7 @@ def _run(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Team run")
+                log_error(f"Error in Team run: {e}")
 
                 # Cleanup and store the run response and session
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1736,7 +1735,7 @@ def _run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Team run")
+                log_error(f"Error in Team run: {e}")
 
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
@@ -2266,7 +2265,7 @@ async def _arun_tasks(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_exception("Error in Team task run")
+        log_error(f"Error in Team task run: {e}")
         if team_session is not None:
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
@@ -2767,7 +2766,7 @@ async def _arun_tasks_stream(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_exception("Error in Team task run (async stream)")
+        log_error(f"Error in Team task run (async stream): {e}")
         if team_session is not None:
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         yield run_error
@@ -3145,7 +3144,7 @@ async def _arun(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Team run")
+                log_error(f"Error in Team run: {e}")
 
                 # Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3239,14 +3238,14 @@ async def _arun_background(
                 **kwargs,
             )
         except Exception:
-            log_exception(f"Background run {run_response.run_id} failed")
+            log_error(f"Background run {run_response.run_id} failed")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
             except Exception:
-                log_exception(f"Failed to persist error state for background run {run_response.run_id}")
+                log_error(f"Failed to persist error state for background run {run_response.run_id}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -3714,7 +3713,7 @@ async def _arun_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Team run")
+                log_error(f"Error in Team run: {e}")
 
                 # Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -5164,7 +5163,7 @@ def _continue_run(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_exception("Error in Team continue_run")
+                log_error(f"Error in Team continue_run: {e}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 return run_response
     finally:
@@ -5428,7 +5427,7 @@ def _continue_run_stream(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_exception("Error in Team continue_run stream")
+                log_error(f"Error in Team continue_run stream: {e}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
     finally:
@@ -5844,7 +5843,7 @@ async def _acontinue_run(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_exception("Error in Team acontinue_run")
+                log_error(f"Error in Team acontinue_run: {e}")
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -6264,7 +6263,7 @@ async def _acontinue_run_stream(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_exception("Error in Team acontinue_run stream")
+                log_error(f"Error in Team acontinue_run stream: {e}")
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 yield run_error

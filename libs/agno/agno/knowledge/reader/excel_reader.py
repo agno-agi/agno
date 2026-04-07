@@ -14,7 +14,7 @@ from agno.knowledge.reader.utils import (
     infer_file_extension,
 )
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_error
 
 
 class ExcelReader(Reader):
@@ -186,7 +186,7 @@ class ExcelReader(Reader):
             raise
         except Exception:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_exception(f"Error reading {file_desc}")
+            log_error(f"Error reading {file_desc}")
             return []
 
     async def async_read(
@@ -221,5 +221,5 @@ class ExcelReader(Reader):
             raise
         except Exception:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_exception(f"Error reading {file_desc}")
+            log_error(f"Error reading {file_desc}")
             return []

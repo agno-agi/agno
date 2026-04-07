@@ -15,7 +15,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
     format_messages,
@@ -618,13 +618,13 @@ class Claude(Model):
         Always raises — never returns normally.
         """
         if isinstance(e, APIConnectionError):
-            log_exception("Connection error while calling Claude API")
+            log_error("Connection error while calling Claude API")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, RateLimitError):
             log_warning("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
-            log_exception(f"Claude API error (status {e.status_code})")
+            log_error(f"Claude API error (status {e.status_code})")
             if e.status_code == 529 or "overloaded_error" in str(e):
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
@@ -632,7 +632,7 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_exception("Unexpected error calling Claude API")
+        log_error("Unexpected error calling Claude API")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
@@ -1177,7 +1177,7 @@ class Claude(Model):
             ):
                 model_response.content = response.delta.text
         except Exception:
-            log_exception("Error parsing Beta response")
+            log_error("Error parsing Beta response")
 
         return model_response
 

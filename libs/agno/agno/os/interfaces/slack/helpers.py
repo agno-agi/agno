@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from agno.media import Audio, File, Image, Video
-from agno.utils.log import log_exception, log_warning
+from agno.utils.log import log_error, log_warning
 
 
 def task_id(agent_name: Optional[str], base_id: str) -> str:
@@ -168,7 +168,7 @@ async def download_event_files_async(
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
             except Exception:
-                log_exception(f"Failed to download file {file_id}")
+                log_error(f"Failed to download file {file_id}")
 
     return files, images, videos, audio, skipped
 
@@ -195,7 +195,7 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                         thread_ts=thread_ts,
                     )
                 except Exception:
-                    log_exception(f"Failed to upload {attr.rstrip('s')}")
+                    log_error(f"Failed to upload {attr.rstrip('s')}")
 
 
 async def send_slack_message_async(

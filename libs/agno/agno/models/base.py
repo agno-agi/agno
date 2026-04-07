@@ -52,7 +52,7 @@ from agno.tools.function import (
     UserFeedbackQuestion,
     UserInputField,
 )
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -242,7 +242,7 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_exception("Non-retryable model provider error")
+                    log_error(f"Non-retryable model provider error: {e}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -253,7 +253,7 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_exception(f"Model provider error after {self.retries + 1} attempts")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -290,7 +290,7 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_exception("Non-retryable model provider error")
+                    log_error(f"Non-retryable model provider error: {e}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -301,7 +301,7 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_exception(f"Model provider error after {self.retries + 1} attempts")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -340,7 +340,7 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
-                    log_exception("Non-retryable model provider error")
+                    log_error(f"Non-retryable model provider error: {e}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -352,7 +352,7 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_exception(f"Model provider error after {self.retries + 1} attempts")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -393,7 +393,7 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_exception("Non-retryable model provider error")
+                    log_error(f"Non-retryable model provider error: {e}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -405,7 +405,7 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_exception(f"Model provider error after {self.retries + 1} attempts")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -2131,7 +2131,7 @@ class Model(ABC):
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except Exception as e:
-            log_exception(f"Error executing function {function_call.function.name}")
+            log_error(f"Error executing function {function_call.function.name}: {e}")
             raise e
 
         function_call_success = function_execution_result.status == "success"
@@ -2184,7 +2184,7 @@ class Model(ABC):
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except Exception as e:
-                log_exception(f"Error while iterating function result generator for {function_call.function.name}")
+                log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                 function_call.error = str(e)
                 function_call_success = False
 
@@ -2452,7 +2452,7 @@ class Model(ABC):
         except AgentRunException as e:
             success = e
         except Exception as e:
-            log_exception(f"Error executing function {function_call.function.name}")
+            log_error(f"Error executing function {function_call.function.name}: {e}")
             success = False
             raise e
 
@@ -2747,7 +2747,7 @@ class Model(ABC):
                 yield event
 
             except Exception:
-                log_exception("Error processing async generator event")
+                log_error("Error processing async generator event")
                 break
 
         # Now process all results (non-async generators and completed async generators)
@@ -2836,7 +2836,7 @@ class Model(ABC):
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except Exception as e:
-                    log_exception(f"Error while iterating function result generator for {function_call.function.name}")
+                    log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                     function_call.error = str(e)
                     function_call_success = False
 

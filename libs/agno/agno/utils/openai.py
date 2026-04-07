@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from agno.media import Audio, File, Image
-from agno.utils.log import log_error, log_exception, log_warning
+from agno.utils.log import log_error, log_warning
 from agno.utils.media import resolve_image_mime_type
 
 
@@ -68,7 +68,7 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
                 except Exception:
-                    log_exception(f"Failed to read audio file {path}")
+                    log_error(f"Failed to read audio file {path}")
                     continue  # Skip this audio snippet if file reading fails
             else:
                 log_error(f"Audio file not found or is not a file: {path}")
@@ -113,7 +113,7 @@ def _process_image_path(
         with open(path, "rb") as image_file:
             image_data = image_file.read()
     except Exception:
-        log_exception(f"Failed to read image file {path}")
+        log_error(f"Failed to read image file {path}")
         raise
 
     base64_image = base64.b64encode(image_data).decode("utf-8")
@@ -156,10 +156,10 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
         return image_payload
 
     except (FileNotFoundError, IsADirectoryError, ValueError):
-        log_exception("Failed to process image due to invalid input")
+        log_error("Failed to process image due to invalid input")
         return None  # Return None for handled validation errors
     except Exception:
-        log_exception("An unexpected error occurred while processing image")
+        log_error("An unexpected error occurred while processing image")
         # Depending on policy, you might want to return None or re-raise
         return None  # Return None for unexpected errors as well, preventing crashes
 
@@ -189,7 +189,7 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             if image_data:
                 image_messages.append(image_data)
         except Exception:
-            log_exception("Failed to process image")
+            log_error("Failed to process image")
             continue
 
     return image_messages

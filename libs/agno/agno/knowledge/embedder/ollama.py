@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_exception, log_warning, logger
+from agno.utils.log import log_error, log_warning, logger
 
 try:
     import importlib.metadata as metadata
@@ -31,7 +31,7 @@ except ImportError as e:
 
 except Exception:
     # Catch-all for unexpected errors
-    log_exception("An unexpected error occurred")
+    log_error("An unexpected error occurred")
 
 
 @dataclass

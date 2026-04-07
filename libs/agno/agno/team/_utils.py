@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 from agno.filters import FilterExpr
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 def _get_effective_filters(
@@ -92,14 +92,14 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
                 json.dumps({key: value}, default=str)
                 sanitized_context[key] = value
             except Exception:
-                log_exception("Failed to serialize to JSON")
+                log_error("Failed to serialize to JSON")
                 # If serialization fails, convert to string representation
                 sanitized_context[key] = str(value)
 
         try:
             return json.dumps(sanitized_context, indent=2)
         except Exception:
-            log_exception("Failed to convert sanitized context to JSON")
+            log_error("Failed to convert sanitized context to JSON")
             return str(context)
 
 
@@ -153,7 +153,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception:
-        log_exception(f"Failed to create deep copy of {team.__class__.__name__}")
+        log_error(f"Failed to create deep copy of {team.__class__.__name__}")
         raise
 
 

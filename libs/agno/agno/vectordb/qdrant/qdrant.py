@@ -13,7 +13,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -409,7 +409,7 @@ class Qdrant(VectorDb):
                                 doc.embedding = embeddings[j]
                                 doc.usage = usages[j] if j < len(usages) else None
                         except Exception:
-                            log_exception(f"Error assigning batch embedding to document '{doc.name}'")
+                            log_error(f"Error assigning batch embedding to document '{doc.name}'")
 
                 except Exception as e:
                     # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -420,7 +420,7 @@ class Qdrant(VectorDb):
                     )
 
                     if is_rate_limit:
-                        log_exception("Rate limit detected during batch embedding.")
+                        log_error(f"Rate limit detected during batch embedding.: {e}")
                         raise e
                     else:
                         log_warning(
@@ -1088,7 +1088,7 @@ class Qdrant(VectorDb):
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
 
         except Exception:
-            log_exception(f"Error updating metadata for content_id '{content_id}'")
+            log_error(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def close(self) -> None:

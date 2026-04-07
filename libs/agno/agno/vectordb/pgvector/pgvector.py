@@ -28,7 +28,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
@@ -111,7 +111,7 @@ class PgVector(VectorDb):
             try:
                 db_engine = create_engine(db_url)
             except Exception:
-                log_exception("Failed to create engine from 'db_url'")
+                log_error("Failed to create engine from 'db_url'")
                 raise
 
         # Database settings
@@ -219,7 +219,7 @@ class PgVector(VectorDb):
         try:
             return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
         except Exception:
-            log_exception("Error checking if table exists")
+            log_error("Error checking if table exists")
             return False
 
     def create(self) -> None:
@@ -260,7 +260,7 @@ class PgVector(VectorDb):
                 result = sess.execute(stmt).first()
                 return result is not None
         except Exception:
-            log_exception("Error checking if record exists")
+            log_error("Error checking if record exists")
             return False
 
     def name_exists(self, name: str) -> bool:
@@ -337,7 +337,7 @@ class PgVector(VectorDb):
                             try:
                                 batch_records.append(self._get_document_record(doc, filters, content_hash))
                             except Exception:
-                                log_exception(f"Error processing document '{doc.name}'")
+                                log_error(f"Error processing document '{doc.name}'")
 
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
@@ -345,11 +345,11 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception:
-                        log_exception(f"Error with batch starting at index {i}")
+                        log_error(f"Error with batch starting at index {i}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception:
-            log_exception("Error inserting documents")
+            log_error("Error inserting documents")
             raise
 
     async def async_insert(
@@ -396,7 +396,7 @@ class PgVector(VectorDb):
                                 }
                                 batch_records.append(record)
                             except Exception:
-                                log_exception(f"Error processing document '{doc.name}'")
+                                log_error(f"Error processing document '{doc.name}'")
 
                         # Insert the batch of records
                         if batch_records:
@@ -405,11 +405,11 @@ class PgVector(VectorDb):
                             sess.commit()  # Commit batch independently
                             log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception:
-                        log_exception(f"Error with batch starting at index {i}")
+                        log_error(f"Error with batch starting at index {i}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception:
-            log_exception("Error inserting documents")
+            log_error("Error inserting documents")
             raise
 
     def upsert_available(self) -> bool:
@@ -438,7 +438,7 @@ class PgVector(VectorDb):
                 self._delete_by_content_hash(content_hash)
             self._upsert(content_hash, documents, filters, batch_size)
         except Exception:
-            log_exception("Error upserting documents by content hash")
+            log_error("Error upserting documents by content hash")
             raise
 
     def _upsert(
@@ -470,7 +470,7 @@ class PgVector(VectorDb):
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
                             except Exception:
-                                log_exception(f"Error processing document '{doc.name}'")
+                                log_error(f"Error processing document '{doc.name}'")
 
                         # Convert dict to list for upsert
                         batch_records = list(batch_records_dict.values())
@@ -497,11 +497,11 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception:
-                        log_exception(f"Error with batch starting at index {i}")
+                        log_error(f"Error with batch starting at index {i}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception:
-            log_exception("Error upserting documents")
+            log_error("Error upserting documents")
             raise
 
     def _get_document_record(
@@ -553,7 +553,7 @@ class PgVector(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception:
-                        log_exception(f"Error assigning batch embedding to document '{doc.name}'")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -564,7 +564,7 @@ class PgVector(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_exception("Rate limit detected during batch embedding.")
+                    log_error(f"Rate limit detected during batch embedding.: {e}")
                     raise e
                 else:
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
@@ -583,7 +583,7 @@ class PgVector(VectorDb):
                                 )
 
                             else:
-                                log_error(f"Error embedding document {i}: {result}")
+                                log_error(f"Error embedding document {i}: {result}: {e}")
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
@@ -614,7 +614,7 @@ class PgVector(VectorDb):
                 self._delete_by_content_hash(content_hash)
             await self._async_upsert(content_hash, documents, filters, batch_size)
         except Exception:
-            log_exception("Error upserting documents by content hash")
+            log_error("Error upserting documents by content hash")
             raise
 
     async def _async_upsert(
@@ -682,7 +682,7 @@ class PgVector(VectorDb):
                                 }
                                 batch_records_dict[record_id] = record  # This deduplicates by ID
                             except Exception:
-                                log_exception(f"Error processing document '{doc.name}'")
+                                log_error(f"Error processing document '{doc.name}'")
 
                         # Convert dict to list for upsert
                         batch_records = list(batch_records_dict.values())
@@ -709,11 +709,11 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception:
-                        log_exception(f"Error with batch starting at index {i}")
+                        log_error(f"Error with batch starting at index {i}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception:
-            log_exception("Error upserting documents")
+            log_error("Error upserting documents")
             raise
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -740,7 +740,7 @@ class PgVector(VectorDb):
                 sess.execute(stmt, {"md": metadata, "ft": metadata})
                 sess.commit()
         except Exception:
-            log_exception(f"Error updating metadata for document {content_id}")
+            log_error(f"Error updating metadata for document {content_id}")
             raise
 
     def search(
@@ -880,7 +880,7 @@ class PgVector(VectorDb):
                             sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception:
-                log_exception("Error performing semantic search")
+                log_error("Error performing semantic search")
                 log_error("Table might not exist, creating for future use")
                 self.create()
                 return []
@@ -911,7 +911,7 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception:
-            log_exception("Error during vector search")
+            log_error("Error during vector search")
             return []
 
     def enable_prefix_matching(self, query: str) -> str:
@@ -993,7 +993,7 @@ class PgVector(VectorDb):
                 with self.Session() as sess, sess.begin():
                     results = sess.execute(stmt).fetchall()
             except Exception:
-                log_exception("Error performing keyword search")
+                log_error("Error performing keyword search")
                 log_error("Table might not exist, creating for future use")
                 self.create()
                 return []
@@ -1016,7 +1016,7 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception:
-            log_exception("Error during keyword search")
+            log_error("Error during keyword search")
             return []
 
     def hybrid_search(
@@ -1136,7 +1136,7 @@ class PgVector(VectorDb):
                             sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception:
-                log_exception("Error performing hybrid search")
+                log_error("Error performing hybrid search")
                 return []
 
             search_results: List[Document] = []
@@ -1163,7 +1163,7 @@ class PgVector(VectorDb):
 
             return search_results
         except Exception:
-            log_exception("Error during hybrid search")
+            log_error("Error during hybrid search")
             return []
 
     def drop(self) -> None:
@@ -1176,7 +1176,7 @@ class PgVector(VectorDb):
                 self.table.drop(self.db_engine)
                 log_info(f"Table '{self.table.fullname}' dropped successfully.")
             except Exception:
-                log_exception(f"Error dropping table '{self.table.fullname}'")
+                log_error(f"Error dropping table '{self.table.fullname}'")
                 raise
         else:
             log_info(f"Table '{self.table.fullname}' does not exist.")
@@ -1211,7 +1211,7 @@ class PgVector(VectorDb):
                 result = sess.execute(stmt).scalar()
                 return int(result) if result is not None else 0
         except Exception:
-            log_exception(f"Error getting count from table '{self.table.fullname}'")
+            log_error(f"Error getting count from table '{self.table.fullname}'")
             return 0
 
     def optimize(self, force_recreate: bool = False) -> None:
@@ -1252,7 +1252,7 @@ class PgVector(VectorDb):
                 drop_index_sql = f'DROP INDEX IF EXISTS "{self.schema}"."{index_name}";'
                 sess.execute(text(drop_index_sql))
         except Exception:
-            log_exception(f"Error dropping index '{index_name}'")
+            log_error(f"Error dropping index '{index_name}'")
             raise
 
     def _create_vector_index(self, force_recreate: bool = False) -> None:
@@ -1310,7 +1310,7 @@ class PgVector(VectorDb):
                     log_error(f"Unknown index type: {type(self.vector_index)}")
                     return
         except Exception:
-            log_exception(f"Error creating vector index '{self.vector_index.name}'")
+            log_error(f"Error creating vector index '{self.vector_index.name}'")
             raise
 
     def _create_ivfflat_index(self, sess: Session, table_fullname: str, index_distance: str) -> None:
@@ -1409,7 +1409,7 @@ class PgVector(VectorDb):
                 )
                 sess.execute(create_gin_index_sql)
         except Exception:
-            log_exception(f"Error creating GIN index '{gin_index_name}'")
+            log_error(f"Error creating GIN index '{gin_index_name}'")
             raise
 
     def delete(self) -> bool:
@@ -1428,7 +1428,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted all records from table '{self.table.fullname}'.")
                 return True
         except Exception:
-            log_exception(f"Error deleting rows from table '{self.table.fullname}'")
+            log_error(f"Error deleting rows from table '{self.table.fullname}'")
             sess.rollback()
             return False
 
@@ -1444,7 +1444,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
                 return True
         except Exception:
-            log_exception(f"Error deleting rows from table '{self.table.fullname}'")
+            log_error(f"Error deleting rows from table '{self.table.fullname}'")
             sess.rollback()
             return False
 
@@ -1460,7 +1460,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with name '{name}' from table '{self.table.fullname}'.")
                 return True
         except Exception:
-            log_exception(f"Error deleting rows from table '{self.table.fullname}'")
+            log_error(f"Error deleting rows from table '{self.table.fullname}'")
             sess.rollback()
             return False
 
@@ -1476,7 +1476,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with metadata '{metadata}' from table '{self.table.fullname}'.")
                 return True
         except Exception:
-            log_exception(f"Error deleting rows from table '{self.table.fullname}'")
+            log_error(f"Error deleting rows from table '{self.table.fullname}'")
             sess.rollback()
             return False
 
@@ -1492,7 +1492,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
                 return True
         except Exception:
-            log_exception(f"Error deleting rows from table '{self.table.fullname}'")
+            log_error(f"Error deleting rows from table '{self.table.fullname}'")
             sess.rollback()
             return False
 
@@ -1508,7 +1508,7 @@ class PgVector(VectorDb):
                 log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")
                 return True
         except Exception:
-            log_exception(f"Error deleting rows from table '{self.table.fullname}'")
+            log_error(f"Error deleting rows from table '{self.table.fullname}'")
             sess.rollback()
             return False
 

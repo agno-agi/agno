@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
@@ -468,7 +468,7 @@ class MCPTools(Toolkit):
         try:
             await self._connect()
         except (RuntimeError, BaseException):
-            log_exception(f"Failed to connect to {str(self)}")
+            log_error(f"Failed to connect to {str(self)}")
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -636,10 +636,10 @@ class MCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception:
-                    log_exception(f"Failed to register tool {tool.name}")
+                    log_error(f"Failed to register tool {tool.name}")
 
         except (RuntimeError, BaseException):
-            log_exception(f"Failed to get tools for {str(self)}")
+            log_error(f"Failed to get tools for {str(self)}")
             raise
 
     async def initialize(self) -> None:
@@ -659,4 +659,4 @@ class MCPTools(Toolkit):
             self._initialized = True
 
         except (RuntimeError, BaseException):
-            log_exception("Failed to initialize MCP toolkit")
+            log_error("Failed to initialize MCP toolkit")

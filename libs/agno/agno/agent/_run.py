@@ -102,7 +102,6 @@ from agno.utils.hooks import (
 from agno.utils.log import (
     log_debug,
     log_error,
-    log_exception,
     log_info,
     log_warning,
 )
@@ -682,7 +681,7 @@ def _run(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -1190,7 +1189,7 @@ def _run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -1778,7 +1777,7 @@ async def _arun(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -1886,14 +1885,14 @@ async def _arun_background(
                 **kwargs,
             )
         except Exception:
-            log_exception(f"Background run {run_response.run_id} failed")
+            log_error(f"Background run {run_response.run_id} failed")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
                 await asave_session(agent, session=agent_session)
             except Exception:
-                log_exception(f"Failed to persist error state for background run {run_response.run_id}")
+                log_error(f"Failed to persist error state for background run {run_response.run_id}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -2408,7 +2407,7 @@ async def _arun_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -3088,7 +3087,7 @@ def _continue_run(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 cleanup_and_store(
@@ -3377,7 +3376,7 @@ def _continue_run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 cleanup_and_store(
@@ -3893,7 +3892,7 @@ async def _acontinue_run(
                 if run_response.content is None:  # type: ignore
                     run_response.content = str(e)  # type: ignore
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -4378,7 +4377,7 @@ async def _acontinue_run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_exception("Error in Agent run")
+                log_error(f"Error in Agent run: {e}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:

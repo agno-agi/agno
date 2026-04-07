@@ -19,7 +19,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -844,7 +844,7 @@ class ChromaDb(VectorDb):
                         ranked.append((doc_id, score))
                 return ranked
             except Exception:
-                log_exception("Error in vector search component")
+                log_error("Error in vector search component")
                 return []
 
         def fts_search() -> List[Tuple[str, float]]:
@@ -880,7 +880,7 @@ class ChromaDb(VectorDb):
                 ranked.sort(key=lambda x: x[1], reverse=True)
                 return ranked
             except Exception:
-                log_exception("Error in FTS search component")
+                log_error("Error in FTS search component")
                 return []
 
         # Execute searches in parallel for better performance
@@ -910,7 +910,7 @@ class ChromaDb(VectorDb):
                 include=["documents", "metadatas", "embeddings"],
             )
         except Exception:
-            log_exception("Error fetching full results")
+            log_error("Error fetching full results")
             return []
 
         # Build lookup dict for results
@@ -1070,7 +1070,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            log_exception("Error building search results")
+            log_error(f"Error building search results: {e}")
 
         return search_results
 
@@ -1157,7 +1157,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            log_exception("Error building get results")
+            log_error(f"Error building get results: {e}")
 
         return search_results
 
@@ -1499,7 +1499,7 @@ class ChromaDb(VectorDb):
                     raise te
 
         except Exception:
-            log_exception(f"Error updating metadata for content_id '{content_id}'")
+            log_error(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:

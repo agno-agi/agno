@@ -2,7 +2,7 @@ from functools import update_wrapper, wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
 from agno.tools.function import Function, get_entrypoint_docstring
-from agno.utils.log import log_exception
+from agno.utils.log import log_error
 
 # Type variable for better type hints
 F = TypeVar("F", bound=Callable[..., Any])
@@ -175,7 +175,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                log_exception(
+                log_error(
                     f"Error in tool {func.__name__!r}: {e!r}",
                 )
                 raise
@@ -185,7 +185,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
-                log_exception(
+                log_error(
                     f"Error in async tool {func.__name__!r}: {e!r}",
                 )
                 raise
@@ -195,7 +195,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                log_exception(
+                log_error(
                     f"Error in async generator tool {func.__name__!r}: {e!r}",
                 )
                 raise

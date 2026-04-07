@@ -9,7 +9,7 @@ except ImportError:
     raise ImportError("`redshift_connector` not installed. Please install using `pip install redshift-connector`.")
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_exception, log_info
+from agno.utils.log import log_debug, log_info, log_error
 
 
 class RedshiftTools(Toolkit):
@@ -220,7 +220,7 @@ class RedshiftTools(Toolkit):
                 return f"{header}\n" + "\n".join(data_rows)
 
         except redshift_connector.Error as e:
-            log_exception("Database error")
+            log_error(f"Database error: {e}")
             if self._connection:
                 try:
                     self._connection.rollback()
@@ -228,7 +228,7 @@ class RedshiftTools(Toolkit):
                     pass  # Connection might be closed
             return f"Error executing query: {e}"
         except Exception as e:
-            log_exception("An unexpected error occurred")
+            log_error(f"An unexpected error occurred: {e}")
             return f"An unexpected error occurred: {e}"
 
     def show_tables(self) -> str:

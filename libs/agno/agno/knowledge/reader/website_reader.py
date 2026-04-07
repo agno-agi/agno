@@ -12,7 +12,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -404,7 +404,7 @@ class WebsiteReader(Reader):
                     )
             return documents
         except (httpx.HTTPStatusError, httpx.RequestError):
-            log_exception(f"Error reading website {url}")
+            log_error(f"Error reading website {url}")
             raise
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -459,5 +459,5 @@ class WebsiteReader(Reader):
 
             return documents
         except (httpx.HTTPStatusError, httpx.RequestError):
-            log_exception(f"Error reading website asynchronously {url}")
+            log_error(f"Error reading website asynchronously {url}")
             raise

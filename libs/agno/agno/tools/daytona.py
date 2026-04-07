@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning, log_error
 
 try:
     from daytona import (
@@ -240,7 +240,7 @@ class DaytonaTools(Toolkit):
             log_info(f"Created new Daytona sandbox: {sandbox.id}")
             return sandbox
         except Exception as e:
-            log_exception("Error creating Daytona sandbox")
+            log_error(f"Error creating Daytona sandbox: {e}")
             raise e
 
     # Tools

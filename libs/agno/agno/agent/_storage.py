@@ -33,7 +33,7 @@ from agno.utils.agent import (
     get_last_run_output_util,
     get_run_output_util,
 )
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
@@ -1039,7 +1039,7 @@ def save(
         return config.get("version")
 
     except Exception:
-        log_exception("Error saving Agent to database")
+        log_error("Error saving Agent to database")
         raise
 
 

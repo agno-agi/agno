@@ -10,7 +10,7 @@ from agno.db.base import BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, TeamSession, WorkflowSession
-from agno.utils.log import log_exception, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 
@@ -526,7 +526,7 @@ def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, ba
                         break
 
     except Exception:
-        log_exception(f"Error getting batched content from table/collection {table_name}")
+        log_error(f"Error getting batched content from table/collection {table_name}")
         return
 
 
@@ -570,7 +570,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
         try:
             agent_session = AgentSession.from_dict(session)
         except Exception:
-            log_exception(f"Error parsing agent session. This is the complete session that failed: {session}")
+            log_error(f"Error parsing agent session. This is the complete session that failed: {session}")
             continue
 
         if agent_session is not None:
@@ -603,7 +603,7 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
         try:
             team_session = TeamSession.from_dict(session)
         except Exception:
-            log_exception(f"Error parsing team session. This is the complete session that failed: {session}")
+            log_error(f"Error parsing team session. This is the complete session that failed: {session}")
             continue
 
         if team_session is not None:
@@ -640,7 +640,7 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
         try:
             workflow_session = WorkflowSession.from_dict(session)
         except Exception:
-            log_exception(f"Error parsing workflow session. This is the complete session that failed: {session}")
+            log_error(f"Error parsing workflow session. This is the complete session that failed: {session}")
             continue
 
         if workflow_session is not None:

@@ -2,7 +2,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_exception
+from agno.utils.log import log_debug, log_error
 
 try:
     from eth_account.account import LocalAccount
@@ -125,5 +125,5 @@ class EvmTools(Toolkit):
                 raise Exception("Transaction failed!")
 
         except Exception as e:
-            log_exception("Error sending transaction")
+            log_error(f"Error sending transaction: {e}")
             return f"error: {e}"

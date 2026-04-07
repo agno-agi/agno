@@ -14,7 +14,7 @@ from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.utils import stringify_cell_value
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class FieldLabeledCSVReader(Reader):
@@ -162,7 +162,7 @@ class FieldLabeledCSVReader(Reader):
         except FileNotFoundError:
             raise
         except Exception:
-            log_exception(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}")
+            log_error(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}")
             return []
 
     async def async_read(
@@ -278,5 +278,5 @@ class FieldLabeledCSVReader(Reader):
         except FileNotFoundError:
             raise
         except Exception:
-            log_exception(f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}")
+            log_error(f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}")
             return []

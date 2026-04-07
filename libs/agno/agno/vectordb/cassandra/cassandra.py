@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
@@ -141,7 +141,7 @@ class Cassandra(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception:
-                        log_exception(f"Error assigning batch embedding to document '{doc.name}'")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -152,17 +152,17 @@ class Cassandra(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_exception("Rate limit detected during batch embedding.")
+                    log_error(f"Rate limit detected during batch embedding.: {e}")
                     raise e
                 else:
-                    log_exception("Async batch embedding failed, falling back to individual embeddings")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     for doc in documents:
                         try:
                             embed_tasks = [doc.async_embed(embedder=self.embedder)]
                             await asyncio.gather(*embed_tasks, return_exceptions=True)
                         except Exception:
-                            log_exception(f"Error processing document '{doc.name}'")
+                            log_error(f"Error processing document '{doc.name}'")
         else:
             # Use individual embedding (original behavior)
             for doc in documents:
@@ -170,7 +170,7 @@ class Cassandra(VectorDb):
                     embed_tasks = [doc.async_embed(embedder=self.embedder)]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
                 except Exception:
-                    log_exception(f"Error processing document '{doc.name}'")
+                    log_error(f"Error processing document '{doc.name}'")
 
         futures = []
         for doc in documents:
@@ -493,7 +493,7 @@ class Cassandra(VectorDb):
                 log_debug(f"Updated metadata for {updated_count} documents with content_id {content_id}")
 
         except Exception:
-            log_exception(f"Error updating metadata for content_id {content_id}")
+            log_error(f"Error updating metadata for content_id {content_id}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

@@ -24,7 +24,7 @@ from agno.knowledge.remote_content.remote_content import (
 from agno.knowledge.remote_knowledge import RemoteKnowledge
 from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
@@ -542,7 +542,7 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception:
-            log_exception("Error searching for documents")
+            log_error("Error searching for documents")
             return []
 
     async def asearch(
@@ -586,7 +586,7 @@ class Knowledge(RemoteKnowledge):
                 log_info("Vector db does not support async search")
                 return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception:
-            log_exception("Error searching for documents")
+            log_error("Error searching for documents")
             return []
 
     # ==========================================
@@ -1590,7 +1590,7 @@ class Knowledge(RemoteKnowledge):
                     read_documents = await self._aread(reader, source, name=name, password=password)
 
         except Exception as e:
-            log_exception(f"Error reading URL: {content.url}")
+            log_error(f"Error reading URL: {content.url}: {e}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
@@ -1628,13 +1628,13 @@ class Knowledge(RemoteKnowledge):
                     try:
                         await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
                     except Exception:
-                        log_exception(f"Error upserting document from {source_url}")
+                        log_error(f"Error upserting document from {source_url}")
                         continue
                 else:
                     try:
                         await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
                     except Exception:
-                        log_exception(f"Error inserting document from {source_url}")
+                        log_error(f"Error inserting document from {source_url}")
                         continue
 
             content.status = ContentStatus.COMPLETED
@@ -1742,7 +1742,7 @@ class Knowledge(RemoteKnowledge):
                     read_documents = self._read(reader, source, name=name, password=password)
 
         except Exception as e:
-            log_exception(f"Error reading URL: {content.url}")
+            log_error(f"Error reading URL: {content.url}: {e}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
             self._update_content(content)
@@ -1780,13 +1780,13 @@ class Knowledge(RemoteKnowledge):
                     try:
                         self.vector_db.upsert(doc_hash, source_docs, content.metadata)
                     except Exception:
-                        log_exception(f"Error upserting document from {source_url}")
+                        log_error(f"Error upserting document from {source_url}")
                         continue
                 else:
                     try:
                         self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
                     except Exception:
-                        log_exception(f"Error inserting document from {source_url}")
+                        log_error(f"Error inserting document from {source_url}")
                         continue
 
             content.status = ContentStatus.COMPLETED
@@ -2375,7 +2375,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception:
-                log_exception("Error upserting document")
+                log_error("Error upserting document")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 await self._aupdate_content(content)
@@ -2388,7 +2388,7 @@ class Knowledge(RemoteKnowledge):
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception:
-                log_exception("Error inserting document")
+                log_error("Error inserting document")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 await self._aupdate_content(content)
@@ -2414,7 +2414,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception:
-                log_exception("Error upserting document")
+                log_error("Error upserting document")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 self._update_content(content)
@@ -2427,7 +2427,7 @@ class Knowledge(RemoteKnowledge):
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception:
-                log_exception("Error inserting document")
+                log_error("Error inserting document")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 self._update_content(content)
@@ -2589,7 +2589,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_exception("Error uploading file to LightRAG")
+                log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
@@ -2634,7 +2634,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_exception("Error uploading file to LightRAG")
+                log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
@@ -2749,7 +2749,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_exception("Error uploading file to LightRAG")
+                log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
@@ -2797,7 +2797,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_exception("Error uploading file to LightRAG")
+                log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)

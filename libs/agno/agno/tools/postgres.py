@@ -10,7 +10,7 @@ except ImportError:
     raise ImportError("`psycopg` not installed. Please install using `pip install 'psycopg-binary'`.")
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
@@ -140,12 +140,12 @@ class PostgresTools(Toolkit):
                 return f"{header}\n" + "\n".join(data_rows)
 
         except psycopg.Error as e:
-            log_exception("Database error")
+            log_error(f"Database error: {e}")
             if self._connection and not self._connection.closed:
                 self._connection.rollback()
             return f"Error executing query: {e}"
         except Exception as e:
-            log_exception("An unexpected error occurred")
+            log_error(f"An unexpected error occurred: {e}")
             return f"An unexpected error occurred: {e}"
 
     def show_tables(self) -> str:

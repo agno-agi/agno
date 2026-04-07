@@ -9,7 +9,7 @@ from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
-from agno.utils.log import log_exception
+from agno.utils.log import log_error
 
 
 @dataclass
@@ -178,7 +178,7 @@ class BaseRunOutputEvent:
         try:
             _dict = self.to_dict()
         except Exception:
-            log_exception("Failed to convert response event to json")
+            log_error("Failed to convert response event to json")
             raise
 
         if indent is None:

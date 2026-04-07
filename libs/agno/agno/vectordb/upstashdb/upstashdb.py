@@ -127,7 +127,7 @@ class UpstashVectorDb(VectorDb):
             self.index.info()
             return True
         except Exception as e:
-            log_error(f"Error checking index existence: {str(e)}")
+            log_error(f"Error checking index existence: {str(e)}: {e}")
             return False
 
     def create(self) -> None:

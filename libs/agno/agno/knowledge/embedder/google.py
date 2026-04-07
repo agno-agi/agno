@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from google import genai
@@ -91,7 +91,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return []
         except Exception:
-            log_exception("Error extracting embeddings")
+            log_error("Error extracting embeddings")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -108,7 +108,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return [], usage
         except Exception:
-            log_exception("Error extracting embeddings")
+            log_error("Error extracting embeddings")
             return [], usage
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -140,7 +140,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return []
         except Exception:
-            log_exception("Error extracting embeddings")
+            log_error("Error extracting embeddings")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -176,7 +176,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return [], usage
         except Exception:
-            log_exception("Error extracting embeddings")
+            log_error("Error extracting embeddings")
             return [], usage
 
     async def async_get_embeddings_batch_and_usage(

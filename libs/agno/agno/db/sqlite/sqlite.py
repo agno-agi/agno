@@ -28,7 +28,7 @@ from agno.db.sqlite.utils import (
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -393,7 +393,7 @@ class SqliteDb(BaseDb):
             from traceback import print_exc
 
             print_exc()
-            log_exception(f"Could not create table '{table_name}'")
+            log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
     def _resolve_fk_reference(self, fk_ref: str) -> str:
@@ -609,7 +609,7 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
-            log_exception(f"Error loading existing table {table_name}")
+            log_error(f"Error loading existing table {table_name}: {e}")
             raise e
 
     def get_latest_schema_version(self, table_name: str):
@@ -679,7 +679,7 @@ class SqliteDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_exception("Error deleting session")
+            log_error(f"Error deleting session: {e}")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -707,7 +707,7 @@ class SqliteDb(BaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_exception("Error deleting sessions")
+            log_error(f"Error deleting sessions: {e}")
             raise e
 
     def get_session(
@@ -911,7 +911,7 @@ class SqliteDb(BaseDb):
             return self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
-            log_exception("Exception renaming session")
+            log_error(f"Exception renaming session: {e}")
             raise e
 
     def upsert_session(
@@ -1277,7 +1277,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception:
-            log_exception("Exception during bulk session upsert, falling back to individual upserts")
+            log_error("Exception during bulk session upsert, falling back to individual upserts")
             # Fallback to individual upserts
             return [
                 result
@@ -1320,7 +1320,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_exception("Error deleting user memory")
+            log_error(f"Error deleting user memory: {e}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1347,7 +1347,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_exception("Error deleting user memories")
+            log_error(f"Error deleting user memories: {e}")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -1497,7 +1497,7 @@ class SqliteDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_exception("Error reading from memory table")
+            log_error(f"Error reading from memory table: {e}")
             raise e
 
     def get_user_memory_stats(
@@ -1569,7 +1569,7 @@ class SqliteDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_exception("Error getting user memory stats")
+            log_error(f"Error getting user memory stats: {e}")
             raise e
 
     def upsert_user_memory(
@@ -1640,7 +1640,7 @@ class SqliteDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_exception("Error upserting user memory")
+            log_error(f"Error upserting user memory: {e}")
             raise e
 
     def upsert_memories(
@@ -1738,7 +1738,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception:
-            log_exception("Exception during bulk memory upsert, falling back to individual upserts")
+            log_error("Exception during bulk memory upsert, falling back to individual upserts")
 
             # Fallback to individual upserts
             return [
@@ -1810,7 +1810,7 @@ class SqliteDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_exception("Error reading from sessions table")
+            log_error(f"Error reading from sessions table: {e}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1915,7 +1915,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_exception("Error refreshing metrics")
+            log_error(f"Error refreshing metrics: {e}")
             raise e
 
     def get_metrics(
@@ -1957,7 +1957,7 @@ class SqliteDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_exception("Error getting metrics")
+            log_error(f"Error getting metrics: {e}")
             raise e
 
     # -- Knowledge methods --
@@ -1981,7 +1981,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_exception("Error deleting knowledge content")
+            log_error(f"Error deleting knowledge content: {e}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -2010,7 +2010,7 @@ class SqliteDb(BaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_exception("Error getting knowledge content")
+            log_error(f"Error getting knowledge content: {e}")
             raise e
 
     def get_knowledge_contents(
@@ -2066,7 +2066,7 @@ class SqliteDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_exception("Error getting knowledge contents")
+            log_error(f"Error getting knowledge contents: {e}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2114,7 +2114,7 @@ class SqliteDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_exception("Error upserting knowledge content")
+            log_error(f"Error upserting knowledge content: {e}")
             raise e
 
     # -- Eval methods --
@@ -2153,7 +2153,7 @@ class SqliteDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_exception("Error creating eval run")
+            log_error(f"Error creating eval run: {e}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2176,7 +2176,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_exception(f"Error deleting eval run {eval_run_id}")
+            log_error(f"Error deleting eval run {eval_run_id}: {e}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2199,7 +2199,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_exception(f"Error deleting eval runs {eval_run_ids}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise e
 
     def get_eval_run(
@@ -2237,7 +2237,7 @@ class SqliteDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_exception(f"Exception getting eval run {eval_run_id}")
+            log_error(f"Exception getting eval run {eval_run_id}: {e}")
             raise e
 
     def get_eval_runs(
@@ -2331,7 +2331,7 @@ class SqliteDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_exception("Exception getting eval runs")
+            log_error(f"Exception getting eval runs: {e}")
             raise e
 
     def rename_eval_run(
@@ -2373,7 +2373,7 @@ class SqliteDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_exception(f"Error renaming eval run {eval_run_id}")
+            log_error(f"Error renaming eval run {eval_run_id}: {e}")
             raise e
 
     # -- Trace methods --
@@ -2516,7 +2516,7 @@ class SqliteDb(BaseDb):
                 sess.execute(upsert_stmt)
 
         except Exception:
-            log_exception("Error creating trace")
+            log_error("Error creating trace")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2568,7 +2568,7 @@ class SqliteDb(BaseDb):
                 return None
 
         except Exception:
-            log_exception("Error getting trace")
+            log_error("Error getting trace")
             return None
 
     def get_traces(
@@ -2676,7 +2676,7 @@ class SqliteDb(BaseDb):
                 return traces, total_count
 
         except Exception:
-            log_exception("Error getting traces")
+            log_error("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -2801,7 +2801,7 @@ class SqliteDb(BaseDb):
                 return stats_list, total_count
 
         except Exception:
-            log_exception("Error getting trace stats")
+            log_error("Error getting trace stats")
             return [], 0
 
     # -- Span methods --
@@ -2822,7 +2822,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception:
-            log_exception("Error creating span")
+            log_error("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2844,7 +2844,7 @@ class SqliteDb(BaseDb):
                     sess.execute(stmt)
 
         except Exception:
-            log_exception("Error creating spans batch")
+            log_error("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2870,7 +2870,7 @@ class SqliteDb(BaseDb):
                 return None
 
         except Exception:
-            log_exception("Error getting span")
+            log_error("Error getting span")
             return None
 
     def get_spans(
@@ -2907,7 +2907,7 @@ class SqliteDb(BaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception:
-            log_exception("Error getting spans")
+            log_error("Error getting spans")
             return []
 
     # -- Migrations --
@@ -3015,7 +3015,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No cultural artifact found with id: {id}")
 
         except Exception as e:
-            log_exception("Error deleting cultural artifact")
+            log_error(f"Error deleting cultural artifact: {e}")
             raise e
 
     def get_cultural_knowledge(
@@ -3051,7 +3051,7 @@ class SqliteDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_exception("Exception reading from cultural artifacts table")
+            log_error(f"Exception reading from cultural artifacts table: {e}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -3125,7 +3125,7 @@ class SqliteDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_exception("Error reading from cultural artifacts table")
+            log_error(f"Error reading from cultural artifacts table: {e}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -3196,7 +3196,7 @@ class SqliteDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_exception("Error upserting cultural knowledge")
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
     # --- Components ---
@@ -3231,7 +3231,7 @@ class SqliteDb(BaseDb):
                 return dict(result._mapping) if result else None
 
         except Exception:
-            log_exception("Error getting component")
+            log_error("Error getting component")
             raise
 
     def upsert_component(
@@ -3330,7 +3330,7 @@ class SqliteDb(BaseDb):
             return result
 
         except Exception:
-            log_exception("Error upserting component")
+            log_error("Error upserting component")
             raise
 
     def delete_component(
@@ -3380,7 +3380,7 @@ class SqliteDb(BaseDb):
             return result.rowcount > 0
 
         except Exception:
-            log_exception("Error deleting component")
+            log_error("Error deleting component")
             raise
 
     def list_components(
@@ -3437,7 +3437,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results], total_count
 
         except Exception:
-            log_exception("Error listing components")
+            log_error("Error listing components")
             raise
 
     def create_component_with_config(
@@ -3570,7 +3570,7 @@ class SqliteDb(BaseDb):
             return component, config_result
 
         except Exception:
-            log_exception("Error creating component with config")
+            log_error("Error creating component with config")
             raise
 
     # --- Config ---
@@ -3644,7 +3644,7 @@ class SqliteDb(BaseDb):
                 return dict(result._mapping) if result else None
 
         except Exception:
-            log_exception("Error getting config")
+            log_error("Error getting config")
             raise
 
     def upsert_config(
@@ -3825,7 +3825,7 @@ class SqliteDb(BaseDb):
             return result
 
         except Exception:
-            log_exception("Error upserting config")
+            log_error("Error upserting config")
             raise
 
     def delete_config(
@@ -3896,7 +3896,7 @@ class SqliteDb(BaseDb):
             return True
 
         except Exception:
-            log_exception("Error deleting config")
+            log_error("Error deleting config")
             raise
 
     def list_configs(
@@ -3953,7 +3953,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception:
-            log_exception("Error listing configs")
+            log_error("Error listing configs")
             raise
 
     def set_current_version(
@@ -4025,7 +4025,7 @@ class SqliteDb(BaseDb):
             return True
 
         except Exception:
-            log_exception("Error setting current version")
+            log_error("Error setting current version")
             raise
 
     # --- Component Links ---
@@ -4066,7 +4066,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception:
-            log_exception("Error getting links")
+            log_error("Error getting links")
             raise
 
     def get_dependents(
@@ -4097,7 +4097,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception:
-            log_exception("Error getting dependents")
+            log_error("Error getting dependents")
             raise
 
     def resolve_version(
@@ -4129,7 +4129,7 @@ class SqliteDb(BaseDb):
                 return result
 
         except Exception:
-            log_exception("Error resolving version")
+            log_error("Error resolving version")
             raise
 
     def load_component_graph(
@@ -4200,7 +4200,7 @@ class SqliteDb(BaseDb):
             }
 
         except Exception:
-            log_exception("Error loading component graph")
+            log_error("Error loading component graph")
             raise
 
     # -- Learning methods --
@@ -4495,7 +4495,7 @@ class SqliteDb(BaseDb):
                 sess.execute(table.insert().values(**schedule_data))
             return schedule_data
         except Exception:
-            log_exception("Error creating schedule")
+            log_error("Error creating schedule")
             raise
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4597,7 +4597,7 @@ class SqliteDb(BaseDb):
                 sess.execute(table.insert().values(**run_data))
             return run_data
         except Exception:
-            log_exception("Error creating schedule run")
+            log_error("Error creating schedule run")
             raise
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4671,7 +4671,7 @@ class SqliteDb(BaseDb):
                 sess.execute(table.insert().values(**data))
             return data
         except Exception:
-            log_exception("Error creating approval")
+            log_error("Error creating approval")
             raise
 
     def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:

@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from sqlalchemy import Engine, Table, func
@@ -91,7 +91,7 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         return exists
 
     except Exception:
-        log_exception("Error checking if table exists")
+        log_error("Error checking if table exists")
         return False
 
 
@@ -125,7 +125,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
         return True
     except Exception:
-        log_exception(f"Error validating table schema for {db_schema}.{table_name}")
+        log_error(f"Error validating table schema for {db_schema}.{table_name}")
         return False
 
 
@@ -455,7 +455,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         return exists
 
     except Exception:
-        log_exception("Error checking if table exists")
+        log_error("Error checking if table exists")
         return False
 
 
@@ -487,7 +487,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
         return True
     except Exception:
-        log_exception(f"Error validating table schema for {db_schema}.{table_name}")
+        log_error(f"Error validating table schema for {db_schema}.{table_name}")
         return False
 
 

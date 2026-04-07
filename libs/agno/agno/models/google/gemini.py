@@ -22,7 +22,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
-from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
@@ -551,7 +551,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_exception("Error from Gemini API")
+            log_error(f"Error from Gemini API: {e}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -567,7 +567,7 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_exception("Unknown error from Gemini API")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -605,7 +605,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_exception("Error from Gemini API")
+            log_error(f"Error from Gemini API: {e}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -621,7 +621,7 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_exception("Unknown error from Gemini API")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -664,7 +664,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_exception("Error from Gemini API")
+            log_error(f"Error from Gemini API: {e}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -680,7 +680,7 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_exception("Unknown error from Gemini API")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -721,7 +721,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_exception("Error from Gemini API")
+            log_error(f"Error from Gemini API: {e}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -737,7 +737,7 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_exception("Unknown error from Gemini API")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
@@ -1508,7 +1508,7 @@ class Gemini(Model):
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception:
-            log_exception("Error creating File Search store")
+            log_error("Error creating File Search store")
             raise
 
     async def async_create_file_search_store(self, display_name: Optional[str] = None) -> Any:
@@ -1528,7 +1528,7 @@ class Gemini(Model):
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception:
-            log_exception("Error creating File Search store")
+            log_error("Error creating File Search store")
             raise
 
     def list_file_search_stores(self, page_size: int = 100) -> List[Any]:
@@ -1548,7 +1548,7 @@ class Gemini(Model):
             log_debug(f"Found {len(stores)} File Search stores")
             return stores
         except Exception:
-            log_exception("Error listing File Search stores")
+            log_error("Error listing File Search stores")
             raise
 
     async def async_list_file_search_stores(self, page_size: int = 100) -> List[Any]:
@@ -1568,7 +1568,7 @@ class Gemini(Model):
             log_debug(f"Found {len(stores)} File Search stores")
             return stores
         except Exception:
-            log_exception("Error listing File Search stores")
+            log_error("Error listing File Search stores")
             raise
 
     def get_file_search_store(self, name: str) -> Any:
@@ -1586,7 +1586,7 @@ class Gemini(Model):
             log_debug(f"Retrieved File Search store: {name}")
             return store
         except Exception:
-            log_exception(f"Error getting File Search store {name}")
+            log_error(f"Error getting File Search store {name}")
             raise
 
     async def async_get_file_search_store(self, name: str) -> Any:
@@ -1602,7 +1602,7 @@ class Gemini(Model):
             log_debug(f"Retrieved File Search store: {name}")
             return store
         except Exception:
-            log_exception(f"Error getting File Search store {name}")
+            log_error(f"Error getting File Search store {name}")
             raise
 
     def delete_file_search_store(self, name: str, force: bool = False) -> None:
@@ -1617,7 +1617,7 @@ class Gemini(Model):
             self.get_client().file_search_stores.delete(name=name, config={"force": force})
             log_info(f"Deleted File Search store: {name}")
         except Exception:
-            log_exception(f"Error deleting File Search store {name}")
+            log_error(f"Error deleting File Search store {name}")
             raise
 
     async def async_delete_file_search_store(self, name: str, force: bool = True) -> None:
@@ -1632,7 +1632,7 @@ class Gemini(Model):
             await self.get_client().aio.file_search_stores.delete(name=name, config={"force": force})
             log_info(f"Deleted File Search store: {name}")
         except Exception:
-            log_exception(f"Error deleting File Search store {name}")
+            log_error(f"Error deleting File Search store {name}")
             raise
 
     def wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
@@ -1742,7 +1742,7 @@ class Gemini(Model):
             log_info(f"Upload initiated for {file_path.name}")
             return operation
         except Exception:
-            log_exception("Error uploading file to File Search store")
+            log_error("Error uploading file to File Search store")
             raise
 
     async def async_upload_to_file_search_store(
@@ -1787,7 +1787,7 @@ class Gemini(Model):
             log_info(f"Upload initiated for {file_path.name}")
             return operation
         except Exception:
-            log_exception("Error uploading file to File Search store")
+            log_error("Error uploading file to File Search store")
             raise
 
     def import_file_to_store(
@@ -1825,7 +1825,7 @@ class Gemini(Model):
             log_info(f"Import initiated for {file_name}")
             return operation
         except Exception:
-            log_exception("Error importing file to File Search store")
+            log_error("Error importing file to File Search store")
             raise
 
     async def async_import_file_to_store(
@@ -1861,7 +1861,7 @@ class Gemini(Model):
             log_info(f"Import initiated for {file_name}")
             return operation
         except Exception:
-            log_exception("Error importing file to File Search store")
+            log_error("Error importing file to File Search store")
             raise
 
     def list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
@@ -1882,7 +1882,7 @@ class Gemini(Model):
             log_debug(f"Found {len(documents)} documents in store {store_name}")
             return documents
         except Exception:
-            log_exception(f"Error listing documents in store {store_name}")
+            log_error(f"Error listing documents in store {store_name}")
             raise
 
     async def async_list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
@@ -1906,7 +1906,7 @@ class Gemini(Model):
             log_debug(f"Found {len(documents)} documents in store {store_name}")
             return documents
         except Exception:
-            log_exception(f"Error listing documents in store {store_name}")
+            log_error(f"Error listing documents in store {store_name}")
             raise
 
     def get_document(self, document_name: str) -> Any:
@@ -1925,7 +1925,7 @@ class Gemini(Model):
             log_debug(f"Retrieved document: {document_name}")
             return doc
         except Exception:
-            log_exception(f"Error getting document {document_name}")
+            log_error(f"Error getting document {document_name}")
             raise
 
     async def async_get_document(self, document_name: str) -> Any:
@@ -1943,7 +1943,7 @@ class Gemini(Model):
             log_debug(f"Retrieved document: {document_name}")
             return doc
         except Exception:
-            log_exception(f"Error getting document {document_name}")
+            log_error(f"Error getting document {document_name}")
             raise
 
     def delete_document(self, document_name: str) -> None:
@@ -1963,7 +1963,7 @@ class Gemini(Model):
             self.get_client().file_search_stores.documents.delete(name=document_name)
             log_info(f"Deleted document: {document_name}")
         except Exception:
-            log_exception(f"Error deleting document {document_name}")
+            log_error(f"Error deleting document {document_name}")
             raise
 
     async def async_delete_document(self, document_name: str) -> None:
@@ -1977,5 +1977,5 @@ class Gemini(Model):
             await self.get_client().aio.file_search_stores.documents.delete(name=document_name)
             log_info(f"Deleted document: {document_name}")
         except Exception:
-            log_exception(f"Error deleting document {document_name}")
+            log_error(f"Error deleting document {document_name}")
             raise

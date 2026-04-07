@@ -7,7 +7,7 @@ from typing import Any, List, Optional, Tuple, Union
 import httpx
 
 from agno.utils.audio import pcm_to_wav_bytes
-from agno.utils.log import log_exception, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.media import get_image_type
 
 _BASE_URL = "https://graph.facebook.com"
@@ -249,10 +249,10 @@ async def _send_text(recipient: str, text: str, config: WhatsAppConfig, preview_
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
-        log_exception(f"Failed to send WhatsApp text message. Error response: {e.response.text}")
+        log_error(f"Failed to send WhatsApp text message. Error response: {e.response.text}: {e}")
         raise
     except Exception:
-        log_exception("Unexpected error sending WhatsApp text message")
+        log_error("Unexpected error sending WhatsApp text message")
         raise
 
 
@@ -286,10 +286,10 @@ async def _send_media(
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
     except httpx.HTTPStatusError as e:
-        log_exception(f"Failed to send WhatsApp {media_type} message. Error response: {e.response.text}")
+        log_error(f"Failed to send WhatsApp {media_type} message. Error response: {e.response.text}: {e}")
         raise
     except Exception:
-        log_exception(f"Unexpected error sending WhatsApp {media_type} message")
+        log_error(f"Unexpected error sending WhatsApp {media_type} message")
         raise
 
 

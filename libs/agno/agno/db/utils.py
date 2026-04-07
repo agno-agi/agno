@@ -7,7 +7,7 @@ from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.utils.log import log_exception, log_warning
+from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
@@ -180,7 +180,7 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
 
             return PostgresDb.from_dict(db_data)
         except Exception:
-            log_exception("Error reconstructing PostgresDb from dictionary")
+            log_error("Error reconstructing PostgresDb from dictionary")
             return None
     elif db_type == "sqlite":
         try:
@@ -188,7 +188,7 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
 
             return SqliteDb.from_dict(db_data)
         except Exception:
-            log_exception("Error reconstructing SqliteDb from dictionary")
+            log_error("Error reconstructing SqliteDb from dictionary")
             return None
     else:
         log_warning(f"Unknown database type: {db_type}")

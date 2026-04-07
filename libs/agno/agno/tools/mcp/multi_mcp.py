@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
@@ -438,7 +438,7 @@ class MultiMCPTools(Toolkit):
         try:
             await self._connect()
         except (RuntimeError, BaseException):
-            log_exception(f"Failed to connect to {str(self)}")
+            log_error(f"Failed to connect to {str(self)}")
 
     @classmethod
     async def create_and_connect(
@@ -519,7 +519,7 @@ class MultiMCPTools(Toolkit):
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
 
-                log_exception(f"Failed to initialize MCP server with params {server_params}")
+                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
                 server_connection_errors.append(str(e))
                 continue
 
@@ -565,7 +565,7 @@ class MultiMCPTools(Toolkit):
         try:
             await self._connect()
         except (RuntimeError, BaseException):
-            log_exception(f"Failed to connect to {str(self)}")
+            log_error(f"Failed to connect to {str(self)}")
         return self
 
     async def __aexit__(
@@ -617,7 +617,7 @@ class MultiMCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception:
-                    log_exception(f"Failed to register tool {tool.name}")
+                    log_error(f"Failed to register tool {tool.name}")
                     raise
 
     async def initialize(self, session: ClientSession, server_idx: int = 0) -> None:
@@ -634,5 +634,5 @@ class MultiMCPTools(Toolkit):
 
             self._initialized = True
         except Exception:
-            log_exception("Failed to get MCP tools")
+            log_error("Failed to get MCP tools")
             raise

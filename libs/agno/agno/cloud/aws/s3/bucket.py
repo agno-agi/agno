@@ -101,7 +101,7 @@ class S3Bucket(AwsResource):
                 self.active_resource = response
                 return True
         except Exception as e:
-            log_error(f"{self.get_resource_type()} could not be created.")
+            log_error(f"{self.get_resource_type()} could not be created.: {e}")
             log_error(e)
         return False
 
@@ -119,7 +119,7 @@ class S3Bucket(AwsResource):
                     },
                 )
             except Exception as e:
-                log_error("Waiter failed.")
+                log_error(f"Waiter failed.: {e}")
                 log_error(e)
         return True
 
@@ -148,7 +148,7 @@ class S3Bucket(AwsResource):
         except ClientError as ce:
             log_debug(f"ClientError: {ce}")
         except Exception as e:
-            log_error(f"Error reading {self.get_resource_type()}.")
+            log_error(f"Error reading {self.get_resource_type()}.: {e}")
             log_error(e)
         return self.active_resource
 
@@ -167,8 +167,8 @@ class S3Bucket(AwsResource):
             log_debug(f"Response: {response}")
             return True
         except Exception as e:
-            log_error(f"{self.get_resource_type()} could not be deleted.")
-            log_error("Please try again or delete resources manually.")
+            log_error(f"{self.get_resource_type()} could not be deleted.: {e}")
+            log_error(f"Please try again or delete resources manually.: {e}")
             log_error(e)
         return False
 

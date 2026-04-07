@@ -23,7 +23,7 @@ from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.os.interfaces.slack.state import StreamState
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error, log_exception
+from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
@@ -239,7 +239,7 @@ def attach_routes(
                 )
                 await upload_response_media_async(async_client, response, ctx["channel_id"], ctx["thread_id"])
         except Exception:
-            log_exception("Error processing slack event")
+            log_error("Error processing slack event")
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
@@ -437,7 +437,7 @@ def attach_routes(
             if not is_msg_too_long:
                 is_msg_too_long = "msg_too_long" in str(e)
             if not is_msg_too_long:
-                log_exception(
+                log_error(
                     f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
                 )
             try:
@@ -484,6 +484,6 @@ def attach_routes(
                 channel_id=channel_id, thread_ts=thread_ts, prompts=prompts
             )
         except Exception:
-            log_exception("Failed to set suggested prompts")
+            log_error("Failed to set suggested prompts")
 
     return router

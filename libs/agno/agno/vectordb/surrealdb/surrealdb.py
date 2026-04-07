@@ -14,7 +14,7 @@ except ImportError as e:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -655,7 +655,7 @@ class SurrealDb(VectorDb):
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
         except Exception:
-            log_exception(f"Error updating metadata for content_id '{content_id}'")
+            log_error(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:

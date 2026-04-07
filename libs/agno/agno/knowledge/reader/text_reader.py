@@ -8,7 +8,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class TextReader(Reader):
@@ -64,7 +64,7 @@ class TextReader(Reader):
                 return chunked_documents
             return documents
         except Exception:
-            log_exception(f"Error reading: {file}")
+            log_error(f"Error reading: {file}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -100,7 +100,7 @@ class TextReader(Reader):
                 return await self._async_chunk_document(document)
             return [document]
         except Exception:
-            log_exception(f"Error reading asynchronously: {file}")
+            log_error(f"Error reading asynchronously: {file}")
             return []
 
     async def _async_chunk_document(self, document: Document) -> List[Document]:

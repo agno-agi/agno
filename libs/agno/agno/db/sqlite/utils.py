@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from sqlalchemy import Table, func
@@ -76,7 +76,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception:
-        log_exception("Error checking if table exists")
+        log_error("Error checking if table exists")
         return False
 
 
@@ -95,7 +95,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception:
-        log_exception("Error checking if table exists")
+        log_error("Error checking if table exists")
         return False
 
 
@@ -128,7 +128,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
 
         return True
     except Exception:
-        log_exception(f"Error validating table schema for {table_name}")
+        log_error(f"Error validating table schema for {table_name}")
         return False
 
 
@@ -160,7 +160,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         return True
 
     except Exception:
-        log_exception(f"Error validating table schema for {table_name}")
+        log_error(f"Error validating table schema for {table_name}")
         return False
 
 

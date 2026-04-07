@@ -68,7 +68,7 @@ from agno.team.team import Team
 from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
-    log_exception,
+    log_error,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -934,7 +934,7 @@ class Workflow:
             return config.get("version")
 
         except Exception:
-            log_exception("Error saving workflow")
+            log_error("Error saving workflow")
             return None
 
     @classmethod
@@ -1965,7 +1965,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_exception(f"Validation failed | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
@@ -2292,7 +2292,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_exception(f"Validation failed | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -2687,7 +2687,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_exception(f"Validation failed | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
@@ -3041,7 +3041,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_exception(f"Validation failed | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -7323,7 +7323,7 @@ class Workflow:
             log_debug(f"Created new {self.__class__.__name__}")
             return new_workflow
         except Exception:
-            log_exception(f"Failed to create deep copy of {self.__class__.__name__}")
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}")
             raise
 
     def _deep_copy_steps(self, steps: Any) -> Any:
@@ -7497,7 +7497,7 @@ def get_workflow_by_id(
         return workflow
 
     except Exception:
-        log_exception(f"Error loading Workflow {id} from database")
+        log_error(f"Error loading Workflow {id} from database")
         return None
 
 
@@ -7529,10 +7529,10 @@ def get_workflows(
                         workflows.append(workflow)
             except Exception:
                 component_id = component.get("component_id", "unknown")
-                log_exception(f"Error loading Workflow {component_id} from database")
+                log_error(f"Error loading Workflow {component_id} from database")
                 continue
         return workflows
 
     except Exception:
-        log_exception("Error loading Workflows from database")
+        log_error("Error loading Workflows from database")
         return []

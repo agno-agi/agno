@@ -21,7 +21,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_exception, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -127,7 +127,7 @@ class GcsJsonDb(BaseDb):
                     blob.upload_from_string("[]", content_type="application/json")
                 return []
             else:
-                log_exception(f"Error reading the {blob_name} JSON file from GCS")
+                log_error(f"Error reading the {blob_name} JSON file from GCS: {e}")
                 raise json.JSONDecodeError(f"Error reading {blob_name}", "", 0)
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
@@ -148,7 +148,7 @@ class GcsJsonDb(BaseDb):
             blob.upload_from_string(json_data, content_type="application/json")
 
         except Exception:
-            log_exception(f"Error writing to the {blob_name} JSON file in GCS")
+            log_error(f"Error writing to the {blob_name} JSON file in GCS")
             return
 
     def get_latest_schema_version(self):
@@ -488,7 +488,7 @@ class GcsJsonDb(BaseDb):
             return results
 
         except Exception:
-            log_exception("Exception during bulk session upsert")
+            log_error("Exception during bulk session upsert")
             return []
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
@@ -746,7 +746,7 @@ class GcsJsonDb(BaseDb):
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
-            log_exception("Exception upserting user memory")
+            log_error(f"Exception upserting user memory: {e}")
             raise e
 
     def upsert_memories(
@@ -782,7 +782,7 @@ class GcsJsonDb(BaseDb):
             return results
 
         except Exception:
-            log_exception("Exception during bulk memory upsert")
+            log_error("Exception during bulk memory upsert")
             return []
 
     def clear_memories(self) -> None:
@@ -1474,7 +1474,7 @@ class GcsJsonDb(BaseDb):
             self._write_json_file(self.trace_table_name, traces)
 
         except Exception:
-            log_exception("Error creating trace")
+            log_error("Error creating trace")
 
     def get_trace(
         self,
@@ -1528,7 +1528,7 @@ class GcsJsonDb(BaseDb):
             return Trace.from_dict(trace_data)
 
         except Exception:
-            log_exception("Error getting trace")
+            log_error("Error getting trace")
             return None
 
     def get_traces(
@@ -1621,7 +1621,7 @@ class GcsJsonDb(BaseDb):
             return result_traces, total_count
 
         except Exception:
-            log_exception("Error getting traces")
+            log_error("Error getting traces")
             return [], 0
 
     def get_trace_stats(
@@ -1724,7 +1724,7 @@ class GcsJsonDb(BaseDb):
             return stats_list, total_count
 
         except Exception:
-            log_exception("Error getting trace stats")
+            log_error("Error getting trace stats")
             return [], 0
 
     # --- Spans ---
@@ -1740,7 +1740,7 @@ class GcsJsonDb(BaseDb):
             self._write_json_file(self.span_table_name, spans)
 
         except Exception:
-            log_exception("Error creating span")
+            log_error("Error creating span")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -1758,7 +1758,7 @@ class GcsJsonDb(BaseDb):
             self._write_json_file(self.span_table_name, existing_spans)
 
         except Exception:
-            log_exception("Error creating spans batch")
+            log_error("Error creating spans batch")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -1781,7 +1781,7 @@ class GcsJsonDb(BaseDb):
             return None
 
         except Exception:
-            log_exception("Error getting span")
+            log_error("Error getting span")
             return None
 
     def get_spans(
@@ -1823,7 +1823,7 @@ class GcsJsonDb(BaseDb):
             return [Span.from_dict(s) for s in filtered]
 
         except Exception:
-            log_exception("Error getting spans")
+            log_error("Error getting spans")
             return []
 
     # -- Learning methods (stubs) --

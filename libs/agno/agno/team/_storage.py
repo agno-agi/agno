@@ -44,7 +44,7 @@ from agno.utils.agent import (
 )
 from agno.utils.log import (
     log_debug,
-    log_exception,
+    log_error,
     log_warning,
 )
 from agno.utils.merge_dict import merge_dictionaries
@@ -1080,7 +1080,7 @@ def save(
         return config["version"]
 
     except Exception:
-        log_exception("Error saving Team to database")
+        log_error("Error saving Team to database")
         raise
 
 

@@ -909,7 +909,7 @@ class MongoDb(VectorDb):
             log_error(
                 f"Error during hybrid search, potentially due to missing or misconfigured Atlas Search index for text search: {e}"
             )
-            log_error(f"Details: {e.details}")
+            log_error(f"Details: {e.details}: {e}")
             return []
         except Exception:
             logger.exception("Error during hybrid search")

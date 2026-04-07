@@ -363,7 +363,7 @@ class Weaviate(VectorDb):
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
                 except Exception as e:
-                    log_error(f"Error inserting document {document.name}: {str(e)}")
+                    log_error(f"Error inserting document {document.name}: {str(e)}: {e}")
         finally:
             await client.close()
 

@@ -27,7 +27,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_exception
+from agno.utils.log import log_error
 
 
 def get_registry_router(registry: Registry, settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
@@ -515,7 +515,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 ),
             )
         except Exception as e:
-            log_exception("Error listing registry resources")
+            log_error(f"Error listing registry resources: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     return router

@@ -9,7 +9,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error, log_exception
+from agno.utils.log import log_debug, log_error
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -274,7 +274,7 @@ class BasePDFReader(Reader):
                 log_error(f'Failed to decrypt PDF file "{doc_name}": incorrect password')
                 return False
         except Exception:
-            log_exception(f'Error decrypting PDF file "{doc_name}"')
+            log_error(f'Error decrypting PDF file "{doc_name}"')
             return False
 
     def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
@@ -390,7 +390,7 @@ class PDFReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError:
-            log_exception("Error reading PDF")
+            log_error("Error reading PDF")
             return []
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
@@ -414,7 +414,7 @@ class PDFReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError:
-            log_exception("Error reading PDF")
+            log_error("Error reading PDF")
             return []
 
         # Handle PDF decryption
@@ -439,7 +439,7 @@ class PDFImageReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError:
-            log_exception("Error reading PDF")
+            log_error("Error reading PDF")
             return []
 
         # Handle PDF decryption
@@ -461,7 +461,7 @@ class PDFImageReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError:
-            log_exception("Error reading PDF")
+            log_error("Error reading PDF")
             return []
 
         # Handle PDF decryption

@@ -65,7 +65,7 @@ from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
-    log_exception,
+    log_error,
 )
 
 
@@ -1754,7 +1754,7 @@ def get_team_by_id(
         return team
 
     except Exception:
-        log_exception(f"Error loading Team {id} from database")
+        log_error(f"Error loading Team {id} from database")
         return None
 
 
@@ -1795,5 +1795,5 @@ def get_teams(
         return teams
 
     except Exception:
-        log_exception("Error loading Teams from database")
+        log_error("Error loading Teams from database")
         return []

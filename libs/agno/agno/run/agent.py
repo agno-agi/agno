@@ -19,7 +19,7 @@ from agno.utils.media import (
     reconstruct_response_audio,
     reconstruct_videos,
 )
-from agno.utils.log import log_exception
+from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
@@ -817,7 +817,7 @@ class RunOutput:
         try:
             _dict = self.to_dict()
         except Exception:
-            log_exception("Failed to convert response to json")
+            log_error("Failed to convert response to json")
             raise
 
         if indent is None:

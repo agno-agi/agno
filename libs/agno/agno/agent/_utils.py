@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.filters import FilterExpr
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 def get_effective_filters(
@@ -100,7 +100,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
         try:
             return json.dumps(sanitized_context, indent=2)
         except Exception:
-            log_exception("Failed to convert sanitized context to JSON")
+            log_error("Failed to convert sanitized context to JSON")
             return str(context)
 
 
@@ -151,7 +151,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         log_debug(f"Created new {agent.__class__.__name__}")
         return new_agent
     except Exception:
-        log_exception(f"Failed to create deep copy of {agent.__class__.__name__}")
+        log_error(f"Failed to create deep copy of {agent.__class__.__name__}")
         raise
 
 

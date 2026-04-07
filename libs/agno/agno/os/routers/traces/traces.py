@@ -28,7 +28,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db, timestamp_to_datetime
 from agno.remote.base import RemoteDb
-from agno.utils.log import log_exception
+from agno.utils.log import log_error
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +230,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
-            log_exception("Error retrieving traces")
+            log_error(f"Error retrieving traces: {e}")
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
 
     @router.get(
@@ -408,7 +408,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except HTTPException:
             raise
         except Exception as e:
-            log_exception(f"Error retrieving trace {trace_id}")
+            log_error(f"Error retrieving trace {trace_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
 
     @router.get(
@@ -566,7 +566,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
-            log_exception("Error retrieving trace statistics")
+            log_error(f"Error retrieving trace statistics: {e}")
             raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
 
     @router.post(
@@ -742,7 +742,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid filter expression: {str(e)}")
         except Exception as e:
-            log_exception("Error searching traces")
+            log_error(f"Error searching traces: {e}")
             raise HTTPException(status_code=500, detail=f"Error searching traces: {str(e)}")
 
     return router

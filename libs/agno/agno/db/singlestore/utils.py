@@ -9,7 +9,7 @@ from sqlalchemy import Engine
 
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.singlestore.schemas import get_table_schema_definition
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from sqlalchemy import Table, func
@@ -103,7 +103,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         return exists
 
     except Exception:
-        log_exception("Error checking if table exists")
+        log_error("Error checking if table exists")
         return False
 
 
@@ -148,7 +148,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
     except Exception:
         table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
-        log_exception(f"Error validating table schema for {table_ref}")
+        log_error(f"Error validating table schema for {table_ref}")
         return False
 
 
