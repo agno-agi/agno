@@ -605,8 +605,6 @@ class AsyncMongoDb(AsyncBaseDb):
             query = {"session_id": session_id}
             if user_id is not None:
                 query["user_id"] = user_id
-            if session_type is not None:
-                query["session_type"] = session_type
 
             result = await collection.find_one(query)
             if result is None:

@@ -15,7 +15,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
@@ -148,12 +147,10 @@ class OpenAIChat(Model):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using OpenAI SDK default.")
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         # Create and cache the client
         self.client = OpenAIClient(**client_params)
@@ -177,13 +174,11 @@ class OpenAIChat(Model):
                 client_params["http_client"] = self.http_client
             else:
                 log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using OpenAI SDK default."
                 )
-                # Use global async client when user http_client is invalid
-                client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         # Create and cache the client
         self.async_client = AsyncOpenAIClient(**client_params)
