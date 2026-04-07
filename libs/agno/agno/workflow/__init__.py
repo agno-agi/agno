@@ -1,3 +1,4 @@
+from agno.visualize import AVAILABLE_FLAVORS, WorkflowVisualization
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.cel import CEL_AVAILABLE, validate_cel_expression
 from agno.workflow.condition import Condition
@@ -14,6 +15,8 @@ from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 __all__ = [
     "Workflow",
     "WorkflowAgent",
+    "WorkflowVisualization",
+    "AVAILABLE_FLAVORS",
     "RemoteWorkflow",
     "Steps",
     "Step",

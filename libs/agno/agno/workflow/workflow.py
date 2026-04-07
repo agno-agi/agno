@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
+    from agno.visualize import WorkflowVisualization
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
@@ -6657,6 +6658,22 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
+
+    def visualize(self, direction: str = "TD", color: str = "default") -> "WorkflowVisualization":
+        """Generate a visual representation of the workflow as a Mermaid flowchart.
+
+        Args:
+            direction: Mermaid layout direction — ``"TD"`` (top-down, default) or ``"LR"`` (left-right).
+            color: Color flavor — ``"default"``, ``"monotone"``, or ``"black"``.
+
+        Returns:
+            A :class:`~agno.visualize.WorkflowVisualization` instance with
+            ``.to_mermaid()``, ``.to_svg(path)``, ``.to_png(path)``, and ``.show()`` methods.
+        """
+        from agno.visualize import WorkflowVisualization, generate_mermaid
+
+        mermaid_text = generate_mermaid(self.steps, workflow_name=self.name, direction=direction, color=color)
+        return WorkflowVisualization(mermaid_text, workflow_name=self.name)
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""

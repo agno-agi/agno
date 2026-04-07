@@ -331,6 +331,12 @@ embedders = [
   "agno[vllm]"
 ]
 
+# Workflow visualization
+visualize = [
+  "mermaid-py",
+  "Pillow"
+]
+
 # All libraries for testing
 tests = [
     "agno[a2a]",
@@ -365,6 +371,7 @@ integration-tests = [
 demo = [
     "agno[dev]",
     "agno[scheduler]",
+    "agno[visualize]",
     "anthropic",
     "chromadb",
     "ddgs",
