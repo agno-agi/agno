@@ -46,13 +46,13 @@ class WorkflowSession:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
 
-        runs_data = None
+        runs_data: Optional[List[Dict[str, Any]]] = None
         if self.runs:
             runs_data = []
             for run in self.runs:
                 try:
                     if isinstance(run, dict):
-                        runs_data.append(run)
+                        runs_data.append(run)  # type: ignore[arg-type]
                     else:
                         runs_data.append(run.to_dict())
                 except Exception as e:
