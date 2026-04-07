@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 
 
 class AzureOpenAITools(Toolkit):
@@ -42,9 +42,9 @@ class AzureOpenAITools(Toolkit):
 
         # Log warnings for missing credentials
         if not self.api_key:
-            logger.error("AZURE_OPENAI_API_KEY not set")
+            log_error("AZURE_OPENAI_API_KEY not set")
         if not self.azure_endpoint:
-            logger.error("AZURE_OPENAI_ENDPOINT not set")
+            log_error("AZURE_OPENAI_ENDPOINT not set")
 
         # Initialize image generation parameters
         self.image_deployment = image_deployment or getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT")
@@ -60,7 +60,7 @@ class AzureOpenAITools(Toolkit):
             if all or enable_generate_image:
                 tools.append(self.generate_image)
         else:
-            logger.error("Missing required image generation parameters or invalid model")
+            log_error("Missing required image generation parameters or invalid model")
 
         super().__init__(name="azure_openai_tools", tools=tools)
 
@@ -186,5 +186,5 @@ class AzureOpenAITools(Toolkit):
                 return ToolResult(content="No images were generated.")
 
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.exception("Failed to generate image")
             return ToolResult(content=f"Error: {e}")
